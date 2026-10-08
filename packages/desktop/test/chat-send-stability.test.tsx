@@ -86,6 +86,7 @@ vi.mock('../src/renderer/components/ui/dropdown-menu', () => ({
   DropdownMenuSub: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -144,6 +145,9 @@ vi.mock('../src/renderer/components/ImageLightbox', () => ({ default: () => null
 vi.mock('../src/renderer/components/FilePreviewModal', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/ConnectionBanner', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/EnsembleAgentBar', () => ({ default: () => null }));
+// 「团队协作」条读团队会议 store（`features/team-meeting/instance` 会拉整个 platform 端口）。
+// 这个文件只测"发送不重建节点"，把条本身钉成 null —— 它有自己的 `team-collab-bar.test.tsx`。
+vi.mock('../src/renderer/features/team-meeting/TeamCollabBar', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/data-display/DataTable', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/semantic/EmptyState', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/semantic/StatusTag', () => ({ default: () => null }));
@@ -200,6 +204,8 @@ vi.mock('../src/renderer/components/ChatInput/useAttachments', () => ({
     pendingAttachments: [],
     setPendingAttachments: vi.fn(),
     removeAttachment: vi.fn(),
+    // BUG-028：离开一段对话时输入框会调它清暂存附件（桩必须跟着长）。
+    clearAttachments: vi.fn(),
     handlePaste: vi.fn(),
   }),
 }));
@@ -214,6 +220,7 @@ vi.mock('../src/renderer/components/ChatInput/useTaskMaterials', () => ({
     clearSelectedImportedFiles: vi.fn(),
     markImportedFileMissing: vi.fn(),
     toggleImportedFile: vi.fn(),
+    removeImportedFileReference: vi.fn(),
     revokeSource: vi.fn(),
     importFiles: vi.fn(),
     grantFolder: vi.fn(),
@@ -335,6 +342,8 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', async () => {
       toolsCatalog: null,
       modelLabel: 'DeepSeek V4 Flash',
       currentModelEntry: undefined,
+      currentMode: 'custom',
+      modelCatalog: [],
       modelsByProvider: {},
       taskGwId: null,
       quotaBlock: null,
@@ -624,56 +633,9 @@ describe('聊天区在发送时的稳定性', () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
 
-  it.each([
-    { theme: 'light', video: 'ready' },
-    { theme: 'dark', video: 'ready' },
-    { theme: 'light', video: 'unavailable' },
-    { theme: 'dark', video: 'unavailable' },
-    { theme: 'light', video: 'unknown' },
-    { theme: 'dark', video: 'unknown' },
-    { theme: 'light', video: 'probe-failed' },
-    { theme: 'dark', video: 'probe-failed' },
-  ] as const)('shows relay $video media without blocking chat in $theme theme', ({ theme, video }) => {
-    const previousGateway = uiState.defaultGatewayId;
-    const previousStatus = uiState.gatewayStatusMap;
-    const previousCatalog = uiState.modelCatalogByGateway;
-    uiState.defaultGatewayId = 'local-runtime';
-    uiState.gatewayStatusMap = { 'local-runtime': 'connected' };
-    uiState.modelCatalogByGateway = { 'local-runtime': [{ id: 'seed-chat', provider: 'clawrouter' }] };
-    mocks.pendingNewTask = { gatewayId: 'local-runtime', agentId: 'main', model: 'seed-chat' };
-    document.documentElement.dataset.theme = theme;
-    try {
-      const view = renderMainArea({
-        ...readiness,
-        gatewayId: 'local-runtime',
-        composerBlocked: false,
-        media: { image: 'ready', video },
-      });
-      const status = view.container.querySelector('[role="status"][aria-label="mediaReadiness.relayLabel"]');
-      expect(status).not.toBeNull();
-      expect(status?.textContent).toContain('mediaReadiness.image');
-      expect(status?.textContent).toContain('mediaReadiness.video');
-      expect(status?.textContent).toContain('mediaReadiness.ready');
-      expect(status?.textContent).toContain(`mediaReadiness.${video}`);
-      expect(status?.textContent).toContain('mediaReadiness.chatModelNote');
-      expect(status?.querySelector('button')).toBeNull();
-      expect(view.container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false);
-      expect(mocks.handleSend).not.toHaveBeenCalled();
-      const composer = view.container.querySelector('textarea');
-      mocks.tasks = [{ ...activeTask(), gatewayId: 'remote-gateway' }];
-      mocks.activeTaskId = 'task-1';
-      mocks.pendingNewTask = null;
-      view.rerender();
-      expect(view.container.querySelector('[aria-label="mediaReadiness.relayLabel"]')).toBeNull();
-      expect(view.container.querySelector('textarea')).toBe(composer);
-      view.unmount();
-    } finally {
-      uiState.defaultGatewayId = previousGateway;
-      uiState.gatewayStatusMap = previousStatus;
-      uiState.modelCatalogByGateway = previousCatalog;
-      delete document.documentElement.dataset.theme;
-    }
-  });
+  // 2026-10-06（用户拍板）：媒体就绪横幅已删除——原 8 个 `shows relay $video media`
+  // 场景用例（light/dark × ready/unavailable/unknown/probe-failed）随之移除；
+  // "横幅不存在"由下方守卫用例继续钉住。
 
   it('keeps media status hidden without ready local relay evidence', () => {
     const view = renderMainArea(readiness);

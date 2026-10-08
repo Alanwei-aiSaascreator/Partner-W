@@ -4,7 +4,7 @@ import { electronApp, is } from '@electron-toolkit/utils';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { nativeTheme } from 'electron';
-import { initAllGateways, destroyAllGateways } from './ws/index.js';
+import { initAllGateways, destroyAllGateways, getGatewayClient } from './ws/index.js';
 import { getMainWindow, setMainWindow } from './window-manager.js';
 import { sendToWindow } from './ws/window-utils.js';
 import { initDebugLogger, getDebugLogger } from './debug/index.js';
@@ -27,6 +27,7 @@ import { registerQuickLaunchHandlers } from './ipc/quick-launch-handlers.js';
 import { registerContextHandlers } from './ipc/context-handlers.js';
 import { registerNotificationHandlers } from './ipc/notification-handlers.js';
 import { registerAvatarHandlers, registerAvatarProtocol } from './ipc/avatar-handlers.js';
+import { registerOpeningMediaProtocol } from './media/opening-asset.js';
 import { registerHubHandlers } from './ipc/hub-handlers.js';
 import { registerCommercialHandlers } from './ipc/commercial-handlers.js';
 import { registerCommunityHandlers } from './ipc/community-handlers.js';
@@ -65,15 +66,27 @@ import {
   recordInstanceOwner,
 } from './runtime/instance-guard.js';
 import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
+import type { RuntimeBootstrapResult } from './runtime/index.js';
+import type { DeployProgress } from './runtime/deploy.js';
+import {
+  clearDeployProgress,
+  createDeployStallWatch,
+  getDeployProgress,
+  publishDeployProgress,
+  publishDeployStalled,
+} from './runtime/deploy-progress.js';
 import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
-import { ensureClientGatewayEntry } from './runtime/state-config.js';
+import { ensureClientGatewayEntry, LOCAL_GATEWAY_ID } from './runtime/state-config.js';
+import { ensureCapabilityBoundaryPromptWithRetry } from './capability/capability-boundary-prompt.js';
 import { PORTABLE_STATE_MIGRATION_BLOCKED } from './runtime/portable-state-migration.js';
 import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
+import type { RuntimeDeployProgress } from '@clawwork/shared';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'clawwork-avatar', privileges: { secure: true, supportFetchAPI: true } },
+  { scheme: 'clawwork-asset', privileges: { secure: true, supportFetchAPI: true } },
 ]);
 
 let isQuitting = false;
@@ -90,15 +103,22 @@ if (process.env.CLAUDEW_DEBUG_PORT) {
 
 function buildAppMenu(devMode = false): Menu {
   const isMac = process.platform === 'darwin';
+  // ⚠️ 2026-10-06（用户点名）：Windows 菜单栏必须**汉化**（原 File/Edit/View 英文上屏，
+  //    对商业交付用户属"半成品感"）。方案=**保留 Electron role（快捷键/行为零变化）只改标签**；
+  //    「重新加载/开发者工具」仅 dev/调试模式可见（生产面不出现开发项）。macOS 分支维持惯例不动。
   const viewSubmenu: Electron.MenuItemConstructorOptions[] = [
-    { role: 'resetZoom' as const },
-    { role: 'zoomIn' as const },
-    { role: 'zoomOut' as const },
+    { role: 'resetZoom' as const, label: '实际大小' },
+    { role: 'zoomIn' as const, label: '放大' },
+    { role: 'zoomOut' as const, label: '缩小' },
     { type: 'separator' as const },
-    { role: 'togglefullscreen' as const },
+    { role: 'togglefullscreen' as const, label: '全屏' },
   ];
   if (devMode || is.dev) {
-    viewSubmenu.push({ type: 'separator' as const }, { role: 'reload' as const }, { role: 'toggleDevTools' as const });
+    viewSubmenu.push(
+      { type: 'separator' as const },
+      { role: 'reload' as const, label: '重新加载' },
+      { role: 'toggleDevTools' as const, label: '开发者工具' },
+    );
   }
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
@@ -120,12 +140,30 @@ function buildAppMenu(devMode = false): Menu {
         ]
       : []),
     {
-      label: 'File',
-      submenu: [isMac ? { role: 'close' as const, accelerator: 'Command+W' } : { role: 'quit' as const }],
+      label: '文件',
+      submenu: [
+        isMac
+          ? { role: 'close' as const, label: '关闭窗口', accelerator: 'Command+W' }
+          : { role: 'quit' as const, label: '退出荣盈魔方' },
+      ],
     },
-    { role: 'editMenu' as const },
     {
-      label: 'View',
+      label: '编辑',
+      submenu: [
+        { role: 'undo' as const, label: '撤销' },
+        { role: 'redo' as const, label: '重做' },
+        { type: 'separator' as const },
+        { role: 'cut' as const, label: '剪切' },
+        { role: 'copy' as const, label: '复制' },
+        { role: 'paste' as const, label: '粘贴' },
+        ...(isMac ? [{ role: 'pasteAndMatchStyle' as const, label: '粘贴并匹配样式' }] : []),
+        { role: 'delete' as const, label: '删除' },
+        { type: 'separator' as const },
+        { role: 'selectAll' as const, label: '全选' },
+      ],
+    },
+    {
+      label: '视图',
       submenu: viewSubmenu,
     },
     ...(isMac
@@ -156,6 +194,7 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
+    icon: is.dev ? join(import.meta.dirname, '../../build/icon.png') : join(process.resourcesPath, 'icon.png'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: (() => {
@@ -164,7 +203,7 @@ function createWindow(): BrowserWindow {
       return dark ? '#1C1C1C' : '#FAFAFA';
     })(),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -225,7 +264,7 @@ function createWindow(): BrowserWindow {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'));
+    win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
   }
 
   setMainWindow(win);
@@ -261,7 +300,10 @@ const portableAppData = applyPortableAppData({
 
 continueAfterPortableAppData(
   portableAppData,
-  { notifyFailure: (copy) => dialog.showErrorBox(copy.title, copy.content), exit: (code) => app.exit(code) },
+  {
+    notifyFailure: (copy) => dialog.showErrorBox(copy.title, copy.content),
+    exit: (code) => app.exit(code),
+  },
   () => {
     const runtimeCacheUserDataDir = runtimeCacheScopeDir({
       localUserDataDir,
@@ -325,6 +367,114 @@ continueAfterPortableAppData(
         },
       });
 
+      /**
+       * 部署进度：主进程留快照 + 推给渲染层（窗口还没挂上来时推送会丢，
+       * 渲染层挂上来后靠 `runtime:deploy-progress` 补读 —— 见 `deploy-progress.ts`）。
+       *
+       * ⚠️ 每条真实事件都重新计时；**>90 秒没有新事件** = 这块盘读写很慢 ——
+       *    推一条 `stalled` 让界面说人话（"正在等系统响应"），但**不中止**任何东西：
+       *    慢盘上重来一次只会更坏（前功尽弃，还要再等一遍）。
+       */
+      const emitDeployProgress = (snapshot: RuntimeDeployProgress | null): void => {
+        sendToWindow(getMainWindow(), 'runtime-deploy-progress', snapshot);
+      };
+      const deployStallWatch = createDeployStallWatch({
+        onStall: () => {
+          const stalled = publishDeployStalled();
+          if (stalled) emitDeployProgress(stalled);
+        },
+      });
+      const handleDeployProgress = (progress: DeployProgress): void => {
+        const published = publishDeployProgress(progress);
+        if (published) emitDeployProgress(published);
+        // `finalize` = 部署本体已走完（再往后是解析 Node / 起网关，是**另一段**等待，
+        // 不该被"部署停滞"的提示粘上）。
+        if (progress.phase === 'finalize') deployStallWatch.cancel();
+        else deployStallWatch.touch();
+      };
+      /** 这一轮部署结束（成功/失败都算）：清快照 + 推 null，界面不再挂着上一轮的进度。 */
+      const finishDeployProgress = (): void => {
+        deployStallWatch.cancel();
+        const hadProgress = getDeployProgress() !== null;
+        clearDeployProgress();
+        // 全程没报过进度（走的是"本机缓存已就绪"的快路径）⇒ 不推：没人见过它开始，
+        // 也就不需要一条"它结束了"。
+        if (hadProgress) emitDeployProgress(null);
+      };
+
+      /**
+       * 一轮完整的本机运行时拉起（定位 → 部署 → 起网关 → 等就绪）。
+       *
+       * ⚠️ 启动路径与用户点的「重新准备」（IPC `runtime:bootstrap-retry`）**共用这一段**：
+       *    两条路各写一遍必然漂移，而漂移的代价是"手动重试和启动跑的不是同一件事"。
+       */
+      const runRuntimeBootstrap = (portableWorkspacePath: string | undefined): Promise<RuntimeBootstrapResult> =>
+        bootstrapWithRetry({
+          attempt: () =>
+            bootstrapLocalGatewayRuntime({
+              userDataDir: app.getPath('userData'),
+              runtimeCacheUserDataDir,
+              stateCacheUserDataDir: app.getPath('userData'),
+              legacyStateUserDataDir: portableAppData.target ? localUserDataDir : undefined,
+              // 便携版主助手必须和用户文件一起留在已验证的盘上工作区；否则 OpenClaw
+              // 会把 `main` 默认到本机 state/workspace，生成物与“记住你”的文件就会
+              // 悄悄落进 C 盘。非 NTFS 盘已在工作区启动门禁被诚实拒绝。
+              portableWorkspacePath,
+              onDeployProgress: handleDeployProgress,
+              deps: {
+                log: (event, data) => {
+                  const entry = { domain: 'gateway' as const, event, data };
+                  if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
+                  else getDebugLogger().info(entry);
+                },
+              },
+            }),
+          sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          // ⭐ 只在**可重试**的那一类上退避（我们自己的网关还没就绪）。
+          //    端口被**别人的**网关占用是终态 —— 见 `runtime/bootstrap-retry.ts` 的白名单。
+          onRetry: ({ attempt, delayMs, reason }) =>
+            getDebugLogger().info({
+              domain: 'gateway',
+              event: 'runtime.bootstrap.retry',
+              data: { attempt, delayMs, reason },
+            }),
+        });
+
+      /**
+       * 「重新准备」重试时用的盘上工作区路径。
+       *
+       * ⚠️ 工作区准备在 `whenReady` 链里才做（这里是占位）；重试**不重跑工作区准备** ——
+       *    那件事已经做完了，重跑等于把用户拖回一次选盘/自愈。
+       */
+      let retryPortableWorkspacePath: string | undefined;
+
+      /**
+       * 能力边界注入（BUG-043）：把"已知能力清单 + 暂不支持时怎么回答"写进 main 助手的
+       * `AGENTS.md`（运行时每轮全文注入的提示词通道；**子代理会话只注入它**，见
+       * `capability-boundary-prompt.ts` 的头注释）。
+       *
+       * **刻意不 await、永不抛**：注入失败只影响"模型答得漂不漂亮"，绝不能挡住窗口/工作区
+       *（首跑那 1–3 分钟里网关 RPC 本来就不可靠）；失败只留一条日志，下次启动再补。
+       * 首跑被 `portable-state-migration-blocked` 挡下时**不注入**（连接都没建）——
+       * 用户点「重新准备」成功那条路会再调一次这个函数（见下面的重试 IPC）。
+       */
+      const kickCapabilityBoundaryInjection = (): void => {
+        const client = getGatewayClient(LOCAL_GATEWAY_ID);
+        if (!client) return;
+        void ensureCapabilityBoundaryPromptWithRetry(client, {
+          sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          delaysMs: [5000, 15000, 30000],
+        })
+          .then((outcome) => {
+            getDebugLogger().info({
+              domain: 'gateway',
+              event: 'capability.boundary',
+              data: { ...outcome },
+            });
+          })
+          .catch(() => {});
+      };
+
       app
         .whenReady()
         .then(async () => {
@@ -353,7 +503,9 @@ continueAfterPortableAppData(
               },
             });
           }
-          electronApp.setAppUserModelId('com.mofangluopan.app');
+          electronApp.setAppUserModelId(
+            portableAppData.reason ? 'com.mofangluopan.app.portable' : 'com.mofangluopan.app',
+          );
 
           registerWsHandlers();
           registerArtifactHandlers();
@@ -388,6 +540,11 @@ continueAfterPortableAppData(
           registerNotificationHandlers();
           registerAvatarHandlers();
           registerAvatarProtocol();
+          registerOpeningMediaProtocol({
+            isPackaged: app.isPackaged,
+            resourcesPath: process.resourcesPath,
+            appPath: app.getAppPath(),
+          });
           registerHubHandlers();
           registerCommercialHandlers();
           registerCommunityHandlers();
@@ -414,6 +571,45 @@ continueAfterPortableAppData(
            *    （继续显示准备中），不许把它说成出错。
            */
           ipcMain.handle('runtime:bootstrap-status', () => getRuntimeBootstrapStatus());
+
+          /**
+           * 部署进度的**初始读**（渲染层挂载时补读一次）。
+           *
+           * ⚠️ 与 `runtime:bootstrap-status` 同一个理由：部署在窗口建好**之前**就跑，
+           *    那之前的推送没人收。`null` = 现在没有部署在进行（**不是**"部署完成"）。
+           */
+          ipcMain.handle('runtime:deploy-progress', () => getDeployProgress());
+
+          /**
+           * 「重新准备」—— 用户在准备页 / 就绪面板上点的重试。
+           *
+           * ⭐ 这条通道存在的理由（2026-10-07 体检）：运行时**起不来**时原来那个重试
+           *    只是重新初始化连接层 —— 在同一个"起不来"上再转一圈，什么都不会变，
+           *    用户唯一的出路是**完全退出应用重开**。这里让它和启动走**同一条路**
+           *    （重跑一轮 bootstrap：定位 → 部署 → 起网关 → 等就绪）。
+           *
+           * ⚠️ 单飞：连点两下不许并发跑两轮（两轮会同时往同一个 tmp 目录里解压、
+           *    抢同一个原子 rename 的目标）。
+           * ⚠️ 结束时与启动路径一样推 `runtime-status`：渲染层据此把"起不来"那条
+           *    结论换掉（成功换成就绪，失败换成新的那一类）。
+           */
+          let runtimeRetryInFlight = false;
+          ipcMain.handle('runtime:bootstrap-retry', async () => {
+            if (runtimeRetryInFlight) return getRuntimeBootstrapStatus();
+            runtimeRetryInFlight = true;
+            try {
+              const result = await runRuntimeBootstrap(retryPortableWorkspacePath);
+              finishDeployProgress();
+              publishRuntimeBootstrapStatus(result);
+              sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
+              // 网关是**这一次**才起来的（首跑被 migration-blocked 挡下、用户点重试）⇒
+              // 补一次能力边界注入（同一条 fire-and-forget，失败不挡任何东西）。
+              if (result.ok) kickCapabilityBoundaryInjection();
+              return getRuntimeBootstrapStatus();
+            } finally {
+              runtimeRetryInFlight = false;
+            }
+          });
 
           ipcMain.on('ui:set-window-button-visibility', (_event, visible: boolean) => {
             if (process.platform === 'darwin') {
@@ -443,6 +639,9 @@ continueAfterPortableAppData(
             event: 'workspace.detected',
             data: { workspacePath: wsPath, portable: workspace.portable, decision: workspace.decision.kind },
           });
+          // 盘上运行才带：重试（IPC `runtime:bootstrap-retry`）**不重跑工作区准备**，
+          // 直接用这一轮已经验证过的那个工作区 —— 重跑等于把用户拖回一次选盘/自愈。
+          retryPortableWorkspacePath = workspace.portable ? wsPath : undefined;
 
           // 工作区就绪 = 本地库已经打开（`prepareWorkspaceAtStartup` 里建的）。
           portableHealth.markDatabaseReady();
@@ -462,6 +661,13 @@ continueAfterPortableAppData(
 
           // 窗口先出来，别像卡死 —— 首次启动要解压 35k 个文件（1–3 分钟）
           createWindow();
+
+          // ⚠️ 托盘必须**紧跟开窗**建起来（2026-10-07 体检）：窗口的 `close` 一律拦下来
+          //    改成隐藏（`win.on('close')`），而托盘原来是 bootstrap **之后**才建 ——
+          //    首跑那 1–20 分钟里点 X = 窗口没了、托盘还没有 = 用户眼里"程序消失了"，
+          //    只能去任务管理器杀进程。托盘先立起来，关窗就是老老实实收进托盘。
+          //    （它只读 config 建一个图标，不依赖网关，也不挡任何东西。）
+          initTray();
 
           // 窗口已经存在。渲染进程那一侧还要它自己握手（`markRendererReady`）。
           portableHealth.markWindowReady();
@@ -493,35 +699,8 @@ continueAfterPortableAppData(
           // ⚠️ 拉起本机运行时（定位 → 部署 → 起网关 → 等就绪）。**这一步永不抛**：
           // 失败只是"网关没起来"，界面照常出，让 ConnectionBanner 说真话；
           // 上一轮留下的、或用户自己的网关可能还活着，下面 initAllGateways() 照样要去连它。
-          const runtimeResult = await bootstrapWithRetry({
-            attempt: () =>
-              bootstrapLocalGatewayRuntime({
-                userDataDir: app.getPath('userData'),
-                runtimeCacheUserDataDir,
-                stateCacheUserDataDir: app.getPath('userData'),
-                legacyStateUserDataDir: portableAppData.target ? localUserDataDir : undefined,
-                // 便携版主助手必须和用户文件一起留在已验证的盘上工作区；否则 OpenClaw
-                // 会把 `main` 默认到本机 state/workspace，生成物与“记住你”的文件就会
-                // 悄悄落进 C 盘。非 NTFS 盘已在工作区启动门禁被诚实拒绝。
-                portableWorkspacePath: workspace.portable ? wsPath : undefined,
-                deps: {
-                  log: (event, data) => {
-                    const entry = { domain: 'gateway' as const, event, data };
-                    if (event === 'runtime.bootstrap.failed') getDebugLogger().error(entry);
-                    else getDebugLogger().info(entry);
-                  },
-                },
-              }),
-            sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-            // ⭐ 只在**可重试**的那一类上退避（我们自己的网关还没就绪）。
-            //    端口被**别人的**网关占用是终态 —— 见 `runtime/bootstrap-retry.ts` 的白名单。
-            onRetry: ({ attempt, delayMs, reason }) =>
-              getDebugLogger().info({
-                domain: 'gateway',
-                event: 'runtime.bootstrap.retry',
-                data: { attempt, delayMs, reason },
-              }),
-          });
+          const runtimeResult = await runRuntimeBootstrap(retryPortableWorkspacePath);
+          finishDeployProgress();
           if (!runtimeResult.ok) {
             // ⚠️ 盘上那份与"装到电脑"那份的应用数据现在是**分开**的（各自一个单实例锁），
             //    "两份同时开着"于是从"第二份根本起不来"变成了"第二份能开、本地网关抢不到
@@ -555,6 +734,9 @@ continueAfterPortableAppData(
 
           if (runtimeResult.code !== PORTABLE_STATE_MIGRATION_BLOCKED) initAllGateways();
 
+          // 能力边界注入（BUG-043）：网关刚起来、连接刚建好，这是本进程里第一个"能调网关 RPC"的点。
+          kickCapabilityBoundaryInjection();
+
           // ⚠️ **runtime ready ≠ commercial ready**：网关活着只说明连得上；模型能不能用
           // 要看中转配置有没有落到网关（clawrouter provider）。
           //
@@ -571,7 +753,6 @@ continueAfterPortableAppData(
           // 放在网关之后：首跑要立刻读一次额度，此时会话/配置已就绪，否则首报必然是空
           initUsageReporter();
           initRelayLiveness();
-          initTray();
           initQuickLaunch();
 
           app.on('activate', () => {

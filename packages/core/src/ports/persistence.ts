@@ -11,6 +11,8 @@ export interface PersistedTask {
   tags: string[];
   artifactDir: string;
   gatewayId: string;
+  /** 任务模式；老数据是 NULL（按 custom 语义处理，见 `@clawwork/shared` 的 task-modes）。 */
+  mode?: string | null;
   model?: string;
   modelProvider?: string;
   thinkingLevel?: string;
@@ -50,6 +52,7 @@ export interface PersistencePort {
     sessionId: string;
     title: string;
     status: string;
+    mode?: string;
     model?: string;
     modelProvider?: string;
     thinkingLevel?: string;
@@ -66,6 +69,7 @@ export interface PersistencePort {
     id: string;
     title?: string;
     status?: string;
+    mode?: string;
     model?: string;
     modelProvider?: string;
     thinkingLevel?: string;
@@ -74,6 +78,8 @@ export interface PersistencePort {
     contextTokens?: number;
     /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
     pinnedAt?: string | null;
+    /** deck 路由标记（演示文稿 → DeepSeek 的粘性开关）；见 `Task.deckRouted`。 */
+    deckRouted?: boolean;
     updatedAt: string;
   }) => Promise<IpcResult>;
   persistMessage: (msg: {

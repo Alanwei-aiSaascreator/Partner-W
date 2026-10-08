@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
+import { userMdContentFromReadResult } from '@/lib/identity-persona';
 import { Button } from '@/components/ui/button';
 import SettingGroup from '@/components/semantic/SettingGroup';
 import SettingRow from '@/components/semantic/SettingRow';
@@ -44,6 +45,13 @@ export default function MemorySection() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   /**
+   * 读失败 ⇒ **不给**可编辑的空输入框（2026-10-07 体检问题 1/2 的同族）。
+   *
+   * 以前读失败时 `content` 落在 `''`：输入框看着"空荡荡"，用户补一句再点保存，
+   * 就把盘上真实存在、只是没读出来的记忆**整份覆盖**了。读不出来就别给编辑口。
+   */
+  const [readFailed, setReadFailed] = useState(false);
+  /**
    * ⚠️ 存的是**翻译 key 或原始报文**，不是翻好的句子。
    *
    * 为什么：翻好的话就得在 effect 里调 `t`，而 `t` 一旦进了依赖数组，
@@ -66,19 +74,31 @@ export default function MemorySection() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setReadFailed(false);
     // 读**第一个**助手的当作这份盘上的记忆（保存时会写给全部 —— 见文件头说明）
     window.clawwork
       .getAgentFile(gatewayId, agents[0].id, 'USER.md')
       .then((res) => {
         if (cancelled) return;
-        const text = res.ok && res.result ? String((res.result as { content?: unknown }).content ?? '') : '';
+        /**
+         * 🔴 2026-10-07 体检问题 1（同 IdentityCenter）：真机载荷是 `{ file: { content } }`，
+         * 老写法读 `result.content` 恒得空串 ⇒ 记忆页永远显示为空、一保存就把真内容覆盖。
+         * 读不出来（ok=false / 形状不认识）**不当空文件** —— 见 `readFailed` 的说明。
+         */
+        const text = res.ok ? userMdContentFromReadResult(res.result) : null;
+        if (text === null) {
+          setReadFailed(true);
+          setError(res.error ? { raw: res.error } : { key: 'settings.memoryReadFailed' });
+          setLoading(false);
+          return;
+        }
         setContent(text);
         setSavedContent(text);
-        if (!res.ok) setError(res.error ? { raw: res.error } : { key: 'settings.memoryReadFailed' });
         setLoading(false);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        setReadFailed(true);
         setError(err instanceof Error ? { raw: err.message } : { key: 'settings.memoryReadFailed' });
         setLoading(false);
       });
@@ -140,7 +160,7 @@ export default function MemorySection() {
 
       {error && <p className="type-support text-[var(--danger)]">{'key' in error ? t(error.key) : error.raw}</p>}
 
-      {!loading && !noAgents && (
+      {!loading && !noAgents && !readFailed && (
         <div className="space-y-3">
           <textarea
             value={content}

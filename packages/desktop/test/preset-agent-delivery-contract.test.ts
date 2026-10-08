@@ -147,9 +147,58 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
   it('提示词版本号是当前那一版（改了合同就该动它）', () => {
     // 这一版删掉了「**It has no character limit**」那句假话，改成"正文有上限、
     // 长版面要写成文件、一条指令一份 deck"。
+    // 2026-10-07 再次提版：演示条款从条件句改成**硬约束**（见上一组用例），
+    // 同一版还引入了主罗盘（`main`）的交付合同文件。
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-10-02.1');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-10-07.1');
+  });
+});
+
+/**
+ * 2026-10-07 加固：演示条款从**条件句**（"*If* the 幻灯版面 skill is available…"）
+ * 改成**硬约束**。
+ *
+ * 为什么：条件句读起来是"有就用、没有就算了"，而真机上的形状是模型**根本没去读**
+ * 那份 SKILL.md —— 转头用 docgen 出白底素版，或**自写脚本**把文件写进工作区
+ * （产物面板之外，用户什么都拿不到）。收口批次的红线是「不谎报、不给简约垃圾版」，
+ * 这三条不写成"必须 / 禁止"，就还是软的。
+ */
+describe('演示硬约束（2026-10-07）：必须读 SKILL.md / 禁 docgen pptx / 禁自写脚本 / 禁链接式交付', () => {
+  it('给人看的演示必须先打开「幻灯版面」的 SKILL.md 并遵循', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('Before you write a presentation, open the 幻灯版面 skill');
+    expect(COMMON_OPERATING_CONTRACT).toContain('open its SKILL.md and follow it');
+    expect(COMMON_OPERATING_CONTRACT, '条件句（If available）会把硬约束读软').not.toMatch(
+      /\*If\* the 幻灯版面 skill is available/,
+    );
+  });
+
+  it('禁止用 docgen 的 pptx 出正式演示（素版只留给用户明确要的草稿）', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('Never compose it through the 文档生成 (`document-deck`) route');
+    expect(COMMON_OPERATING_CONTRACT).toContain('plain draft deck');
+  });
+
+  it('禁止自写脚本生成 .pptx（PptxGenJS / python-pptx / 裸 OOXML 都点名）', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('no ad-hoc script');
+    expect(COMMON_OPERATING_CONTRACT).toContain('PptxGenJS');
+    expect(COMMON_OPERATING_CONTRACT).toContain('python-pptx');
+    expect(COMMON_OPERATING_CONTRACT, '唯一被授权的生成器是技能自己的 generate.cjs').toContain(
+      "no CLI other than the 幻灯版面 skill's own `scripts/generate.cjs`",
+    );
+  });
+
+  it('⭐ 禁止"下载链接 / 文件路径"式交付：生成好了 = 产物面板真的出现了', () => {
+    expect(COMMON_OPERATING_CONTRACT).toContain('download link or a bare file path');
+    expect(COMMON_OPERATING_CONTRACT).toMatch(
+      /A deck counts as\s+generated only when it appears in this task's 产物 panel/,
+    );
+    expect(COMMON_OPERATING_CONTRACT, '没注册进产品的路径不算交付').toContain('is not delivery');
+  });
+
+  it('⭐ 硬约束真的进了每个预置助手的 SOUL（主罗盘的合同走的是同一份文本）', () => {
+    for (const agent of PRESET_AGENT_DEFINITIONS) {
+      expect(agent.soulMd, `${agent.id} 拿不到演示硬约束`).toContain('PptxGenJS');
+    }
   });
 });

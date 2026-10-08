@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
-import { delimiter, dirname } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { delimiter, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
   GATEWAY_PORT_OCCUPIED,
   buildGatewayEnvironment,
@@ -9,6 +11,7 @@ import {
   ensureGatewayRunning,
 } from '../src/main/runtime/gateway-process.js';
 import type { GatewayChildProcess, StartupzProbe } from '../src/main/runtime/gateway-process.js';
+import { setPortableRoots } from '../src/main/runtime/portable-root.js';
 
 /**
  * 三态判定与 ownership —— **硬缺口 ③**（用户复审提出）。
@@ -38,6 +41,24 @@ function makeChild(pid = 4242): GatewayChildProcess & { killed: boolean; exitLis
 
 const READY: StartupzProbe = { reachable: true, status: 'started' };
 const DOWN: StartupzProbe = { reachable: false };
+
+/** 认证多探的"立刻探完"预算（单测不真等秒级）。 */
+const fastProbe = () => ({ attempts: 3, intervalMs: 0, sleep: async () => {} });
+/** 占用者退场等待的"不等"预算（单测不真等 15 秒）。 */
+const noWait = () => ({ timeoutMs: 0, intervalMs: 0, sleep: async () => {}, now: () => 0 });
+/** 假时钟：`now` 跟着 `sleep` 走（与 waitForGatewayReady 的测法同款）。 */
+function waitClock() {
+  let nowMs = 0;
+  const sleeps: number[] = [];
+  return {
+    sleeps,
+    now: () => nowMs,
+    sleep: async (ms: number) => {
+      sleeps.push(ms);
+      nowMs += ms;
+    },
+  };
+}
 
 function baseOpts(over: Record<string, unknown> = {}) {
   const child = makeChild();
@@ -79,6 +100,69 @@ describe('classifyExistingGateway', () => {
     expect(classifyExistingGateway({ reachable: true, status: 'starting', authenticated: true }).verdict).toBe(
       'foreign',
     );
+  });
+});
+
+/**
+ * BUG-041 ②：网关子进程的 TEMP/TMP 要**跟着盘走**。
+ *
+ * 缺口（审计发现的）：应用数据、state、缓存都上了盘，唯独 `TEMP`/`TMP` 还是宿主机的
+ * `%TEMP%` —— 网关/工具写下的临时文件留在别人电脑上（隐私与残留都说不通）。
+ */
+describe('BUG-041 ②：盘上运行的 TEMP/TMP 重定向', () => {
+  const hostEnv = { TEMP: 'C:\\host-temp', TMP: 'C:\\host-tmp', PATH: 'C:\\Windows' };
+  let fixture = '';
+
+  beforeEach(() => {
+    fixture = mkdtempSync(join(tmpdir(), 'gateway-env-test-'));
+  });
+
+  afterEach(() => {
+    setPortableRoots(null);
+    vi.restoreAllMocks();
+    rmSync(fixture, { recursive: true, force: true });
+  });
+
+  const portableRoots = (tempRoot: string) => ({
+    volumeRoot: 'E:\\',
+    programDir: 'E:\\荣盈魔方',
+    dataRoot: 'E:\\荣盈魔方-运行数据',
+    stateRoot: 'E:\\荣盈魔方-运行数据\\state',
+    workspaceRoot: 'E:\\荣盈魔方工作区',
+    cacheRoot: 'E:\\荣盈魔方-运行数据\\portable-runtime-cache',
+    logsRoot: 'E:\\荣盈魔方-运行数据\\logs',
+    tempRoot,
+  });
+
+  it('⭐ 盘上运行 ⇒ TEMP/TMP 指到 <dataRoot>/tmp，并把目录建好', () => {
+    const tempRoot = join(fixture, 'tmp');
+    setPortableRoots(portableRoots(tempRoot));
+
+    const env = buildGatewayEnvironment(hostEnv, 'E:\\荣盈魔方-运行数据\\state\\x');
+
+    expect(env.TEMP).toBe(tempRoot);
+    expect(env.TMP).toBe(tempRoot);
+    expect(existsSync(tempRoot)).toBe(true);
+  });
+
+  it('⭐ 非盘上形态 ⇒ 一字不动（安装形态的宿主 TEMP 不许被碰）', () => {
+    setPortableRoots(null);
+    const env = buildGatewayEnvironment(hostEnv, 'C:\\profile\\state');
+    expect(env.TEMP).toBe('C:\\host-temp');
+    expect(env.TMP).toBe('C:\\host-tmp');
+  });
+
+  it('⭐ 盘上临时目录建不出来 ⇒ 回落宿主 + 警告（绝不因临时目录把网关拦死）', () => {
+    const blocker = join(fixture, 'blocker');
+    writeFileSync(blocker, 'x');
+    setPortableRoots(portableRoots(join(blocker, 'tmp')));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const env = buildGatewayEnvironment(hostEnv, 'E:\\state');
+
+    expect(env.TEMP).toBe('C:\\host-temp');
+    expect(env.TMP).toBe('C:\\host-tmp');
+    expect(warn).toHaveBeenCalled();
   });
 });
 
@@ -231,7 +315,9 @@ describe('ensureGatewayRunning', () => {
       }),
     });
 
-    await expect(ensureGatewayRunning(opts)).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
+    await expect(
+      ensureGatewayRunning({ ...opts, authProbe: fastProbe(), foreignWait: noWait() }),
+    ).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -272,8 +358,114 @@ describe('ensureGatewayRunning', () => {
 describe('preflight vs readiness —— 同一件事，两个相反的结论', () => {
   it('⭐ preflight：端口活着但不是 started ⇒ foreign（不 spawn）', async () => {
     const { opts, spawn } = baseOpts({ probe: vi.fn(async () => ({ reachable: true, status: 'starting' })) });
-    await expect(ensureGatewayRunning(opts)).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
+    await expect(ensureGatewayRunning({ ...opts, foreignWait: noWait() })).rejects.toMatchObject({
+      code: GATEWAY_PORT_OCCUPIED,
+    });
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * BUG-040 · R1：「探测超时」不是「明确拒绝」。
+   *
+   * 实测形状（文件头那条 2026-09-13 的教训）：网关报 `started` 之后还要几秒才肯
+   * 完成 WS 握手，这段时间认证探测是**挂住**（超时），不是拒绝。旧行为一次超时
+   * 就判 foreign ⇒ 报"端口被占"，而端口上跑的正是我们上一轮自己起的网关。
+   */
+  describe('BUG-040 R1：认证"探不动"要有界多探，别一次就判死', () => {
+    it('⭐ 超时两次后认证通过 ⇒ reuse（绝不 spawn）', async () => {
+      let calls = 0;
+      const { opts, spawn } = baseOpts({
+        probe: vi.fn(async () => READY),
+        authenticate: vi.fn(async () => (++calls < 3 ? ('unavailable' as const) : true)),
+      });
+      const res = await ensureGatewayRunning({ ...opts, authProbe: fastProbe() });
+      expect(res.ownership).toBe('reused');
+      expect(calls).toBe(3);
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('⭐ 一直探不动 ⇒ 有界多探（3 次）后才判 foreign，且绝不 spawn', async () => {
+      const authenticate = vi.fn(async () => 'unavailable' as const);
+      const { opts, spawn } = baseOpts({ probe: vi.fn(async () => READY), authenticate });
+      await expect(
+        ensureGatewayRunning({ ...opts, authProbe: fastProbe(), foreignWait: noWait() }),
+      ).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
+      expect(authenticate).toHaveBeenCalledTimes(3);
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('⭐ 明确拒绝（false）⇒ 一次就终态，不做多探、不等待（行为不变）', async () => {
+      const clock = waitClock();
+      const authenticate = vi.fn(async () => false);
+      const { opts, spawn } = baseOpts({ probe: vi.fn(async () => READY), authenticate });
+      await expect(
+        ensureGatewayRunning({
+          ...opts,
+          authProbe: { attempts: 3, intervalMs: 1_000, sleep: clock.sleep },
+          foreignWait: { timeoutMs: 15_000, intervalMs: 1_000, sleep: clock.sleep, now: clock.now },
+        }),
+      ).rejects.toMatchObject({ code: GATEWAY_PORT_OCCUPIED });
+      expect(authenticate).toHaveBeenCalledTimes(1);
+      expect(clock.sleeps).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * BUG-040 · R4：孤儿占用者（崩溃/被杀留下的网关没起完）会一直占着端口。
+   * spawn 之前先**有界等待**，看它是不是自己退场；真 foreign 的行为一个字不变。
+   */
+  describe('BUG-040 R4：占用者退场的有界等待', () => {
+    it('⭐ 端口上有个"没起来"的服务，等它退场后 ⇒ 正常 spawn', async () => {
+      const clock = waitClock();
+      const probes: StartupzProbe[] = [
+        { reachable: true, status: 'starting' },
+        { reachable: true, status: 'starting' },
+        { reachable: false },
+      ];
+      let index = 0;
+      const { opts, spawn } = baseOpts({ probe: vi.fn(async () => probes[Math.min(index++, probes.length - 1)]) });
+      const res = await ensureGatewayRunning({
+        ...opts,
+        foreignWait: { timeoutMs: 15_000, intervalMs: 1_000, sleep: clock.sleep, now: clock.now },
+      });
+      expect(res.ownership).toBe('spawned');
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(clock.sleeps.length).toBeGreaterThan(0);
+      expect(clock.sleeps.length).toBeLessThan(15_000 / 1_000);
+    });
+
+    it('⭐ 等待期间对端变成 started 且认证通过 ⇒ reuse（不 spawn）', async () => {
+      const clock = waitClock();
+      const probes: StartupzProbe[] = [
+        { reachable: true, status: 'starting' },
+        { reachable: true, status: 'started' },
+      ];
+      let index = 0;
+      const { opts, spawn } = baseOpts({ probe: vi.fn(async () => probes[Math.min(index++, probes.length - 1)]) });
+      const res = await ensureGatewayRunning({
+        ...opts,
+        authenticate: vi.fn(async () => true),
+        foreignWait: { timeoutMs: 15_000, intervalMs: 1_000, sleep: clock.sleep, now: clock.now },
+      });
+      expect(res.ownership).toBe('reused');
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('⭐ 等满窗口仍在 ⇒ 仍判 foreign；错误信息带**占用者线索**（净是"端口被占"没人能排障）', async () => {
+      const clock = waitClock();
+      const { opts, spawn } = baseOpts({ probe: vi.fn(async () => ({ reachable: true, status: 'starting' })) });
+      const error = (await ensureGatewayRunning({
+        ...opts,
+        portOccupant: () => 'PID 4321（node.exe）',
+        foreignWait: { timeoutMs: 15_000, intervalMs: 1_000, sleep: clock.sleep, now: clock.now },
+      }).catch((reason: unknown) => reason)) as Error & { code?: string };
+      expect(error.code).toBe(GATEWAY_PORT_OCCUPIED);
+      expect(error.message).toContain('PID 4321');
+      expect(error.message).toContain('15');
+      expect(spawn).not.toHaveBeenCalled();
+      expect(clock.sleeps.length).toBe(15);
+    });
   });
 
   it('⭐ readiness：我们**自己 spawn 的**报 starting ⇒ 继续等，绝不判 foreign', async () => {

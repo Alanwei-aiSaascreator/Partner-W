@@ -13,6 +13,7 @@ import { safeFetch } from '../net/safe-fetch.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
 import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
 import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
+import { isVerifiedFileName, verifyArtifactBuffer } from '../artifact/verify.js';
 import { getGatewayClient } from '../ws/index.js';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
 import {
@@ -113,7 +114,10 @@ export function registerArtifactHandlers(): void {
             return {
               ...row,
               ...(filePath ? { filePath } : {}),
-              availability: rootPath ? getArtifactAvailability(row.localPath, rootPath) : 'missing',
+              // ⚠️ 根解析不出来（网关没连上/冷启动/切工作区）⇒ `'unknown'` —— **不是** `'missing'`。
+              //    旧值 `'missing'` 会让助手根那一批整族折进"历史与问题文件"（冷启动时"交付物没了"），
+              //    而这时候我们其实**不知道**文件在不在（见 `artifact-versions.ts` 的折叠规则）。
+              availability: rootPath ? getArtifactAvailability(row.localPath, rootPath) : 'unknown',
             };
           }),
         ),
@@ -138,7 +142,8 @@ export function registerArtifactHandlers(): void {
         result: {
           ...rows[0],
           ...(filePath ? { filePath } : {}),
-          availability: rootPath ? getArtifactAvailability(rows[0].localPath, rootPath) : 'missing',
+          // 同 `artifact:list`：根解析不出来 ⇒ `'unknown'`（不知道），不是 `'missing'`（没有）。
+          availability: rootPath ? getArtifactAvailability(rows[0].localPath, rootPath) : 'unknown',
         },
       };
     } catch (err) {
@@ -363,8 +368,14 @@ export function registerArtifactHandlers(): void {
       if (revalidated.availability !== 'available' || revalidated.absolutePath !== inspected.absolutePath) {
         return { ok: false, error: `artifact ${revalidated.availability}` };
       }
+      // M1 打开前复核（2026-10-07 体检 P2-6）：登记门只覆盖"新变更"那两条路径 ——
+      // 已登记、此后没再被动过的坏件（写坏 / 崩溃半截 / 外部改坏）会永远留在列表里，
+      // 而点开这条路**不复核**，"能点开但打不开"就在这里回归（图14/16 同族）。
+      // 受检格式（pptx/docx/xlsx/pdf）在交给 shell 之前做一次与登记门同一份轻量判据。
+      const verified = await verifyArtifactBeforeOpen(artifact.name, rootPath, artifact.localPath);
+      if (!verified.ok) return { ok: false, error: verified.error };
       const result = await shell.openPath(revalidated.absolutePath);
-      if (result) return { ok: false, error: result };
+      if (result) return { ok: false, error: classifyOpenPathFailure(result) };
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
@@ -504,6 +515,73 @@ async function agentWorkspaceForTask(taskId: string): Promise<string | null> {
 async function rootForArtifact(artifact: { taskId: string; root?: string | null }): Promise<string | null> {
   if (artifact.root !== 'agent') return getWorkspacePath() || null;
   return agentWorkspaceForTask(artifact.taskId);
+}
+
+/**
+ * 打开前复核要读多大。
+ *
+ * ⚠️ 超上限**放行**（返回 ok）：这条路的意义是挡"结构上打不开的坏件"，不是拿内存去换
+ *    大文件的开门权 —— 几十兆的 pptx 打不开是它自己的事，不能因为我们不肯读就不让开。
+ */
+const MAX_OPEN_VERIFY_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 打开前的完整性复核。失败时回一个**稳定的机器可读标记**（`'artifact invalid'`）：
+ * 它与 `artifact missing` / `artifact unsafe`（availability 那族）以及 `shell.openPath`
+ * 的系统错误串分开，日志/测试/后续界面分化都以它为准；界面文案由渲染层给
+ * （`artifactCard.openFailed` + 提示「在文件夹中显示」）。
+ */
+const INVALID_ARTIFACT_ERROR = 'artifact invalid';
+
+/**
+ * ⭐ BUG-042-b（2026-10-08 亲验）：**"没有可打开它的程序"不是"文件损坏"**。
+ *
+ * 机器里没装 Word/WPS 时 `shell.openPath` 回的是系统错误串（Windows 上来自
+ * `ShellExecuteW`，如 "No application is associated with the specified file…" /
+ * "This file does not have a program associated with it…"），而界面原来对**任何**
+ * 打开失败都说「文件可能已损坏或未写完」—— 文件明明是好的，用户会白白重做一遍。
+ *
+ * 这里把那一族**分类**成一个稳定的机器可读标记（与 `artifact invalid` 同款做法）：
+ * 文案由渲染层按标记各说各的（`ArtifactCard`），日志/测试也以标记为准。
+ * ⚠️ 认不出的系统错误**原样回**（不发明结论）；坏件判据在 `verifyArtifactBeforeOpen`，
+ *    那条路仍然回 `artifact invalid`，两条不许互相冒充。
+ */
+const NO_OPENER_ARTIFACT_ERROR = 'artifact no-opener';
+
+/** `shell.openPath` 的失败串里，「系统没有可打开它的程序」那一族的形状。 */
+const NO_OPENER_PATTERNS: readonly RegExp[] = [
+  /no application/i,
+  // Windows 10/11 的 SE_ERR_NOASSOC 文案（"This file does not have a program associated with it…"）
+  /does not have a program/i,
+  /no (?:program|association)/i,
+  /not associated/i,
+  /failed to open/i,
+];
+
+/**
+ * 把 `shell.openPath` 的失败串分类。
+ *
+ * ⚠️ 判据刻意**只认"没有程序能打开它"这一族**：把别的原因也归进来（比如权限）等于
+ *    教用户装一个程序去修一个装程序解决不了的问题 —— 那和原来的"都说成损坏"是同一种错。
+ */
+function classifyOpenPathFailure(message: string): string {
+  return NO_OPENER_PATTERNS.some((pattern) => pattern.test(message)) ? NO_OPENER_ARTIFACT_ERROR : message;
+}
+
+async function verifyArtifactBeforeOpen(
+  fileName: string,
+  rootPath: string,
+  localPath: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isVerifiedFileName(fileName)) return { ok: true };
+  let buffer: Buffer;
+  try {
+    buffer = await readVerifiedArtifactFile(rootPath, localPath, { maxBytes: MAX_OPEN_VERIFY_BYTES });
+  } catch (err) {
+    if (err instanceof ArtifactTooLargeError) return { ok: true };
+    return { ok: false, error: err instanceof Error ? err.message : INVALID_ARTIFACT_ERROR };
+  }
+  return verifyArtifactBuffer(fileName, buffer).ok ? { ok: true } : { ok: false, error: INVALID_ARTIFACT_ERROR };
 }
 
 const TEXT_EXTS = new Set([

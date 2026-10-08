@@ -42,6 +42,22 @@ vi.mock('better-sqlite3', async () => {
 });
 import { closeDatabase, getSqlite, initDatabase, reinitDatabase } from '../src/main/db/index.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts } from '../src/main/artifact/reconcile.js';
+import { makeZip } from './helpers/make-zip.js';
+
+/**
+ * 最小**合法** PPTX（M1 门的夹具，2026-10-06）。
+ *
+ * ⚠️ 本档的 `invalid.pptx` 用例钉的是**候选有效性**检查点（isCandidateCurrent）——
+ *    夹具必须是结构完整的包，否则会在 `verify.ts` 的登记前置门就被 skip，
+ *    用例还会"绿"，但绿的是**另一条**判据（绿错了理由）。
+ */
+function minimalPptx(): Buffer {
+  return makeZip([
+    { name: '[Content_Types].xml', content: Buffer.from('<?xml version="1.0"?><Types/>') },
+    { name: 'ppt/presentation.xml', content: Buffer.from('<?xml version="1.0"?><p:presentation/>') },
+    { name: 'ppt/slides/slide1.xml', content: Buffer.from('<?xml version="1.0"?><p:sld/>') },
+  ]);
+}
 let root = '';
 function seed() {
   const sqlite = getSqlite()!;
@@ -129,7 +145,8 @@ it('continues indexing unaffected candidates when another final version is inval
   const workspacePath = join(root, 'a');
   const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task' });
   writeFileSync(join(workspacePath, 'task', 'answer.txt'), 'generated file');
-  writeFileSync(join(workspacePath, 'task', 'invalid.pptx'), 'changed file');
+  // 合法 pptx + "候选不再有效" ⇒ 必须走 isCandidateCurrent 那条路被 skip（见 minimalPptx 注释）。
+  writeFileSync(join(workspacePath, 'task', 'invalid.pptx'), minimalPptx());
   const result = await reconcileTaskArtifacts(
     {
       workspacePath,

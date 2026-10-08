@@ -89,3 +89,91 @@ describe('message-store —— 可重试错误的登记', () => {
     expect(store.getState().retryableErrorBySession[SK]).toBeUndefined();
   });
 });
+
+/**
+ * 包 D（2026-10-07）：「整轮失败自动重发 1 次」的候选登记。
+ *
+ * 与上面那份（B10 按钮）**同一套生命周期纪律**，但两件事必须分开存：
+ *   - 那份决定"给不给用户一个按钮"（只认结构化判据说 `yes` 的）；
+ *   - 这份决定"界面要不要自己重发一次"（瞬时 / 未分类的候选，重发前还要过
+ *     渲染层的「零最终交付」严格判据）。
+ * 合成一份的话，lifecycle 失败（判据恒为 unknown）会凭空长出按钮 —— B10 明确拒绝过。
+ */
+describe('message-store —— 自动重试候选的登记（包 D）', () => {
+  const candidate = { taskId: TID, messageId: 'msg-err', kind: 'unclassified' as const };
+
+  it('登记之后界面查得到', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toEqual(candidate);
+  });
+
+  it('没登记过就查不到（默认不自动重发任何东西）', () => {
+    const store = makeStore();
+    expect(store.getState().autoRetryFailureBySession[SK]).toBeUndefined();
+  });
+
+  it('⭐ 一轮真的跑起来（空闲→忙）就作废 —— 有人已经重发过了，别抢在用户前面再发一次', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    store.getState().setProcessing(SK, true);
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toBeUndefined();
+  });
+
+  it('⚠️ `setProcessing(false)` 不许清 —— 错误落地时正是先关忙再登记', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    store.getState().setProcessing(SK, false);
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toEqual(candidate);
+  });
+
+  it('已经在忙时重复 `setProcessing(true)` 不作废（重连/迟到事件不是"新一轮"）', () => {
+    const store = makeStore();
+    store.getState().setProcessing(SK, true);
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    store.getState().setProcessing(SK, true);
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toEqual(candidate);
+  });
+
+  it('同一会话只留**最近**一条（旧的失败不该继续挂着等重发）', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    store.getState().markAutoRetryFailure(SK, { ...candidate, messageId: 'msg-err-2' });
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toEqual({ ...candidate, messageId: 'msg-err-2' });
+  });
+
+  it('瞬时 / 未分类两种候选各自带着自己的类别（渲染层据此记录判据来源）', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, { ...candidate, kind: 'transient' });
+
+    expect(store.getState().autoRetryFailureBySession[SK]?.kind).toBe('transient');
+  });
+
+  it('别的会话不受影响（各自独立）', () => {
+    const other = 'agent:main:clawwork:dev:task:t2';
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    store.getState().setProcessing(other, true);
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toEqual(candidate);
+  });
+
+  it('清空任务时一并清掉（跟其它按会话存的界面态保持一致，别留孤儿）', () => {
+    const store = makeStore();
+    store.getState().markAutoRetryFailure(SK, candidate);
+
+    store.getState().clearMessages(TID);
+
+    expect(store.getState().autoRetryFailureBySession[SK]).toBeUndefined();
+  });
+});

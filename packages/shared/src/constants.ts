@@ -342,3 +342,14 @@ export const NON_RETRYABLE_ERROR_CODES = new Set([
  *    前缀由调用方按自己的上下文拼（见 relay-config.ts 的说明）。
  */
 export const COMMERCIAL_DEFAULT_MODEL_ID = 'deepseek-v4-flash';
+
+/**
+ * 冷启动开场片（1 分钟，含内嵌音轨）。
+ *
+ * ⚠️ `OPENING_MEDIA_DIR_NAME` 必须与 electron-builder 配置里 extraResources 的
+ *    `to:` 一字不差（`test/opening-media-packaging-gate.test.ts` 钉住）。
+ * ⚠️ 媒体绝不进 app.asar（同 pptx-templates 的理由：大文件走 extraResources）。
+ */
+export const OPENING_MEDIA_SCHEME = 'clawwork-asset';
+export const OPENING_MEDIA_DIR_NAME = 'media';
+export const OPENING_VIDEO_FILE_NAME = 'opening.mp4';

@@ -87,6 +87,8 @@ vi.mock('react-i18next', () => ({
 vi.mock('../src/renderer/lib/toast', () => ({
   toast: {
     error: vi.fn(),
+    // 2026-10-08 集成：useChatSend 的 vision 计划会调 `toast.info`（真身=sonner 全量对象，存在）。
+    info: vi.fn(),
   },
 }));
 
@@ -94,6 +96,10 @@ vi.mock('@clawwork/core', () => ({
   deriveSessionActivity: () => 'idle',
   extractDescription: (content: string) => content.slice(0, 50),
   getTaskSessionKeys: (task: { sessionKey: string }) => [task.sessionKey],
+}));
+
+vi.mock('../src/renderer/features/team-meeting/instance', () => ({
+  teamMeetingController: { store: { getState: () => ({ records: [] }) } },
 }));
 
 /* Build mock store functions that support both hook calls and .getState() */

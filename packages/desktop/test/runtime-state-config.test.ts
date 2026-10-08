@@ -65,9 +65,11 @@ vi.mock('../src/main/util/json-file.js', async (importOriginal) => {
 import { CONFIG_FILE_NAME } from '@clawwork/shared';
 import {
   LOCAL_GATEWAY_ID,
+  hasInboxReadonlyGuard,
   hasMemoryToolsDenied,
   hasStaleExecKeys,
   hasToolGuard,
+  mergeInboxReadonlyGuard,
   readMemorySearchProvider,
   STATE_CONFIG_FILE,
   STATE_DIR_NAME,
@@ -78,6 +80,7 @@ import {
   stateConfigPath,
   stateDirFor,
 } from '../src/main/runtime/state-config.js';
+import { INBOX_READONLY_PLUGIN_ID, inboxReadonlyPolicyDir } from '../src/main/guard/inbox-readonly.js';
 import { authStorePath } from '../src/main/runtime/token-store.js';
 
 let tmpRoot: string;
@@ -99,6 +102,8 @@ afterEach(() => {
 
 const configPath = (): string => path.join(userDataDir, CONFIG_FILE_NAME);
 const readConfigRaw = (): Record<string, unknown> => JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
+/** 收件箱只读守卫插件目录（写进 `plugins.load.paths` 的就是这个绝对路径）。 */
+const inboxPolicyDir = (stateDir: string): string => inboxReadonlyPolicyDir(stateDir);
 
 describe('minimalGatewayConfig', () => {
   it('⭐ 只写 gateway.auth，**不写** gateway.mode / gateway.port', () => {
@@ -128,8 +133,23 @@ describe('ensureStateConfig', () => {
     expect(raw).toEqual({
       gateway: { auth: { mode: 'token', token: res.token } },
       memory: { search: { provider: 'none' } },
+      // 收件箱只读守卫（P3-1）：插件的**目录**与显式启用，见下面 inbox guard 一组用例
+      plugins: {
+        load: { paths: [inboxPolicyDir(res.stateDir)] },
+        entries: { 'rongying-inbox-readonly': { enabled: true } },
+      },
       tools: {
-        deny: ['memory_search', 'memory_get'],
+        deny: [
+          'memory_search',
+          'memory_get',
+          'canvas',
+          'web_search',
+          'web_fetch',
+          'view_image',
+          'image_generate',
+          'video_generate',
+          'file_fetch',
+        ],
         fs: { workspaceOnly: true },
         exec: { mode: 'ask' },
         elevated: { enabled: false },
@@ -263,7 +283,17 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     const res = ensureStateConfig(userDataDir);
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
 
-    expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
+    expect(raw.tools.deny).toEqual([
+      'memory_search',
+      'memory_get',
+      'canvas',
+      'web_search',
+      'web_fetch',
+      'view_image',
+      'image_generate',
+      'video_generate',
+      'file_fetch',
+    ]);
   });
 
   it('⭐ 存量用户（token 与 memory 段都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
@@ -282,7 +312,17 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
 
     expect(res.token).toBe(first.token);
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
-    expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
+    expect(raw.tools.deny).toEqual([
+      'memory_search',
+      'memory_get',
+      'canvas',
+      'web_search',
+      'web_fetch',
+      'view_image',
+      'image_generate',
+      'video_generate',
+      'file_fetch',
+    ]);
   });
 
   it('用户/将来版本已经设过别的 deny ⇒ 并集，不动他原有的项', () => {
@@ -303,6 +343,11 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     expect(raw.tools.deny).toContain('some_other_tool');
     expect(raw.tools.deny).toContain('memory_search');
     expect(raw.tools.deny).toContain('memory_get');
+    // 2026-10-07 P0-3：平台特异工具（canvas=macOS 配对节点）也进并集
+    expect(raw.tools.deny).toContain('canvas');
+    // 2026-10-07 交付日：web 工具降级（BUG-033——无稳定国内搜索源前不暴露）也进并集
+    expect(raw.tools.deny).toContain('web_search');
+    expect(raw.tools.deny).toContain('web_fetch');
   });
 
   it('⭐ 查重：已经有 `memory_search` 时补 `memory_get`，**不能把它追加成两条**', () => {
@@ -324,8 +369,64 @@ describe('tools.deny —— 摘掉那两个会必然失败的 memory 工具', ()
     ensureStateConfig(userDataDir);
 
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
-    expect(raw.tools.deny).toEqual(['memory_search', 'memory_get']);
+    expect(raw.tools.deny).toEqual([
+      'memory_search',
+      'memory_get',
+      'canvas',
+      'web_search',
+      'web_fetch',
+      'view_image',
+      'image_generate',
+      'video_generate',
+      'file_fetch',
+    ]);
     expect(raw.tools.deny.filter((n: string) => n === 'memory_search')).toHaveLength(1);
+  });
+});
+
+/**
+ * BUG-049（2026-10-08 真机定案）：PPT 任务（8e5b7580）的模型用 `exec` 扫工作目录 →
+ * 命中**另一个任务** inbox 里的验收探针 PNG → 用内核工具 `view_image` 把图读进模型上下文
+ * → 之后 14 个回合复述图里的「验收测试码 7441」，并把它说成"你发的这张PPT截图"。
+ *
+ * `view_image` 对产品是**净负收益能力**：
+ *   ① 产品唯一的看图通路是 App 侧附件投递（BUG-027「识别图片」），不依赖模型自己去磁盘捞图；
+ *   ② 全库随包技能（`packages/desktop/our-skills`）**0 处**引用 `view_image`；
+ *   ③ 它没有任务级路径沙箱（`tools.fs.workspaceOnly` 只护到 workspace 根，而 workspace 是
+ *      设备级共享）⇒ 任一任务的模型都能把别家任务的图片读进上下文。
+ * 所以并入默认 deny（与 canvas / web 工具同一机制、同一条自愈判据）。
+ */
+describe('tools.deny —— 摘掉无沙箱的看图工具 view_image（BUG-049）', () => {
+  it('⭐ 首跑就带上 view_image', () => {
+    const res = ensureStateConfig(userDataDir);
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(raw.tools.deny).toContain('view_image');
+  });
+
+  it('⭐ 存量用户（旧默认 7 名全都在、只缺 view_image）也必须补上 —— 提前返回不能漏了它', () => {
+    // 与 canvas / web 工具同源的坑：存量用户每次启动都从提前返回那条路出去，
+    // 判据里少认一个新名字 ⇒ 这台机器上保护**永远不会生效**。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const first = ensureStateConfig(userDataDir);
+
+    // 模拟"pre19 之前写下的文件"：token/闸门/旧 deny 全对，唯独没有 view_image
+    const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    cfg.tools.deny = cfg.tools.deny.filter((name: string) => name !== 'view_image');
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+    expect(hasMemoryToolsDenied(cfg), '前提：旧配置必须被判"未就绪"，否则测的是提前返回').toBe(false);
+
+    expect(ensureStateConfig(userDataDir).token).toBe(first.token);
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.tools.deny).toContain('view_image');
+    expect(raw.tools.deny.filter((n: string) => n === 'view_image')).toHaveLength(1);
+  });
+
+  it('幂等：已有 view_image ⇒ 第二次启动一个字节都不写（探针先自证活着）', () => {
+    ensureStateConfig(userDataDir);
+    jsonFileMock.writeJsonAtomic.mockClear();
+    ensureStateConfig(userDataDir);
+    expect(jsonFileMock.writeJsonAtomic).not.toHaveBeenCalled();
   });
 });
 
@@ -887,5 +988,180 @@ describe('ensureClientGatewayEntry', () => {
   it('状态目录写在 <userData>/openclaw-state（media/resolve 读的就是它）', async () => {
     await ensureClientGatewayEntry({ userDataDir });
     expect(fs.existsSync(path.join(userDataDir, STATE_DIR_NAME, STATE_CONFIG_FILE))).toBe(true);
+  });
+});
+
+describe('导入收件箱只读守卫（P3-1 · inbox guard 的配置侧）', () => {
+  /**
+   * 判定逻辑在插件里（`test/inbox-readonly-policy.test.ts` 直接跑那份生成代码）；
+   * 这里钉的是**装载条件**——漏一条就静默失效（2026-10-07 真机实验：只给
+   * `plugins.load.paths` 不给 `entries.<id>.enabled`，或只给裸文件不给目录，
+   * 网关都不加载它、且不打任何日志）。
+   */
+  const policyFiles = ['openclaw.plugin.json', 'package.json', 'index.mjs'];
+
+  it('首跑：插件三件套落盘，配置把 .load.paths 指向**目录**并显式启用', () => {
+    const res = ensureStateConfig(userDataDir);
+    const dir = inboxPolicyDir(res.stateDir);
+
+    for (const name of policyFiles) {
+      expect(fs.existsSync(path.join(dir, name)), name).toBe(true);
+    }
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(hasInboxReadonlyGuard(raw, dir)).toBe(true);
+    expect(raw.plugins.load.paths).toEqual([dir]);
+    expect(raw.plugins.entries[INBOX_READONLY_PLUGIN_ID]).toEqual({ enabled: true });
+  });
+
+  it('⭐ 存量用户（token/memory/deny/闸门都早就对了）也必须补上 —— 提前返回不能漏了它', () => {
+    // 与 memory / deny / 三闸门同源的坑：提前返回是存量用户每次启动的必经之路。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const first = ensureStateConfig(userDataDir);
+
+    const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    delete cfg.plugins; // 模拟"这一版之前写下的文件"
+    fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.gateway.auth.token).toBe(first.token);
+    expect(hasInboxReadonlyGuard(raw, inboxPolicyDir(stateDir))).toBe(true);
+  });
+
+  it('⭐ 幂等：守卫已在 ⇒ 第二次启动一个字节都不写（探针先自证活着）', () => {
+    jsonFileMock.writeJsonAtomic.mockClear();
+    const first = ensureStateConfig(userDataDir);
+    expect(jsonFileMock.writeJsonAtomic).toHaveBeenCalled(); // 钉子活着才能信下一次的"没写"
+
+    jsonFileMock.writeJsonAtomic.mockClear();
+    const second = ensureStateConfig(userDataDir);
+
+    expect(second.created).toBe(false);
+    expect(second.token).toBe(first.token);
+    expect(jsonFileMock.writeJsonAtomic).not.toHaveBeenCalled();
+  });
+
+  it('保留用户已有的 plugins 段与 load 路径；有 allow 名单时把守卫 id 加进去', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          fs: { workspaceOnly: true },
+          exec: { mode: 'ask' },
+          elevated: { enabled: false },
+        },
+        plugins: {
+          load: { paths: ['D:\\somewhere\\their-own-plugin'] },
+          allow: ['their-own-plugin'],
+          entries: { 'their-own-plugin': { enabled: true, config: { a: 1 } } },
+        },
+      }),
+    );
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.plugins.load.paths).toContain('D:\\somewhere\\their-own-plugin');
+    expect(raw.plugins.load.paths).toContain(inboxPolicyDir(stateDir));
+    // allow 是白名单：不加进去 = 守卫被静默挡在门外（假装在跑的保护）。
+    expect(raw.plugins.allow).toEqual(['their-own-plugin', INBOX_READONLY_PLUGIN_ID]);
+    expect(raw.plugins.entries['their-own-plugin']).toEqual({ enabled: true, config: { a: 1 } });
+  });
+
+  it('插件文件被删/改坏 ⇒ 下次启动自愈（写文件在提前返回之前）', () => {
+    const res = ensureStateConfig(userDataDir);
+    const entryPath = path.join(inboxPolicyDir(res.stateDir), 'index.mjs');
+    fs.writeFileSync(entryPath, '// tampered\n', 'utf-8');
+
+    ensureStateConfig(userDataDir);
+
+    expect(fs.readFileSync(entryPath, 'utf-8')).not.toBe('// tampered\n');
+    expect(fs.readFileSync(entryPath, 'utf-8')).toContain('before_tool_call');
+  });
+
+  it('插件目录写不进去 ⇒ 不把配置指过去，也不影响启动', () => {
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    // 把 `policies` 占成**文件**：mkdir 必失败，模拟只读/占位等落盘失败。
+    fs.writeFileSync(path.join(stateDir, 'policies'), 'not-a-dir', 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = ensureStateConfig(userDataDir);
+
+    expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+    expect(raw.plugins?.load?.paths ?? []).not.toContain(inboxPolicyDir(stateDir));
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('⭐ 换盘符残留（同插件旧盘符死条目）⇒ 判「未就绪」并在启动时自动清除（2026-10-07 真机事故）', () => {
+    // 事故：盘在 G: 上写过配置，换插后以 E: 挂载 —— 旧 G: 条目在新盘符下不存在，
+    // 网关把"任一 load path 不存在"判为 Invalid config ⇒ 拒绝启动 ⇒ 整盘卡死。
+    const stateDir = stateDirFor(userDataDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    const current = inboxPolicyDir(stateDir);
+    const staleSibling = 'G:\\荣盈魔方-运行数据\\state\\deadbeef\\policies\\rongying-inbox-readonly';
+    fs.writeFileSync(
+      stateConfigPath(stateDir),
+      JSON.stringify({
+        gateway: { auth: { mode: 'token', token: 'existing-token' } },
+        memory: { search: { provider: 'none' } },
+        tools: {
+          deny: ['memory_search', 'memory_get'],
+          fs: { workspaceOnly: true },
+          exec: { mode: 'ask' },
+          elevated: { enabled: false },
+        },
+        plugins: {
+          load: { paths: [staleSibling, current, 'D:\\somewhere\\their-own-plugin'] },
+          entries: {
+            [INBOX_READONLY_PLUGIN_ID]: { enabled: true },
+            'their-own-plugin': { enabled: true },
+          },
+        },
+      }),
+    );
+
+    const before = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    // 死条目在场 ⇒ 绝不许提前返回（否则它永远留在配置里，每次启动都失败）。
+    expect(hasInboxReadonlyGuard(before, current)).toBe(false);
+
+    ensureStateConfig(userDataDir);
+
+    const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+    expect(raw.plugins.load.paths).toContain(current);
+    expect(raw.plugins.load.paths).not.toContain(staleSibling); // 旧盘符死条目已清
+    expect(raw.plugins.load.paths).toContain('D:\\somewhere\\their-own-plugin'); // 别人的不动
+    expect(raw.gateway.auth.token).toBe('existing-token'); // 无关字段不碰
+    expect(hasInboxReadonlyGuard(raw, current)).toBe(true);
+
+    // 清干净之后恢复幂等：第二次启动一个字节都不写。
+    jsonFileMock.writeJsonAtomic.mockClear();
+    ensureStateConfig(userDataDir);
+    expect(jsonFileMock.writeJsonAtomic).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 合并只保留当前盘符的守卫条目；只有死条目时补上当前路径', () => {
+    const current = 'E:\\rundata\\state\\abc\\policies\\rongying-inbox-readonly';
+    const stale = 'G:\\rundata\\state\\abc\\policies\\rongying-inbox-readonly';
+
+    const merged = mergeInboxReadonlyGuard(
+      { plugins: { load: { paths: [stale, current, 'D:\\their-own-plugin'] } } },
+      current,
+    );
+    const mergedLoad = merged.load as { paths?: string[] } | undefined;
+    expect(mergedLoad?.paths).toEqual([current, 'D:\\their-own-plugin']);
+
+    const fromStaleOnly = mergeInboxReadonlyGuard({ plugins: { load: { paths: [stale] } } }, current);
+    const staleOnlyLoad = fromStaleOnly.load as { paths?: string[] } | undefined;
+    expect(staleOnlyLoad?.paths).toEqual([current]);
   });
 });

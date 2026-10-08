@@ -17,11 +17,12 @@
 
 import { act, useEffect, type ReactElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IpcResult, RelayBootstrapPublicState } from '@clawwork/shared';
 
 const gatewayMocks = vi.hoisted(() => ({
   fetchAgentsForGateway: vi.fn(async () => undefined),
+  refreshCatalogsForGateway: vi.fn(async (_gatewayId: string, _options?: { isCurrent?: () => boolean }) => undefined),
   reinitializeGatewayBootstrap: vi.fn(async () => undefined),
 }));
 
@@ -86,6 +87,7 @@ vi.mock('../src/renderer/components/ui/dropdown-menu', () => ({
   DropdownMenuSub: ({ children }: { children?: ReactNode }) => <>{children}</>,
   DropdownMenuSubContent: ({ children }: { children?: ReactNode }) => <>{children}</>,
   DropdownMenuSubTrigger: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuTrigger: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
 vi.mock('../src/renderer/components/ui/tooltip', () => ({
@@ -125,6 +127,8 @@ vi.mock('../src/renderer/components/ChatInput/useAttachments', () => ({
     pendingAttachments: [],
     setPendingAttachments: vi.fn(),
     removeAttachment: vi.fn(),
+    // BUG-028：离开一段对话时输入框会调它清暂存附件（桩必须跟着长）。
+    clearAttachments: vi.fn(),
     handlePaste: vi.fn(),
   }),
 }));
@@ -138,6 +142,7 @@ vi.mock('../src/renderer/components/ChatInput/useTaskMaterials', () => ({
     clearSelectedImportedFiles: vi.fn(),
     markImportedFileMissing: vi.fn(),
     toggleImportedFile: vi.fn(),
+    removeImportedFileReference: vi.fn(),
     revokeSource: vi.fn(),
     importFiles: vi.fn(),
     grantFolder: vi.fn(),
@@ -202,6 +207,8 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', () => ({
     toolsCatalog: null,
     modelLabel: sendMocks.modelLabel,
     currentModelEntry: sendMocks.currentModelEntry,
+    currentMode: 'custom',
+    modelCatalog: [],
     modelsByProvider: {},
     taskGwId: 'gw-1',
     quotaBlock: null,
@@ -232,6 +239,11 @@ import {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type HookState = ReturnType<typeof useStartupReadiness>;
+const mountedHarnesses = new Set<() => void>();
+
+afterEach(() => {
+  for (const unmount of mountedHarnesses) unmount();
+});
 
 function mountHarness(enabled = true) {
   const container = document.createElement('div');
@@ -247,6 +259,13 @@ function mountHarness(enabled = true) {
     return null;
   }
 
+  const unmount = () => {
+    act(() => root.unmount());
+    container.remove();
+    mountedHarnesses.delete(unmount);
+  };
+  mountedHarnesses.add(unmount);
+
   return {
     get state(): HookState {
       if (!latest) throw new Error('harness 还没渲染出第一帧');
@@ -260,10 +279,7 @@ function mountHarness(enabled = true) {
     flush: async () => {
       await act(async () => undefined);
     },
-    unmount: () => {
-      act(() => root.unmount());
-      container.remove();
-    },
+    unmount,
   };
 }
 
@@ -273,6 +289,11 @@ let resolveRead: ((value: IpcResult<RelayBootstrapPublicState>) => void) | null 
 let rejectRead: ((reason: unknown) => void) | null = null;
 
 const relayApi = {
+  // 本机运行时那两条（2026-10-07 区 7）：默认**没有问题** —— 既有用例照旧走
+  // "重新初始化连接层"那条通用重试路径；要测"运行时起不来"时各自显式改返回值。
+  runtimeStatus: vi.fn(async () => ({ ok: true }) as { ok: true } | { ok: false; reason: string }),
+  runtimeBootstrapRetry: vi.fn(async () => ({ ok: true }) as { ok: true } | { ok: false; reason: string }),
+  reconnectGateway: vi.fn(async () => undefined),
   onCommercialRelayBootstrapState: vi.fn((callback: (state: RelayBootstrapPublicState) => void) => {
     order.push('subscribe');
     listeners.push(callback);
@@ -290,7 +311,7 @@ const relayApi = {
   ),
   commercialRelayBootstrapRetry: vi.fn(async () => ({ ok: true })),
   probeWorkspaceFsIdentity: vi.fn(async () => ({ state: 'ok' as const, dev: '1', ino: '2' })),
-  ensureOurSkills: vi.fn(async () => ({ ok: true })),
+  ensureOurSkills: vi.fn(async () => ({ ok: true, result: { installed: [], failed: [] } })),
 };
 
 function emit(state: RelayBootstrapPublicState): void {
@@ -305,9 +326,13 @@ beforeEach(() => {
   relayApi.onCommercialRelayBootstrapState.mockClear();
   relayApi.commercialRelayBootstrapState.mockClear();
   relayApi.commercialRelayBootstrapRetry.mockClear();
+  relayApi.runtimeStatus.mockReset().mockResolvedValue({ ok: true });
+  relayApi.runtimeBootstrapRetry.mockReset().mockResolvedValue({ ok: true });
+  relayApi.reconnectGateway.mockClear();
   relayApi.probeWorkspaceFsIdentity.mockClear();
   relayApi.ensureOurSkills.mockClear();
   gatewayMocks.reinitializeGatewayBootstrap.mockClear();
+  gatewayMocks.refreshCatalogsForGateway.mockReset().mockResolvedValue(undefined);
   coordinatorMocks.run.mockClear();
   coordinatorMocks.reset.mockClear();
 
@@ -319,6 +344,206 @@ beforeEach(() => {
     gatewayStatusMap: { 'gw-1': 'connected' },
     modelCatalogByGateway: {},
   } as never);
+});
+
+describe('relay-ready catalog refresh', () => {
+  function prepareLocal(status: 'connected' | 'connecting' = 'connected') {
+    useUiStore.setState({
+      defaultGatewayId: 'local-runtime',
+      gatewayStatusMap: { 'local-runtime': status },
+      modelCatalogByGateway: { 'local-runtime': [{ id: 'codex-cli', provider: 'codex-cli' }] },
+      modelCatalogFailureByGateway: {},
+    });
+  }
+
+  it('refreshes a nonempty CLI-only catalog when relay configuration becomes ready without resetting runs', async () => {
+    prepareLocal();
+    gatewayMocks.refreshCatalogsForGateway.mockImplementation(async (gatewayId, options) => {
+      if (options?.isCurrent?.()) {
+        useUiStore
+          .getState()
+          .setModelCatalogForGateway(gatewayId, [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }]);
+      }
+    });
+    const harness = mountHarness();
+    harness.render();
+    expect(harness.state.ai.phase).toBe('error');
+    await act(async () => emit({ phase: 'running', updatedAt: 20 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).not.toHaveBeenCalled();
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledOnce();
+    expect(harness.state.ai.phase).toBe('ready');
+    expect(gatewayMocks.reinitializeGatewayBootstrap).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it('refreshes once per ready generation and ignores duplicate or older events', async () => {
+    prepareLocal();
+    const harness = mountHarness();
+    harness.render();
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    await act(async () => emit({ phase: 'ready', updatedAt: 20 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledOnce();
+    await act(async () => emit({ phase: 'running', updatedAt: 22 }));
+    await act(async () => emit({ phase: 'ready', updatedAt: 23 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(2);
+    harness.unmount();
+  });
+
+  it('⭐ 目录晚热：空结论之后按 0/60/120 有界补问，可用目录一进 store 就停（真机 2026-10-04）', async () => {
+    vi.useFakeTimers();
+    try {
+      prepareLocal();
+      gatewayMocks.refreshCatalogsForGateway.mockImplementation(async (gatewayId, options) => {
+        if (!options?.isCurrent?.()) return;
+        // 第一问（0s）目录还没热 ⇒ 空结论落 store；补问时已经变热。
+        const attempt = gatewayMocks.refreshCatalogsForGateway.mock.calls.length;
+        useUiStore
+          .getState()
+          .setModelCatalogForGateway(
+            gatewayId,
+            attempt === 1 ? [] : [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }],
+          );
+      });
+      const harness = mountHarness();
+      harness.render();
+      await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(1);
+      expect(harness.state.ai.phase).not.toBe('ready'); // 空目录 ≠ 能干活
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000); // +60s 的第一次补问
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(2);
+      expect(harness.state.ai.phase).toBe('ready');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300_000); // 已可用 ⇒ 后续窗口不再问
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(2);
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('⛔ 补问封顶：始终为空 ⇒ 只在 0/60/120 各问一次，之后不再有计时器', async () => {
+    vi.useFakeTimers();
+    try {
+      prepareLocal();
+      gatewayMocks.refreshCatalogsForGateway.mockImplementation(async (gatewayId, options) => {
+        if (options?.isCurrent?.()) useUiStore.getState().setModelCatalogForGateway(gatewayId, []);
+      });
+      const harness = mountHarness();
+      harness.render();
+      await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600_000);
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledTimes(3);
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('补问窗口在 scope 失效（断连）时立刻停止', async () => {
+    vi.useFakeTimers();
+    try {
+      prepareLocal();
+      gatewayMocks.refreshCatalogsForGateway.mockResolvedValue(undefined);
+      const harness = mountHarness();
+      harness.render();
+      await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledOnce();
+      await act(async () => useUiStore.getState().setGatewayStatusByGateway('local-runtime', 'disconnected'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300_000);
+      });
+      expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledOnce();
+      harness.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for the existing local gateway connection without making a new connection', async () => {
+    prepareLocal('connecting');
+    const harness = mountHarness();
+    harness.render();
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).not.toHaveBeenCalled();
+    await act(async () => useUiStore.getState().setGatewayStatusByGateway('local-runtime', 'connected'));
+    expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledOnce();
+    expect(gatewayMocks.reinitializeGatewayBootstrap).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it('does not refresh an inactive account and refreshes after the current entry is enabled', async () => {
+    prepareLocal();
+    const harness = mountHarness(false);
+    harness.render();
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).not.toHaveBeenCalled();
+    await act(async () => harness.render(true));
+    expect(gatewayMocks.refreshCatalogsForGateway).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it('does not apply local relay readiness to a remote gateway', async () => {
+    const harness = mountHarness();
+    harness.render();
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    expect(gatewayMocks.refreshCatalogsForGateway).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it.each(['workspace', 'disabled', 'gateway', 'disconnect', 'relay', 'unmount'] as const)(
+    'invalidates an in-flight refresh at the %s boundary',
+    async (boundary) => {
+      prepareLocal();
+      const harness = mountHarness();
+      harness.render();
+      await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+      const isCurrent = gatewayMocks.refreshCatalogsForGateway.mock.calls[0]?.[1]?.isCurrent;
+      expect(isCurrent?.()).toBe(true);
+      await act(async () => {
+        if (boundary === 'workspace') useTaskStore.getState().resetWorkspace();
+        if (boundary === 'disabled') harness.render(false);
+        if (boundary === 'gateway') useUiStore.getState().setDefaultGatewayId('gw-remote');
+        if (boundary === 'disconnect') useUiStore.getState().setGatewayStatusByGateway('local-runtime', 'disconnected');
+        if (boundary === 'relay') emit({ phase: 'idle', updatedAt: 22 });
+        if (boundary === 'unmount') harness.unmount();
+      });
+      expect(isCurrent?.()).toBe(false);
+      if (boundary !== 'unmount') harness.unmount();
+    },
+  );
+
+  it('does not revive an old account refresh after disable and re-enable', async () => {
+    prepareLocal();
+    const harness = mountHarness();
+    harness.render();
+    await act(async () => emit({ phase: 'ready', updatedAt: 21 }));
+    const oldGuard = gatewayMocks.refreshCatalogsForGateway.mock.calls[0]?.[1]?.isCurrent;
+    await act(async () => harness.render(false));
+    await act(async () => harness.render(true));
+    expect(oldGuard?.()).toBe(false);
+    expect(gatewayMocks.refreshCatalogsForGateway.mock.calls.at(-1)?.[1]?.isCurrent?.()).toBe(true);
+    harness.unmount();
+  });
 });
 
 describe('useStartupReadiness × 中转公开状态', () => {
@@ -422,6 +647,41 @@ describe('useStartupReadiness × 中转公开状态', () => {
     expect(coordinatorMocks.run, '助手也等 ready 之后再刷').toHaveBeenCalled();
     expect(harness.state.relayFailure).toBeNull();
 
+    harness.unmount();
+  });
+
+  it('⭐⭐ 本机运行端起不来：重试**真的重跑一轮 bootstrap**（不再是原地重新初始化连接层）', async () => {
+    relayApi.runtimeStatus.mockResolvedValue({ ok: false, reason: 'deploy-failed' });
+    relayApi.runtimeBootstrapRetry.mockResolvedValue({ ok: true });
+    const harness = mountHarness();
+    harness.render();
+    await harness.flush();
+
+    await act(async () => {
+      await harness.state.retry();
+    });
+
+    expect(relayApi.runtimeBootstrapRetry, '主进程那一条自助出口必须被用到').toHaveBeenCalledOnce();
+    expect(relayApi.reconnectGateway, '起得来之后要叫网关这条 WS 去连（它可能早就 gaveUp 了）').toHaveBeenCalledWith(
+      'gw-1',
+    );
+    expect(relayApi.commercialRelayBootstrapRetry, '这不是中转那一类失败，别乱发').not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it('⭐ 重跑之后**还是**起不来：不假装成功（不重连、照旧等主进程那条推送）', async () => {
+    relayApi.runtimeStatus.mockResolvedValue({ ok: false, reason: 'port-occupied' });
+    relayApi.runtimeBootstrapRetry.mockResolvedValue({ ok: false, reason: 'port-occupied' });
+    const harness = mountHarness();
+    harness.render();
+    await harness.flush();
+
+    await act(async () => {
+      await harness.state.retry();
+    });
+
+    expect(relayApi.runtimeBootstrapRetry).toHaveBeenCalledOnce();
+    expect(relayApi.reconnectGateway, '没起来就别去打扰连接层').not.toHaveBeenCalled();
     harness.unmount();
   });
 

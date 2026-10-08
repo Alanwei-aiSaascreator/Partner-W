@@ -149,14 +149,21 @@ describe('debug logger retention and lifecycle contract', () => {
     expect(rows().map((row) => row.event)).toContain('old-stream');
   });
 
-  it('rejects new events after close starts instead of reopening an untracked writer', async () => {
+  it('关闭后的写入降级为丢弃（绝不再抛；退出竞态曾把主进程弹成模态错误框），且不重开 writer', async () => {
     logger = createDebugLogger({ debugDir: dir, console: false, retentionDays: 0 });
     logger.info({ domain: 'app', event: 'accepted-before-close' });
     const closed = logger.close();
-    expect(() => logger!.info({ domain: 'app', event: 'after-close' })).toThrow(/clos/i);
+    // 真机 2026-10-08（用户点退出）：teardown 杀掉网关后，子进程 stdout/stderr 的
+    // 'data'/'close' 事件仍在事件循环里 → runtime.gateway.output 回调里写日志。
+    // 旧契约在关闭后 throw ⇒ 事件处理器里的同步异常冒成**主进程未捕获异常** ⇒ 模态弹窗。
+    // 新契约：丢弃（仍进 recentEvents），**绝不抛**，也绝不重开流。
+    expect(() => logger!.info({ domain: 'app', event: 'after-close' })).not.toThrow();
     await closed;
+    // 关后事件既没进文件、也没把它重新开流 —— 原契约真正要保的那件事不变。
     expect(rows().map((row) => row.event)).toEqual(['accepted-before-close']);
     expect(capture.streams.size).toBe(0);
+    // 排障现场不丢：关后事件仍可在内存里读到。
+    expect(logger.getRecentEvents().map((row) => row.event)).toContain('after-close');
   });
 
   it('does not automatically remove historical files present before logger creation', async () => {

@@ -1,6 +1,6 @@
 import { createStore } from 'zustand/vanilla';
-import { buildSessionKey } from '@clawwork/shared';
-import type { Task, TaskStatus, IpcResult } from '@clawwork/shared';
+import { DEFAULT_TASK_MODE, buildSessionKey, normalizeTaskModeSetting } from '@clawwork/shared';
+import type { Task, TaskModeSetting, TaskStatus, IpcResult } from '@clawwork/shared';
 
 /**
  * 点名要的助手**不在已加载的目录里**（2026-09-24）。
@@ -24,6 +24,11 @@ export interface PendingNewTask {
   gatewayId: string;
   agentId: string;
   tags?: string[];
+  /**
+   * 任务模式（待发态用户选的档）。缺省 ⇒ 建任务时写入默认档（`DEFAULT_TASK_MODE`）。
+   * 选了「高级：指定模型」才会是 `custom`（那时 `model` 才是决定性的）。
+   */
+  mode?: TaskModeSetting;
   model?: string;
   thinkingLevel?: string;
   ensemble?: boolean;
@@ -46,13 +51,20 @@ export interface TaskState {
   createTask: (opts?: {
     gatewayId?: string;
     agentId?: string;
+    mode?: TaskModeSetting;
     model?: string;
     thinkingLevel?: string;
     ensemble?: boolean;
     teamId?: string;
     tags?: string[];
   }) => Task;
-  setActiveTask: (id: string | null) => void;
+  /**
+   * 切当前任务。
+   *
+   * ⚠️ 默认**顺带清 `pendingNewTask`**（防"从待发态点已有对话"的残留，2026-10-07 质量战役区 3）。
+   *    复合动作（如 `useSelectAgent` 切助手——它自己专门管理 pending）传 `{ clearPending: false }` 保留。
+   */
+  setActiveTask: (id: string | null, options?: { clearPending?: boolean }) => void;
   /**
    * 置顶 / 取消置顶。
    *
@@ -67,6 +79,8 @@ export interface TaskState {
     id: string,
     meta: {
       ensemble?: boolean;
+      /** 任务模式（快速/智能/深度/高级指定模型）。见 `@clawwork/shared` 的 `task-modes.ts`。 */
+      mode?: TaskModeSetting;
       model?: string;
       modelProvider?: string;
       thinkingLevel?: string;
@@ -82,6 +96,11 @@ export interface TaskState {
        * 「采纳后新会话带上下文」就落空了。
        */
       sessionKey?: string;
+      /**
+       * deck 路由标记（演示文稿 → DeepSeek 的粘性开关）。写入时机与判据在
+       * `renderer/lib/deck-intent.ts`；见 `Task.deckRouted`。
+       */
+      deckRouted?: boolean;
       updatedAt?: string;
     },
   ) => void;
@@ -114,6 +133,7 @@ export interface TaskStoreDeps {
     title?: string;
     status?: string;
     ensemble?: boolean;
+    mode?: string;
     model?: string;
     modelProvider?: string;
     thinkingLevel?: string;
@@ -125,6 +145,8 @@ export interface TaskStoreDeps {
     sessionKey?: string;
     /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
     pinnedAt?: string | null;
+    /** deck 路由标记（演示文稿 → DeepSeek 的粘性开关）；见 `Task.deckRouted`。 */
+    deckRouted?: boolean;
     updatedAt: string;
   }) => Promise<IpcResult>;
   deleteTask: (taskId: string) => Promise<IpcResult>;
@@ -137,6 +159,8 @@ export interface TaskStoreDeps {
       title: string;
       status: string;
       ensemble?: boolean | null;
+      /** 任务模式；老数据是 NULL（读出来按 custom 语义处理，见 task-modes.ts）。 */
+      mode?: string | null;
       model?: string | null;
       modelProvider?: string | null;
       thinkingLevel?: string | null;
@@ -151,6 +175,8 @@ export interface TaskStoreDeps {
       gatewayId: string;
       /** 置顶时间（ISO）；SQLite 里没置顶是 NULL。 */
       pinnedAt?: string | null;
+      /** deck 路由标记（SQLite 0/1；老行 = 0 ⇒ false）。见 `Task.deckRouted`。 */
+      deckRouted?: boolean | null;
     }[];
   }>;
   patchSession: (gatewayId: string, sessionKey: string, patch: Record<string, unknown>) => Promise<IpcResult>;
@@ -166,6 +192,13 @@ export interface TaskStoreDeps {
    */
   getAgentCatalog: (gatewayId: string) => { agents: { id: string }[]; defaultId: string | null } | undefined;
   onTaskCreated?: () => void;
+  /**
+   * 任务删除成功后，把该任务的消息从消息 store 里清掉（2026-10-07 · 区 3 问题 10）。
+   *
+   * ⚠️ 可选注入（core 不直接依赖另一张 store 的实例）：宿主把 `messageStore.clearMessages`
+   *    接进来。缺了它只影响"删除后消息内存残留"，不影响删除本身。
+   */
+  clearTaskMessages?: (taskId: string) => void;
 }
 
 export function createTaskStore(deps: TaskStoreDeps) {
@@ -207,6 +240,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
       const task = get().createTask({
         gatewayId: gwId,
         agentId: agId,
+        mode: pending?.mode,
         model: pending?.model,
         thinkingLevel: pending?.thinkingLevel,
         ensemble: pending?.ensemble,
@@ -249,6 +283,9 @@ export function createTaskStore(deps: TaskStoreDeps) {
         artifactDir: '',
         gatewayId: resolvedGatewayId,
         agentId: resolvedAgentId,
+        // ⭐ 任务模式在**建任务这一刻**就定死默认档：不靠发送路径兜底，旧行（mode 为空）
+        //    才不会被后来的"默认智能"悄悄劫持（两者的区别全靠这一行撑着）。
+        mode: opts?.mode ?? DEFAULT_TASK_MODE,
         model: opts?.model,
         thinkingLevel: opts?.thinkingLevel,
         teamId: opts?.teamId,
@@ -260,7 +297,17 @@ export function createTaskStore(deps: TaskStoreDeps) {
       return task;
     },
 
-    setActiveTask: (id) => set({ activeTaskId: id }),
+    /**
+     * 显式切换当前任务（打开一段已有对话 / 回到欢迎屏）。
+     *
+     * ⭐ 2026-10-07（质量战役区 3 · 问题 5）：**顺带清掉 `pendingNewTask`**。
+     * 原实现只改 `activeTaskId`：用户在待发态（新建对话但还没发第一条）点了列表里
+     * 一段已有对话后，`pendingNewTask` 一直挂着，切回欢迎屏还会"复活"上次的待发配置。
+     * ⚠️ 不受影响的路径：`commitPendingTask`（发送把待发变真任务）**不经过这里**，
+     * 它自己 `set({ tasks, activeTaskId })`；`startNewTask` 同样直接 set（设待发态本身）。
+     */
+    setActiveTask: (id, options) =>
+      set({ activeTaskId: id, ...(options?.clearPending === false ? {} : { pendingNewTask: null }) }),
 
     setTaskPinned: (id, pinned) => {
       const task = get().tasks.find((t) => t.id === id);
@@ -317,6 +364,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
         .persistTaskUpdate({
           id,
           ensemble: meta.ensemble,
+          mode: meta.mode,
           model: meta.model,
           modelProvider: meta.modelProvider,
           thinkingLevel: meta.thinkingLevel,
@@ -325,6 +373,7 @@ export function createTaskStore(deps: TaskStoreDeps) {
           contextTokens: meta.contextTokens,
           teamId: meta.teamId,
           sessionKey: meta.sessionKey,
+          deckRouted: meta.deckRouted,
           updatedAt,
         })
         .catch((err) => {
@@ -377,6 +426,11 @@ export function createTaskStore(deps: TaskStoreDeps) {
           activeTaskId: nextActiveId,
         };
       });
+      // ⭐ 2026-10-07（质量战役区 3 · 问题 10）：任务删掉了，它的消息不该继续挂在内存里。
+      //    store 层**自我了结**（不再只依赖 UI 那条路记得清 `clearMessages` —— 那是
+      //    `delete-task.ts` 里的一个调用点义务，任何别的 removeTask 调用方都会漏）。
+      //    幂等：UI 那条路重复清一次无副作用。
+      deps.clearTaskMessages?.(id);
     },
 
     hydrate: async () => {
@@ -397,6 +451,10 @@ export function createTaskStore(deps: TaskStoreDeps) {
               title: r.title,
               status: r.status as TaskStatus,
               ensemble: r.teamId ? false : (r.ensemble ?? undefined),
+              // ⚠️ 旧行（NULL / 脏值）= **没有偏好**：归一成 `undefined` 交给
+              //    `resolveEffectiveTaskMode` 按 custom 处理，**不在这里补默认档**
+              //    （补了 = 劫持用户当年显式选过的 model，见 task-modes.ts 的"存量保护"）。
+              mode: normalizeTaskModeSetting(r.mode),
               model: r.model ?? undefined,
               modelProvider: r.modelProvider ?? undefined,
               thinkingLevel: r.thinkingLevel ?? undefined,
@@ -412,6 +470,9 @@ export function createTaskStore(deps: TaskStoreDeps) {
               // ⚠️ 这一行漏了置顶就"重启失效"（写库那侧照常通）。这种"加一列"的功能
               //    最典型的暗坑就是读回来没带上，用户看到的是功能根本不管用。
               pinnedAt: r.pinnedAt ?? undefined,
+              // ⚠️ 同一个暗坑：deck 路由标记漏读 ⇒ 重启后改稿又跑回模式模型。
+              //    `false` / NULL 都归一成 `undefined`（= "没标记过"）。
+              deckRouted: r.deckRouted ? true : undefined,
             })),
             hydrated: true,
           });

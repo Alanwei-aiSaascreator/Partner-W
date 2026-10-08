@@ -4,6 +4,7 @@ import { describeSendRefusal, UnknownAgentError } from '@clawwork/core';
 import type { FileIndexEntry, ImportedTaskFile, TaskContextSource } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
 import { describeImportRejections } from '@/lib/import-rejection-copy';
+import { MAX_SEND_MATERIAL_BYTES, materialBudgetMb } from './constants';
 import { useTaskStore } from '../../stores/taskStore';
 
 export type ImportedMaterialFile = ImportedTaskFile & { taskId: string; availability: 'available' | 'missing' };
@@ -90,9 +91,11 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
         }
         setSources(sourceResult.result ?? []);
         if (fileResult.ok) {
-          setImportedFiles(
-            (fileResult.result ?? []).map((file) => ({ ...file, taskId: nextTaskId, availability: 'available' })),
-          );
+          // ⭐ 2026-10-07（质量战役区 3 · 问题 6）：重载**走 mergeImported，不再整表替换**。
+          //    整表替换会和在途导入竞态：列表 IPC 的响应可能早于导入完成，替换会把导入刚
+          //    加进来的文件当场抹掉（而用户明明看到"已选"）。effect 头部本就把列表清空过，
+          //    所以 merge 只会保留"这次加载期间新进的文件"——不会积累陈旧行。
+          setImportedFiles((current) => mergeImported(current, fileResult.result ?? [], nextTaskId));
         }
       })
       .catch((error: unknown) => {
@@ -168,6 +171,16 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
             description: describeImportRejections(result.result.rejected, t),
           });
         }
+        // ⭐ P2-2（2026-10-07）：导入侧放行 100MB、发送侧预算 18MiB —— 收得下但发不出的
+        //    文件必须在**进来这一刻**点破（只提示、不拦截：用户可以先挑别的再发）。
+        //    预算取默认值（网关协商值在 store 里，本函数不读 store；差异只在"网关被配得
+        //    更宽/更窄"时，提示偏保守不拦人）。
+        const overSendBudget = imported.filter((file) => file.size > MAX_SEND_MATERIAL_BYTES);
+        if (overSendBudget.length > 0) {
+          toast.warning(t('chatInput.materialSingleTooLarge', { size: materialBudgetMb(MAX_SEND_MATERIAL_BYTES) }), {
+            description: overSendBudget.map((file) => file.fileName).join('、'),
+          });
+        }
         return imported;
       } catch (error) {
         if (!isCurrent(targetTaskId, generation)) return [];
@@ -181,7 +194,16 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
   );
 
   const importFiles = useCallback(
-    () => runImport((targetTaskId) => window.clawwork.importTaskFiles(targetTaskId)),
+    // `purpose: 'images'` = 「识别图片」入口（C 组 BUG-027）：主进程只把对话框的可选范围
+    // 缩到图片；导入后段（拒绝原因 / 选中 / 跨任务守卫）与普通入口逐字同一条。
+    // ⚠️ 不传 purpose 时**调用形状与从前逐字一致**（两个参数都不补）—— 补 undefined 会改掉
+    //    IPC 参数形状，存量契约（含既有用例）没必要跟着变。
+    (purpose?: 'files' | 'images') =>
+      runImport((targetTaskId) =>
+        purpose
+          ? window.clawwork.importTaskFiles(targetTaskId, undefined, purpose)
+          : window.clawwork.importTaskFiles(targetTaskId),
+      ),
     [runImport],
   );
 
@@ -298,6 +320,45 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     });
   }, []);
 
+  /**
+   * 「从当前对话移除」（BUG-029）—— 把这份材料移出**当前对话的引用集合**。
+   *
+   * 与 `toggleImportedFile` 的区别（为什么不能复用开关）：
+   *   - 移除是**幂等**的：点了就是"不在本次请求里"，再渲染一次也不会翻回来；
+   *   - 语义只在"引用"这一层：`importedFiles` 一个字都不动（材料还在，用户随时能再引用），
+   *     inbox 里的那份文件更没被碰（没有"删文件"这回事 —— 文案也不许这么写）。
+   */
+  const removeImportedFileReference = useCallback((localPath: string) => {
+    setSelectedImportedPaths((current) => {
+      if (!current.has(localPath)) return current;
+      const next = new Set(current);
+      next.delete(localPath);
+      return next;
+    });
+  }, []);
+
+  /**
+   * 只保留前 `keepCount` 个**已选**导入材料（「只保留前 N 个」一键裁剪，2026-10-07 · 方案 D）。
+   *
+   * 顺序 = `importedFiles` 的列表顺序（与材料条展示一致，用户看到的"前 N 个"就是留下的
+   * 前 N 个）；与 `removeImportedFileReference` 同一层语义 —— 只动**引用集合**，
+   * `importedFiles` 与 inbox 原文件一个字都不碰。
+   */
+  const trimSelectedImportedFiles = useCallback(
+    (keepCount: number) => {
+      const keep = Math.max(0, Math.floor(keepCount));
+      const selectedInOrder = importedFiles.filter(
+        (file) => file.availability === 'available' && selectedImportedPaths.has(file.localPath),
+      );
+      const keepPaths = new Set(selectedInOrder.slice(0, keep).map((file) => file.localPath));
+      setSelectedImportedPaths((current) => {
+        const next = new Set([...current].filter((localPath) => keepPaths.has(localPath)));
+        return next.size === current.size ? current : next;
+      });
+    },
+    [importedFiles, selectedImportedPaths],
+  );
+
   const clearSelectedImportedFiles = useCallback((expectedTaskId?: string) => {
     if (!mountedRef.current || (expectedTaskId && identityRef.current !== expectedTaskId)) return;
     setSelectedImportedPaths(new Set());
@@ -328,6 +389,8 @@ export function useTaskMaterials(taskIdOverride?: string | null) {
     listSourceFiles,
     loadSourceFiles,
     toggleImportedFile,
+    removeImportedFileReference,
+    trimSelectedImportedFiles,
     clearSelectedImportedFiles,
     markImportedFileMissing,
   };

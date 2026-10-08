@@ -24,6 +24,10 @@ describe('gatewayFailureReasonFrom', () => {
     expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.gateway-ready-timeout' })).toBe('ready-timeout');
   });
 
+  it('⭐ 从盘上准备运行环境失败 ⇒ deploy-failed（出口在**盘**上，与"网关起不来"分开）', () => {
+    expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.deploy-failed' })).toBe('deploy-failed');
+  });
+
   it('认证被拒（关闭码 1008）⇒ auth-rejected', () => {
     expect(gatewayFailureReasonFrom({ closeCode: 1008 })).toBe('auth-rejected');
   });
@@ -41,7 +45,7 @@ describe('gatewayFailureReasonFrom', () => {
     expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.something-new' })).toBe('unknown');
   });
 
-  it('⭐ 原始文本永远进不了这个类型：任何输入都只落在那 5 个值里', () => {
+  it('⭐ 原始文本永远进不了这个类型：任何输入都只落在闭集的值里', () => {
     const hostile = [
       'token=sk-live-abcdefg',
       'ws://127.0.0.1:18789?token=secret',
@@ -60,10 +64,11 @@ describe('gatewayFailureReasonFrom', () => {
     }
   });
 
-  it('闭集本身只有 5 个值（多一个都要先想清楚界面上说什么）', () => {
+  it('闭集本身只有 7 个值（多一个都要先想清楚界面上说什么）', () => {
     expect([...GATEWAY_FAILURE_REASONS].sort()).toEqual(
       [
         'auth-rejected',
+        'deploy-failed',
         'port-occupied',
         'process-exited',
         'ready-timeout',

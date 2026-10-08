@@ -118,6 +118,16 @@ export interface UiState {
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
 
   /**
+   * 网关**协商下来**的单帧字节上限（`hello-ok.policy.maxPayload`）。
+   *
+   * ⚠️ 缺席 = 没谈到（还在连接 / 旧网关）⇒ 发送字节预算回落默认值 —— 不是 0、不是无限。
+   *    消费者是发送侧的预算推导（`deriveMaterialByteBudget`），**别拿它当展示字段**。
+   * 语义与 `gatewayVersionMap` 对齐：`undefined` 清条目（连接参数跟着连接存亡）。
+   */
+  gatewayMaxPayloadByGateway: Record<string, number>;
+  setGatewayMaxPayloadByGateway: (gatewayId: string, bytes: number | undefined) => void;
+
+  /**
    * ⚠️ `reason`（有结论时的公开原因）**跟着重连信息一起存**：它描述的就是
    *    "这个网关连得怎么样"，与 `attempt` / `gaveUp` 是同一件事的不同侧面。
    *    缺席 = 还没有结论（普通断线、还在重连）—— 不是"没问题"。
@@ -336,6 +346,21 @@ export function createUiStore(deps: UiStoreDeps) {
         }
         if (current === version) return s;
         return { gatewayVersionMap: { ...s.gatewayVersionMap, [gatewayId]: version } };
+      }),
+
+    gatewayMaxPayloadByGateway: {},
+    setGatewayMaxPayloadByGateway: (gatewayId, bytes) =>
+      set((s) => {
+        const current = s.gatewayMaxPayloadByGateway[gatewayId];
+        // 非法值（None/0/NaN）与缺席同义：清掉条目 ⇒ 消费侧回落默认预算。
+        if (bytes === undefined || !Number.isFinite(bytes) || bytes <= 0) {
+          if (current === undefined) return s;
+          const next = { ...s.gatewayMaxPayloadByGateway };
+          delete next[gatewayId];
+          return { gatewayMaxPayloadByGateway: next };
+        }
+        if (current === bytes) return s;
+        return { gatewayMaxPayloadByGateway: { ...s.gatewayMaxPayloadByGateway, [gatewayId]: bytes } };
       }),
 
     gatewayReconnectInfo: {},

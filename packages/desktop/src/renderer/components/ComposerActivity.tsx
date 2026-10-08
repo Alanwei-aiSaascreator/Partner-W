@@ -33,15 +33,24 @@ import ArtifactDeliveryActivity from './ArtifactDeliveryActivity';
  *    否则两处文案迟早漂成两句不同的话。
  */
 interface ComposerActivityProps {
-  /** 当前会话键；没有活动任务时为 null（此时整条不显示）。 */
+  /** 当前会话键（主会话）；没有活动任务时为 null（此时整条不显示）。 */
   sessionKey: string | null;
+  /**
+   * 整条任务的全部会话（主会话在前、performers 在后，见 `getTaskSessionKeys`）。
+   *
+   * ⚠️ 区1 体检 P2-6：多智能体任务里主会话往往只是"派活"，真正在跑的是 performer ——
+   *    只盯主会话时整条不显示，而正文里的 `TurnActivityRow` 照样在动。
+   * ⚠️ 取消（`onCancel` → `composer.abort(taskId)`）本来就是**整任务**的：房间里的
+   *    每个会话都会被中止，所以这里盯 performer 时那个取消按钮仍然是真的。
+   */
+  sessionKeys?: readonly string[];
   /** 取消当前这一轮。 */
   onCancel: () => void;
 }
 
-export default function ComposerActivity({ sessionKey, onCancel }: ComposerActivityProps) {
+export default function ComposerActivity({ sessionKey, sessionKeys, onCancel }: ComposerActivityProps) {
   const { t } = useTranslation();
-  const { active, elapsedMs, headline, quip, running } = useTurnActivity(sessionKey);
+  const { active, elapsedMs, headline, quip, running } = useTurnActivity(sessionKey, sessionKeys);
 
   if (!sessionKey || !active) return <ArtifactDeliveryActivity sessionKey={sessionKey} />;
 

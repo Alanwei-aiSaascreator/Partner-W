@@ -4,8 +4,25 @@ import { useTranslation } from 'react-i18next';
 import type { ArtifactDeliveryActivity as DeliveryActivity } from '@clawwork/shared';
 import { isArtifactDeliveryPageProgress } from '@clawwork/shared';
 import { useDeliveryActivityStore } from '../stores/deliveryActivityStore';
+import { useMessageStore } from '../stores/messageStore';
 import { useTaskStore } from '../stores/taskStore';
 import { formatElapsed } from '../lib/waiting-copy';
+
+/**
+ * 图13（2026-10-06）：纯聊天也会走 `reconciling-artifacts` 收尾阶段 ⇒ 产出
+ * "检查文件 · 处理完成 · 0.0s" 这类**没有内容**的记录（真机验收现场当场被点名）。
+ *
+ * 展示规则：非成功终态一律可见（诚实——失败不许藏）；成功态必须"真有事发生"——
+ * 除收尾阶段（reconciling-artifacts）外至少还有一个实质阶段；旧记录没有
+ * observedPhases 时退回看 fallback phase。
+ */
+export function informativeDeliveryActivity(activity: DeliveryActivity): boolean {
+  if (activity.status !== 'succeeded') return true;
+  const phases = (activity.observedPhases ?? []).map((step) => step.phase);
+  const substantive = phases.filter((phase) => phase !== 'reconciling-artifacts');
+  if (substantive.length > 0) return true;
+  return phases.length === 0 && activity.phase !== 'reconciling-artifacts';
+}
 
 function ObservedPhases({ activity }: { activity: DeliveryActivity }) {
   const { t } = useTranslation();
@@ -58,6 +75,11 @@ function PageProgress({ activity }: { activity: DeliveryActivity }) {
 
 export default function ArtifactDeliveryActivity({ sessionKey }: { sessionKey: string | null }) {
   const { t } = useTranslation();
+  /**
+   * 失败记录的「回到这条消息」（区1 体检 P3-12）—— 与文件面板/右侧栏的"跳转到源消息"
+   * **同一个动作**（`setHighlightedMessage`：切回对话并高亮那一条），不是新造通道。
+   */
+  const jumpToMessage = useMessageStore((state) => state.setHighlightedMessage);
   const active = useDeliveryActivityStore((state) => state.active);
   const records = useDeliveryActivityStore((state) => state.records);
   const ownerEpoch = useDeliveryActivityStore((state) => state.workspaceEpoch);
@@ -71,7 +93,10 @@ export default function ArtifactDeliveryActivity({ sessionKey }: { sessionKey: s
     ? Object.values(records)
         .filter(
           (activity) =>
-            activity.status !== 'active' && activity.taskId === taskId && activity.sessionKey === sessionKey,
+            activity.status !== 'active' &&
+            activity.taskId === taskId &&
+            activity.sessionKey === sessionKey &&
+            informativeDeliveryActivity(activity),
         )
         .sort((a, b) => (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt))
         .slice(0, 5)
@@ -124,16 +149,32 @@ export default function ArtifactDeliveryActivity({ sessionKey }: { sessionKey: s
             <details key={activity.operationId} data-testid="artifact-delivery-history">
               <summary className="type-label cursor-pointer text-[var(--text-secondary)]">
                 <span>
-                  {t(`chatInput.deliveryHistory.phaseTypes.${activity.observedPhases?.[0]?.phase ?? activity.phase}`)}
+                  {/*
+                    区1 体检 P3-12：摘要取**最后**观测到的阶段（原来固定取 `[0]`）——
+                    失败记录原来显示"第一个阶段 · 失败"，真正的失败点藏在展开里；
+                    成功记录同理，用户想看的是"最后做到哪一步"。
+                    ⚠️ 仍然只认**实际观测到**的阶段（`observedPhases`），不看 `phase` 这个可能过期的字段。
+                  */}
+                  {t(
+                    `chatInput.deliveryHistory.phaseTypes.${activity.observedPhases?.at(-1)?.phase ?? activity.phase}`,
+                  )}
                   {' · '}
                   {t(`chatInput.deliveryHistory.${activity.status}`)}
                 </span>
-                {typeof activity.endedAt === 'number' && (
-                  <span className="type-mono-data ml-3 inline-block text-[var(--text-muted)]">
-                    {formatElapsed(Math.max(0, activity.endedAt - activity.startedAt))}
-                  </span>
-                )}
+                {/* 图13（2026-10-06）：取消对用户展示耗时——"0.0s" 曾被当场当成"假流程"。
+                    真实耗时语义保留在展开的阶段时间线里（observedAt）。 */}
               </summary>
+              {/* 失败记录给一个真实入口（P3-12）：跳回那条消息，用户能在那里看到重试/下一步。 */}
+              {activity.status === 'failed' ? (
+                <button
+                  type="button"
+                  data-testid="artifact-delivery-jump"
+                  onClick={() => jumpToMessage(activity.messageId)}
+                  className="glow-focus type-caption mt-1 cursor-pointer rounded-md px-1 text-[var(--accent)] hover:underline"
+                >
+                  {t('chatInput.deliveryHistory.jumpToMessage')}
+                </button>
+              ) : null}
               <ObservedPhases activity={activity} />
             </details>
           ))}

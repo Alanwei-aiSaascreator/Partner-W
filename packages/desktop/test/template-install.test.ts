@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { templateToInstallDefinition } from '@clawwork/core';
 import { installTemplate, type TemplateInstallDeps } from '../src/renderer/lib/template-install';
 import type { AgentTemplateDetail } from '@clawwork/shared';
 
@@ -79,6 +80,22 @@ function makeDeps(overrides: Partial<TemplateInstallDeps> = {}) {
   return { deps, api, refreshAgents, recordInstalled };
 }
 
+/** 这个模板的 IDENTITY.md 正文（模板装出来的助手写的就是它）。 */
+const TEMPLATE_IDENTITY = templateToInstallDefinition(template, '公共契约').identityMd;
+/** 整 id 哈希前 12 位算出来的 slug（2026-10-07 起，不再是最初 8 个可读字符）。 */
+const TEMPLATE_AGENT_ID = 'rongying-tpl-88a1c42c9d74';
+
+/** 让「既有助手」看起来正是这个模板装出来的：IDENTITY.md 正文逐字一致。 */
+function matchingIdentityApi(overrides: Record<string, unknown> = {}) {
+  return makeApi({
+    getAgentFile: {
+      ok: true,
+      result: { file: { name: 'IDENTITY.md', missing: false, content: TEMPLATE_IDENTITY } },
+    },
+    ...overrides,
+  });
+}
+
 describe('installTemplate —— 真安装的编排', () => {
   it('⭐ 成功：建 agent（带模板的提示词）→ 刷新目录 → 服务端记账', async () => {
     const { deps, api, refreshAgents, recordInstalled } = makeDeps();
@@ -86,7 +103,7 @@ describe('installTemplate —— 真安装的编排', () => {
     const outcome = await installTemplate(deps, template);
 
     expect(outcome.ok).toBe(true);
-    expect(outcome.agentId).toBe('rongying-tpl-3f2a1b4c');
+    expect(outcome.agentId).toBe(TEMPLATE_AGENT_ID);
     // 建出来的 agent 带着模板的提示词
     const identityWrite = api.calls.find((c) => c.fn === 'setAgentFile' && c.args[2] === 'IDENTITY.md');
     expect(String(identityWrite?.args[3])).toContain('你是内容创作教练。');
@@ -135,27 +152,57 @@ describe('installTemplate —— 真安装的编排', () => {
     expect(outcome.diagnostic).toContain('gateway not connected');
   });
 
-  it('⭐ 已装过（同 id 在网关里）⇒ 跳过建、仍然记一次账（跨机器状态最终一致）', async () => {
-    const { deps, api, recordInstalled } = makeDeps({ currentAgentIds: ['rongying-tpl-3f2a1b4c'] });
+  it('⭐ 已装过且正文一致（同 id 在网关里）⇒ 读回校对后跳过建、仍然记一次账', async () => {
+    // ⚠️ 2026-10-07（质检 P2-1）：市场模板**不再"id 存在即跳过"** —— 跳过前必须读回
+    //    IDENTITY.md 比对正文，所以这里的既有助手要装成"正是这个模板写的"。
+    const api = matchingIdentityApi();
+    const { deps, recordInstalled } = makeDeps({ api, currentAgentIds: [TEMPLATE_AGENT_ID] });
 
     const outcome = await installTemplate(deps, template);
 
     expect(outcome.ok).toBe(true);
     expect(outcome.alreadyInstalled).toBe(true);
-    expect(api.calls).toHaveLength(0);
+    expect(outcome.agentId).toBe(TEMPLATE_AGENT_ID);
+    expect(api.calls.map((call) => call.fn)).toEqual(['getAgentFile', 'getAgentFile']); // 校对读回，不建
     expect(recordInstalled).toHaveBeenCalledOnce();
   });
 
-  it('本地目录陈旧 + 网关报 already exists ⇒ 对账复用后强刷 UI 目录', async () => {
-    const staleApi = makeApi({
-      createAgent: { ok: false, error: 'agent "rongying-tpl-3f2a1b4c" already exists' },
+  it('⭐⭐ 同 id 的既有助手正文**不是**这个模板 ⇒ 明确报错、绝不复用、不记账（P2-1）', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const api = makeApi({
+      getAgentFile: {
+        ok: true,
+        result: { file: { name: 'IDENTITY.md', missing: false, content: '# 别人的助手内容\n' } },
+      },
+    });
+    const { deps, refreshAgents, recordInstalled } = makeDeps({ api, currentAgentIds: [TEMPLATE_AGENT_ID] });
+
+    const outcome = await installTemplate(deps, template);
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.messageKey).toBe('market.error.assistantConflict');
+    expect(outcome.diagnostic).toContain('template-agent-identity-mismatch');
+    expect(api.calls.some((call) => call.fn === 'createAgent')).toBe(false);
+    expect(api.calls.some((call) => call.fn === 'setAgentFile')).toBe(false); // 不覆盖用户文件
+    expect(refreshAgents).not.toHaveBeenCalled();
+    expect(recordInstalled).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('本地目录陈旧 + 网关报 already exists ⇒ 对账复用后强刷 UI 目录，并透传**网关里的真实 id**', async () => {
+    // ⚠️ 网关里的 id 与定义 id 只差大小写（`reconcileAlreadyExistingAgent` 的规格化对账
+    //    正是为这种目录陈旧准备的）——恒返回定义 id 会让「在罗盘助手中使用」落到
+    //    "助手不在本机"（2026-10-07 质检 P3-4）。
+    const gatewayAgentId = 'RONGYING-TPL-88A1C42C9D74';
+    const staleApi = matchingIdentityApi({
+      createAgent: { ok: false, error: `agent "${gatewayAgentId}" already exists` },
       listAgents: {
         ok: true,
         result: {
           defaultId: 'main',
           mainKey: 'main',
           scope: 'per-sender',
-          agents: [{ id: 'rongying-tpl-3f2a1b4c', name: '爆款内容教练' }],
+          agents: [{ id: gatewayAgentId, name: '爆款内容教练' }],
         },
       },
     });
@@ -165,12 +212,17 @@ describe('installTemplate —— 真安装的编排', () => {
 
     expect(outcome).toMatchObject({
       ok: true,
-      agentId: 'rongying-tpl-3f2a1b4c',
+      agentId: gatewayAgentId,
       alreadyInstalled: true,
     });
     expect(refreshAgents).toHaveBeenCalledOnce();
     expect(recordInstalled).toHaveBeenCalledOnce();
-    expect(staleApi.calls.map((call) => call.fn)).toEqual(['createAgent', 'listAgents']);
+    expect(staleApi.calls.map((call) => call.fn)).toEqual([
+      'createAgent',
+      'listAgents',
+      'getAgentFile',
+      'getAgentFile',
+    ]);
   });
 
   /**
@@ -213,6 +265,35 @@ describe('installTemplate —— 真安装的编排', () => {
     const outcome = await installTemplate(deps, template);
     expect(outcome.ok).toBe(false);
     expect(outcome.message ?? '').toMatch(/[\u4e00-\u9fa5]/);
+    expect(outcome.messageKey).toBe('market.error.noGateway');
     expect(recordInstalled).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⭐ 2026-10-07（质检 P1-2）：失败文案要**成对**给出 —— i18n 键给 UI（9 语言），
+   *    中文回落给没有 `t()` 的调用方；两条都不许出现机器码/英文原文。
+   */
+  it('⭐ 失败 = i18n 键 + 中文回落成对（坏工作区 / 未连网关各走各的键）', async () => {
+    const noGateway = await installTemplate(makeDeps({ gatewayId: '' }).deps, template);
+    expect(noGateway).toMatchObject({ ok: false, messageKey: 'market.error.noGateway' });
+    expect(noGateway.message ?? '').toMatch(/[一-龥]/);
+
+    const unavailable = await installTemplate(makeDeps({ workspaceRoot: null }).deps, template);
+    expect(unavailable.messageKey).toBe('market.error.workspaceUnavailable');
+    expect(unavailable.message ?? '').toMatch(/[一-龥]/);
+
+    const unsupported = await installTemplate(
+      makeDeps({
+        probeWorkspaceFsIdentity: vi.fn(async () => ({
+          state: 'unsupported-identity' as const,
+          dev: null,
+          ino: null,
+          error: 'unsupported filesystem: exFAT',
+        })),
+      }).deps,
+      template,
+    );
+    expect(unsupported.messageKey).toBe('market.error.workspaceUnsupported');
+    expect(unsupported.message ?? '').not.toContain('exFAT');
   });
 });

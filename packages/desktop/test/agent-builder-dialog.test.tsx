@@ -350,6 +350,10 @@ describe('AgentBuilderDialog', () => {
     const name = '\u878d\u8d44\u4e3b\u7ba1';
     const view = render();
     expect(session.start.mock.calls[0]?.[0].initialMessage).not.toContain('MUST be in English');
+    expect(session.start.mock.calls[0]?.[0].initialMessage).toContain('Default response language: Simplified Chinese.');
+    expect(session.start.mock.calls[0]?.[0].initialMessage).toContain(
+      'visible text in generated pages, documents, and presentations',
+    );
     typeInto(inputByName(view.container, translate('settings.agentName')) as HTMLElement, name);
     await act(async () => {
       buttonByText(view.container, translate('settings.agentBuilderCreate'))?.click();

@@ -13,13 +13,23 @@ import type { GatewayChildProcess } from '../src/main/runtime/gateway-process.js
  * 因为关一个客户端就把它杀掉，是那种"看着正常、用户丢了会话才发现"的事故。
  */
 
-function makeChild(pid = 777): GatewayChildProcess & { killed: boolean } {
+function makeChild(pid = 777): GatewayChildProcess & { killed: boolean; exited: boolean; exitNow: () => void } {
+  const listeners: Array<() => void> = [];
   const c = {
     pid,
     killed: false,
-    onExit: () => {},
+    exited: false,
+    // 与真实包装 `toGatewayChild` 语义一致：已退出则**同步**回调，否则挂监听。
+    onExit: (listener: () => void) => {
+      if (c.exited) listener();
+      else listeners.push(listener);
+    },
     kill: () => {
       c.killed = true;
+    },
+    exitNow: () => {
+      c.exited = true;
+      for (const listener of listeners.splice(0)) listener();
     },
   };
   return c;
@@ -90,6 +100,30 @@ describe('stopGateway', () => {
 
     expect(child.killed).toBe(true);
     expect(opts.taskkill).toHaveBeenCalledWith(777);
+  });
+
+  it('⭐ 子进程已退出（句柄已关）⇒ 绝不对这个 pid 再打 taskkill —— pid 可能已被系统复用', async () => {
+    // 生产 stderr 的常态：收尾时网关早已退出（`taskkill … status 128`）。
+    // 那一刻 Node 已回收子进程句柄 —— Windows 可以把同一个 pid 发给**任何**新进程，
+    // `taskkill /PID /T /F` 会连它整棵子树一起杀。所以只在"还没退出"时才允许兜底。
+    const child = makeChild(777);
+    child.exitNow();
+    const opts = stopOpts(child);
+    await stopGateway(opts);
+    expect(opts.runCommand).toHaveBeenCalledTimes(1); // 优雅 stop 照旧
+    expect(child.killed).toBe(true); // child.kill 是 handle 级操作，安全，照旧
+    expect(opts.taskkill).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 退出事件已送达（优雅 stop 期间自己退的）⇒ 同样不打 taskkill', async () => {
+    const child = makeChild(888);
+    const opts = stopOpts(child);
+    opts.runCommand = vi.fn(() => {
+      child.exitNow();
+    });
+    await stopGateway(opts);
+    expect(child.killed).toBe(true);
+    expect(opts.taskkill).not.toHaveBeenCalled();
   });
 
   it('taskkill 失败也不抛（进程往往已经死了，那是常态）', async () => {

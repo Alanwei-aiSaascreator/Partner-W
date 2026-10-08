@@ -102,6 +102,19 @@ export type DocgenFailure =
    */
   | { code: 'docgen-reply-unavailable' }
   /**
+   * ⭐ **这条通道不做演示**（H0 硬门，2026-10-07）：这一轮用户要的是"给人看的演示"
+   * （`newDeckIntent` / `revisionIntent`），客户端**拒收** `kind:"pptx"` 的 docgen 请求，
+   * 让它改走「幻灯版面（自己排）」—— 整份版面写进 `.slidegen` 文件、按该技能 SKILL.md 出片。
+   *
+   * 为什么必须是**一条失败**而不是静默跳过：跳过之后那段 docgen 块什么也不产出，
+   * 用户与模型都看不到任何解释 ⇒ 又回到"它说做好了、面板里什么都没有"。
+   * 这条码的文案同时是**给模型的下一步**（写着该走哪条路）。
+   *
+   * ⚠️ `format` 恒为 `'pptx'`（拦的就是演示那一种）；留着它是因为下游 toast 按格式说名字，
+   *    去掉它会让"没生成的是什么"少一格。
+   */
+  | { code: 'presentation-slidegen-required'; format: DocgenFormat }
+  /**
    * 渲染/落盘时出的其它错（我们自己的意外，不假装知道原因）。
    *
    * `maxChars` 出现在上面几条上，含义是**这一页 / 这个标题最多能放几个全角字**。

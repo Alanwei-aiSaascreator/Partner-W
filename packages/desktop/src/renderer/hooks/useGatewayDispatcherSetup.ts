@@ -94,6 +94,8 @@ function getDispatcher(): GatewayDispatcher {
       setGatewayStatusByGateway: (gatewayId, status) =>
         useUiStore.getState().setGatewayStatusByGateway(gatewayId, status),
       setGatewayVersion: (gatewayId, version) => useUiStore.getState().setGatewayVersion(gatewayId, version),
+      setGatewayMaxPayloadByGateway: (gatewayId, bytes) =>
+        useUiStore.getState().setGatewayMaxPayloadByGateway(gatewayId, bytes),
       setGatewayReconnectInfo: (gatewayId, info) => useUiStore.getState().setGatewayReconnectInfo(gatewayId, info),
       setRuntimeBootstrapFailure: (reason) => useUiStore.getState().setRuntimeBootstrapFailure(reason),
       setDefaultGatewayId: (id) => useUiStore.getState().setDefaultGatewayId(id),
@@ -180,6 +182,13 @@ export function useGatewayDispatcherSetup(): GatewayDispatcher {
 export async function fetchAgentsForGateway(gatewayId: string, options: { force?: boolean } = {}): Promise<void> {
   const agentCatalog = useUiStore.getState().agentCatalogByGateway;
   return getDispatcher().fetchAgentsForGateway(gatewayId, agentCatalog, options);
+}
+
+export async function refreshCatalogsForGateway(
+  gatewayId: string,
+  options: { isCurrent?: () => boolean } = {},
+): Promise<void> {
+  await getDispatcher().refreshCatalogsForGateway(gatewayId, options);
 }
 
 export async function reinitializeGatewayBootstrap(): Promise<void> {

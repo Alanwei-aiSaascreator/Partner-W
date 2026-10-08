@@ -52,6 +52,10 @@ export function docgenFailureMessage(failure: DocgenFailure, t: Translate): stri
     case 'docgen-reply-unavailable':
       // 没取到本轮那条回复 ⇒ **我们没生成**（宁可没有，也不给半份）。重试有意义。
       return t('docgen.replyUnavailable');
+    case 'presentation-slidegen-required':
+      // ⭐ H0 硬门（2026-10-07）：这条**同时**是给用户的解释和给模型的下一步 ——
+      //    演示改走「幻灯版面」，整份版面写进 `.slidegen` 文件。路线逐字写在这条文案里。
+      return t('docgen.slidegenRequired');
     case 'render-failed':
       return t('docgen.renderFailed', { format: failure.format });
   }

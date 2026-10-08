@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { cn, formatFileSize, formatRelativeTime } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getArtifactLabel } from '@/lib/artifact-labels';
+import { fileExtensionOf, openFailureKind, openFailureMessageKey, type OpenFailureKind } from '@/lib/open-failure';
 import ArtifactThumbnail from '@/components/ArtifactThumbnail';
 import { Button } from '@/components/ui/button';
 
@@ -16,6 +17,8 @@ interface ArtifactCardProps {
 }
 
 type ActionState = 'idle' | 'saving' | 'saved' | 'cancelled' | 'error';
+
+// 打开失败原因的分类与文案（BUG-042-b）——唯一真源在 `@/lib/open-failure`（FileBrowser 同款复用）。
 
 /**
  * 只把真正的绝对路径呈现给用户。
@@ -38,8 +41,16 @@ export default function ArtifactCard({
 }: ArtifactCardProps) {
   const { t } = useTranslation();
   const [state, setState] = useState<ActionState>('idle');
+  /** 打开失败的原因面：留下来（不像其它状态 2.4 秒自灭），见下面 catch 的注释。 */
+  const [openFailure, setOpenFailure] = useState<OpenFailureKind | null>(null);
   const [pathCopied, setPathCopied] = useState(false);
   const available = artifact.availability === 'available';
+  /**
+   * `unknown` = "现在判不了"（助手工作区还没解析出来，冷启动/网关没连上）。
+   * ⚠️ 它不是 `missing` 的近义：**不许**打警告标、**不许**说"重新生成" —— 那是在教用户
+   *    修一个可能根本没坏的文件（P2-3）。
+   */
+  const pending = artifact.availability === 'unknown';
   const absolutePath = absoluteArtifactPath(artifact.filePath);
 
   useEffect(() => {
@@ -60,6 +71,7 @@ export default function ArtifactCard({
 
   const runAction = async (action: 'save' | 'open' | 'reveal'): Promise<void> => {
     if (!available || state === 'saving') return;
+    setOpenFailure(null);
     if (action === 'save') setState('saving');
     try {
       const response =
@@ -73,9 +85,13 @@ export default function ArtifactCard({
         setState(response.result?.status === 'cancelled' ? 'cancelled' : 'saved');
         window.setTimeout(() => setState('idle'), 1800);
       }
-    } catch {
+    } catch (error) {
       setState('error');
-      window.setTimeout(() => setState('idle'), 2400);
+      // 打开失败要**带着下一步**留下（P3-8）：2.4 秒一闪而过的通用文案等于什么都没说，
+      // 而这时用户唯一能做的事是"去文件夹里手动打开"—— 那句话必须在屏上。
+      // ⭐ BUG-042-b：失败原因按主进程回的稳定标记分流 —— 只有确证坏件才说"损坏"。
+      if (action === 'open') setOpenFailure(openFailureKind(error instanceof Error ? error.message : ''));
+      else window.setTimeout(() => setState('idle'), 2400);
     }
   };
 
@@ -86,7 +102,7 @@ export default function ArtifactCard({
       : state === 'cancelled'
         ? t('artifactCard.cancelled')
         : state === 'error'
-          ? t('artifactCard.error')
+          ? t(openFailureMessageKey(openFailure ?? 'other'), { ext: fileExtensionOf(artifact.name) })
           : t('artifactCard.available');
   const identity = (
     <>
@@ -153,12 +169,16 @@ export default function ArtifactCard({
         <span
           className={cn(
             'type-support mr-auto inline-flex min-w-0 items-center gap-1.5',
-            available ? 'text-[var(--text-muted)]' : 'text-[var(--warning)]',
+            !available && !pending ? 'text-[var(--warning)]' : 'text-[var(--text-muted)]',
           )}
           role="status"
           aria-live="polite"
         >
-          {!available ? <FileWarning size={13} className="shrink-0" /> : state === 'saved' ? <Check size={13} /> : null}
+          {!available && !pending ? (
+            <FileWarning size={13} className="shrink-0" />
+          ) : state === 'saved' ? (
+            <Check size={13} />
+          ) : null}
           <span className="truncate">{statusLabel}</span>
         </span>
         <Button
@@ -199,8 +219,11 @@ export default function ArtifactCard({
           {t('artifactCard.saveAs')}
         </Button>
       </div>
-      {!available ? (
+      {!available && !pending ? (
         <p className="type-support mt-2 text-[var(--text-muted)]">{t('artifactCard.recoveryHint')}</p>
+      ) : null}
+      {openFailure !== null ? (
+        <p className="type-support mt-2 text-[var(--text-muted)]">{t('artifactCard.openFailedHint')}</p>
       ) : null}
     </article>
   );

@@ -18,6 +18,14 @@ export type GatewayFailureReason =
   /** 等就绪**等满了超时**（慢 ⇒ 终态，绝不重试三次）。 */
   | 'ready-timeout'
   | 'state-migration-blocked'
+  /**
+   * **从盘上准备运行环境**这一步失败（找不到运行时盘 / 盘上那两份文件读不出来 / 归档坏了）。
+   *
+   * ⚠️ 与"网关起不来"是**两回事**：那几类要用户去关别的程序或查激活，这一类的出口
+   *    在**盘上**（插好盘 / 换回随附那块 / 解除写保护 / 换一份完整的运行时）。
+   *    闭集里单独一档，界面才说得出"是盘的问题"而不是笼统的 `unknown`。
+   */
+  | 'deploy-failed'
   /** 说不清就是说不清 —— **不猜**。 */
   | 'unknown';
 
@@ -38,15 +46,17 @@ export const GATEWAY_FAILURE_REASONS = [
   'process-exited',
   'ready-timeout',
   'state-migration-blocked',
+  'deploy-failed',
   'unknown',
 ] as const satisfies readonly GatewayFailureReason[];
 
-/** 中转（runtime bootstrap）那两个码到公开原因的映射。 */
+/** 本机运行时 bootstrap 的失败码到公开原因的映射。 */
 const FROM_BOOTSTRAP_CODE: Readonly<Record<string, GatewayFailureReason>> = {
   'runtime.gateway-port-occupied': 'port-occupied',
   'runtime.gateway-process-exited': 'process-exited',
   'runtime.gateway-ready-timeout': 'ready-timeout',
   'runtime.portable-state-migration-blocked': 'state-migration-blocked',
+  'runtime.deploy-failed': 'deploy-failed',
 };
 
 /**

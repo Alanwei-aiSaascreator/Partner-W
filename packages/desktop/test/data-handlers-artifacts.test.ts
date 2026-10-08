@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import JSZip from 'jszip';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const autoExtractArtifactsMock = vi.fn();
+/**
+ * `getSqlite()` 默认 null（无库=多数用例的常态）；BUG-038 的用例把它换成
+ * 一个带 `prepare().all()` 的桩，喂"本任务已登记的产物名"。
+ */
+const getSqliteMock = vi.fn((): unknown => null);
 const captureTaskArtifactBaselineMock = vi.fn();
 const reconcileTaskArtifactsMock = vi.fn();
 const getGatewayClientMock = vi.fn();
@@ -39,6 +48,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../src/main/db/index.js', () => ({
   getDb: vi.fn(() => dbMock),
+  getSqlite: getSqliteMock,
   isDbReady: vi.fn(() => true),
 }));
 
@@ -64,6 +74,37 @@ async function flushJobs(): Promise<void> {
 
 async function flushMicrotasks(): Promise<void> {
   for (let index = 0; index < 6; index += 1) await Promise.resolve();
+}
+
+/**
+ * 按**链**取 `reconcileTaskArtifacts` 的调用。
+ *
+ * ⚠️ 2026-10-07 起，一轮收尾会跑**两条**链：应用根（缺省 `rootKind`）与
+ *    **应用工作区根层**（第三个根，`rootKind:'workspace-root'`）；助手工作区解析得出来时
+ *    再多一条 `'agent'`。所以"这一轮跑了几次"必须**按链**问，而不是数总次数 ——
+ *    数总数会让这些用例的语义变成"第三条链在不在"，而不是"这条链的时序对不对"。
+ */
+function reconcileCalls(rootKind?: 'workspace' | 'agent' | 'workspace-root') {
+  const wanted = rootKind ?? 'workspace';
+  return reconcileTaskArtifactsMock.mock.calls.filter(
+    ([input]) => ((input as { rootKind?: string }).rootKind ?? 'workspace') === wanted,
+  );
+}
+
+/**
+ * 给**应用根**那条基线排一条队列；**第三个根**（应用工作区根层）一律回空快照。
+ *
+ * ⚠️ 这些用例钉的是应用根那条链的时序/归属（哪一轮拿哪份基线），根层那趟不该干扰它们：
+ *    真按调用顺序往下发 `mockResolvedValueOnce`，根层那趟会把下一轮的值吃掉。
+ */
+function appRootBaselines(...baselines: Array<Record<string, string> | Error>): void {
+  const queue = [...baselines];
+  captureTaskArtifactBaselineMock.mockImplementation(async (input: { rootKind?: string }) => {
+    if (input.rootKind === 'workspace-root') return {};
+    const next = queue.shift() ?? { 'before.txt': 'signature' };
+    if (next instanceof Error) throw next;
+    return next;
+  });
 }
 
 describe('assistant artifact reconciliation boundary', () => {
@@ -257,7 +298,8 @@ describe('assistant artifact reconciliation boundary', () => {
     selectGetMock.mockReturnValueOnce({ id: 'next-message' }).mockReturnValueOnce({ gid: 'gateway-1' });
     handler({}, { ...msg, id: 'next-message', runId: 'run-new', timestamp: '2026-09-30T00:00:01.000Z' });
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
+    // 两轮各跑一遍**应用根**那条链（第三个根那条另算 —— 见 `reconcileCalls`）。
+    expect(reconcileCalls()).toHaveLength(2);
   });
   it.each(['database', 'workspace', 'run'])(
     'discards old history failure after %s replacement',
@@ -559,6 +601,7 @@ describe('assistant artifact reconciliation boundary', () => {
     consoleErrorMock.mockClear();
     withTeamMeetingTaskDeletionMock.mockReset().mockImplementation((_taskId, remove) => remove());
     dbMock.delete.mockClear();
+    getSqliteMock.mockReset().mockReturnValue(null);
   });
 
   it('uses the gateway-start baseline even when output appears before the user message is persisted', async () => {
@@ -597,10 +640,17 @@ describe('assistant artifact reconciliation boundary', () => {
       ),
     ).toEqual({ ok: true });
     await flushJobs();
-    expect(captureTaskArtifactBaselineMock).toHaveBeenCalledTimes(1);
+    // 起跑那一刻采**两份**基线：应用根（任务目录）与**应用工作区根层**（第三个根，2026-10-07）。
+    // 两份都必须在"用户消息落库之前"这一刻拿到 —— 晚一刻就会把这一轮新写的文件当成"之前就有"。
+    expect(captureTaskArtifactBaselineMock).toHaveBeenCalledTimes(2);
     expect(captureTaskArtifactBaselineMock).toHaveBeenCalledWith({
       workspacePath: 'C:\\trusted-workspace',
       taskId: 'task-1',
+    });
+    expect(captureTaskArtifactBaselineMock).toHaveBeenCalledWith({
+      workspacePath: 'C:\\trusted-workspace',
+      taskId: 'task-1',
+      rootKind: 'workspace-root',
     });
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
@@ -652,7 +702,7 @@ describe('assistant artifact reconciliation boundary', () => {
       ),
     ).toEqual({ ok: true });
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileCalls()).toHaveLength(1);
   });
 
   it('does not reconcile while a tool call is still running', async () => {
@@ -701,7 +751,7 @@ describe('assistant artifact reconciliation boundary', () => {
     ).toEqual({ ok: true });
     await flushJobs();
     expect(autoExtractArtifactsMock).toHaveBeenCalledTimes(1);
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileCalls()).toHaveLength(1);
 
     selectGetMock.mockReturnValueOnce({ id: 'tool-only-replay' });
     handleMap.get('data:create-message')!(
@@ -717,13 +767,11 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileCalls()).toHaveLength(1);
   });
 
   it('does not clear a newer retry run when an older reconciliation finishes later', async () => {
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     let finishFirst!: (value: unknown) => void;
     reconcileTaskArtifactsMock.mockImplementationOnce(
       () =>
@@ -762,21 +810,15 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
-    expect(reconcileTaskArtifactsMock.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ baseline: { 'a-before.txt': 'a' } }),
-    );
-    expect(reconcileTaskArtifactsMock.mock.calls[1][0]).toEqual(
-      expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }),
-    );
+    expect(reconcileCalls()).toHaveLength(2);
+    expect(reconcileCalls()[0]![0]).toEqual(expect.objectContaining({ baseline: { 'a-before.txt': 'a' } }));
+    expect(reconcileCalls()[1]![0]).toEqual(expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }));
     finishFirst({ saved: [], existing: [], missing: [], skipped: [], budgetExhausted: false });
     await flushJobs();
   });
 
   it('consumes same-session runs FIFO when B begins before A terminal persistence', async () => {
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
@@ -801,19 +843,13 @@ describe('assistant artifact reconciliation boundary', () => {
       await flushJobs();
     }
 
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
-    expect(reconcileTaskArtifactsMock.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ baseline: { 'a-before.txt': 'a' } }),
-    );
-    expect(reconcileTaskArtifactsMock.mock.calls[1][0]).toEqual(
-      expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }),
-    );
+    expect(reconcileCalls()).toHaveLength(2);
+    expect(reconcileCalls()[0]![0]).toEqual(expect.objectContaining({ baseline: { 'a-before.txt': 'a' } }));
+    expect(reconcileCalls()[1]![0]).toEqual(expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }));
   });
 
   it('strictly binds out-of-order terminal messages to gateway run ids', async () => {
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
       await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
@@ -842,10 +878,10 @@ describe('assistant artifact reconciliation boundary', () => {
       await flushJobs();
     }
 
-    expect(reconcileTaskArtifactsMock.mock.calls[0][0]).toEqual(
+    expect(reconcileCalls()[0]![0]).toEqual(
       expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
     );
-    expect(reconcileTaskArtifactsMock.mock.calls[1][0]).toEqual(
+    expect(reconcileCalls()[1]![0]).toEqual(
       expect.objectContaining({ messageId: 'assistant-a', baseline: { 'a-before.txt': 'a' } }),
     );
   });
@@ -882,7 +918,7 @@ describe('assistant artifact reconciliation boundary', () => {
         },
       );
       await flushJobs();
-      expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(canceled ? 0 : 1);
+      expect(reconcileCalls()).toHaveLength(canceled ? 0 : 1);
       const visibleFailures = webContentsSendMock.mock.calls.filter(
         ([channel]) => channel === 'artifact:claim-violation',
       );
@@ -891,9 +927,7 @@ describe('assistant artifact reconciliation boundary', () => {
   );
 
   it('does not let a completed assistant replay consume the following run', async () => {
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
@@ -941,17 +975,15 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
 
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
-    expect(reconcileTaskArtifactsMock.mock.calls[1][0]).toEqual(
+    expect(reconcileCalls()).toHaveLength(2);
+    expect(reconcileCalls()[1]![0]).toEqual(
       expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
     );
   });
 
   it('fails the session closed when completed-message dedupe TTL expires', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
@@ -968,7 +1000,7 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileCalls()).toHaveLength(1);
 
     now.mockReturnValue(25 * 60 * 60 * 1000);
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
@@ -985,7 +1017,7 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileCalls()).toHaveLength(1);
     now.mockRestore();
   });
 
@@ -1010,7 +1042,8 @@ describe('assistant artifact reconciliation boundary', () => {
       );
       await flushMicrotasks();
     }
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2050);
+    // 按**链**数：应用根那条正好每条完成消息一次（第三个根那条另有各一次，见 `reconcileCalls`）。
+    expect(reconcileCalls()).toHaveLength(2050);
 
     beginArtifactRun('C:\\trusted-workspace', 'dedupe-task-0', 'dedupe-session-0');
     selectGetMock.mockReturnValueOnce({ id: 'after-limit' });
@@ -1026,14 +1059,12 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2050);
+    expect(reconcileCalls()).toHaveLength(2050);
   });
 
   it('keeps an expired run as a tombstone so its late final cannot steal B', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
@@ -1075,9 +1106,7 @@ describe('assistant artifact reconciliation boundary', () => {
   });
 
   it('consumes a failed-baseline slot without stealing the following run', async () => {
-    captureTaskArtifactBaselineMock
-      .mockRejectedValueOnce(new Error('baseline failed'))
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines(new Error('baseline failed'), { 'b-before.txt': 'b' });
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
     beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
@@ -1096,7 +1125,8 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+    // 没采到基线的那一轮，**应用根**那条链一次都不跑（第三个根那条有它自己的基线，另算）。
+    expect(reconcileCalls()).toHaveLength(0);
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-b' }).mockReturnValueOnce({ gid: 'gateway-1' });
     handleMap.get('data:create-message')!(
@@ -1111,15 +1141,12 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }),
-    );
+    // B 拿到的是**它自己**那份基线（A 的失败没有被后面的轮次捡走）
+    expect(reconcileCalls()[0]?.[0]).toEqual(expect.objectContaining({ baseline: { 'b-before.txt': 'b' } }));
   });
 
   it('keeps failed dispatch A as a tombstone and leaves same-session B queued', async () => {
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' });
     const { beginArtifactRun, cancelArtifactRun, registerDataHandlers } =
       await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
@@ -1140,7 +1167,7 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
+    expect(reconcileCalls()).toHaveLength(0);
 
     selectGetMock.mockReturnValueOnce({ id: 'assistant-b' }).mockReturnValueOnce({ gid: 'gateway-1' });
     handleMap.get('data:create-message')!(
@@ -1155,16 +1182,13 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledWith(
+    expect(reconcileCalls()[0]?.[0]).toEqual(
       expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
     );
   });
 
   it('correlates a late terminal run id to the oldest unbound tombstone', async () => {
-    captureTaskArtifactBaselineMock
-      .mockResolvedValueOnce({ 'a-before.txt': 'a' })
-      .mockResolvedValueOnce({ 'b-before.txt': 'b' })
-      .mockResolvedValueOnce({ 'c-before.txt': 'c' });
+    appRootBaselines({ 'a-before.txt': 'a' }, { 'b-before.txt': 'b' }, { 'c-before.txt': 'c' });
     const { beginArtifactRun, bindArtifactRun, cancelArtifactRun, registerDataHandlers } =
       await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
@@ -1208,8 +1232,7 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
 
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(2);
-    expect(reconcileTaskArtifactsMock.mock.calls.map((call) => call[0])).toEqual([
+    expect(reconcileCalls().map((call) => call[0])).toEqual([
       expect.objectContaining({ messageId: 'assistant-b', baseline: { 'b-before.txt': 'b' } }),
       expect.objectContaining({ messageId: 'assistant-c', baseline: { 'c-before.txt': 'c' } }),
     ]);
@@ -1268,7 +1291,7 @@ describe('assistant artifact reconciliation boundary', () => {
       },
     );
     await flushJobs();
-    expect(reconcileTaskArtifactsMock).toHaveBeenCalledTimes(1);
+    expect(reconcileCalls()).toHaveLength(1);
   });
 
   it('expires old runs and bounds the registry so abandoned sends cannot live forever', async () => {
@@ -1588,11 +1611,15 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
 
+    // ⭐ 2026-10-04：未登记到成果列表的格式走**独立字段** `missingKinds` —— 不再与
+    //    "物理上找不到的文件"混成同一句话（真机：文件在盘上却被说成"工作区里没有"）。
+    //    这条守卫的力度**不变**：明确要了 PPT、本轮没产出，就必须报。
     expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
       taskId: 'task-1',
       sessionKey: 'session-task-1',
       messageId: 'assistant-persisted',
-      missing: ['PPT/PPTX 演示文稿'],
+      missing: [],
+      missingKinds: ['PPT/PPTX 演示文稿'],
     });
   });
 
@@ -1685,11 +1712,13 @@ describe('assistant artifact reconciliation boundary', () => {
     );
     await flushJobs();
 
+    // 同上：格式缺失经 `missingKinds` 独立上报，守卫力度不变。
     expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
       taskId: 'task-1',
       sessionKey: 'session-task-1',
       messageId: 'assistant-persisted',
-      missing: ['HTML 网页'],
+      missing: [],
+      missingKinds: ['HTML 网页'],
     });
   });
 
@@ -1723,6 +1752,154 @@ describe('assistant artifact reconciliation boundary', () => {
     await flushJobs();
 
     expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+  });
+
+  /**
+   * ⭐⭐ BUG-038（2026-10-08 亲验）：claim-guard 的**假失败**。
+   *
+   * 模型在后续轮次里**引用本任务已经登记过的产物名**（"已生成 report.docx，在上一版基础上补充…"）时，
+   * 那份文件本来就不该在本轮变新 —— 旧判据拿 `sinceMs` 一把否定 ⇒ 每轮弹「说好的文件不在」。
+   * 判据修正：名字**在本任务已登记的 artifact 集合里** ⇒ 不计入 missing。
+   * ⚠️ 守卫强度对**未登记**的名字照旧（下一条负对照）。
+   */
+  describe('⭐ claim-guard 已登记名豁免（BUG-038）', () => {
+    const registeredSqlite = (names: string[]) =>
+      getSqliteMock.mockReturnValue({
+        prepare: vi.fn(() => ({ all: vi.fn(() => names.map((name) => ({ name }))) })),
+      });
+
+    async function persistClaim(content: string): Promise<void> {
+      const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-incoming',
+          taskId: 'task-1',
+          role: 'assistant',
+          content,
+          timestamp: '2026-10-08T00:00:02.000Z',
+          sessionKey: 'session-task-1',
+        },
+      );
+      await flushJobs();
+    }
+
+    it('⭐ 引用的名字在本任务已登记 ⇒ 不推「说好的文件不在」', async () => {
+      registeredSqlite(['report.docx']);
+      await persistClaim('已生成 report.docx，在上一版基础上补充了结论一节。');
+      expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+    });
+
+    it('⭐ 负对照：同一条回复，名字**没登记过** ⇒ 照旧报 missing（守卫强度不许松）', async () => {
+      registeredSqlite(['other.docx']);
+      await persistClaim('已生成 report.docx，在上一版基础上补充了结论一节。');
+      expect(webContentsSendMock).toHaveBeenCalledWith(
+        'artifact:claim-violation',
+        expect.objectContaining({ messageId: 'assistant-persisted', missing: ['report.docx'] }),
+      );
+    });
+
+    it('⭐ 负对照：没有库（getSqlite 为 null）⇒ 老行为一字不变', async () => {
+      await persistClaim('已生成 report.docx，在上一版基础上补充了结论一节。');
+      expect(webContentsSendMock).toHaveBeenCalledWith(
+        'artifact:claim-violation',
+        expect.objectContaining({ messageId: 'assistant-persisted', missing: ['report.docx'] }),
+      );
+    });
+  });
+
+  /**
+   * ⭐⭐ BUG-042-c（2026-10-08 亲验的 C1 静默丢弃）：**写出来的不是有效文档**。
+   *
+   * 真机形状：模型自己把 JSON / 纯文本改名成 `.docx` 写进工作区，回复说"已生成"。
+   * 文件**在**盘上（不算 missing）、登记门按字节拒收（只进 `skipped`）—— 从前界面上
+   * **一条提示都没有**。现在：如实说"写出的文件不是有效文档"（走既有 claim 通道）。
+   */
+  describe('⭐ 假文档（写出来但不是有效格式）不再静默（BUG-042-c）', () => {
+    async function validDocxBytes(): Promise<Buffer> {
+      const zip = new JSZip();
+      zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types/>');
+      zip.file('word/document.xml', '<?xml version="1.0"?><w:document/>');
+      return (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer;
+    }
+
+    /** 走一遍真实收尾：工作区里放一份"这一轮写的" 季度报告.docx，回复声称已生成它。 */
+    async function persistClaim(workspace: string, bytes: string | Buffer, userContent?: string): Promise<void> {
+      reconcileTaskArtifactsMock.mockResolvedValue({
+        saved: [],
+        existing: [],
+        updated: [],
+        missing: [],
+        skipped: [],
+        budgetExhausted: false,
+      });
+      // ⚠️ 收尾链的 `workspacePath` 走的是 `getWorkspacePath()`（不是 begin 时传的那个）：
+      //    两个都指到临时目录，这条链才是在**真实的工作区**上核对。
+      getWorkspacePathMock.mockReturnValue(workspace);
+      const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      beginArtifactRun(workspace, 'task-1', 'session-task-1', userContent ? { userContent } : undefined);
+      // 文件在"本轮开始之后"出现（与真机一致：模型这一轮写出来的）。
+      writeFileSync(join(workspace, '季度报告.docx'), bytes);
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-incoming',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '已生成 季度报告.docx，请查收。',
+          timestamp: '2026-10-08T00:00:02.000Z',
+          sessionKey: 'session-task-1',
+        },
+      );
+      await flushJobs();
+    }
+
+    it('⭐ JSON 伪装成 .docx ⇒ 报 invalidArtifacts，整轮判 failed', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'claim-invalid-ws-'));
+      try {
+        await persistClaim(workspace, '{"kind":"docx","sections":[]}');
+        expect(webContentsSendMock).toHaveBeenCalledWith(
+          'artifact:claim-violation',
+          expect.objectContaining({ messageId: 'assistant-persisted', invalidArtifacts: ['季度报告.docx'] }),
+        );
+        expect(webContentsSendMock).toHaveBeenCalledWith(
+          'artifact:delivery-settled',
+          expect.objectContaining({ messageId: 'assistant-persisted', status: 'failed' }),
+        );
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 用户明确要 Word 但拿到的是假件 ⇒ 只说"不是有效文档"，不再叠一句更含糊的"成果没有登记"', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'claim-invalid-kinds-ws-'));
+      try {
+        await persistClaim(workspace, '{"kind":"docx","sections":[]}', '给我做一份 Word 文档');
+        const violation = webContentsSendMock.mock.calls.find(
+          ([channel]) => channel === 'artifact:claim-violation',
+        )?.[1];
+        expect(violation).toMatchObject({ invalidArtifacts: ['季度报告.docx'] });
+        // 取舍写在案：含义更准的那条胜出（两层说的是同一件事，先弹更含糊的会误导）。
+        expect(violation?.missingKinds).toBeUndefined();
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 负对照：盘上那份是真 .docx ⇒ 一条失败都不报（别把正常的打成假文档）', async () => {
+      const workspace = mkdtempSync(join(tmpdir(), 'claim-valid-ws-'));
+      try {
+        await persistClaim(workspace, await validDocxBytes());
+        expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
   });
 
   it('clears every artifact run for a deleted task', async () => {
@@ -1878,6 +2055,136 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(
       reconcileTaskArtifactsMock.mock.calls.some((call) => (call[0] as { rootKind?: string }).rootKind === undefined),
     ).toBe(true);
+  });
+
+  /**
+   * ⭐ **第三个根**：应用工作区**根层**（2026-10-07）。
+   *
+   * 现场：模型用 exec / CLI 把成品写到 `荣盈魔方工作区\荣盈互动公司介绍-v2-ade3018a.pptx`。
+   * 前两条链（`<工作区>/<taskId>`、助手工作区）一个都不覆盖 ⇒ 文件明明生成了、
+   * 产物面板里却什么都没有，**连失败提示都没有**（claim-guard 找得到，所以不算"丢了"）。
+   *
+   * ⚠️ 与应用根那条**同刻起跑**（`beginArtifactRun` 里）：它要抓的是"这一轮开始之前"
+   *    根层就有哪些文件 —— 晚一刻就会把用户自己的文件当成这一轮的产物。
+   */
+  it('⭐ 第三个根：应用工作区根层同刻起跑，收尾跑第三条 reconcile 并推送', async () => {
+    reconcileTaskArtifactsMock.mockImplementation(async (input: { rootKind?: string }) =>
+      input.rootKind === 'workspace-root'
+        ? {
+            saved: [
+              {
+                id: 'workspace-root-artifact',
+                name: '荣盈互动公司介绍-v2-ade3018a.pptx',
+                root: 'workspace-root',
+                localPath: '荣盈互动公司介绍-v2-ade3018a.pptx',
+              },
+            ],
+            existing: [],
+            updated: [],
+            missing: [],
+            skipped: [],
+            budgetExhausted: false,
+          }
+        : { saved: [], existing: [], updated: [], missing: [], skipped: [], budgetExhausted: false },
+    );
+    const { beginArtifactRunForGatewayDispatch, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    const createMessage = handleMap.get('data:create-message')!;
+    const sessionKey = 'session-task-1';
+
+    selectGetMock.mockReturnValueOnce({ id: 'task-1' });
+    beginArtifactRunForGatewayDispatch({
+      gatewayId: 'gateway-1',
+      sessionKey,
+      taskId: 'task-1',
+      userContent: '做一份公司介绍 PPT',
+    });
+    await flushJobs();
+
+    // 起跑那一刻就采根层基线（与应用根基线同一刻、**独立**的一趟）
+    expect(captureTaskArtifactBaselineMock).toHaveBeenCalledWith({
+      workspacePath: 'C:\\trusted-workspace',
+      taskId: 'task-1',
+      rootKind: 'workspace-root',
+    });
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    createMessage(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '完成',
+        timestamp: '2026-10-07T00:00:02.000Z',
+        sessionKey,
+        toolCalls: [{ id: 'tool-1', status: 'done' }],
+      },
+    );
+    await flushJobs();
+
+    expect(reconcileTaskArtifactsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspacePath: 'C:\\trusted-workspace',
+        taskId: 'task-1',
+        rootKind: 'workspace-root',
+      }),
+    );
+    // 根层收上来的产物必须**推给界面**（不推的话面板还是空的）
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:saved',
+      expect.objectContaining({ id: 'workspace-root-artifact', root: 'workspace-root' }),
+    );
+  });
+
+  /**
+   * ⭐ 第三个根的**fail-closed** 面（2026-10-07）。
+   *
+   * 根层基线采不到（根不可信 / IO 出错）时，那一趟**一次都不许扫** —— "没有基线就裸扫"
+   * 会把这一轮开始前就躺在根层的用户文件当成这一轮的产物。同时它必须是**软的**：
+   * 与"没有第二个根"同一条处置，绝不把整轮交付判成失败。
+   */
+  it('⭐ 第三个根：根层基线采不到 ⇒ 那一趟不扫（绝无基线裸扫），也不拖垮整轮交付', async () => {
+    captureTaskArtifactBaselineMock.mockImplementation(async (input: { rootKind?: string }) => {
+      if (input.rootKind === 'workspace-root') throw new Error('workspace root unavailable');
+      return { 'before.txt': 'signature' };
+    });
+    const { beginArtifactRunForGatewayDispatch, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    selectGetMock.mockReturnValueOnce({ id: 'task-1' });
+    beginArtifactRunForGatewayDispatch({
+      gatewayId: 'gateway-1',
+      sessionKey: 'session-task-1',
+      taskId: 'task-1',
+      userContent: '做一份公司介绍 PPT',
+    });
+    await flushJobs();
+
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '完成',
+        timestamp: '2026-10-07T00:00:03.000Z',
+        sessionKey: 'session-task-1',
+        toolCalls: [{ id: 'tool-1', status: 'done' }],
+      },
+    );
+    await flushJobs();
+
+    // 应用根那条照跑；根层那条**一次都没有**
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(reconcileCalls('workspace-root')).toHaveLength(0);
+    // 而且是软失败：整轮交付仍然按时结算（不是 failed、更不是悬着）
+    expect(webContentsSendMock).toHaveBeenCalledWith(
+      'artifact:delivery-settled',
+      expect.objectContaining({ taskId: 'task-1', status: 'succeeded' }),
+    );
   });
 
   it('⭐ 助手根登记出来的产物会**推送**给界面（不推的话面板还是空的）', async () => {

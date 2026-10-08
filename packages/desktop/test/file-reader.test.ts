@@ -9,7 +9,7 @@ vi.mock('fs', () => ({
   statSync: vi.fn(),
 }));
 
-import { readContextFile, resolveFdRealPath } from '../src/main/context/file-reader.js';
+import { readContextFile, readContextFileForSend, resolveFdRealPath } from '../src/main/context/file-reader.js';
 import { openSync, realpathSync, fstatSync, readSync, closeSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 
@@ -175,6 +175,43 @@ describe('readContextFile', () => {
     expect(mockRealpathSync).toHaveBeenCalledWith(filePath);
     expect(mockRealpathSync).not.toHaveBeenCalledWith(`/dev/fd/${FAKE_FD}`);
     win32Spy.mockRestore();
+  });
+});
+
+/**
+ * ⭐ 2026-10-07（质量战役区 2 · P2-1）：
+ *   - text tier 返回的 `byteLength` = **实际内联字节**（内容 + 截断标记），不是整份体积；
+ *   - text tier 的**单文件 25MB 前置闸放开**（30MB 的 .log 只带 100KB 上模型，
+ *     不该在"加进来"这一步就被拒）；二进制 tier 照旧受闸门约束。
+ */
+describe('readContextFileForSend（发送读）', () => {
+  it('⭐ text tier：30MB 的 .log 可读，byteLength 按实际内联字节（~100KB）回报', () => {
+    const filePath = join(CONTEXT_DIR, 'huge.log');
+    mockFile(filePath, 30 * 1024 * 1024);
+
+    const result = readContextFileForSend(filePath, [CONTEXT_DIR]);
+
+    expect(result.tier).toBe('text');
+    expect(result.size).toBe(30 * 1024 * 1024);
+    expect(result.truncated).toBe(true);
+    expect(result.byteLength).toBe(Buffer.byteLength(result.content, 'utf8'));
+    expect(result.byteLength).toBeLessThan(200 * 1024);
+  });
+
+  it('text tier：小文件 byteLength 与服务端实际带上的内容一致', () => {
+    const filePath = join(CONTEXT_DIR, 'small.ts');
+    mockFile(filePath, 50 * 1024);
+
+    const result = readContextFileForSend(filePath, [CONTEXT_DIR]);
+
+    expect(result.byteLength).toBe(Buffer.byteLength(result.content, 'utf8'));
+  });
+
+  it('二进制 tier：>25MB 仍被单文件闸门拒（text 才放开，base64 整份发送的照旧）', () => {
+    const filePath = join(CONTEXT_DIR, 'huge.pdf');
+    mockFile(filePath, 26 * 1024 * 1024);
+
+    expect(() => readContextFileForSend(filePath, [CONTEXT_DIR])).toThrow('context file is too large to send');
   });
 });
 

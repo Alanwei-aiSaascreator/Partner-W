@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { buildSessionKey } from '@clawwork/shared';
+import { resolveCatalogAgentId } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
 import type {
   AgentListResponse,
@@ -421,26 +422,37 @@ export default function CronJobDialog({ open, onOpenChange, gatewayId, editingJo
     let cancelled = false;
 
     setLoadingCatalogs(true);
-    Promise.all([window.clawwork.listAgents(gatewayId), window.clawwork.listModels(gatewayId)])
-      .then(([agentsRes, modelsRes]) => {
+    setModelOptions([]);
+    window.clawwork
+      .listAgents(gatewayId)
+      .then(async (agentsRes) => {
         if (cancelled) return;
-
+        let owner: string | undefined;
         if (agentsRes.ok && agentsRes.result) {
           const data = agentsRes.result as unknown as AgentListResponse;
+          const managementOwner = resolveCatalogAgentId(data);
+          owner = resolveCatalogAgentId(data, agentId || editingJob?.agentId);
           const agents = (data.agents ?? []).map((agent) => ({
             id: agent.id,
             name: agent.name ?? agent.identity?.name ?? agent.id,
           }));
           setAgentOptions(agents);
-          setDefaultAgentId(data.defaultId ?? '');
-          if (!editingJob && !agentId && data.defaultId) {
-            setAgentId(data.defaultId);
+          setDefaultAgentId(managementOwner ?? '');
+          if (!editingJob && !agentId && managementOwner) {
+            setAgentId(managementOwner);
           }
         }
-
+        if (!owner) {
+          setServerError(t('cron.errorCatalogLoad'));
+          return;
+        }
+        const modelsRes = await window.clawwork.listModels(gatewayId, owner);
+        if (cancelled) return;
         if (modelsRes.ok && modelsRes.result) {
           const data = modelsRes.result as unknown as ModelListResponse;
           setModelOptions((data.models ?? []).map((entry) => ({ id: entry.id, name: entry.name ?? entry.id })));
+        } else {
+          setServerError(t('cron.errorCatalogLoad'));
         }
       })
       .catch(() => {

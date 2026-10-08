@@ -57,6 +57,30 @@ fs.writeFileSync('invocation.json',JSON.stringify({flag,file,env:{temp:process.e
 const bytes=Buffer.from('actual-child-output');fs.writeFileSync('result.pptx',bytes);
 console.log(JSON.stringify({schemaVersion:1,status:'file-generated',fileCreated:true,artifactIndexed:false,fileName:'result.pptx',pages:2,bytes:bytes.length,sourceSha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),outputSha256:crypto.createHash('sha256').update(bytes).digest('hex'),warnings:[],visualReview:'not-performed'}));`;
 
+it('blocks a legacy PPT source before spawning in controlled native validation', () => {
+  configure(success);
+  const result = invoke([sourceName], { ROYIN_NATIVE_PPT_VALIDATION: '1' });
+  expect(result.status).toBe(1);
+  expect(result.report).toMatchObject({
+    status: 'source-invalid',
+    fileCreated: false,
+    diagnostics: [{ code: 'native-route-required' }],
+    runtimeCleanup: 'not-created',
+  });
+  expect(fs.existsSync(path.join(workspace, 'invocation.json'))).toBe(false);
+  expect(fs.existsSync(path.join(workspace, 'result.pptx'))).toBe(false);
+});
+
+it('uses the installed native command for a controlled source and its previous receipt', () => {
+  configure(success);
+  const native = 'report.native-ppt.json';
+  fs.writeFileSync(path.join(workspace, native), 'source');
+  expect(invoke([native, '--previous', 'report.receipt.json'], { ROYIN_NATIVE_PPT_VALIDATION: '1' }).status).toBe(0);
+  const invocation = JSON.parse(fs.readFileSync(path.join(workspace, 'invocation.json'), 'utf8'));
+  expect(invocation.flag).toBe('--royin-render-native-ppt');
+  expect(invocation.file).toBe(native);
+});
+
 it.each([
   { ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--no-warnings', NODE_PATH: 'untrusted' },
   { electron_run_as_node: '1', node_options: '--no-warnings', node_path: 'untrusted' },
@@ -261,4 +285,48 @@ it('preserves real page progress but reports unknown when the child times out af
     if (envBefore === undefined) delete process.env.ROYIN_SLIDEGEN_TIMEOUT_MS;
     else process.env.ROYIN_SLIDEGEN_TIMEOUT_MS = envBefore;
   }
+});
+
+/**
+ * ⭐ **B 包（2026-10-07）：报告里那句"东西写在哪"必须被校验，不能照单全收。**
+ *
+ * 缘由：CLI 的落点是**子进程的 cwd**（= 模型跑命令的目录），主进程对此零控制。
+ * 这一句 `outputDir` 是主进程把收据找回来、再把产物登记进任务目录的**唯一线索**；
+ * 而报告这一路会经过模型（工具结果原文），**模型可以编**。所以启动器这里先钉一道：
+ * 它自己的 cwd 就是子进程的 cwd（`spawn({cwd: workspace})`）—— 子进程说"我写在别处"
+ * 一定是假话，直接判报告不成立（`render-output-unconfirmed`，与其它报告校验同一条处置）。
+ *
+ * ⚠️ 没有这个字段的**照旧接受**：老子进程（未升级的运行时会话）与 native 路由都不发它。
+ */
+const withOutputDir = (expression: string) =>
+  success.replace("visualReview:'not-performed'}));", `visualReview:'not-performed',outputDir:${expression}}));`);
+
+it('⭐ accepts the report output location the child actually wrote into, and passes it through', () => {
+  configure(withOutputDir('require("node:fs").realpathSync(process.cwd())'));
+  const result = invoke();
+  expect(result.status).toBe(0);
+  expect(result.report).toMatchObject({
+    status: 'file-generated',
+    fileCreated: true,
+    outputDir: fs.realpathSync(workspace),
+  });
+});
+
+it('⭐ rejects a report that claims a directory outside its own workspace', () => {
+  configure(withOutputDir(JSON.stringify(path.join(root, 'elsewhere'))));
+  const result = invoke();
+  expect(result.status).toBe(1);
+  expect(result.report).toMatchObject({
+    status: 'output-unconfirmed',
+    fileCreated: null,
+    diagnostics: [{ code: 'render-output-unconfirmed' }],
+  });
+});
+
+it('⭐ keeps accepting reports that do not carry an output location at all', () => {
+  configure(success);
+  const result = invoke();
+  expect(result.status).toBe(0);
+  expect(result.report).toMatchObject({ status: 'file-generated', fileCreated: true });
+  expect(result.report).not.toHaveProperty('outputDir');
 });

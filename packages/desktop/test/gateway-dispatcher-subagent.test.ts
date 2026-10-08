@@ -35,6 +35,8 @@ function createHarness(
     setProcessing: vi.fn(),
     setRunPhase: vi.fn(),
     setSessionProgressText: vi.fn(),
+    // 包 D：错误释放点会登记「自动重试候选」——手写桩必须跟着长（缺了它错误分支会 TypeError）。
+    markAutoRetryFailure: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {

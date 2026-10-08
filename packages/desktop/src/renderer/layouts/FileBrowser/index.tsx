@@ -7,7 +7,8 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
-import { getArtifactKindFilter, getArtifactLabel, type ArtifactKindFilter } from '@/lib/artifact-labels';
+import { getArtifactDisplayName, getArtifactKindFilter, type ArtifactKindFilter } from '@/lib/artifact-labels';
+import { fileExtensionOf, openFailureKind, openFailureMessageKey } from '@/lib/open-failure';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import FileCard from '@/components/FileCard';
@@ -21,6 +22,7 @@ import ListItem from '@/components/semantic/ListItem';
 import SectionCard from '@/components/semantic/SectionCard';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import WorkspaceAccessSummary from './WorkspaceAccessSummary';
+import { toast } from '@/lib/toast';
 
 function sortArtifacts(list: Artifact[]): Artifact[] {
   return [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -94,24 +96,57 @@ export default function FileBrowser() {
     [setActiveTask, setHighlightedMessage, setMainView],
   );
 
+  /**
+   * 右键菜单里的"打开 / 定位"以前把返回值**直接丢掉**（2026-10-07 体检 P3-7）：
+   * 失败零反馈 —— 用户点了没动静，只能反复点。现在失败给一句 toast（成功不打扰）。
+   */
+  const reportFileActionFailure = useCallback(async (pending: Promise<{ ok: boolean }>, message: string) => {
+    try {
+      const response = await pending;
+      if (!response.ok) toast.error(message);
+    } catch {
+      toast.error(message);
+    }
+  }, []);
+
+  /**
+   * 「打开」的失败反馈（BUG-042-b）：按主进程稳定标记分流 ——
+   * 只有确证坏件说"损坏"；无关联程序说"装 Word/WPS"；其余中性。
+   * 真源在 `@/lib/open-failure`（与 ArtifactCard 共用，禁止本地重写分类）。
+   */
+  const reportOpenFailure = useCallback(
+    async (pending: Promise<{ ok: boolean; error?: string }>, name: string) => {
+      try {
+        const response = await pending;
+        if (response.ok) return;
+        const kind = openFailureKind(typeof response.error === 'string' ? response.error : '');
+        toast.error(t(openFailureMessageKey(kind), { ext: fileExtensionOf(name) }));
+      } catch {
+        toast.error(t('artifactCard.error'));
+      }
+    },
+    [t],
+  );
+
   const fileMenuItems = useMemo((): MenuItem[] => {
     if (!fileMenu) return [];
     const a = fileMenu.artifact;
     return [
       {
         label: t('filePreview.openInEditor'),
-        action: () => window.clawwork.openArtifactFile(a.id, a.taskId),
+        action: () => void reportOpenFailure(window.clawwork.openArtifactFile(a.id, a.taskId), a.name),
       },
       {
         label: t('filePreview.revealInFolder'),
-        action: () => window.clawwork.showArtifactInFolder(a.id, a.taskId),
+        action: () =>
+          void reportFileActionFailure(window.clawwork.showArtifactInFolder(a.id, a.taskId), t('artifactCard.error')),
       },
       {
         label: t('filePreview.goToSourceShort'),
         action: () => handleNavigateToTask(a.taskId, a.messageId),
       },
     ];
-  }, [fileMenu, t, handleNavigateToTask]);
+  }, [fileMenu, t, handleNavigateToTask, reportFileActionFailure, reportOpenFailure]);
 
   useEffect(() => {
     return () => setSelectedArtifact(null);
@@ -341,7 +376,7 @@ export default function FileBrowser() {
                       )}
                     >
                       <ListItem
-                        title={getArtifactLabel(r, t)}
+                        title={getArtifactDisplayName(r, t)}
                         subtitle={r.contentSnippet ? <SnippetHighlight snippet={r.contentSnippet} /> : undefined}
                         meta={taskMap.get(r.taskId) ?? r.taskId}
                         active={r.id === selectedId}

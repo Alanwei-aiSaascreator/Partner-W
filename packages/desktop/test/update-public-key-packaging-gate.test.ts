@@ -1,8 +1,9 @@
 import { generateKeyPairSync } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -154,6 +155,174 @@ describe('构建门禁：beforePack 钩子（electron-builder 的入口）', () 
   it('变量合法但产物里没有钥匙 ⇒ 抛错中止打包', async () => {
     envKey(ED25519_KEY);
     await expect(gate.beforePack(context, () => 'var k = "";\n')).rejects.toThrow(/构建中止/);
+  });
+});
+
+describe('public key in reachable Vite main chunks', () => {
+  function checkFiles(
+    files: Record<string, string> | ((root: string) => Record<string, string>),
+    setup?: (root: string) => void,
+  ): string | null {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'update-key-main-chunks-'));
+    if (path.dirname(root) !== path.resolve(os.tmpdir())) throw new Error('Unexpected fixture directory');
+    try {
+      for (const [name, source] of Object.entries(typeof files === 'function' ? files(root) : files)) {
+        const target = path.join(root, name);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, source);
+      }
+      setup?.(root);
+      return gate.checkBuiltBundle({ bundlePath: path.join(root, 'main/index.js'), keyBase64: ED25519_KEY });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it('accepts the current Vite dynamic entry with its key in the normal app chunk', () => {
+    expect(
+      checkFiles({
+        'main/index.js':
+          'if (process.argv.includes("--royin-render-slidegen")) { await import("./render-command-Ab12.js"); } else { await import("./index-Cd34.js").then((n) => n.a); }',
+        'main/render-command-Ab12.js': 'export const command = true;',
+        'main/index-Cd34.js': `export const a = ${JSON.stringify(ED25519_KEY)};`,
+      }),
+    ).toBeNull();
+  });
+
+  it('follows transitive static imports and re-exports without looping on cycles', () => {
+    expect(
+      checkFiles({
+        'main/index.js': 'import "./app-Ab12.js";',
+        'main/app-Ab12.js': 'export { key } from "./key-Cd34.js";',
+        'main/key-Cd34.js': `import "./app-Ab12.js"; export const key = ${JSON.stringify(ED25519_KEY)};`,
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a key found only in an unreferenced stale chunk', () => {
+    expect(
+      checkFiles({
+        'main/index.js': 'await import("./app-Ab12.js");',
+        'main/app-Ab12.js': 'export const key = "";',
+        'main/stale-Cd34.js': `export const key = ${JSON.stringify(ED25519_KEY)};`,
+      }),
+    ).not.toBeNull();
+  });
+
+  it('does not follow import text inside comments or string literals', () => {
+    expect(
+      checkFiles({
+        'main/index.js': '// import "./key-Ab12.js";\nconst example = \'import("./key-Ab12.js")\';',
+        'main/key-Ab12.js': `export const key = ${JSON.stringify(ED25519_KEY)};`,
+      }),
+    ).not.toBeNull();
+  });
+
+  it('rejects relative imports outside the main output directory', () => {
+    expect(
+      checkFiles({
+        'main/index.js': 'await import("../key-Ab12.js");',
+        'key-Ab12.js': `export const key = ${JSON.stringify(ED25519_KEY)};`,
+      }),
+    ).not.toBeNull();
+  });
+
+  it('rejects a missing referenced chunk even when the entry contains the key', () => {
+    expect(
+      checkFiles({ 'main/index.js': `const key = ${JSON.stringify(ED25519_KEY)}; import "./missing.js";` }),
+    ).not.toBeNull();
+  });
+
+  it('keeps external dependencies outside the local chunk traversal', () => {
+    expect(
+      checkFiles({ 'main/index.js': `import fs from "node:fs"; const key = ${JSON.stringify(ED25519_KEY)};` }),
+    ).toBeNull();
+  });
+
+  it('rejects a directory junction that redirects a referenced chunk outside main output', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'update-key-main-chunks-'));
+    if (path.dirname(root) !== path.resolve(os.tmpdir())) throw new Error('Unexpected fixture directory');
+    try {
+      fs.mkdirSync(path.join(root, 'main'));
+      fs.mkdirSync(path.join(root, 'outside'));
+      fs.writeFileSync(path.join(root, 'main/index.js'), 'await import("./linked/key.js");');
+      fs.writeFileSync(path.join(root, 'outside/key.js'), `export const key = ${JSON.stringify(ED25519_KEY)};`);
+      fs.symlinkSync(path.join(root, 'outside'), path.join(root, 'main/linked'), 'junction');
+      expect(
+        gate.checkBuiltBundle({ bundlePath: path.join(root, 'main/index.js'), keyBase64: ED25519_KEY }),
+      ).not.toBeNull();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a directory junction even when its referenced chunk stays inside main output', () => {
+    expect(
+      checkFiles(
+        {
+          'main/index.js': 'await import("./nested/linked/key.js");',
+          'main/actual/key.js': `export const key = ${JSON.stringify(ED25519_KEY)};`,
+        },
+        (root) => {
+          fs.mkdirSync(path.join(root, 'main/nested'));
+          const linked = path.join(root, 'main/nested/linked');
+          fs.symlinkSync(path.join(root, 'main/actual'), linked, 'junction');
+          expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+        },
+      ),
+    ).not.toBeNull();
+  });
+
+  it('rejects a main output root that is itself a directory junction', () => {
+    expect(
+      checkFiles({ 'actual/index.js': `export const key = ${JSON.stringify(ED25519_KEY)};` }, (root) => {
+        const linked = path.join(root, 'main');
+        fs.symlinkSync(path.join(root, 'actual'), linked, 'junction');
+        expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+      }),
+    ).not.toBeNull();
+  });
+
+  it.each(['main/key.js', 'outside/key.js', 'missing/key.js'])(
+    'rejects a literal file URL for %s even when the entry contains the key',
+    (target) => {
+      expect(
+        checkFiles((root) => ({
+          'main/index.js': `const key = ${JSON.stringify(ED25519_KEY)}; await import(${JSON.stringify(pathToFileURL(path.join(root, target)).href)});`,
+          'main/key.js': 'export const present = true;',
+          'outside/key.js': 'export const present = true;',
+        })),
+      ).not.toBeNull();
+    },
+  );
+
+  it('rejects a case-insensitive file URL in a static import', () => {
+    expect(
+      checkFiles((root) => ({
+        'main/index.js': `import ${JSON.stringify(pathToFileURL(path.join(root, 'outside/key.js')).href.replace(/^file:/, 'FILE:'))}; const key = ${JSON.stringify(ED25519_KEY)};`,
+        'outside/key.js': 'export const present = true;',
+      })),
+    ).not.toBeNull();
+  });
+
+  it.each([' file:', '\tfile:', 'fi\tle:', 'fi\nle:'])(
+    'rejects a literal file URL with the normalized protocol %j',
+    (protocol) => {
+      expect(
+        checkFiles((root) => ({
+          'main/index.js': `const key = ${JSON.stringify(ED25519_KEY)}; await import(${JSON.stringify(pathToFileURL(path.join(root, 'outside/key.js')).href.replace(/^file:/, protocol))});`,
+          'outside/key.js': 'export const present = true;',
+        })),
+      ).not.toBeNull();
+    },
+  );
+
+  it('keeps rejecting a malformed literal file URL even when standard URL parsing fails', () => {
+    expect(
+      checkFiles({
+        'main/index.js': `const key = ${JSON.stringify(ED25519_KEY)}; await import("file://[broken-host/key.js");`,
+      }),
+    ).toContain('Unsupported file URL main chunk');
   });
 });
 

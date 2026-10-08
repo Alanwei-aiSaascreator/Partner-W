@@ -103,7 +103,7 @@ describe('installTeam', () => {
 
     expect(events.find((event) => event.type === 'error')?.message).toContain('name rejected');
     expect(deps.persistTeam).not.toHaveBeenCalled();
-    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1' });
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1', deleteFiles: true });
   });
 
   it('installs a team successfully with no files', async () => {
@@ -154,7 +154,7 @@ describe('installTeam', () => {
     expect(events.some((event) => event.type === 'error' && event.message?.includes('disk read-only'))).toBe(true);
     expect(events.some((event) => event.type === 'done')).toBe(false);
     expect(deps.persistTeam).not.toHaveBeenCalled();
-    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1' });
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1', deleteFiles: true });
   });
 
   it('persists only installed optional skills and keeps failed installs as visible warnings', async () => {
@@ -305,8 +305,8 @@ describe('installTeam', () => {
     const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
 
     expect(deps.deleteAgent).toHaveBeenCalledTimes(2);
-    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1' });
-    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-2' });
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1', deleteFiles: true });
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-2', deleteFiles: true });
 
     const errorEvent = events.find((e) => e.type === 'error')!;
     expect(errorEvent.message).toContain('db error');
@@ -421,8 +421,8 @@ describe('installTeam', () => {
 
     const events = await collect(installTeam(parsed, {}, 'gw-1', '/w', deps));
 
-    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1' });
-    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-2' });
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-1', deleteFiles: true });
+    expect(deps.deleteAgent).toHaveBeenCalledWith({ agentId: 'agent-2', deleteFiles: true });
     expect(deps.persistTeam).not.toHaveBeenCalled();
     const errorEvent = events.find((e) => e.type === 'error')!;
     expect(errorEvent.message).toContain('Failed to configure subagents');

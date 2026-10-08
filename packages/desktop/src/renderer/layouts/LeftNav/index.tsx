@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { PanelLeftClose, PanelLeftOpen, Search, SquarePen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useTaskStore } from '@/stores/taskStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
+import { useTeamStore } from '@/stores/teamStore';
 import { useFileStore } from '@/stores/fileStore';
 import SearchResults, { type SearchResult } from '@/components/SearchResults';
 import { motionDuration } from '@/styles/design-tokens';
@@ -93,6 +94,13 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   };
 
   const { selectedGwId, agentCatalog, defaultAgentId } = useGatewaySelector();
+  const teamsMap = useTeamStore((state) => state.teams);
+  const loadTeams = useTeamStore((state) => state.loadTeams);
+  const teams = useMemo(() => Object.values(teamsMap), [teamsMap]);
+  useEffect(() => {
+    const state = useTeamStore.getState();
+    if (!state.loadedOnce && !state.loading) void loadTeams();
+  }, [loadTeams]);
   const agentCatalogEntry = useUiStore((s) => s.agentCatalogByGateway[selectedGwId]);
   const selectedAgentId = useUiStore((s) => s.selectedAgentByGateway[selectedGwId] ?? '');
   /**
@@ -118,8 +126,12 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
    * 下游拿到的就是这个**原样的 id**：切换器靠它落进中性格子（非空但找不到 ⇒ `current`
    * 为 `undefined`），「新建任务」把它原样交给待发任务 ⇒ 欢迎屏会**再次**走同一条拒绝
    * 路径并给出出口。全程没有一处换成别人。
+   *
+   * ⚠️ 2026-10-07（质检 P2-2）：**不再** `|| agentCatalog[0]?.id` —— 那等于"目录第一个
+   *    就是默认"，与「默认=主罗盘」相悖。默认值的判定已经收进 `useGatewaySelector`
+   *    （core `resolveCatalogAgentId` + 缺省固定主罗盘），这里只用它。
    */
-  const currentAgentId = selectedAgentId || defaultAgentId || agentCatalog[0]?.id || '';
+  const currentAgentId = selectedAgentId || defaultAgentId;
 
   // ⚠️ 切助手的四步**不在这里**，在 `useSelectAgent` —— 身份中心的「应用此画像」
   //    也要切助手，两边各写一遍必然漂移（最典型是漏掉 `setPending`）。
@@ -219,6 +231,9 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
             <>
               <AssistantSwitcher
                 agents={agentCatalog}
+                teams={teams}
+                gatewayId={selectedGwId}
+                defaultAgentId={defaultAgentId}
                 selectedAgentId={currentAgentId}
                 onSelect={handleSelectAgent}
                 onAddAssistant={onOpenAssistantSettings}

@@ -63,15 +63,23 @@ function failureLine(failure: SlidegenFailure, t: Translate): string {
   }
 }
 
-/** 一句能贴进 toast 的话（多条时合并；重复的码只留一条）。 */
+/**
+ * 一句能贴进 toast 的话（多条时合并；重复的码只留一条）。
+ *
+ * ⚠️ 2026-10-06（图12，商业验收）**有意反转** 2026-09-30 加进来的那半句
+ *    `[dsl-close-mismatch @34] expected </Text> but found </Slide>`：那是
+ *    **内部诊断码 + 英文解析器原文**，验收判为"内部信息裸奔"（同 `tool-activity.ts`
+ *    同日的口径反转）。这里只出产品化文案（`failureLine`）。
+ *
+ * 原始 diagnostic 没有丢：它仍在数据里（`SlidegenFailure.diagnostic`），
+ * 由调用方送 console 供排查（claim-violation 那条见 `useClaimGuardToast`）——
+ * 用户面看不见，排查时拿得到。
+ */
 export function slidegenFailureToastBody(failures: readonly SlidegenFailure[], t: Translate): string {
   const lines: string[] = [];
   const seen = new Set<string>();
   for (const failure of failures) {
-    const diagnostic = failure.diagnostic;
-    const line = diagnostic
-      ? `${failureLine(failure, t)}\n[${diagnostic.code}${diagnostic.offset === undefined ? '' : ` @${diagnostic.offset}`}] ${diagnostic.detail}`
-      : failureLine(failure, t);
+    const line = failureLine(failure, t);
     if (seen.has(line)) continue;
     seen.add(line);
     lines.push(line);

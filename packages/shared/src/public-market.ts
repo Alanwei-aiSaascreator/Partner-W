@@ -18,8 +18,10 @@
  *
  * 主进程（IPC 守卫）与渲染层（导航置灰 + 直接视图关闭态）必须读**同一个**常量 ——
  * 各写一份，早晚漂出"界面关了、接口还开着"的缝。重新开放时改这一个值。
+ *
+ * 2026-10-06：**重新开放**（用户拍板「智能体市场恢复」）——改回 false。
  */
-export const PUBLIC_MARKET_CLOSED = true;
+export const PUBLIC_MARKET_CLOSED = false;
 
 /** 关闭期间公开读/上架接口返回的机器码（映射到中文文案，绝不上屏英文）。 */
 export const PUBLIC_MARKET_CLOSED_CODE = 'public_market_closed';

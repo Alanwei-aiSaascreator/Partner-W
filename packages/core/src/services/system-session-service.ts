@@ -18,6 +18,16 @@ export interface SystemSessionServiceDeps {
   getStore: () => SystemSessionState;
 }
 
+/**
+ * `start()` 被拒的唯一原因：**已经有一条会话在用**（store 是全局单例）。
+ *
+ * ⚠️ 为什么要把这个原因单列成错误码（2026-10-05，「AI 创建」建队失败排查）：
+ *    调用方（`useSystemSession`）要靠它判断"store 里这条会话**是不是我的**" ——
+ *    是别人的会话就不许在卸载时替别人 `end()`，否则会把正在跑的目标分析 / AI 建助手掐掉。
+ *    光看 `ok:false` 分不出"会话被别人占着"和"我们自己建失败（服务已回滚）"这两种。
+ */
+export const SYSTEM_SESSION_BUSY = 'SESSION_BUSY';
+
 export interface SystemSessionService {
   start(opts: {
     gatewayId: string;
@@ -86,7 +96,7 @@ export function createSystemSessionService(deps: SystemSessionServiceDeps): Syst
     async start(opts) {
       const store = deps.getStore();
       if (store.sessionKey) {
-        return { ok: false, error: 'system session already active' };
+        return { ok: false, error: 'system session already active', errorCode: SYSTEM_SESSION_BUSY };
       }
 
       const sessionKey = buildSystemSessionKey(opts.purpose, opts.agentId);

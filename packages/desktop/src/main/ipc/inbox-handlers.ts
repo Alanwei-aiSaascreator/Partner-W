@@ -4,6 +4,13 @@ import { readInboxFile, readInboxFileForSend, resolveInboxPath } from '../inbox/
 import { getWorkspacePath } from '../workspace/config.js';
 
 const MAX_INBOX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/**
+ * 收件箱文件"发送读"的单文件上限（整份 base64 出去）。
+ *
+ * ⚠️ 同 `context/file-reader.ts` 的同名常量：单文件边界，**不是**单帧预算 ——
+ *    帧预算在渲染层按网关协商值（`hello-ok.policy.maxPayload`）折算成聚合闸门
+ *    （2026-10-07 · 质量战役区 2 · P1-1）。这里没有 gatewayId 上下文，保持静态。
+ */
 const MAX_SEND_FILE_BYTES = 25 * 1024 * 1024;
 
 export function registerInboxHandlers(): void {

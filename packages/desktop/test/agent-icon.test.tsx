@@ -54,4 +54,30 @@ describe('AgentIcon local avatar lookup', () => {
     expect(view.container.querySelector('img')?.getAttribute('src')).toBe('clawwork-avatar://gw/writer');
     view.unmount();
   });
+
+  it.each([
+    ['main', undefined, 'lucide-compass'],
+    ['rongying-content', undefined, 'lucide-pen-line'],
+    ['rongying-video', undefined, 'lucide-clapperboard'],
+    ['member', 'moderator', 'lucide-network'],
+    ['member', 'challenger', 'lucide-shield-check'],
+    ['member', 'scribe', 'lucide-notebook-pen'],
+  ] as const)('uses a recognizable role icon for %s/%s without custom identity', (agentId, position, iconClass) => {
+    const view = render(<AgentIcon agentId={agentId} position={position} />);
+    expect(view.container.querySelector(`.${iconClass}`)).not.toBeNull();
+    view.unmount();
+  });
+
+  it('keeps custom emoji ahead of the role fallback', () => {
+    const view = render(<AgentIcon agentId="main" emoji="X" />);
+    expect(view.container.textContent).toBe('X');
+    expect(view.container.querySelector('svg')).toBeNull();
+    view.unmount();
+  });
+
+  it('does not treat object prototype names as preset icons', () => {
+    const view = render(<AgentIcon agentId="constructor" />);
+    expect(view.container.querySelector('.lucide-bot')).not.toBeNull();
+    view.unmount();
+  });
 });

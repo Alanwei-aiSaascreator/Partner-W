@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { MainView } from '@clawwork/core';
 import { cn } from '@/lib/utils';
+import { toast } from '@/lib/toast';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { isInternalBetaEnabled } from '@/features/internal-beta/beta-route';
 
@@ -98,6 +99,12 @@ type NavItem = {
   disabled?: boolean;
   /** 置灰项的说明气泡文案键（`title`）。 */
   disabledTitleKey?: string;
+  /**
+   * 视觉置灰但**仍可点击**（2026-10-06，用户拍板：「需求悬赏」暂不可用）：
+   * 与 `disabled` 同样是灰样式，但不吞点击——点击由 `onClick` 弹「敬请期待」提示。
+   * （`button[disabled]` 会吞掉 onClick，所以这类占位入口不能用 `disabled`。）
+   */
+  muted?: boolean;
 };
 
 export default function NavMenu({
@@ -133,7 +140,15 @@ export default function NavMenu({
       disabled: PUBLIC_MARKET_CLOSED,
       disabledTitleKey: 'market.publicClosedTitle',
     },
-    { key: 'bounty', labelKey: 'leftNav.pages.bounty', icon: Target, view: 'bounty' },
+    // 2026-10-06（用户拍板）：需求悬赏暂不可用——置灰 + 点击弹「敬请期待」。
+    // 不删入口（直接删会让用户猜"没了还是藏了"——同 disabled 项的既有纪律）。
+    {
+      key: 'bounty',
+      labelKey: 'leftNav.pages.bounty',
+      icon: Target,
+      muted: true,
+      onClick: () => toast(t('leftNav.bountyComingSoon'), { id: 'bounty-coming-soon', duration: 2000 }),
+    },
     { key: 'square', labelKey: 'leftNav.pages.square', icon: Compass, view: 'community' },
     { key: 'creator', labelKey: 'leftNav.pages.creator', icon: Feather, view: 'creator' },
     { key: 'usage', labelKey: 'leftNav.usageOverview', icon: ChartNoAxesCombined, view: 'dashboard' },
@@ -191,9 +206,11 @@ export default function NavMenu({
           collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
           item.disabled
             ? 'cursor-not-allowed text-[var(--text-muted)] opacity-60'
-            : active
-              ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
-              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+            : item.muted
+              ? 'text-[var(--text-muted)] opacity-60 hover:opacity-80'
+              : active
+                ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
+                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
         )}
       >
         <Icon size={collapsed ? 18 : 15} className="flex-shrink-0" />

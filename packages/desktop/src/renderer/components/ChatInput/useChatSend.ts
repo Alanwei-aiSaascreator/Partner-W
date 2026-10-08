@@ -24,6 +24,15 @@ import type {
   ModelCatalogEntry,
   EffectiveToolEntry,
   FileReadResult,
+  TaskMode,
+  TaskModeSetting,
+} from '@clawwork/shared';
+import {
+  DEFAULT_TASK_MODE,
+  MODE_POLICY,
+  normalizeTaskModeSetting,
+  resolveEffectiveTaskMode,
+  resolveModeModelId,
 } from '@clawwork/shared';
 import type { PendingNewTask } from '@clawwork/core';
 import {
@@ -33,7 +42,15 @@ import {
   extractDescription,
   getTaskSessionKeys,
 } from '@clawwork/core';
-import { buildArtifactsIndex } from '../../lib/artifact-index';
+import {
+  buildAttachmentDirective,
+  classifyAttachmentFile,
+  detectEditIntent,
+  resolveImageInputSupport,
+} from '../../lib/attachment-actions';
+import { planVisionRouting } from '../../lib/vision-routing';
+import { planDeckRouting } from '../../lib/deck-intent';
+import { userMdContentFromReadResult } from '../../lib/identity-persona';
 import { artifactFailureContext } from '../../lib/artifact-delivery-feedback';
 import { buildResponseLanguageContext } from '../../lib/response-language';
 import { useTaskStore } from '../../stores/taskStore';
@@ -51,10 +68,11 @@ import type { ThinkingLevel } from './constants';
 import {
   GATEWAY_INJECTED_MODEL,
   EMPTY_MODELS_CATALOG,
-  MAX_SEND_MATERIAL_BYTES,
   MAX_SEND_MATERIAL_COUNT,
   MAX_TEXT_TOTAL,
   MENTION_ALL_AGENT_ID,
+  deriveMaterialByteBudget,
+  materialBudgetMb,
 } from './constants';
 import { getModelLabel, readAsBase64 } from './utils';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
@@ -105,7 +123,6 @@ export function useChatSend(opts: UseChatSendOpts) {
   const { t, i18n } = useTranslation();
 
   const activeTask = useTaskStore((s) => s.tasks.find((tt) => tt.id === s.activeTaskId));
-  const tasks = useTaskStore((s) => s.tasks);
   const commitPendingTask = useTaskStore((s) => s.commitPendingTask);
   const updateTaskMetadata = useTaskStore((s) => s.updateTaskMetadata);
   const pendingNewTask = useTaskStore((s) => s.pendingNewTask);
@@ -145,6 +162,12 @@ export function useChatSend(opts: UseChatSendOpts) {
     everConnected: gatewayEverConnected,
     reconnect: gatewayReconnect,
   });
+  // ⭐ 单帧上限以**网关协商值**为准（`hello-ok.policy.maxPayload`，连接建立时经
+  //    gateway-status 落进 `gatewayMaxPayloadByGateway`）；拿不到就回落默认 25MiB。
+  //    `?.` 照顾手写 store 桩（同 `gatewayReconnectInfo` 那两行）。
+  const gatewayMaxPayloadBytes = useUiStore((s) => (taskGwId ? s.gatewayMaxPayloadByGateway?.[taskGwId] : undefined));
+  // 字节预算 = 单帧 × 3/4 − 余量（base64 折算；推导见 constants.ts 的同名函数）。
+  const materialByteBudget = useMemo(() => deriveMaterialByteBudget(gatewayMaxPayloadBytes), [gatewayMaxPayloadBytes]);
   // ⚠️ 先过 relayModelsFrom 再往下走 —— 网关返回的是**全量**目录（含 claude-cli / deepseek
   // 等我们没配的 provider）。下面的「当前模型」标签和下拉列表**必须同源**，
   // 否则标签会解析到我们服务不了的模型：新任务时显示的 `Claude Opus 5 (Claude CLI)`
@@ -171,9 +194,21 @@ export function useChatSend(opts: UseChatSendOpts) {
       : activeTask.model
     : (pendingNewTask?.model ?? defaultModel?.id);
   const currentThinking = (activeTask?.thinkingLevel ?? pendingNewTask?.thinkingLevel ?? 'off') as ThinkingLevel;
+  /**
+   * 当前生效的任务模式（**发送判据与界面显示同一把尺**，规则住在
+   * `@clawwork/shared` 的 `task-modes.ts`）：
+   *   · 有任务 ⇒ 看任务（旧行 mode 为空 ⇒ `custom`，不劫持它的 `model`）；
+   *   · 待发态 ⇒ 看待发配置，没选过 ⇒ 默认档（与 `createTask` 写入的默认档一致）。
+   */
+  const currentMode: TaskModeSetting = activeTask
+    ? resolveEffectiveTaskMode(activeTask)
+    : (normalizeTaskModeSetting(pendingNewTask?.mode) ?? DEFAULT_TASK_MODE);
 
   const currentModelEntry = currentModel ? modelCatalog.find((m) => m.id === currentModel) : undefined;
   const modelLabel = currentModelEntry?.name ?? getModelLabel(currentModel, modelCatalog[0]?.name);
+  // 「当前模型看不看图」的判据（与输入框那行建议/入口**同源**，见 lib/attachment-actions.ts）。
+  // 发送路径要它来触发自动路由：带图 × 不是 supported ⇒ 先切到能看图的目录模型再发。
+  const imageInputSupport = resolveImageInputSupport(currentModelEntry);
 
   // 切模型后当前档位可能不再被支持（实测：deepseek-v4-flash 支持 5 档，deepseek-r1 只支持 off）。
   // 自动回落到新模型的默认档位。**只改状态、不插系统消息** —— 用户可能正在打字，插消息会打断。
@@ -235,6 +270,19 @@ export function useChatSend(opts: UseChatSendOpts) {
     };
   }, []);
 
+  /**
+   * 把**某个任务会话**的模型钉到 `modelId`（网关 `patchSession` 通道），返回成功与否。
+   * 说什么话由调用方决定：额度降级那条路弹「已切换」，图片路由那条路**只在真切了才提示**
+   *（切不动就静默照发 —— 模型会按附件纪律如实说看不到）。
+   *
+   * ⚠️ 必须定义在 `handleSend` **之前**：handleSend 的依赖数组在渲染期就会读它，
+   *    声明在后面 = TDZ（渲染即炸）。
+   */
+  const patchSessionModel = useCallback(async (task: Task, modelId: string): Promise<boolean> => {
+    const res = await window.clawwork.patchSession(task.gatewayId, task.sessionKey, { model: modelId });
+    return res.ok;
+  }, []);
+
   const handleSend = useCallback(async () => {
     if (isMeetingTaskBusy(activeTask?.id)) {
       toast.error(t('meeting.taskBusy'));
@@ -254,7 +302,10 @@ export function useChatSend(opts: UseChatSendOpts) {
       // 看着像网络问题。详见 isModelSelectable 的注释。
       // ⚠️ 对比模式**跳过这一关**：对比用的是各列自己钉的模型，任务级模型下架
       //    不该把对比一起拦住（拦住的话用户会以为"对比坏了"）。
-      if (!compare.mode && !isModelSelectable(modelCatalog, currentModel)) {
+      // ⚠️ 模式任务（快速/智能/深度）**同样跳过**：`task.model` 对它们只是"上一轮跑过的
+      //    那个模型"的留痕，这一轮跑什么由目录现解析（`resolveModeModelId`）——
+      //    拿一个留痕去拦住用户，等于"模型下架后连智能模式都发不出去"。
+      if (!compare.mode && currentMode === 'custom' && !isModelSelectable(modelCatalog, currentModel)) {
         toast.error(t('chatInput.modelGone', { model: currentModel ?? '' }));
         return;
       }
@@ -283,7 +334,19 @@ export function useChatSend(opts: UseChatSendOpts) {
       stopVoiceInput();
 
       const content = textarea.value.trim();
-      if (!content && !pendingAttachments.length && !selectedImportedFiles.length && !selectedLocalFiles.length) return;
+      // ⭐ 2026-10-07（质量战役区 3）：判据补「存在任一 @ 选择」——
+      //    只有 @ 提及、没有文字时也要能发（此前 `stripAtQuery` 会把 @ 查询串从输入框
+      //    抹掉（不触发 onInput），于是"只剩提及选中"的输入框被判空、发送键形同虚设）。
+      if (
+        !content &&
+        !pendingAttachments.length &&
+        !selectedImportedFiles.length &&
+        !selectedLocalFiles.length &&
+        !selectedTasks.length &&
+        !selectedArtifacts.length &&
+        !selectedAgents.length
+      )
+        return;
 
       let task = activeTask;
       if (!task) {
@@ -364,10 +427,18 @@ export function useChatSend(opts: UseChatSendOpts) {
         toast.error(t('chatInput.materialUnavailable', { fileName: '' }));
         return;
       }
-      const materialCount = pendingAttachments.length + selectedImportedFiles.length + selectedLocalFiles.length;
+      // ⭐ 分桶计数（2026-10-07 · 方案 A）：**只算二进制附件**（暂存附件 + 已选导入材料）。
+      //    `selectedLocalFiles`（@ 授权文件夹）是 tier='text' 内联内容，只受 500KB 文本
+      //    总约束（下面 localFileMentions 一段逐块拦），**不占个数** —— 11 个小文本文件
+      //    塞满的载荷才几 KB，按个数拒发是纯粹的功能损失（P1-2）。
+      const binaryMaterialCount = pendingAttachments.length + selectedImportedFiles.length;
       let materialBytes = pendingAttachments.reduce((sum, item) => sum + item.file.size, 0);
-      if (materialCount > MAX_SEND_MATERIAL_COUNT || materialBytes > MAX_SEND_MATERIAL_BYTES) {
-        toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
+      if (binaryMaterialCount > MAX_SEND_MATERIAL_COUNT) {
+        toast.error(t('chatInput.materialLimitCount', { count: MAX_SEND_MATERIAL_COUNT }));
+        return;
+      }
+      if (materialBytes > materialByteBudget) {
+        toast.error(t('chatInput.materialLimitBytes', { size: materialBudgetMb(materialByteBudget) }));
         return;
       }
 
@@ -411,8 +482,8 @@ export function useChatSend(opts: UseChatSendOpts) {
           const read = await window.clawwork.readInboxFileForSend(file.localPath);
           if (read.ok && read.result) {
             materialBytes += read.result.byteLength;
-            if (materialBytes > MAX_SEND_MATERIAL_BYTES) {
-              toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
+            if (materialBytes > materialByteBudget) {
+              toast.error(t('chatInput.materialLimitBytes', { size: materialBudgetMb(materialByteBudget) }));
               return;
             }
             importedAttachmentRecords.push({
@@ -469,33 +540,16 @@ export function useChatSend(opts: UseChatSendOpts) {
         let contextPrefix = '';
         const extraAttachments: { mimeType: string; fileName: string; content: string }[] = [];
 
-        /**
-         * ⭐ **首轮**给助手一份"这块盘上之前产出过什么"的索引（2026-09-26）。
+        /*
+         * ⭐ 2026-10-07（质量战役区 3 · 用户授权代决）：**首轮产物索引已切断**。
          *
-         * 为什么只给首轮：它是一份**会话级的背景**，不是每轮都要重讲一遍的东西 ——
-         * 每轮都塞等于把一个固定开销乘上轮数（而且是白烧的 token）。
-         * 判据用 `pendingNewTask`（= 这一轮在开一个新会话），与"切换助手后会重新挂一个待发任务"
-         * 那条既有语义一致：换助手再说话，也算这一轮重新交代一次背景。
-         * ⚠️ 只给索引不给内容（要内容得用户 `@`）；失败**不挡发送**。
+         * 原实现（2026-09-26 起）：新会话首轮自动把"全库产物索引"（≤20 条其它会话的
+         * 文件名 + 来源会话标题）作为隐藏上下文发给模型。问题是 `listArtifacts()` 是
+         * **全库**读取，仅排除当前会话 —— 等于每个新会话首轮默认把别人会话的标题与
+         * 文件名披露给模型，是会话隔离叙事里唯一的默认越界。
+         * 现在：模型**只在用户 `@` 产物时**看见它（那条路照旧，见下面 artifactMentions）；
+         * "发现性"由右侧「历史产物」面板承担。会议路径同步去掉了该注入（instance.ts）。
          */
-        if (pendingNewTask) {
-          try {
-            const all = await window.clawwork.listArtifacts();
-            if (all.ok && all.result) {
-              const taskTitles = new Map(tasks.map((task) => [task.id, task.title]));
-              const index = buildArtifactsIndex(all.result, taskTitles, {
-                now: Date.now(),
-                excludeTaskId: activeTask?.id ?? null,
-                unknownTaskLabel: t('rightPanel.historyUnknownTask'),
-              });
-              // ⚠️ 赋给 `contextPrefix`（只发模型），**不要**再拼进 `finalContent`：
-              //    拼进去它就会被当成用户说过的话存库并显示在气泡里。
-              if (index) contextPrefix = index;
-            }
-          } catch {
-            // 锦上添花的东西，拿不到就不加 —— 不能因为少一份索引就把用户的消息卡住
-          }
-        }
 
         // 团队任务不再依赖 conductor。合同作为隐藏上下文发送，既不污染用户气泡/落库正文，
         // 又在每一轮都守住“策略 → 创作 → 质检/修订 → 交付”的可靠模式。
@@ -605,9 +659,13 @@ export function useChatSend(opts: UseChatSendOpts) {
           for (const file of localFileMentions) {
             const res = await window.clawwork.readTaskContextFileForSend(task.id, file.sourceId, file.relativePath);
             if (res.ok && res.result) {
+              // ⚠️ tier='text' 的 byteLength 是**实际内联字节**（主进程按
+              //    min(size, 100KB) 回报，2026-10-07 · P2-1）：30MB 的 .log 在这里
+              //    记 ~100KB，不再按整份体积虚耗预算；tier≠text（base64 发送）仍按整份
+              //    保守计（content 至多 10MB，字节闸门按 size 计只会更早拦，不会漏）。
               materialBytes += res.result.byteLength;
-              if (materialBytes > MAX_SEND_MATERIAL_BYTES) {
-                toast.error(t('chatInput.materialLimitExceeded', { count: MAX_SEND_MATERIAL_COUNT, size: 25 }));
+              if (materialBytes > materialByteBudget) {
+                toast.error(t('chatInput.materialLimitBytes', { size: materialBudgetMb(materialByteBudget) }));
                 return;
               }
             }
@@ -697,9 +755,14 @@ export function useChatSend(opts: UseChatSendOpts) {
             agents.forEach((a, i) => {
               const r = descResults[i];
               if (r.status === 'fulfilled' && r.value.ok && r.value.result) {
-                const data = r.value.result as Record<string, unknown>;
-                if (typeof data.content === 'string') {
-                  const desc = extractDescription(data.content);
+                // ⭐ 2026-10-07（质量战役区 3）：字段错位修复 —— `agents.files.get` 的真机载荷是
+                //    `{ agentId, workspace, file: { name, content, missing } }`，旧代码读 `result.content`
+                //    恒为 undefined ⇒ **给模型的助手描述一直是空的**（conductor 花名册只剩 id/name/role）。
+                //    统一走 `userMdContentFromReadResult`（区 6 同一把尺：`file.content`；形状不认识
+                //    返回 null 按读失败处理，不把"读不到"说成"空"）。
+                const rawContent = userMdContentFromReadResult(r.value.result);
+                if (rawContent) {
+                  const desc = extractDescription(rawContent);
                   if (desc) descMap.set(a.id, desc);
                 }
               }
@@ -740,6 +803,10 @@ export function useChatSend(opts: UseChatSendOpts) {
             toast.error(describeGatewayError(result.error, t('errors.sendFailed')));
             return;
           }
+          // `/model <id>` = 用户**显式指定了一个模型** ⇒ 与高级列表里选模型同一个语义：
+          // 模式落 `custom`。不改的话下一次普通发送会把模式模型重新钉回会话上 ——
+          // 用户刚敲的命令等于被静静revert掉（模式覆盖一切是有意设计，但不能覆盖"我刚说了用哪个"）。
+          if (command === 'model') updateTaskMetadata(task.id, { mode: 'custom' });
           if (activeTaskIdRef.current === task.id) {
             textarea.value = '';
             textarea.style.height = 'auto';
@@ -756,6 +823,30 @@ export function useChatSend(opts: UseChatSendOpts) {
           (importedAttachmentRecords.length ? `[${importedAttachmentRecords[0].fileName}]` : '') ||
           (attachmentRecords.length ? `[${attachmentRecords[0].fileName}]` : '');
 
+        /**
+         * ⭐ F 组（BUG-030）：带文件的这一轮，**默认只读**（读了就总结、给结论、给建议操作），
+         * 只有用户**明说**要改才走写。纪律写进 `contextPrefix`（只发模型，不进气泡/不落库），
+         * 判据在 `lib/attachment-actions.ts`（纯函数，单独钉）。
+         *
+         * ⚠️ 判"要不要改"只看**用户自己敲的话**（`content`），不看 `finalContent` ——
+         *    后者前面拼进了被 @ 的**文件正文**，一份讲"如何修改合同"的文档会让每一轮都被判成改动。
+         */
+        const attachedFilesForIntent = [
+          ...pendingAttachments.map((att) => ({ fileName: att.file.name, mimeType: att.file.type || undefined })),
+          ...importedAttachmentRecords.map((record) => ({
+            fileName: record.fileName,
+            mimeType: record.mimeType || undefined,
+          })),
+          ...localFileMentions.map((file) => ({ fileName: file.fileName, mimeType: file.mimeType || undefined })),
+        ];
+        const attachmentDirective = buildAttachmentDirective({
+          files: attachedFilesForIntent.map((file) => ({
+            fileName: file.fileName,
+            kind: classifyAttachmentFile(file.fileName, file.mimeType),
+          })),
+          intent: detectEditIntent(content) ? 'edit' : 'read',
+        });
+
         const isMentionAll = agentMentions.some((a) => a.agentId === MENTION_ALL_AGENT_ID);
         const failureContext = artifactFailureContext(
           useMessageStore.getState().messagesByTask[task.id] ?? [],
@@ -765,6 +856,7 @@ export function useChatSend(opts: UseChatSendOpts) {
           buildResponseLanguageContext(i18n?.resolvedLanguage ?? i18n?.language ?? 'zh-CN'),
           contextPrefix,
           failureContext,
+          attachmentDirective,
         ]
           .filter(Boolean)
           .join('\n\n');
@@ -772,6 +864,85 @@ export function useChatSend(opts: UseChatSendOpts) {
           toast.error(t('meeting.taskBusy'));
           return;
         }
+
+        // ── Auto Capability Routing v1/v1.1：带图发送 × 当前模型不看图 ⇒ 先切到能看图的模型再发 ──
+        // 判据与候选选择全在纯函数里（`lib/vision-routing.ts` 的 `planVisionRouting`）；
+        // 这里只做接线：
+        //   · `switch`：切成功了才给一条轻量提示（无按钮、不打断）；切不动 ⇒ **不拦截**，
+        //     照发 —— 附件纪律（attachmentDirective）会让模型如实说看不到，而不是编内容；
+        //   · `unavailable`（目录里一个能看图的候选都没有）：照发，但**不许静默** ——
+        //     给一条诚实文案再发（v1.1；用户有权先知道这一轮图片识别不了）；
+        //   · 切过去后**不自动切回**（v1 取舍，见 vision-routing.ts 文件头）：会话停在该模型，
+        //     选择器可见，用户想换自己换。
+        //   · 会话/任务维度**没有任何记忆**：每次发送拿"这个任务此刻的模型"重新判 ——
+        //     新任务（待发态）的起点是默认模型，不继承上一段会话切过去的那个。
+        //
+        // ⚠️ 任务模式（快速/智能/深度）下**不做这条路由**：模式已经把"跑哪个模型"定死了，
+        //    自动切走会当场违背用户刚选的档（而模式模型的选型本来就把看图考虑进去了）。
+        //    这条路由继续为 `custom`（高级：指定模型）与旧会话护航 —— 见任务书的口径。
+        const sendMode = resolveEffectiveTaskMode(task);
+        let effectiveModel = currentModel;
+        let effectiveThinking: string = currentThinking;
+        if (sendMode !== 'custom') {
+          const policy = MODE_POLICY[sendMode];
+          const catalogModelIds = modelCatalog.map((entry) => entry.id);
+          const modeModelId = resolveModeModelId(sendMode, catalogModelIds);
+          // 两档候选都不在目录（目录没拉到 / 模型下架）⇒ **保持现状、不拦截**：
+          // 拿"目录里暂时没有"当"不支持"去拦住用户，是更坏的失败。
+          if (modeModelId) {
+            effectiveModel = modeModelId;
+            effectiveThinking = policy.thinkingLevel;
+          }
+
+          // ── Deck 意图路由（2026-10-08 产品拍板）：演示类任务内部钉 DeepSeek ──
+          // 真机实证：PPT 生成/改稿链在 qwen 上 20 分钟修稿循环不收敛；同一模式换成
+          // DeepSeek 后 2.6 分钟出 9 页合格成品。瓶颈是输出稳定性、与速度档无关 ⇒
+          // **三档（快速/智能/深度）都路由**；模式芯片照旧显示用户选的那一档
+          //（这是内部路由，不是用户可见的模式），所以**不给提示、不弹 toast**。
+          //
+          // 粘性：第一条命中就把任务标记成 deck 路由（`deckRouted`）—— 后续消息
+          //（"把标题改一下"这类不含演示名词的改稿）继续走 DeepSeek；`custom`
+          //（用户显式选过模型）是唯一出口：那时整段路由都不介入（判据在纯函数里）。
+          //
+          // 判据只吃**用户手打的字**（`content`），不吃 @ 进来的文件正文/附件名 ——
+          // 与附件 read/edit 纪律同一条（见上面 `attachedFilesForIntent` 的说明）。
+          const deckPlan = planDeckRouting({
+            sendMode,
+            task,
+            text: content,
+            catalogModelIds,
+          });
+          if (deckPlan.markTask) updateTaskMetadata(task.id, { deckRouted: true });
+          // 目录里没有 DeepSeek（没拉到 / 下架）⇒ `route: false`：**保持现状、不拦截**。
+          if (deckPlan.route && deckPlan.modelId) effectiveModel = deckPlan.modelId;
+        }
+        const hasImageAttachment = attachedFilesForIntent.some(
+          (file) => classifyAttachmentFile(file.fileName, file.mimeType) === 'image',
+        );
+        if (sendMode === 'custom') {
+          const visionPlan = planVisionRouting({
+            hasImageAttachment,
+            imageInputSupport,
+            currentModelId: currentModel,
+            catalog: modelCatalog,
+          });
+          if (visionPlan.kind === 'switch') {
+            const visionFallback = visionPlan.model;
+            if (await patchSessionModel(task, visionFallback.id)) {
+              effectiveModel = visionFallback.id;
+              // 任务级元数据与真实会话对齐 —— 否则选择器还显示旧模型（界面在说谎）。
+              updateTaskMetadata(task.id, {
+                model: visionFallback.id,
+                modelProvider: visionFallback.provider,
+              });
+              toast.info(t('chatInput.visionFallbackSwitched', { model: visionFallback.name ?? visionFallback.id }));
+            }
+          } else if (visionPlan.kind === 'unavailable') {
+            // 照发（不拦截），但先如实说一句 —— 这条文案是这轮唯一的知情渠道。
+            toast.info(t('chatInput.visionUnavailable'));
+          }
+        }
+
         const result = await composer.send(task.id, {
           content: finalContent,
           // 首轮产物索引：发给模型，但**不进** store / 落库 / 气泡。
@@ -779,8 +950,10 @@ export function useChatSend(opts: UseChatSendOpts) {
           attachments: allAttachments.length > 0 ? allAttachments : undefined,
           messageAttachments: allMessageAttachments,
           deferUserMessageUntilSent,
-          presetModel: currentModel,
-          presetThinking: currentThinking,
+          presetModel: effectiveModel,
+          // 模式任务：思考档由 `MODE_POLICY` 决定（composer 会对着模型的真实能力再校验一次，
+          // 不支持时回落到该模型自己的默认档）；custom / 旧会话：用户自己那一档。
+          presetThinking: effectiveThinking,
           titleHint: task.title ? undefined : titleHint,
           mentionAll: isMentionAll || undefined,
           mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
@@ -811,9 +984,8 @@ export function useChatSend(opts: UseChatSendOpts) {
     }
   }, [
     activeTask,
-    // ⚠️ 首轮产物索引要用这两样（`pendingNewTask` 判"是不是新会话"、`tasks` 查来源会话标题）
-    pendingNewTask,
-    tasks,
+    // ⚠️ `pendingNewTask` **不在这个依赖数组里**：首轮产物索引切断后（2026-10-07 · 区 3），
+    //    handleSend 体内已不再读它（离线判定/当前模型/思考档位那几处在 hook 顶层，各自成依赖）。
     commitPendingTask,
     addMessage,
     setProcessing,
@@ -839,17 +1011,29 @@ export function useChatSend(opts: UseChatSendOpts) {
     modelCatalog,
     currentModel,
     currentThinking,
+    currentMode,
+    imageInputSupport,
+    patchSessionModel,
+    updateTaskMetadata,
+    materialByteBudget,
   ]);
 
+  /**
+   * 选了一个**具体模型**（高级：指定模型）⇒ 模式落到 `custom`。
+   *
+   * 这是"三档 ↔ 高级"两个层级之间唯一的耦合点：选了具体模型就不再是三档任务
+   *（否则发送时会被 MODE_POLICY 顶掉，用户刚点的模型等于没说）。
+   */
   const handleModelQuickSend = useCallback(
     (modelId: string) => {
       if (!activeTask) {
-        useTaskStore.getState().updatePending({ model: modelId });
+        useTaskStore.getState().updatePending({ mode: 'custom', model: modelId });
         return;
       }
       const ta = textareaRef.current;
       if (!ta) return;
       updateTaskMetadata(activeTask.id, {
+        mode: 'custom',
         model: modelId,
         modelProvider: modelCatalog.find((m) => m.id === modelId)?.provider,
       });
@@ -859,6 +1043,24 @@ export function useChatSend(opts: UseChatSendOpts) {
       void handleSend();
     },
     [activeTask, handleSend, modelCatalog, updateTaskMetadata, textareaRef],
+  );
+
+  /**
+   * 选了快速 / 智能 / 深度 ⇒ 只写模式，**不立刻发消息**。
+   *
+   * 与选模型那条路的关键差别：模式在**下一轮发送**由 `presetModel`/`presetThinking`
+   * 生效（composer 每轮都会把模型钉到会话上），不需要像 `/model` 那样当场打一次网关。
+   * 三档之间切换也不需要在任务上留 `model` 覆盖 —— 发送路径按模式现解析（单一真源）。
+   */
+  const handleModeQuickSend = useCallback(
+    (mode: TaskMode) => {
+      if (!activeTask) {
+        useTaskStore.getState().updatePending({ mode });
+        return;
+      }
+      updateTaskMetadata(activeTask.id, { mode });
+    },
+    [activeTask, updateTaskMetadata],
   );
 
   const handleThinkingQuickSend = useCallback(
@@ -900,15 +1102,15 @@ export function useChatSend(opts: UseChatSendOpts) {
     const store = useTaskStore.getState();
     const task = store.tasks.find((item) => item.id === store.activeTaskId);
     if (!task) return;
-    const res = await window.clawwork.patchSession(task.gatewayId, task.sessionKey, {
-      model: defaultModel?.id ?? currentModel,
-    });
-    if (res.ok) {
+    const target = defaultModel?.id ?? currentModel;
+    // 两个都取不到 = 目录空且任务没钉模型，没有可切的目标 —— 与旧行为一致：直接报失败。
+    const ok = target ? await patchSessionModel(task, target) : false;
+    if (ok) {
       toast.success(t('usage.degradeDone'));
     } else {
       toast.error(t('errors.requestFailed'));
     }
-  }, [currentModel, defaultModel?.id, t]);
+  }, [currentModel, defaultModel?.id, patchSessionModel, t]);
 
   const handleToolSelect = useCallback(
     (tool: EffectiveToolEntry) => {
@@ -945,6 +1147,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     modelLabel,
     currentModelEntry,
     modelsByProvider,
+    currentMode,
     pendingNewTask: pendingNewTask as PendingNewTask | null,
     taskGwId,
     quotaBlock,
@@ -953,6 +1156,7 @@ export function useChatSend(opts: UseChatSendOpts) {
     setQuotaDegrade,
     switchToFallbackModel,
     handleSend,
+    handleModeQuickSend,
     handleModelQuickSend,
     handleThinkingQuickSend,
     handleAbort,

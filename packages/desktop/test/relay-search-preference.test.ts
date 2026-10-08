@@ -22,7 +22,7 @@ vi.mock('../src/main/runtime/index.js', () => ({ getActiveLocalGatewayDeployment
 vi.mock('../src/main/runtime/bundled-search.js', () => ({ hasBundledSearchProvider: () => true }));
 
 const INPUT = { relayKey: 'test-relay-key', deviceFingerprint: 'test-device' };
-const SEARCH_REFS = ['clawrouter/qwen-turbo', 'clawrouter/qwen-plus'];
+const SEARCH_REFS = ['clawrouter/qwen-turbo', 'clawrouter/qwen-plus', 'clawrouter/qwen3.7-flash'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -85,6 +85,7 @@ describe('relay search preference merge patches', () => {
     expect(patch).toHaveProperty(['agents', 'defaults', 'models'], {
       'clawrouter/qwen-turbo': { params: { extra_body: { enable_search: null } } },
       'clawrouter/qwen-plus': { params: { extra_body: { enable_search: null } } },
+      'clawrouter/qwen3.7-flash': { params: { extra_body: { enable_search: null } } },
     });
     expect(patch).not.toHaveProperty('tools');
   });

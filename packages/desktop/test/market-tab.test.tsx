@@ -27,12 +27,31 @@ vi.mock('../src/renderer/components/ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-// 安装编排单独测过（template-install.test.ts），这里只验证界面接线
+/**
+ * ⭐ BUG-025：点「在罗盘助手中使用」必须**直达对应罗盘助手**（全应用唯一的那条切助手动作）。
+ * 这里把那条路打桩，验证的是"到没到"，不是"怎么到"（后者在 `use-select-agent.test.tsx`）。
+ */
+const selectAgent = vi.fn();
+vi.mock('@/hooks/useSelectAgent', () => ({ useSelectAgent: () => selectAgent }));
+
+// 备好助手的编排单独测过（template-install.test.ts），这里只验证界面接线。
 // ⚠️ 返回类型必须写全（TemplateInstallOutcome）：推断成 {ok:true; agentId:string} 之后，
 //    mockResolvedValueOnce({ok:false, message}) / ({recordWarning}) 会在 typecheck:tests 报错。
-const install = vi.fn(async (): Promise<TemplateInstallOutcome> => ({ ok: true, agentId: 'rongying-tpl-x' }));
+// ⚠️ 2026-10-07（质检 P2-4）：忙碌态必须**可注入** —— 以前这里把 `installingId` 钉成常量
+//    `null`，于是"安装中按钮禁用 / 双击只算一次"这两条**永远不会被测到**（全盲）。
+const installState = vi.hoisted(() => ({
+  install: vi.fn(async (): Promise<TemplateInstallOutcome> => ({ ok: true, agentId: 'rongying-tpl-x' })),
+  installingIds: new Set<string>(),
+  beginInstall: vi.fn(),
+  endInstall: vi.fn(),
+}));
 vi.mock('../src/renderer/layouts/MarketPanel/useTemplateInstall', () => ({
-  useTemplateInstall: () => ({ install, installingId: null as string | null }),
+  useTemplateInstall: () => ({
+    install: installState.install,
+    installingIds: installState.installingIds,
+    beginInstall: installState.beginInstall,
+    endInstall: installState.endInstall,
+  }),
 }));
 
 import type { TemplateInstallOutcome } from '../src/renderer/lib/template-install';
@@ -94,9 +113,14 @@ function buttonByText(container: HTMLElement, text: string): HTMLButtonElement |
     null) as HTMLButtonElement | null;
 }
 
+function useButton(container: HTMLElement): HTMLButtonElement {
+  return container.querySelector('button[data-action="use-in-compass"]') as HTMLButtonElement;
+}
+
 describe('MarketTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    installState.installingIds = new Set<string>();
     Object.assign(window, {
       clawwork: {
         marketTemplates: vi.fn(async () => ({ ok: true, result: [officialRow, orgRow] })),
@@ -110,7 +134,7 @@ describe('MarketTab', () => {
     document.body.innerHTML = '';
   });
 
-  it('列出模板：名字、描述、作者、安装数、官方徽章', async () => {
+  it('列出模板：名字、描述、作者、用过的人数、官方徽章', async () => {
     const view = await render();
     expect(view.container.textContent).toContain('爆款内容教练');
     expect(view.container.textContent).toContain('从选题到成稿的内容工作流');
@@ -120,14 +144,14 @@ describe('MarketTab', () => {
     view.unmount();
   });
 
-  it('已安装的显示「已安装」且按钮禁用', async () => {
+  it('⭐ 入口只讲「在罗盘助手中使用」：整个市场界面不出现「安装 / 已安装」语义', async () => {
     const view = await render();
-    const installedCard = [...view.container.querySelectorAll('[data-template]')].find((el) =>
-      el.textContent?.includes('同事的模板'),
-    );
-    const button = installedCard?.querySelector('button[data-action="install"]') as HTMLButtonElement;
-    expect(button.textContent).toContain(translate('market.installed'));
-    expect(button.disabled).toBe(true);
+    expect(view.container.textContent).not.toContain('安装');
+    expect(view.container.textContent).not.toContain('已装');
+    expect(document.body.textContent).not.toContain('安装');
+    expect(useButton(view.container)?.textContent).toContain(translate('market.useInCompass'));
+    // 已在我的模板里用过的（`installed_by_me`）也一样能点：这里不摆"已安装"那种状态
+    expect(useButton(view.container)?.disabled).toBe(false);
     view.unmount();
   });
 
@@ -167,94 +191,155 @@ describe('MarketTab', () => {
     view.unmount();
   });
 
-  it('⭐ 安装：拉详情 → 真安装 → 变成「已安装」并提示成功', async () => {
+  it('⭐ 点「在罗盘助手中使用」：拉详情 → 备好助手 → 直达对应罗盘助手（不给"安装成功"提示）', async () => {
     const view = await render();
-    const installButton = [...view.container.querySelectorAll('button[data-action="install"]')].find((b) =>
-      b.textContent?.includes(translate('market.install')),
-    ) as HTMLButtonElement;
+    const button = useButton(view.container);
 
     await act(async () => {
-      installButton.click();
+      button.click();
     });
 
-    // 先拉详情（安装要用提示词），再交给 install 编排
+    // 先拉详情（备好助手要用提示词），再交给备好助手的编排，最后**切到那个助手**
     expect(window.clawwork.marketTemplateDetail).toHaveBeenCalledWith('t-official');
-    expect(install).toHaveBeenCalledWith(expect.objectContaining({ id: 't-official' }));
-    expect(toast.success).toHaveBeenCalled();
-    // 同上：只断言这一张卡片，别借用另一张本来已安装的状态
-    const card = [...view.container.querySelectorAll('[data-template]')].find((el) =>
-      el.textContent?.includes('爆款内容教练'),
-    );
-    expect(card?.querySelector('button[data-action="install"]')?.textContent).toContain(translate('market.installed'));
+    expect(installState.install).toHaveBeenCalledWith(expect.objectContaining({ id: 't-official' }));
+    expect(selectAgent).toHaveBeenCalledWith('rongying-tpl-x');
+    // 关键：不再有「安装成功 → 去助手栏看看吧」这一层
+    expect(toast.success).not.toHaveBeenCalled();
     view.unmount();
   });
 
-  it('⭐ 安装失败 ⇒ 主提示只显示中文，technical diagnostic 只进日志', async () => {
+  it('⭐ 备好助手失败 ⇒ 中文提示 + 不跳转，diagnostic 只进日志', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    install.mockResolvedValueOnce({
+    installState.install.mockResolvedValueOnce({
       ok: false,
-      message: '安装没成功，请稍后重试。',
+      message: '没能打开这个能力，请稍后重试。',
       diagnostic: 'gateway not connected',
     });
     const view = await render();
-    const installButton = [...view.container.querySelectorAll('button[data-action="install"]')].find((b) =>
-      b.textContent?.includes(translate('market.install')),
-    ) as HTMLButtonElement;
 
     await act(async () => {
-      installButton.click();
+      useButton(view.container).click();
     });
 
     const errorTexts = (toast.error as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
     expect(errorTexts.some((text) => /[一-龥]/.test(text))).toBe(true);
     expect(errorTexts.join(' ')).not.toContain('gateway not connected');
-    expect(consoleError).toHaveBeenCalledWith('[market] 助手安装失败:', 'gateway not connected');
-    // ⚠️ 只能断言**这一张卡片**：列表里另一张本来就是"已安装"，
-    //    对整个容器做 not.toContain('已安装') 会因为别人的状态而永远失败
-    expect(installButton.textContent).not.toContain(translate('market.installed'));
-    expect(installButton.disabled).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith('[market] 备好助手失败:', 'gateway not connected');
+    expect(selectAgent).not.toHaveBeenCalled();
+    expect(useButton(view.container).disabled).toBe(false);
     view.unmount();
     consoleError.mockRestore();
   });
 
-  it('⭐ install promise reject ⇒ 捕获并给中文失败提示', async () => {
+  it('⭐ install promise reject ⇒ 捕获并给中文失败提示，不跳转', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    install.mockRejectedValueOnce(new Error('gateway exploded'));
+    installState.install.mockRejectedValueOnce(new Error('gateway exploded'));
     const view = await render();
-    const installButton = [...view.container.querySelectorAll('button[data-action="install"]')].find((b) =>
-      b.textContent?.includes(translate('market.install')),
-    ) as HTMLButtonElement;
 
     await act(async () => {
-      installButton.click();
+      useButton(view.container).click();
       await Promise.resolve();
     });
 
     expect((toast.error as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(
-      translate('market.installFailed'),
+      translate('market.actionFailed'),
     );
-    expect(consoleError).toHaveBeenCalledWith('[market] 助手安装请求异常:', expect.any(Error));
-    expect(installButton.textContent).not.toContain(translate('market.installed'));
+    expect(consoleError).toHaveBeenCalledWith('[market] 在罗盘助手中打开异常:', expect.any(Error));
+    expect(selectAgent).not.toHaveBeenCalled();
     view.unmount();
     consoleError.mockRestore();
   });
 
-  it('⭐ 记账失败 ⇒ 助手装好了但提示一句"次数没记上"（不当作失败）', async () => {
-    install.mockResolvedValueOnce({ ok: true, agentId: 'x', recordWarning: '连不上服务器，请检查网络后重试。' });
+  it('⭐ 详情拿不回来 ⇒ 中文提示，既不备好助手也不跳转', async () => {
+    (window.clawwork.marketTemplateDetail as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      errorCode: 'network',
+    });
     const view = await render();
-    const installButton = [...view.container.querySelectorAll('button[data-action="install"]')].find((b) =>
-      b.textContent?.includes(translate('market.install')),
-    ) as HTMLButtonElement;
 
     await act(async () => {
-      installButton.click();
+      useButton(view.container).click();
+    });
+
+    expect((toast.error as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(
+      translate('market.loadFailed'),
+    );
+    expect(installState.install).not.toHaveBeenCalled();
+    expect(selectAgent).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  /**
+   * ⭐⭐ 2026-10-07（质检 P1-1 / P2-4）：市场链的忙碌态与并发。
+   *
+   * 三条都是**以前测不到**的：mock 把忙碌态钉成常量 null，真实缺陷（拉详情窗口期
+   * 还能再点 ⇒ 双击装两次、记两次账）在测试里全盲。
+   */
+  it('⭐ 正在准备时那一行按钮禁用并显示「正在准备…」，别的行不受影响', async () => {
+    installState.installingIds = new Set(['t-official']);
+    const view = await render();
+
+    const buttons = [...view.container.querySelectorAll('button[data-action="use-in-compass"]')];
+    expect(buttons).toHaveLength(2);
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(true);
+    expect(buttons[0]?.textContent).toContain(translate('market.preparing'));
+    expect((buttons[1] as HTMLButtonElement).disabled).toBe(false);
+    expect(buttons[1]?.textContent).toContain(translate('market.useInCompass'));
+    view.unmount();
+  });
+
+  it('⭐ 双击「在罗盘助手中使用」只触发一次 install（入口同步去重）', async () => {
+    const view = await render();
+    const button = useButton(view.container);
+
+    await act(async () => {
+      button.click();
+      button.click(); // 同一 tick 的第二次点击：React state 还没更新，必须靠 ref 同步挡住
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(installState.install).toHaveBeenCalledTimes(1);
+    expect(installState.beginInstall).toHaveBeenCalledTimes(1);
+    expect(installState.beginInstall).toHaveBeenCalledWith('t-official');
+    expect(installState.endInstall).toHaveBeenCalledWith('t-official');
+    expect(selectAgent).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it('⭐ 备好助手但没拿到助手标识（ok:true 且 agentId 缺失）⇒ 失败文案 + 不跳转', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    installState.install.mockResolvedValueOnce({ ok: true }); // 没有 agentId
+    const view = await render();
+
+    await act(async () => {
+      useButton(view.container).click();
+    });
+
+    expect((toast.error as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(
+      translate('market.actionFailed'),
+    );
+    expect(consoleError).toHaveBeenCalledWith('[market] 备好助手但没拿到助手标识:', 't-official');
+    expect(selectAgent).not.toHaveBeenCalled();
+    expect(installState.endInstall).toHaveBeenCalledWith('t-official');
+    view.unmount();
+    consoleError.mockRestore();
+  });
+
+  it('⭐ 记账失败 ⇒ 提示一句"次数没记上"（不当作失败），照样直达助手', async () => {
+    installState.install.mockResolvedValueOnce({
+      ok: true,
+      agentId: 'rongying-tpl-x',
+      recordWarning: '连不上服务器，请检查网络后重试。',
+    });
+    const view = await render();
+
+    await act(async () => {
+      useButton(view.container).click();
     });
 
     expect(toast.warning).toHaveBeenCalled();
-    const card = [...view.container.querySelectorAll('[data-template]')].find((el) =>
-      el.textContent?.includes('爆款内容教练'),
-    );
-    expect(card?.querySelector('button[data-action="install"]')?.textContent).toContain(translate('market.installed'));
+    expect(selectAgent).toHaveBeenCalledWith('rongying-tpl-x');
     view.unmount();
   });
 

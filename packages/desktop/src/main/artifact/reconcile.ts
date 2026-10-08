@@ -1,13 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import type { BigIntStats, Dirent } from 'node:fs';
 import { hasStrongIdentity, identityKey, identityOf, sameIdentity } from '../util/file-identity.js';
-import { closeSync, existsSync, fstatSync, lstatSync, openSync, opendirSync, realpathSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  opendirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Artifact, ArtifactAvailability, ArtifactRootKind } from '@clawwork/shared';
 import { getSqlite } from '../db/index.js';
 import { validateImportTaskId } from '../context/file-import.js';
 import { ensureTaskDir } from '../workspace/init.js';
 import { captureArtifactWorkspaceOwner } from './workspace-owner.js';
+import { isIntermediateArtifactName } from './extract.js';
+import { artifactFromRow } from './row.js';
+import { isVerifiedFileName, verifyArtifactBuffer } from './verify.js';
 
 const DEFAULT_BUDGETS = Object.freeze({
   maxDepth: 4,
@@ -62,6 +75,7 @@ export interface ReconcileTaskArtifactsInput {
    * ⚠️ **含义随 `rootKind` 变**：
    *    - 缺省 / `'workspace'`：**应用工作区**，扫描根是 `<workspacePath>/<taskId>`
    *    - `'agent'`：**助手自己的工作区**，扫描根就是它本身
+   *    - `'workspace-root'`：**应用工作区的根层**，扫描根就是它本身（深度 0，不递归）
    */
   workspacePath: string;
   taskId: string;
@@ -69,6 +83,13 @@ export interface ReconcileTaskArtifactsInput {
   baseline: ArtifactBaseline;
   /** 见 `workspacePath`。缺省 = `'workspace'`（老行为）。 */
   rootKind?: ArtifactRootKind;
+  /**
+   * 候选落库前的一道闸（调用方按"这一轮是不是还算数"给）。
+   *
+   * ⚠️ 参数是**相对本条根的**路径（由 `normalizedRelativePath(root.realTask, …)` 得来）。
+   *    第三个根的相对路径是**裸文件名** —— 调用方**不能**拿 `<workspacePath>/<taskId>/<file>`
+   *    那套拼接去解析它（解析结果是错的，而且不报错，只是永远匹配不上）。
+   */
   isCandidateCurrent?: (relativePath: string) => boolean;
 }
 
@@ -83,6 +104,12 @@ export interface ReconcileTaskArtifactsResult {
 
 interface ReconcileHooks {
   beforeSecondSnapshot?: (input: { absolutePath: string; relativePath: string }) => void | Promise<void>;
+  /**
+   * 完整性读（`readFileSync`）**之前**的一瞬。只给测试用：真机上的"读失败"
+   * （EBUSY/EACCES/杀软隔离/U 盘拔出）没法在 NTFS 上确定性复现，而它恰恰是
+   * P1-1 那条判据（读失败 ≠ 结构损坏）的分界点 —— 探针在这里制造读失败。
+   */
+  beforeIntegrityRead?: (input: { absolutePath: string; relativePath: string }) => void | Promise<void>;
   budgets?: Partial<ArtifactScanBudgets>;
   stabilityDelayMs?: number;
 }
@@ -163,6 +190,42 @@ function trustedTaskRoot(workspacePath: string, taskIdValue: string): TrustedTas
 }
 
 /**
+ * 受信根：**一个已知的、非符号链接、有强身份的目录**（第二 / 第三个根的公共形状）。
+ *
+ * ## ⚠️ 这里刻意让 `taskPath === workspacePath`
+ *
+ * 那个"任务根"的形状是下游十几个守卫的**共同前提**（`collectPaths` 的 `isWithin`、
+ * `stableCandidateOnce` 的 realpath 比对、`verifyTrustedRoot` 的身份复核、
+ * `normalizedRelativePath`）。把两个字段都指到同一个目录，这些守卫就**一字不改**地生效 ——
+ * 它们本来要的就是"一个已知的、非符号链接、有强身份的目录"。
+ *
+ * ⚠️ **不建目录**（与 `trustedTaskRoot` 的调用方不同）：这两个根都不是"我们的任务目录"，
+ *    我们只读。不存在就是"读不到"，由调用方回落成"没有这个根"。
+ *
+ * ⚠️ 两个根共用这一份实现（而不是各写一遍）：这是**安全路径**，抄一份就意味着
+ *    以后一处补了守卫、另一处漏了 —— 差别只在失败时抛出的那句话（`failureMessage`）。
+ */
+function trustedDirectoryRoot(directoryPath: string, failureMessage: string): TrustedTaskRoot {
+  try {
+    const identity = lstatSync(directoryPath, { bigint: true });
+    const real = realpathSync.native(directoryPath);
+    if (identity.isSymbolicLink() || !identity.isDirectory() || !hasStrongIdentity(identityOf(identity))) {
+      throw new Error();
+    }
+    return {
+      workspacePath: directoryPath,
+      taskPath: directoryPath,
+      realWorkspace: real,
+      realTask: real,
+      workspaceIdentity: identity,
+      taskIdentity: identity,
+    };
+  } catch {
+    throw new Error(failureMessage);
+  }
+}
+
+/**
  * 受信根：**助手自己的工作区**（第二个根，2026-09-27）。
  *
  * ## 为什么需要它
@@ -170,51 +233,50 @@ function trustedTaskRoot(workspacePath: string, taskIdValue: string): TrustedTas
  * 助手把它生成的文件写在**它自己的工作区**里（网关 `agents.entries.<id>.workspace`），
  * 而任务产物的扫描根一直是 `<应用工作区>/<taskId>` —— 两者是**兄弟目录**，永不重叠
  * ⇒ 通道外生成的文件从来没进过产物表（真机 `.clawwork.db` 实测 `COUNT(*) = 0`）。
- *
- * ## ⚠️ 这里刻意让 `taskPath === workspacePath`
- *
- * 那个"任务根"的形状是下游十几个守卫的**共同前提**（`collectPaths` 的 `isWithin`、
- * `stableCandidateOnce` 的 realpath 比对、`verifyTrustedRoot` 的身份复核、
- * `normalizedRelativePath`）。把两个字段都指到助手工作区，这些守卫就**一字不改**地生效 ——
- * 它们本来要的就是"一个已知的、非符号链接、有强身份的目录"。
- *
- * ⚠️ **不建目录**（与 `trustedTaskRoot` 的调用方不同）：助手工作区是网关的，
- *    我们只读。不存在就是"读不到"，由调用方回落成"没有这个根"。
  */
 function trustedAgentWorkspaceRoot(agentWorkspacePath: string): TrustedTaskRoot {
-  try {
-    const identity = lstatSync(agentWorkspacePath, { bigint: true });
-    const real = realpathSync.native(agentWorkspacePath);
-    if (identity.isSymbolicLink() || !identity.isDirectory() || !hasStrongIdentity(identityOf(identity))) {
-      throw new Error();
-    }
-    return {
-      workspacePath: agentWorkspacePath,
-      taskPath: agentWorkspacePath,
-      realWorkspace: real,
-      realTask: real,
-      workspaceIdentity: identity,
-      taskIdentity: identity,
-    };
-  } catch {
-    throw new Error('trusted agent workspace is unavailable');
-  }
+  return trustedDirectoryRoot(agentWorkspacePath, 'trusted agent workspace is unavailable');
+}
+
+/**
+ * 受信根：**应用工作区的根层**（第三个根，2026-10-07）。
+ *
+ * ## 为什么需要它
+ *
+ * 模型绕过 docgen/slidegen，用 exec / CLI 把成品直接写在 `荣盈魔方工作区\` 的**根**上
+ * （真机形态：`荣盈魔方工作区\荣盈互动公司介绍-v2-ade3018a.pptx`）。前两个根一个扫
+ * `<应用工作区>/<taskId>`、一个扫助手工作区 —— 根层文件**谁都不扫**，
+ * 于是"文件真的生成了，产物面板里却什么都没有"，而且**连失败提示都没有**
+ * （claim-guard 找得到那份文件 ⇒ 它不算"丢了"，只是从来没被登记过）。
+ *
+ * ⚠️ 与应用根是**父子**关系，但必须是**独立的一趟**（不能并进 `'workspace'` 那趟）：
+ *    `reconcileTaskArtifacts` 用 `local_path` 前缀判"这行归不归我"（`:641-648`），
+ *    根层文件的 `local_path` 是**裸名**，混进任务目录那趟会被判成 `missing` ⇒ 界面一片红。
+ */
+function trustedWorkspaceRoot(workspacePath: string): TrustedTaskRoot {
+  return trustedDirectoryRoot(workspacePath, 'trusted workspace root is unavailable');
 }
 
 /**
  * `source_key` 前缀。
  *
- * ⚠️ 两个根**必须用不同前缀**：`reconcileTaskArtifacts` 用"前缀是不是我的"来判
- *    「这行归不归我改」—— 共用前缀会让助手根的那一趟把应用根的行**当成自己的**改写掉。
+ * ⚠️ 三个根**必须两两不同**：`reconcileTaskArtifacts` 用"前缀是不是我的"来判
+ *    「这行归不归我改」—— 共用前缀会让后跑的那趟把先跑那趟的行**当成自己的**改写掉。
+ *    （测试钉在 `test/artifact-reconcile-signature.test.ts`。）
  */
 const WORKSPACE_SOURCE_PREFIX = 'workspace-file:';
 const AGENT_SOURCE_PREFIX = 'agent-workspace-file:';
+/**
+ * 第三个根（应用工作区**根层**）。刻意**不是** `workspace-file:` 的前缀变体：
+ * 那两个前缀之间没有"谁是谁的前缀"关系，归属判定才可能是纯字符串 `startsWith`。
+ */
+const WORKSPACE_ROOT_SOURCE_PREFIX = 'workspace-root-file:';
 
 /** 一趟 reconcile 的全部"根相关"取值，集中在一处，免得散落五六个分支。 */
 interface ReconcileScope {
   root: TrustedTaskRoot;
   rootKind: ArtifactRootKind;
-  /** 落库 `local_path` 的前缀。应用根是 `<taskId>/`（既有约定，不改）；助手根是空串。 */
+  /** 落库 `local_path` 的前缀。应用根是 `<taskId>/`（既有约定，不改）；另两个根是空串。 */
   localPrefix: string;
   sourcePrefix: string;
   /**
@@ -225,6 +287,23 @@ interface ReconcileScope {
    * （更深层的同名文件是助手生成的，归 `excludedName` 与 MIME 表管。）
    */
   topLevelExclude: ReadonlySet<string>;
+  /**
+   * 这一趟允许的**最大深度上限**（硬顶，调用方只能收紧）。
+   *
+   * ⚠️ 深度是**根的结构属性**：第三个根是 **0** —— 只收根层文件，**绝不递归**。
+   *    它的根层里躺着 `<taskId>/` 与 `rongying-agents/` 两片目录，
+   *    一旦递归就会把别人的产物、助手的配置当成本根层的东西收进来。
+   */
+  maxDepthLimit: number;
+  /**
+   * **正向**扩展名白名单（`undefined` = MIME 表里的都收，另两个根的老口径）。
+   *
+   * ⚠️ 第三个根刻意**收窄**：根层是**用户与模型共用**的一片（用户自己拷进来的文件、
+   *    别的任务的痕迹都在这一层），所以只收"明确的交付物"格式；`.txt/.csv/.json/.css/.ts/.zip`
+   *    这些在任务目录里收得了的，在这一层不收（宁可漏，不可把用户的杂物当产物）。
+   *    脚本类（`.js/.cjs/.mjs/.py`）与另外两个根同一口径排除（`SCRIPT_EXTENSIONS`）。
+   */
+  allowedExtensions?: ReadonlySet<string>;
 }
 
 /**
@@ -246,6 +325,47 @@ const AGENT_WORKSPACE_RESERVED: ReadonlySet<string> = new Set([
   'inbox',
 ]);
 
+/**
+ * 应用工作区**根层**里属于"应用自己"的名字（小写）—— 不是产物。
+ *
+ * ⚠️ 这三条**本来就是**应用自己的东西：库（`.clawwork.db`）、工作区标记
+ *    （`.clawwork-workspace.json`）、助手工作区（`rongying-agents/`）。
+ *    点开头那两个已被 `excludedName` 挡下、`rongying-agents/` 是目录（depth 0 已被截断）——
+ *    这里**再点名一遍**是刻意的：这一层的"哪些不是产物"要**写出来**，
+ *    而不是靠三条分散的隐式规则凑出来（改任意一条规则都会悄悄改变这一层的语义）。
+ */
+const WORKSPACE_ROOT_RESERVED: ReadonlySet<string> = new Set([
+  '.clawwork.db',
+  '.clawwork-workspace.json',
+  'rongying-agents',
+]);
+
+/**
+ * 第三个根的**正向**扩展名白名单（见 `ReconcileScope.allowedExtensions`）。
+ *
+ * 文档 / 演示 / 表格 / 网页 / 图片，加上视频（`.mp4/.webm`，与另外两个根同一口径）。
+ *
+ * ⚠️ `.md` **在**名单里（这是刻意定的策，不是漏）：模型把交付说明写成 Markdown 是常见形态，
+ *    而且 `<taskId>` 那趟本来就收 `.md` —— 根层不收它，只会让同一个用户看到两种口径。
+ *    代价是根层的模型笔记也会进来；与"生成了必进产物"比，这个方向的错更可接受。
+ * ⚠️ 老式二进制 Office（`.doc/.xls/.ppt`）**不在**名单里：随包的工具链产不出现代格式以外的
+ *    交付物，而这一层宁可漏也不收杂物。
+ */
+const WORKSPACE_ROOT_EXTENSIONS: ReadonlySet<string> = new Set([
+  '.pptx',
+  '.docx',
+  '.xlsx',
+  '.pdf',
+  '.html',
+  '.md',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.mp4',
+  '.webm',
+]);
+
 function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: ArtifactRootKind }): ReconcileScope {
   if (input.rootKind === 'agent') {
     return {
@@ -255,6 +375,19 @@ function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: Art
       sourcePrefix: AGENT_SOURCE_PREFIX,
       // ⭐ 助手工作区根下有助手自己的配置 —— 那些不是产物（见 `AGENT_WORKSPACE_RESERVED`）。
       topLevelExclude: AGENT_WORKSPACE_RESERVED,
+      maxDepthLimit: DEFAULT_BUDGETS.maxDepth,
+    };
+  }
+  if (input.rootKind === 'workspace-root') {
+    return {
+      root: trustedWorkspaceRoot(input.workspacePath),
+      rootKind: 'workspace-root',
+      localPrefix: '',
+      sourcePrefix: WORKSPACE_ROOT_SOURCE_PREFIX,
+      topLevelExclude: WORKSPACE_ROOT_RESERVED,
+      // ⭐ **绝不递归**：这一层的 `<taskId>/` 与 `rongying-agents/` 是**别人的**产物与配置。
+      maxDepthLimit: 0,
+      allowedExtensions: WORKSPACE_ROOT_EXTENSIONS,
     };
   }
   return {
@@ -264,10 +397,26 @@ function scopeFor(input: { workspacePath: string; taskId: string; rootKind?: Art
     sourcePrefix: WORKSPACE_SOURCE_PREFIX,
     // 应用根的"任务目录"里**没有**助手配置，保持原样（一个名字都不多排除）。
     topLevelExclude: EMPTY_EXCLUDE,
+    maxDepthLimit: DEFAULT_BUDGETS.maxDepth,
   };
 }
 
 const EMPTY_EXCLUDE: ReadonlySet<string> = new Set();
+
+/**
+ * 一趟扫描的预算：默认 → 再叠加**本根**的上限（只收不放）→ 再叠加调用方（测试）的覆盖。
+ *
+ * ⚠️ `maxDepth` 用 `min` 收口而不是直接覆盖：调用方可以**收紧**（测试里就是这么做的），
+ *    但**不能**突破本趟的硬顶 —— 第三个根的 0 是安全属性，不是默认值。
+ */
+function scanBudgets(
+  scope: ReconcileScope,
+  hooks: Partial<ArtifactScanBudgets> = {},
+  overrides: Partial<ArtifactScanBudgets> = {},
+): ArtifactScanBudgets {
+  const merged = { ...DEFAULT_BUDGETS, ...hooks, ...overrides };
+  return { ...merged, maxDepth: Math.min(merged.maxDepth, scope.maxDepthLimit) };
+}
 
 function verifyTrustedRoot(root: TrustedTaskRoot): void {
   try {
@@ -305,16 +454,26 @@ function signature(stats: BigIntStats): string {
 }
 
 function excludedName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return (
-    name.startsWith('.') ||
-    name.startsWith('~$') ||
-    lower.endsWith('.tmp') ||
-    lower.endsWith('.part') ||
-    lower.endsWith('.partial') ||
-    lower.endsWith('.lock') ||
-    lower.endsWith('~')
-  );
+  return name.startsWith('.') || isIntermediateArtifactName(name);
+}
+
+/**
+ * **代码脚本不进产物**（2026-10-06，用户反馈 #9："重新生成 docx：桌面出现 js 文件"）。
+ *
+ * 模型干活时会往工作区里写自己的作业脚本（调试 `debug.js`、生成器 `generate.cjs`、
+ * 临时 `probe.py`…）。自动收编把它们当"新文件"登记进产物列表 —— 用户要的是**交付物**，
+ * 不是模型的中间作业。
+ *
+ * ⚠️ 只管**自动扫描登记**这一条路：显式保存（`saveArtifact*`，含"围栏代码块 ⇒ code 产物"）
+ *    完全不经过本扫描 —— 用户点名要的代码仍然进得了列表。
+ * ⚠️ 三个根（应用根 / 助手根 / 应用工作区根层）**同一口径**：按根分叉只会让同一份文件在两处表现不一致，
+ *    而这三个根都没有"脚本算交付物"的场景。
+ * ⚠️ 只排除这四类**脚本**；`.ts/.json/.md/.html/.css` 与 pptx/docx/xlsx/pdf/图片/视频
+ *    一律照旧 —— 边界是"模型自己跑过的作业文件"，不是"所有文本/代码"。
+ */
+const SCRIPT_EXTENSIONS: ReadonlySet<string> = new Set(['.js', '.cjs', '.mjs', '.py']);
+function excludedScriptName(name: string): boolean {
+  return SCRIPT_EXTENSIONS.has(extname(name).toLowerCase());
 }
 
 function mimeTypeFor(name: string): string | null {
@@ -371,6 +530,8 @@ function collectPaths(
   baseline?: ArtifactBaseline,
   /** 根目录那一层要跳过的名字（小写）；见 `ReconcileScope.topLevelExclude`。 */
   topLevelExclude: ReadonlySet<string> = new Set(),
+  /** 正向扩展名白名单；`undefined` = MIME 表里的都收。见 `ReconcileScope.allowedExtensions`。 */
+  allowedExtensions?: ReadonlySet<string>,
 ): {
   candidates: Candidate[];
   skipped: string[];
@@ -414,8 +575,15 @@ function collectPaths(
       }
       if (stats.isDirectory()) {
         if (current.depth >= budgets.maxDepth) {
+          // ⚠️ 深度截断是**确定性范围**，不是"预算耗尽"（2026-10-05）：基线与复核用同一条
+          //    `maxDepth` 扫同一棵树 ⇒ 被截掉的那一层在两趟里都确定不在范围内，不会把基线
+          //    漏掉的文件在复核时误判成"本轮新增"。原先在这里置 exhausted ⇒
+          //    `BASELINE_COMPLETE=false` ⇒ `reconcileTaskArtifacts` 整趟早退
+          //    （saved/existing/skipped 全空、零日志）。真机形态：
+          //    `rongying-agents/<id>/memory/dreaming/{deep,light,rem}` 这类超深目录
+          //    让产物登记永远空转。只有 maxVisited / maxResults / maxTotalBytes
+          //    真把**范围内**的文件半途丢掉才算耗尽（见下方两个分支）。
           skipped.push(relativePath);
-          budgetExhausted = true;
         } else {
           const realDirectory = realpathSync.native(absolutePath);
           if (isWithin(root.realTask, realDirectory) && samePath(realDirectory, absolutePath)) {
@@ -426,9 +594,22 @@ function collectPaths(
         }
         continue;
       }
+      // ⭐ 代码脚本（模型自己的作业文件）不进产物 —— 只对**文件**生效（同名目录照常遍历）。
+      if (excludedScriptName(entry.name)) {
+        skipped.push(relativePath);
+        continue;
+      }
       const mimeType = mimeTypeFor(entry.name);
       const size = Number(stats.size);
-      if (!stats.isFile() || !mimeType || !hasStrongIdentity(identityOf(stats)) || size <= 0 || size > MAX_FILE_BYTES) {
+      if (
+        !stats.isFile() ||
+        !mimeType ||
+        // ⭐ 正向白名单（第三个根）：MIME 表认得 ≠ 这一层收（见 `ReconcileScope.allowedExtensions`）。
+        (allowedExtensions !== undefined && !allowedExtensions.has(extname(entry.name).toLowerCase())) ||
+        !hasStrongIdentity(identityOf(stats)) ||
+        size <= 0 ||
+        size > MAX_FILE_BYTES
+      ) {
         skipped.push(relativePath);
         continue;
       }
@@ -444,27 +625,6 @@ function collectPaths(
     if (budgetExhausted && visited >= budgets.maxVisited) break;
   }
   return { candidates, skipped, budgetExhausted };
-}
-
-function artifactFromRow(row: Record<string, unknown>): Artifact {
-  return {
-    id: String(row.id),
-    taskId: String(row.task_id),
-    messageId: String(row.message_id),
-    type: String(row.type) as Artifact['type'],
-    name: String(row.name),
-    filePath: String(row.file_path),
-    localPath: String(row.local_path),
-    // ⚠️ 只认 `'agent'`，其余（含老行的 `'workspace'` 与任何脏值）一律归 `'workspace'` ——
-    //    与 `Artifact.root` 是可选字段、缺省即老行为**同一个方向**。
-    root: row.root === 'agent' ? 'agent' : 'workspace',
-    mimeType: String(row.mime_type),
-    size: Number(row.size),
-    sourceKey: String(row.source_key),
-    contentText: String(row.content_text),
-    createdAt: String(row.created_at),
-    availability: 'available',
-  };
 }
 
 function listTaskArtifacts(taskId: string): Artifact[] {
@@ -488,20 +648,29 @@ export async function captureTaskArtifactBaseline(
   hooks: CaptureBaselineHooks = {},
 ): Promise<ArtifactBaseline> {
   validateImportTaskId(input.taskId);
-  // ⚠️ 建任务目录**只在应用根**做：助手的工作区是**网关的**，我们只读 ——
-  //    绝不因为它不存在就往里建东西（那会污染助手的沙箱）。
-  if (input.rootKind !== 'agent' && !existsSync(join(input.workspacePath, input.taskId))) {
+  // ⚠️ 建任务目录**只在应用根**做：助手的工作区（网关的沙箱）与应用工作区的**根层**
+  //    （第三个根扫的就是这一层）都只读 —— 绝不因为它们不存在就往里建东西。
+  if (
+    input.rootKind !== 'agent' &&
+    input.rootKind !== 'workspace-root' &&
+    !existsSync(join(input.workspacePath, input.taskId))
+  ) {
     ensureTaskDir(input.workspacePath, input.taskId);
   }
   const scope = scopeFor(input);
   const root = scope.root;
-  const budgets = {
-    ...DEFAULT_BUDGETS,
+  // 基线要"看得见范围内**所有**候选"，所以结果数/字节数放到预算之外（只留 visited 把关）。
+  const budgets = scanBudgets(scope, hooks.budgets, {
     maxResults: DEFAULT_BUDGETS.maxVisited,
     maxTotalBytes: Number.MAX_SAFE_INTEGER,
-    ...hooks.budgets,
-  };
-  const { candidates, budgetExhausted } = collectPaths(root, budgets, undefined, scope.topLevelExclude);
+  });
+  const { candidates, budgetExhausted } = collectPaths(
+    root,
+    budgets,
+    undefined,
+    scope.topLevelExclude,
+    scope.allowedExtensions,
+  );
   verifyTrustedRoot(root);
   const baseline = Object.fromEntries(
     candidates.map((candidate) => [candidate.relativePath, signature(candidate.stats)]),
@@ -615,7 +784,7 @@ export async function reconcileTaskArtifacts(
   const owner = captureArtifactWorkspaceOwner();
   const scope = scopeFor(input);
   const root = scope.root;
-  const budgets = { ...DEFAULT_BUDGETS, ...hooks.budgets };
+  const budgets = scanBudgets(scope, hooks.budgets);
   // ⚠️ 只认**本根**的行。一个任务会同时挂两批产物（应用根 + 助手根），
   //    混在一起算 `missing` 会把另一批整个判成"文件不见了"（在界面上就是一片红）。
   const existingRows = listTaskArtifacts(input.taskId).filter(
@@ -633,7 +802,7 @@ export async function reconcileTaskArtifacts(
     verifyTrustedRoot(root);
     return { saved, existing, updated, missing, skipped: [], budgetExhausted: true };
   }
-  const discovered = collectPaths(root, budgets, input.baseline, scope.topLevelExclude);
+  const discovered = collectPaths(root, budgets, input.baseline, scope.topLevelExclude, scope.allowedExtensions);
   // Open and verify candidates in parallel so the stability window is paid
   // once per reconciliation, not once per output file. The result budget caps
   // the number of simultaneously open read-only handles.
@@ -678,6 +847,46 @@ export async function reconcileTaskArtifacts(
           createdAt: now,
           availability: 'available',
         };
+        // M1 登记前置门（2026-10-06）：截断/未写完的 PPTX / 文本改名的假 DOCX 不许进库
+        // （图14/16"打不开"族 + 反馈 #9"新 docx 打不开/乱码"）。
+        // 不登记 = 用户不受打扰；坏文件本体留在盘上供诊断（skipped 与"不稳定"同语义）。
+        if (isVerifiedFileName(candidate.relativePath)) {
+          // ⚠️ 判据的**分界线**（2026-10-07 体检 P1-1）：**读失败 ≠ 结构损坏**。
+          //    `readFileSync` 抛错只说明"这一瞬读不到"（EBUSY/EACCES/杀软隔离/U 盘拔出），
+          //    文件本体可能完好 —— 旧实现把两者一起判成损坏、顺手 DELETE 掉登记行，
+          //    而下一轮基线按签名跳过（同一路径不再当候选）⇒ 列表里那份**永久消失且不可自愈**。
+          //    现在只有"读得到**且**判据明确说结构坏"才允许动登记；读不到只 skip。
+          const prior = sqlite
+            .prepare('SELECT id, source_key FROM artifacts WHERE task_id = ? AND root = ? AND local_path = ? LIMIT 1')
+            .get(input.taskId, scope.rootKind, storedLocalPath) as { id: string; source_key: string } | undefined;
+          await hooks.beforeIntegrityRead?.({
+            absolutePath: candidate.absolutePath,
+            relativePath: candidate.relativePath,
+          });
+          let integrity: ReturnType<typeof verifyArtifactBuffer> | null = null;
+          try {
+            integrity = verifyArtifactBuffer(candidate.relativePath, readFileSync(candidate.absolutePath));
+          } catch {
+            integrity = null; // 读不到 ⇒ 未知（不登记、也不删行）
+          }
+          if (integrity === null || !integrity.ok) {
+            if (integrity !== null && prior) {
+              // ⭐ 2026-10-06（原地改坏）：文件**曾经合法登记过**、现在读得出来且结构确认坏了 ——
+              //    只 skip 不够：旧行还赖在产物列表里，用户点开就是坏字节（"能点开但打不开"）
+              //    ⇒ 清掉那行陈旧登记。
+              // ⚠️ 进事务 + **按行身份复核**（2026-10-07 体检 P3-10）：并发的那趟如果已经把这行
+              //    换成了新登记（新 id / 新 source_key），这里必须**一个字节都不动** ——
+              //    旧实现按 (task_id, root, local_path) 删、且在 persist 事务外，
+              //    会把别趟刚登记的好行连带抹掉。
+              const prune = sqlite.transaction(() => {
+                sqlite.prepare('DELETE FROM artifacts WHERE id = ? AND source_key = ?').run(prior.id, prior.source_key);
+              });
+              prune();
+            }
+            discovered.skipped.push(candidate.relativePath);
+            continue; // 外层 finally 统一 closeSync(stable.fd)
+          }
+        }
         const persist = sqlite.transaction((): { kind: 'saved' | 'existing' | 'updated'; artifact: Artifact } => {
           if (input.isCandidateCurrent && !input.isCandidateCurrent(candidate.relativePath))
             throw new UnstableArtifactError();
@@ -782,13 +991,17 @@ export function getArtifactAvailability(localPathValue: string, workspacePath: s
     const realFile = realpathSync.native(absolutePath);
     const linkStats = lstatSync(absolutePath, { bigint: true });
     const canonicalStats = statSync(realFile, { bigint: true });
+    // ⚠️ 2026-10-06 真机回归（"S: 盘整版被拦截"）：这里**不要**判 `samePath(realFile, absolutePath)`。
+    //    subst/junction 工作区（U 盘/受控测试的标准形态）里，字面路径与 canonical 路径必然不同名，
+    //    那条例会把**全部**产物误判 unsafe。防护由下面两条承担：
+    //    · 文件本体符号链接 → `isSymbolicLink`（越界链接的文件到不了这里）；
+    //    · realpath 越界 → `isWithin(realWorkspace, realFile)`（outside-junction 用例钉住）。
     if (
       linkStats.isSymbolicLink() ||
       !linkStats.isFile() ||
       !hasStrongIdentity(identityOf(linkStats)) ||
       !sameIdentity(identityOf(linkStats), identityOf(canonicalStats)) ||
-      !isWithin(realWorkspace, realFile) ||
-      !samePath(realFile, absolutePath)
+      !isWithin(realWorkspace, realFile)
     ) {
       return 'unsafe';
     }
@@ -806,4 +1019,10 @@ export function getArtifactAvailability(localPathValue: string, workspacePath: s
  *    的形态（ctime 改不了，它总会在签名里兜住）。而恰恰是"两个不同的文件签名相同"
  *    才会导致"该重建的跳过 ⇒ 陈旧数据"。所以只能在函数层面用合成的 bigint stats 钉。
  */
-export const __testing = Object.freeze({ signature, sourceKeyFor, WORKSPACE_SOURCE_PREFIX, AGENT_SOURCE_PREFIX });
+export const __testing = Object.freeze({
+  signature,
+  sourceKeyFor,
+  WORKSPACE_SOURCE_PREFIX,
+  AGENT_SOURCE_PREFIX,
+  WORKSPACE_ROOT_SOURCE_PREFIX,
+});

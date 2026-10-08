@@ -79,6 +79,8 @@ function createHarness() {
     replaceStreamText: vi.fn(),
     /** B10：可重试错误的登记（界面据此给「重试」按钮）。 */
     markRetryableError: vi.fn(),
+    /** 包 D：自动重试候选的登记（界面据此决定要不要自动重发一次）。 */
+    markAutoRetryFailure: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {
@@ -127,6 +129,7 @@ function createHarness() {
     markUnread: vi.fn(),
     setGatewayStatusByGateway: vi.fn(),
     setGatewayVersion: vi.fn(),
+    setGatewayMaxPayloadByGateway: vi.fn(),
     setGatewayReconnectInfo: vi.fn(),
     setRuntimeBootstrapFailure: vi.fn(),
     setDefaultGatewayId: vi.fn(),
@@ -430,6 +433,124 @@ describe('可重试错误的登记（B10）', () => {
 
     expect(h.messageStore.markRetryableError).not.toHaveBeenCalled();
     expect(h.messageStore.setSessionError).toHaveBeenCalled();
+  });
+});
+
+/**
+ * 包 D（2026-10-07，「整轮失败自动重发 1 次」）：失败候选的**登记**。
+ *
+ * 这里登记的不是 B10 那个「重试」按钮（`markRetryableError`），而是
+ * 「这条失败值不值得让界面自动重发一次」：
+ *   - **确定性**失败（`refusal` / `context_length`）**两边都不登记** —— 重发同一句话
+ *     只会再失败一次（与 B10 同一条结论）；
+ *   - **瞬时**失败（`rate_limit` / `timeout`）登记成 `transient` 候选；
+ *   - **认不出类别**的登记成 `unclassified` 候选 —— 它们**不直接**触发重发，
+ *     还要在渲染层再过一遍「零最终交付」严格判据（activeTurn 无正文/工具、
+ *     本轮无新产物、无已结算交付）；判据本体在 `useAutoRetryFailedTurn` 的用例里。
+ *
+ * ⚠️ 两份登记**故意分开**：B10 的按钮判据在 lifecycle 这条路上恒为 `unknown`
+ *    （帧里没有结构化的 code/kind），若复用同一份登记，等于给这类失败凭空加个
+ *    「重试」按钮 —— 而那正是 B10 明确拒绝过的行为。
+ */
+describe('自动重试候选的登记（包 D）', () => {
+  it('⭐ lifecycle error 释放成 system 消息时登记为「未分类」候选（真机事故走的正是这条）', async () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+
+    emitLifecycleError(h, '⚠️ Agent run failed (model: clawrouter/deepseek-v4-flash)');
+    expect(h.messageStore.markAutoRetryFailure).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(DEDUP_FALLBACK_WINDOW_MS);
+    expect(h.messageStore.markAutoRetryFailure).toHaveBeenCalledWith(TASK.sessionKey, {
+      taskId: 'task-1',
+      messageId: 'msg-1',
+      kind: 'unclassified',
+    });
+  });
+
+  it('被去重窗挡掉的重复 lifecycle error 不再登记（没有新消息，就没有新候选）', async () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+
+    // 同一个去重窗内的两条：第二条把第一条的定时器顶掉，最终只落一条消息
+    emitLifecycleError(h, 'provider unavailable');
+    emitLifecycleError(h, 'provider unavailable');
+    await vi.advanceTimersByTimeAsync(DEDUP_FALLBACK_WINDOW_MS);
+
+    expect(h.systemMessages).toHaveLength(1);
+    expect(h.messageStore.markAutoRetryFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('lifecycle error 走临时会话时**不**登记（那一列的失败只写它自己）', async () => {
+    vi.useFakeTimers();
+    const h = createHarness();
+    const KEY_0 = 'agent:main:clawwork:compare-run-1-0:task:task-1';
+    h.deps.isEphemeralSession = (k: string) => k === KEY_0;
+
+    h.emit('agent', {
+      sessionKey: KEY_0,
+      stream: 'lifecycle',
+      data: { phase: 'error', error: 'provider unavailable' },
+    });
+    await vi.advanceTimersByTimeAsync(DEDUP_FALLBACK_WINDOW_MS);
+
+    expect(h.messageStore.setSessionError).toHaveBeenCalled();
+    expect(h.messageStore.markAutoRetryFailure).not.toHaveBeenCalled();
+  });
+
+  it('瞬时类 chat 失败（rate_limit / timeout）⇒ 登记为 transient 候选', () => {
+    for (const errorKind of ['rate_limit', 'timeout']) {
+      const h = createHarness();
+      emitChatError(h, { errorMessage: 'RateLimitExceededError: slow down', errorKind });
+
+      expect(h.messageStore.markAutoRetryFailure, `kind=${errorKind}`).toHaveBeenCalledWith(TASK.sessionKey, {
+        taskId: 'task-1',
+        messageId: 'msg-1',
+        kind: 'transient',
+      });
+    }
+  });
+
+  it('⭐ 确定性类（refusal / context_length）⇒ **不**登记 —— 自动重发也白搭', () => {
+    for (const errorKind of ['refusal', 'context_length']) {
+      const h = createHarness();
+      emitChatError(h, { errorMessage: 'model refused', errorKind });
+
+      expect(h.messageStore.markAutoRetryFailure, `kind=${errorKind} 不该自动重发`).not.toHaveBeenCalled();
+      // 失败本身照旧要说出来 —— "不自动重发"不等于"不告诉用户"
+      expect(h.systemMessages).toHaveLength(1);
+    }
+  });
+
+  it('认不出类别（unknown / 没有 kind）⇒ 登记为未分类候选（由渲染层过零交付判据）', () => {
+    for (const errorKind of ['unknown', undefined]) {
+      const h = createHarness();
+      emitChatError(h, { errorMessage: 'SomethingNewError: x', ...(errorKind ? { errorKind } : {}) });
+
+      expect(h.messageStore.markAutoRetryFailure, `kind=${errorKind ?? '(missing)'}`).toHaveBeenCalledWith(
+        TASK.sessionKey,
+        { taskId: 'task-1', messageId: 'msg-1', kind: 'unclassified' },
+      );
+    }
+  });
+
+  it('临时会话（对比的一列）不登记自动重试候选', () => {
+    const h = createHarness();
+    const KEY_0 = 'agent:main:clawwork:compare-run-1-0:task:task-1';
+    h.deps.isEphemeralSession = (k: string) => k === KEY_0;
+
+    h.emit('chat', { sessionKey: KEY_0, state: 'error', errorMessage: 'boom', errorKind: 'rate_limit' });
+
+    expect(h.messageStore.markAutoRetryFailure).not.toHaveBeenCalled();
+  });
+
+  it('去重挡掉的重复 chat 错误不再登记（与新按钮同一条纪律）', () => {
+    const h = createHarness();
+
+    emitChatError(h, { errorMessage: 'boom', errorKind: 'rate_limit' });
+    emitChatError(h, { errorMessage: 'boom', errorKind: 'rate_limit' });
+
+    expect(h.messageStore.markAutoRetryFailure).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1665,6 +1786,127 @@ describe('agent lifecycle error buffer', () => {
     expect(h.systemMessages).toHaveLength(1);
     expect(h.systemMessages.some((m) => m.content.includes('provider unavailable'))).toBe(false);
     expect(h.toasts).toHaveLength(1);
+  });
+});
+
+describe('catalog refresh without dispatcher reset', () => {
+  async function connectedHarness() {
+    vi.useFakeTimers();
+    const h = createHarness();
+    h.deps.hydrateFromLocal = vi.fn(async () => {});
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({
+      ok: true,
+      result: { models: [{ id: 'cli-model', provider: 'codex-cli' }] },
+    });
+    h.dispatcher.startGatewayStatus();
+    h.emitStatus({ gatewayId: 'gw-1', connected: true });
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(h.deps.setModelCatalogForGateway).mockClear();
+    return h;
+  }
+
+  it('replaces a CLI-only catalog after relay ready using the existing transport and owner', async () => {
+    const h = await connectedHarness();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledTimes(1);
+    const models = [{ id: 'deepseek-v4-flash', provider: 'clawrouter' }];
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models } });
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledWith('gw-1', 'main');
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenCalledWith('gw-1', models);
+    expect(h.deps.hydrateFromLocal).not.toHaveBeenCalled();
+    expect(h.deps.setGatewayStatusByGateway).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not issue catalog RPCs when the caller scope is already invalid', async () => {
+    const h = await connectedHarness();
+    h.deps.gateway.listAgents = vi.fn();
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => false });
+    expect(h.deps.gateway.listAgents).not.toHaveBeenCalled();
+    expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalled();
+  });
+
+  it('discards a delayed agent response after the caller scope changes', async () => {
+    const h = await connectedHarness();
+    let current = true;
+    let finish = (_response: { ok: boolean; result: { agents: { id: string }[]; defaultId: string } }) => {};
+    h.deps.gateway.listAgents = vi.fn(() => new Promise<Parameters<typeof finish>[0]>((resolve) => (finish = resolve)));
+    vi.mocked(h.deps.setAgentCatalogForGateway).mockClear();
+    vi.mocked(h.deps.gateway.listModels).mockClear();
+    const refresh = h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => current });
+    current = false;
+    finish({ ok: true, result: { agents: [{ id: 'old-owner' }], defaultId: 'old-owner' } });
+    await refresh;
+    expect(h.deps.setAgentCatalogForGateway).not.toHaveBeenCalled();
+    expect(h.deps.gateway.listModels).not.toHaveBeenCalled();
+  });
+
+  it.each(['scope', 'disconnect', 'superseded'] as const)(
+    'discards delayed model output after %s',
+    async (boundary) => {
+      const h = await connectedHarness();
+      let current = true;
+      let finish = (_response: { ok: boolean; result: { models: { id: string }[] } }) => {};
+      h.deps.gateway.listModels = vi.fn(
+        () => new Promise<Parameters<typeof finish>[0]>((resolve) => (finish = resolve)),
+      );
+      await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => current });
+      if (boundary === 'scope') current = false;
+      if (boundary === 'disconnect') h.emitStatus({ gatewayId: 'gw-1', connected: false });
+      if (boundary === 'superseded') {
+        h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [{ id: 'new' }] } });
+        await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+      }
+      finish({ ok: true, result: { models: [{ id: 'old' }] } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalledWith('gw-1', [{ id: 'old' }]);
+    },
+  );
+
+  it('does not continue empty-catalog retries after scope invalidation', async () => {
+    const h = await connectedHarness();
+    let current = true;
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [] } });
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => current });
+    await vi.advanceTimersByTimeAsync(0);
+    current = false;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledTimes(1);
+    expect(h.deps.setModelCatalogForGateway).not.toHaveBeenCalled();
+  });
+
+  it('retains the existing finite empty-catalog retry budget', async () => {
+    const h = await connectedHarness();
+    h.deps.gateway.listModels = vi.fn().mockResolvedValue({ ok: true, result: { models: [] } });
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.deps.gateway.listModels).toHaveBeenCalledTimes(7);
+    expect(h.deps.setModelCatalogForGateway).toHaveBeenLastCalledWith('gw-1', []);
+  });
+
+  it('retains a pending dispatch and rejects foreign run frames after catalog refresh', async () => {
+    const h = await connectedHarness();
+    const ticket = h.dispatcher.beginDispatch('gw-1', TASK.sessionKey);
+    h.emit('chat', { sessionKey: TASK.sessionKey, runId: 'run-current', state: 'delta', deltaText: 'buffered' });
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    h.dispatcher.settleDispatch(ticket, { sessionKey: TASK.sessionKey, runId: 'run-current' });
+    expect(h.messageStore.appendStreamDelta).toHaveBeenCalledWith(TASK.sessionKey, 'buffered');
+    vi.mocked(h.messageStore.appendStreamDelta).mockClear();
+    h.emit('chat', { sessionKey: TASK.sessionKey, runId: 'run-foreign', state: 'delta', deltaText: 'wrong' });
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
+  });
+
+  it('retains user stop markers and closed streams across catalog refresh', async () => {
+    const h = await connectedHarness();
+    h.dispatcher.markAbortedByUser(TASK.id);
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'aborted' });
+    expect(h.systemMessages).toHaveLength(0);
+    await h.dispatcher.refreshCatalogsForGateway('gw-1', { isCurrent: () => true });
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'delta', deltaText: 'late' });
+    expect(h.messageStore.appendStreamDelta).not.toHaveBeenCalled();
   });
 });
 
@@ -3932,6 +4174,24 @@ describe('本机运行时起不来：只把公开原因落进 store', () => {
     expect(JSON.stringify(vi.mocked(h.deps.reportDebugEvent).mock.calls)).not.toContain('ipc exploded');
   });
 
+  it('⭐ 网关协商的单帧上限（hello-ok.policy.maxPayload）原值落 store —— 发送字节预算按它折算', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitStatus({ gatewayId: 'gw-1', connected: true, maxPayloadBytes: 8 * 1024 * 1024 });
+
+    expect(h.deps.setGatewayMaxPayloadByGateway).toHaveBeenCalledWith('gw-1', 8 * 1024 * 1024);
+  });
+
+  it('⭐ 事件不带协商值（断线 / 旧网关）⇒ 以 undefined 清条目，不留上一代的数字', () => {
+    const h = createHarness();
+    h.dispatcher.startGatewayStatus();
+
+    h.emitStatus({ gatewayId: 'gw-1', connected: false });
+
+    expect(h.deps.setGatewayMaxPayloadByGateway).toHaveBeenCalledWith('gw-1', undefined);
+  });
+
   it('⭐ 没有这条通道的形态（pwa / 出厂）也不炸：它比渲染层可选', () => {
     const h = createHarness();
     h.deps.gateway.onRuntimeStatus = undefined;
@@ -4045,11 +4305,31 @@ describe('fetchEffectiveTools', () => {
     expect(typeof dispatcher.fetchEffectiveTools).toBe('function');
     await dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
 
+    // 2026-10-06（10-01 用户实测 #1 同族）：unknown session key 的上屏文案已产品化——
+    // 状态仍 fail-closed 的 error、仍不回退 tools.catalog；只换用户可见文案（不再裸露英文）。
     expect(setEffectiveToolsState).toHaveBeenLastCalledWith('gw-1', TASK.sessionKey, {
       status: 'error',
-      error: 'unknown session key',
+      error: '会话尚未就绪，发送第一条消息后会自动恢复',
     });
     expect(getToolsCatalog).not.toHaveBeenCalled();
+  });
+
+  it('其他 tools.effective 失败照旧透传原文（产品化只针对会话未就绪）', async () => {
+    const h = createHarness();
+    const getEffectiveTools = vi.fn(async () => ({ ok: false as const, error: 'boom upstream 500' }));
+    const setEffectiveToolsState = vi.fn();
+    Object.assign(h.deps.gateway, { getEffectiveTools });
+    Object.assign(h.deps, { setEffectiveToolsState });
+    const dispatcher = h.dispatcher as unknown as {
+      fetchEffectiveTools: (gatewayId: string, sessionKey: string) => Promise<void>;
+    };
+
+    await dispatcher.fetchEffectiveTools('gw-1', TASK.sessionKey);
+
+    expect(setEffectiveToolsState).toHaveBeenLastCalledWith('gw-1', TASK.sessionKey, {
+      status: 'error',
+      error: 'boom upstream 500',
+    });
   });
 
   it.each([

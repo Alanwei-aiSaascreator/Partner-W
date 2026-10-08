@@ -53,6 +53,16 @@ import { useFileStore } from '../src/renderer/stores/fileStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+/**
+ * artifact:saved 的刷新**按帧合并**（P3-9）—— 用例要显式等一帧才看得见那次刷新。
+ * 等两帧：第一帧跑的是我们排进队列的回调，第二帧保证它引发的 IPC promise 链落定。
+ */
+const flushFrames = async (): Promise<void> => {
+  for (let i = 0; i < 2; i += 1) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+};
+
 const artifact: Artifact = {
   id: 'artifact-1',
   taskId: 'task-1',
@@ -244,6 +254,13 @@ describe('RightPanel artifacts', () => {
     const refresh = container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.refresh"]');
     expect(refresh).not.toBeNull();
     await act(async () => refresh?.click());
+    // 图16（2026-10-06）：变成 missing 的文件归入折叠区——先断言它**离开主列表**，
+    // 再展开断言里面确实是 missing 态（旧行为=全量直出，已被有意替换）。
+    expect(container.textContent).not.toContain('report.txt');
+    const archived = container.querySelector<HTMLButtonElement>('[data-action="toggle-artifact-archived"]');
+    expect(archived).not.toBeNull();
+    await act(async () => archived?.click());
+    expect(container.textContent).toContain('report.txt');
     expect(container.textContent).toContain('artifactCard.missing');
     // 两条查询都要发出去：会话内那条带 id，全库那条不带（历史产物就是靠它）
     expect(listArtifacts.mock.calls.some(([taskId]) => taskId === 'task-1')).toBe(true);
@@ -307,10 +324,114 @@ describe('RightPanel artifacts', () => {
     await act(async () => root.render(<RightPanel />));
     expect(container.textContent).toContain('report.txt');
     current = { ...artifact, name: 'updated-report.txt', availability: 'missing' };
-    await act(async () => saved!(current));
+    // ⚠️ 刷新现在按帧合并（P3-9）：saved 只排一次帧内的刷新，所以要等一帧才生效。
+    await act(async () => {
+      saved!(current);
+      await flushFrames();
+    });
+    // 图16：同名元数据更新仍要生效（名字换了、变成 missing）——但按新契约先进折叠区。
+    expect(container.textContent).not.toContain('updated-report.txt');
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-action="toggle-artifact-archived"]')?.click(),
+    );
     expect(container.textContent).toContain('updated-report.txt');
     expect(container.textContent).toContain('artifactCard.missing');
     expect(listArtifacts).toHaveBeenCalledTimes(4);
+    act(() => root.unmount());
+  });
+
+  /**
+   * ⭐ 2026-10-07 体检 P3-9：一轮收尾会连发 N 条 `artifact:saved`（每个产物一条），
+   * 每条都整轮刷新 = 2 次 `artifact:list`（全表扫描 + 逐行 realpath/stat）。
+   * 同一帧里到达的信号必须合并成一次。
+   */
+  it('⭐ 同一帧里的多连 artifact:saved 只刷一次（不是 N 次全表扫描）', async () => {
+    let saved: ((value: Artifact) => void) | undefined;
+    const listArtifacts = vi.fn(async () => ({ ok: true, result: [artifact] }));
+    Object.assign(window, {
+      clawwork: {
+        listArtifacts,
+        onArtifactSaved: (callback: typeof saved) => {
+          saved = callback;
+          return () => {};
+        },
+        readArtifactThumbnail: vi.fn(),
+        saveArtifactAs: vi.fn(),
+        openArtifactFile: vi.fn(),
+        showArtifactInFolder: vi.fn(),
+      },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+    const afterMount = listArtifacts.mock.calls.length; // 挂载那一次的两条查询
+
+    await act(async () => {
+      saved!({ ...artifact, id: 'a-1', name: 'one.pptx' });
+      saved!({ ...artifact, id: 'a-2', name: 'two.pptx' });
+      saved!({ ...artifact, id: 'a-3', name: 'three.pptx' });
+      await flushFrames();
+    });
+
+    // 合并成一次刷新 = 再加 2 条查询；不合并就是 6 条。
+    expect(listArtifacts.mock.calls.length).toBe(afterMount + 2);
+    act(() => root.unmount());
+  });
+
+  /**
+   * ⭐ 2026-10-07 体检 P2-5：会议模式下主列表是**多任务合并**的，
+   * 两个 turn 各交一份同名文件（会议里极常见）时，旧口径只按文件名算族 ⇒
+   * 只有最新那份留在主列表，另一份被折进"历史与问题文件"（跨任务归属错误）。
+   */
+  it('⭐ 会议里两个 turn 交出同名文件 ⇒ 两份都留在主列表，都不进折叠区', async () => {
+    meetingState.records = [
+      {
+        id: 'meeting-x',
+        ownerTaskId: 'task-1',
+        turns: [{ taskId: 'task-1' }, { taskId: 'task-2' }],
+      } as TeamMeetingRecord,
+    ];
+    const ours = { ...artifact, id: 'same-a', taskId: 'task-1', name: '方案-aaaa1111.pptx' };
+    const theirs = {
+      ...artifact,
+      id: 'same-b',
+      taskId: 'task-2',
+      name: '方案-aaaa1111.pptx',
+      createdAt: '2026-09-16T09:00:00.000Z',
+    };
+    const listArtifacts = vi.fn(async (taskId?: string) => ({
+      ok: true,
+      result: taskId ? [ours] : [ours, theirs],
+    }));
+    Object.assign(window, {
+      clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}), readArtifactThumbnail: vi.fn() },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+
+    expect(container.textContent?.match(/方案-aaaa1111\.pptx/g)).toHaveLength(2);
+    expect(container.querySelector('[data-testid="artifact-archived"]')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  /**
+   * ⭐ 2026-10-07 体检 P2-3：`unknown`（连接中）**不参与折叠降级** ——
+   * 冷启动/网关没连上时那一整批助手交付物必须还在主列表里，而不是"交付物没了"。
+   */
+  it('⭐ availability=unknown（连接中）⇒ 仍在主列表，不进"历史与问题文件"', async () => {
+    const pending = { ...artifact, id: 'pending', name: 'deck-aaaa1111.pptx', availability: 'unknown' as const };
+    const listArtifacts = vi.fn(async () => ({ ok: true, result: [pending] }));
+    Object.assign(window, {
+      clawwork: { listArtifacts, onArtifactSaved: vi.fn(() => () => {}), readArtifactThumbnail: vi.fn() },
+    });
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    await act(async () => root.render(<RightPanel />));
+
+    expect(container.textContent).toContain('deck-aaaa1111.pptx');
+    expect(container.textContent).toContain('artifactCard.unknown');
+    expect(container.querySelector('[data-testid="artifact-archived"]')).toBeNull();
     act(() => root.unmount());
   });
 
@@ -448,6 +569,87 @@ describe('RightPanel artifacts', () => {
       const { container, root } = await renderWith([artifact]);
 
       expect(container.querySelector('[data-testid="artifact-history"]')).toBeNull();
+
+      act(() => root.unmount());
+      container.remove();
+    });
+  });
+
+  /**
+   * 图16（2026-10-06）：同任务的重复/失败产物默认收敛。
+   * 旧行为 = 三条同族 pptx 全进主列表（真机三条全"被拦截"，验收现场第一屏就是这个）。
+   */
+  describe('产物版本收敛（图16）', () => {
+    const versioned = (
+      id: string,
+      name: string,
+      createdAt: string,
+      availability: Artifact['availability'] = 'available',
+    ): Artifact => ({ ...artifact, id, messageId: `msg-${id}`, name, createdAt, availability });
+
+    const renderWith = async (artifacts: Artifact[]) => {
+      Object.assign(window, {
+        clawwork: {
+          listArtifacts: vi.fn(async () => ({ ok: true, result: artifacts })),
+          onArtifactSaved: vi.fn(() => () => undefined),
+          readArtifactThumbnail: vi.fn(),
+          saveArtifactAs: vi.fn(),
+          openArtifactFile: vi.fn(),
+          showArtifactInFolder: vi.fn(),
+        },
+      });
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      await act(async () => root.render(<RightPanel />));
+      return { container, root };
+    };
+
+    it('⭐ 同族三版：主列表只留最新可用版，旧版与问题版进折叠区', async () => {
+      const { container, root } = await renderWith([
+        versioned('v3', '高退货率诊断-cccc3333.pptx', '2026-10-06T01:10:00.000Z', 'unsafe'),
+        versioned('v2', '高退货率诊断-bbbb2222.pptx', '2026-10-06T01:05:00.000Z'),
+        versioned('v1', '高退货率诊断-aaaa1111.pptx', '2026-10-06T01:00:00.000Z'),
+      ]);
+
+      expect(container.textContent).toContain('高退货率诊断-bbbb2222.pptx');
+      expect(container.textContent).not.toContain('高退货率诊断-aaaa1111.pptx');
+      expect(container.textContent).not.toContain('高退货率诊断-cccc3333.pptx');
+      const toggle = container.querySelector('[data-action="toggle-artifact-archived"]');
+      expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+      expect(container.textContent).toContain('rightPanel.archivedArtifacts');
+      expect(container.textContent).toContain('(2)');
+
+      act(() => (toggle as HTMLElement).click());
+      expect(container.textContent).toContain('高退货率诊断-aaaa1111.pptx');
+      expect(container.textContent).toContain('高退货率诊断-cccc3333.pptx');
+
+      act(() => root.unmount());
+      container.remove();
+    });
+
+    it('最新一版不可用时，默认展示回退到更旧的可用版', async () => {
+      const { container, root } = await renderWith([
+        versioned('v2', 'deck-bbbb2222.pptx', '2026-10-06T01:05:00.000Z', 'missing'),
+        versioned('v1', 'deck-aaaa1111.pptx', '2026-10-06T01:00:00.000Z'),
+      ]);
+
+      expect(container.textContent).toContain('deck-aaaa1111.pptx');
+      expect(container.textContent).not.toContain('deck-bbbb2222.pptx');
+
+      act(() => root.unmount());
+      container.remove();
+    });
+
+    it('人类命名不归并：报告-2.pptx 与 报告.pptx 同为当前版本、无折叠区', async () => {
+      const { container, root } = await renderWith([
+        versioned('a', '报告.pptx', '2026-10-06T01:00:00.000Z'),
+        versioned('b', '报告-2.pptx', '2026-10-06T01:05:00.000Z'),
+      ]);
+
+      expect(container.textContent).toContain('报告.pptx');
+      expect(container.textContent).toContain('报告-2.pptx');
+      expect(container.querySelector('[data-testid="artifact-archived"]')).toBeNull();
 
       act(() => root.unmount());
       container.remove();

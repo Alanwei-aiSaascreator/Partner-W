@@ -754,8 +754,14 @@ describe('源码契约：失败路径不许 app.quit()', () => {
       'legacyStateUserDataDir: portableAppData.target ? localUserDataDir : undefined',
     );
     expect(bootstrapRegion).not.toContain('stateCacheUserDataDir: localUserDataDir');
+    // ⚠️ 2026-10-07：bootstrap 调用被抽进 `runRuntimeBootstrap(portableWorkspacePath)`
+    //    （启动与「重新准备」重试共用同一段），所以这里钉两处：
+    //    ① 调用把它当一个**入参**（不再就地拼表达式）；② 那个入参的赋值仍然只对盘上运行给值。
     expect(bootstrapRegion, 'The managed agent workspace must follow the selected portable workspace').toContain(
-      'portableWorkspacePath: workspace.portable ? wsPath : undefined',
+      'portableWorkspacePath,',
+    );
+    expect(code, '工作区路径只在盘上运行时才带（且与重试共用同一份）').toContain(
+      'retryPortableWorkspacePath = workspace.portable ? wsPath : undefined;',
     );
   });
 

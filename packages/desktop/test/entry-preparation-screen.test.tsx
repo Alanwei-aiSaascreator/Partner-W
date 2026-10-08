@@ -81,16 +81,21 @@ describe('EntryPreparation', () => {
     'port-occupied',
     'auth-rejected',
     'state-migration-blocked',
+    'deploy-failed',
     'unknown',
-  ] as const)('shows %s with a real restart instruction instead of ineffective retry', async (reason) => {
+  ] as const)('shows %s with the in-app retry exit (不再是"完全退出重开")', async (reason) => {
     const cb = callbacks();
     const failed = { ...facts, runtime: { ok: false as const, reason } };
     const { container } = render(<EntryPreparation facts={failed} {...cb} />);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('entryPreparation.runtimeRestartRequired');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('entryPreparation.runtimeRetryHint');
     expect(container.textContent).toContain('entryPreparation.needsAttention');
-    expect(container.querySelector('[data-entry-retry]')).toBeNull();
+    // ⭐ 运行端起不来时「重新准备」**必须留着**：它现在真的重跑一轮 bootstrap
+    //   （IPC `runtime:bootstrap-retry`），不是原来那个按了没用的按钮。
+    const retry = container.querySelector<HTMLButtonElement>('[data-entry-retry]');
+    expect(retry).not.toBeNull();
+    await act(async () => retry?.click());
+    expect(cb.onRetry).toHaveBeenCalledTimes(1);
     expect(container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.disabled).toBe(true);
-    expect(cb.onRetry).not.toHaveBeenCalled();
     expect(container.querySelector('[data-entry-account]')).not.toBeNull();
     expect(container.querySelector('[data-entry-workspace]')).not.toBeNull();
   });
@@ -107,9 +112,7 @@ describe('EntryPreparation', () => {
     const { container } = render(<EntryPreparation facts={failed} {...cb} />);
     await act(async () => container.querySelector<HTMLButtonElement>('[data-entry-retry]')?.click());
     expect(cb.onRetry).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain(
-      'entryPreparation.runtimeRestartRequired',
-    );
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain('entryPreparation.runtimeRetryHint');
   });
   it('keeps the known runtime cause when a concurrent final check rejects', async () => {
     const cb = callbacks();
@@ -126,10 +129,10 @@ describe('EntryPreparation', () => {
     await act(async () => reject(new Error('private check failure')));
     const alert = container.querySelector('[role="alert"]')?.textContent;
     expect(alert).toContain('startupReadiness.gatewayPortOccupied');
-    expect(alert).toContain('entryPreparation.runtimeRestartRequired');
+    expect(alert).toContain('entryPreparation.runtimeRetryHint');
     expect(alert).not.toContain('entryPreparation.recheckFailed');
     expect(alert).not.toContain('private check failure');
-    expect(container.querySelector('[data-entry-retry]')).toBeNull();
+    expect(container.querySelector('[data-entry-retry]')).not.toBeNull();
   });
   it('rejects a failed final recheck without leaving and releases the button for retry', async () => {
     const cb = callbacks();
@@ -139,6 +142,70 @@ describe('EntryPreparation', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('entryPreparation.recheckFailed');
     expect(container.textContent).not.toContain('private backend detail');
     expect(container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.disabled).toBe(false);
+  });
+});
+
+/**
+ * 部署进度上屏（2026-10-07 体检问题 1/2）。
+ *
+ * 主进程一直在报真实阶段（校验 → 解压 → 装 Node → 换入），而这条信号原来到不了界面 ——
+ * 首跑 1–20 分钟只显示一格不动的 17%。这里钉住"它真的渲染出来了"，以及两个容易犯的错：
+ *   - **只在没结论时才显示**（就绪/失败之后不该继续挂着一条旧百分比）；
+ *   - `stalled` 有自己那句话，且**不硬编一个百分比**。
+ */
+describe('部署进度：准备页说得出"现在在干什么"', () => {
+  const runtimeFacts = {
+    ...facts,
+    // `stage==='runtime'` 且**没有失败结论**：运行时 OK，网关身份还没认到（首跑真实形状）。
+    startup: { ...facts.startup, gatewayId: null },
+  };
+  afterEach(() => {
+    delete (window as { clawwork?: unknown }).clawwork;
+  });
+  function stubClawwork(progress: unknown) {
+    const listeners = new Set<(value: unknown) => void>();
+    Object.assign(window, {
+      clawwork: {
+        onRuntimeDeployProgress: (fn: (value: unknown) => void) => {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        },
+        runtimeDeployProgress: async () => progress,
+        isPortableWorkspace: async () => false,
+      },
+    });
+    return {
+      emit: (value: unknown) => {
+        for (const fn of [...listeners]) fn(value);
+      },
+    };
+  }
+  it('runtime 阶段显示真实阶段文案 + 真实百分比 + 已等时间', async () => {
+    stubClawwork({ phase: 'extract', done: 42, total: 100, startedAt: Date.now() - 65_000 });
+    const cb = callbacks();
+    const { container } = render(<EntryPreparation facts={runtimeFacts} {...cb} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const line = container.querySelector('[data-entry-deploy-progress]');
+    expect(line).not.toBeNull();
+    expect(line?.textContent).toContain('entryPreparation.deployExtract');
+    expect(line?.textContent, '解压那一段有真实的 done/total 百分比').toContain('42%');
+    expect(line?.textContent, '已等时间是主进程给的 startedAt 算出来的').toContain('startupReadiness.elapsed');
+    // 等待期间那两句人话（原来挂在用户到不了的屏上）
+    expect(container.textContent).toContain('startupReadiness.keepOpen');
+  });
+  it('stalled 有自己的那句话，且**不编百分比**', async () => {
+    const bus = stubClawwork({ phase: 'extract', done: 42, total: 100, startedAt: Date.now() - 1000 });
+    const cb = callbacks();
+    const { container } = render(<EntryPreparation facts={runtimeFacts} {...cb} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => bus.emit({ phase: 'stalled', done: 42, total: 100, startedAt: Date.now() - 200_000 }));
+    const line = container.querySelector('[data-entry-deploy-progress]');
+    expect(line?.textContent).toContain('entryPreparation.deployStalled');
+    expect(line?.textContent, '停滞不是进度：不许硬编一个百分比出来').not.toContain('42%');
   });
 });
 

@@ -8,6 +8,12 @@ export const tasks = sqliteTable('tasks', {
   title: text('title').notNull().default(''),
   status: text('status').notNull().default('active'),
   ensemble: integer('ensemble', { mode: 'boolean' }).notNull().default(false),
+  /**
+   * 任务模式（`fast` / `smart` / `deep` / `custom`）。
+   * ⚠️ NULL = **没有偏好**（老行；按 custom 处理，不劫持既有 `model`）；不 backfill。
+   *    见 `@clawwork/shared` 的 `task-modes.ts`。
+   */
+  mode: text('mode'),
   model: text('model'),
   modelProvider: text('model_provider'),
   thinkingLevel: text('thinking_level'),
@@ -20,6 +26,11 @@ export const tasks = sqliteTable('tasks', {
   tags: text('tags').notNull().default('[]'),
   /** 置顶时间（ISO）；NULL = 未置顶。见 `@clawwork/shared` 的 `Task.pinnedAt`。 */
   pinnedAt: text('pinned_at'),
+  /**
+   * deck 路由标记（演示文稿 → DeepSeek 的粘性开关）。
+   * 老行 = 0（没标记过）；语义见 `@clawwork/shared` 的 `Task.deckRouted`。
+   */
+  deckRouted: integer('deck_routed', { mode: 'boolean' }).notNull().default(false),
   artifactDir: text('artifact_dir').notNull().default(''),
   gatewayId: text('gateway_id').notNull().default(''),
 });
@@ -50,6 +61,20 @@ export const teamMeetings = sqliteTable('team_meetings', {
   recordJson: text('record_json').notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+});
+
+export const artifactDeliveryActivities = sqliteTable('artifact_delivery_activities', {
+  operationId: text('operation_id').primaryKey(),
+  taskId: text('task_id')
+    .notNull()
+    .references(() => tasks.id, { onDelete: 'cascade' }),
+  sessionKey: text('session_key').notNull(),
+  ownerUserId: text('owner_user_id'),
+  ownerOrgId: text('owner_org_id'),
+  ownerLicenseId: text('owner_license_id'),
+  endedAt: integer('ended_at').notNull(),
+  recordJson: text('record_json').notNull(),
+  artifactRefsJson: text('artifact_refs_json').notNull().default('[]'),
 });
 
 export const messages = sqliteTable('messages', {

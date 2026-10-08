@@ -79,7 +79,8 @@ describe('installPresetAgentPack', () => {
     expect(result).toMatchObject({
       installed: ['rongying-content'],
       skipped: [],
-      reconciled: ['rongying-content'],
+      // reconciled 带**网关里的真实 id**（2026-10-07 质检 P3-4：市场链要拿它去切助手）
+      reconciled: [{ id: 'rongying-content', agentId: 'rongying-content' }],
       failed: [],
     });
     expect(api.getAgentFile).toHaveBeenCalledTimes(2);

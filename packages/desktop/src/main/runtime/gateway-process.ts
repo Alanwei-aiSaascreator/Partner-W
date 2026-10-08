@@ -30,6 +30,7 @@
 
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import WebSocket from 'ws';
 import { delimiter, dirname, join } from 'node:path';
@@ -38,6 +39,8 @@ import { attachGatewayOutputStreams, gatewayOutputDigest } from './gateway-outpu
 import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from './bootstrap-retry.js';
 import { inheritWindowsSystemProxy } from './gateway-proxy.js';
 import { resolveBundledNativeTools } from './native-tools.js';
+import { describePortOccupant } from './port-occupant.js';
+import { getPortableRoots } from './portable-root.js';
 import { ensureBundledWorkflowTools } from './workflow-tools.js';
 
 /** 端口被**别人**的网关占着（或占着的那个不可信）。 */
@@ -185,6 +188,23 @@ export async function probeStartupz(opts: {
 }
 
 /**
+ * 认证探测的**三态**结论（BUG-040 R1）。
+ *
+ * ⚠️ 为什么必须三态而不是 boolean：`started` 之后网关还要几秒才肯完成 WS 握手，
+ *    这段时间探测是**挂住**（超时）—— 那是 `unavailable`，**不是**"令牌对不上"
+ *    的 `rejected`。把两者当成一件事，就会在**我们自己刚起的网关**上判 foreign、
+ *    报"端口被占"（2026-09-13 实测的 E2E 启动 2 就是这条）。
+ */
+export type GatewayAuthOutcome = 'authenticated' | 'rejected' | 'unavailable';
+
+/** 注入面既收 boolean（既有用法）也收三态。`false` = **明确拒绝**。 */
+export function normalizeAuthOutcome(value: boolean | GatewayAuthOutcome): GatewayAuthOutcome {
+  if (value === true) return 'authenticated';
+  if (value === false) return 'rejected';
+  return value;
+}
+
+/**
  * 用**本 state 的 token** 做最小认证探测：开 WS → 等 `connect.challenge` →
  * 发 `connect` → 看回的是不是 `hello-ok`。
  *
@@ -200,7 +220,7 @@ export async function probeGatewayAuth(opts: {
   clientVersion: string;
   identityPath: string;
   timeoutMs?: number;
-}): Promise<boolean> {
+}): Promise<GatewayAuthOutcome> {
   const { port, token, clientVersion, identityPath, timeoutMs = 5000 } = opts;
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
 
@@ -209,17 +229,17 @@ export async function probeGatewayAuth(opts: {
     const identity = loadOrCreateDeviceIdentity(identityPath);
     const scopes = ['operator.admin', 'operator.write', 'operator.read', 'operator.approvals', 'operator.pairing'];
 
-    return await new Promise<boolean>((resolve) => {
-      const done = (ok: boolean): void => {
+    return await new Promise<GatewayAuthOutcome>((resolve) => {
+      const done = (outcome: GatewayAuthOutcome): void => {
         clearTimeout(timer);
         try {
           ws.close();
         } catch {
           /* 关不掉就算了，进程退出时自然回收 */
         }
-        resolve(ok);
+        resolve(outcome);
       };
-      const timer = setTimeout(() => done(false), timeoutMs);
+      const timer = setTimeout(() => done('unavailable'), timeoutMs);
 
       ws.on('message', (raw: Buffer) => {
         let frame: Record<string, unknown>;
@@ -262,17 +282,20 @@ export async function probeGatewayAuth(opts: {
         }
 
         if (frame.type === 'res' && frame.id === 'runtime-auth-probe') {
+          // 对端**答了**且带 error ⇒ 明确拒绝（不是"还没好"）。
           if (frame.error) {
-            done(false);
+            done('rejected');
             return;
           }
           const payload = (frame.payload ?? {}) as Record<string, unknown>;
-          done(payload.type === 'hello-ok');
+          // 答了但没有 error 也不是 hello-ok ⇒ 协议的明确否定（同样算拒绝）。
+          done(payload.type === 'hello-ok' ? 'authenticated' : 'rejected');
         }
       });
 
-      ws.on('error', () => done(false));
-      ws.on('close', () => done(false));
+      // 连不上 / 中途断了 / 超时 ⇒ **探不动**，与"拒绝"分开。
+      ws.on('error', () => done('unavailable'));
+      ws.on('close', () => done('unavailable'));
     });
   } catch {
     try {
@@ -280,7 +303,7 @@ export async function probeGatewayAuth(opts: {
     } catch {
       /* 见上 */
     }
-    return false;
+    return 'unavailable';
   }
 }
 
@@ -445,10 +468,29 @@ export interface EnsureGatewayRunningOptions {
   clientVersion?: string;
   identityPath?: string;
   probe?: (port: number) => Promise<StartupzProbe>;
-  authenticate?: (opts: { port: number; token: string }) => Promise<boolean>;
+  /** 既收 boolean（既有用法；`false` = 明确拒绝）也收三态。 */
+  authenticate?: (opts: { port: number; token: string }) => Promise<boolean | GatewayAuthOutcome>;
   spawn?: GatewaySpawnFn;
   waitReady?: (child: GatewayChildProcess) => Promise<void>;
+  /** BUG-040 R1：认证"探不动"时的有界多探预算。 */
+  authProbe?: { attempts?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> };
+  /** BUG-040 R4：占用者退场的有界等待预算。 */
+  foreignWait?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+  };
+  /** 端口占用者线索（默认 netstat+tasklist 只读查询；注入用于测试）。 */
+  portOccupant?: (port: number) => string | null;
 }
+
+/** BUG-040 R1 默认值：3 次、间隔 1 秒（够网关把 WS 握手做完，又不是无限等）。 */
+export const AUTH_PROBE_ATTEMPTS = 3;
+export const AUTH_PROBE_INTERVAL_MS = 1_000;
+/** BUG-040 R4 默认值：最多等 15 秒看占用者退不退场。 */
+export const FOREIGN_WAIT_TIMEOUT_MS = 15_000;
+export const FOREIGN_WAIT_INTERVAL_MS = 1_000;
 
 export interface EnsureGatewayRunningResult {
   ownership: 'spawned' | 'reused';
@@ -608,6 +650,21 @@ export function buildGatewayEnvironment(
   childEnv.OPENCLAW_STATE_DIR = stateDir;
   childEnv.LOBSTER_STATE_DIR = join(stateDir, 'lobster');
   childEnv.OPENCLAW_SUPERVISOR_MODE = 'external';
+
+  // BUG-041 ②：盘上运行时，**临时目录也要跟着盘走**。
+  // 缺口：应用数据/state/缓存都上了盘，唯独 TEMP/TMP 还是宿主机的 %TEMP% ——
+  // 网关与工具写下的临时文件留在别人电脑上（残留 + 隐私都说不通）。
+  // ⚠️ 建不出目录就回落宿主并警告：临时目录不是启动的硬依赖，绝不能因此拦死网关。
+  const tempRoot = getPortableRoots()?.tempRoot;
+  if (tempRoot) {
+    try {
+      fs.mkdirSync(tempRoot, { recursive: true });
+      childEnv.TEMP = tempRoot;
+      childEnv.TMP = tempRoot;
+    } catch (error) {
+      console.warn('[runtime] 盘上临时目录不可写，TEMP/TMP 保持宿主:', error);
+    }
+  }
   return childEnv;
 }
 
@@ -640,28 +697,98 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
     opts.authenticate ??
     ((o: { port: number; token: string }) => probeGatewayAuth({ ...o, clientVersion, identityPath }));
 
-  const startupz = await probe(port);
+  const authAttempts = opts.authProbe?.attempts ?? AUTH_PROBE_ATTEMPTS;
+  const authInterval = opts.authProbe?.intervalMs ?? AUTH_PROBE_INTERVAL_MS;
+  const authSleep = opts.authProbe?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  let authenticated = false;
-  if (startupz.reachable && startupz.status === 'started') {
+  /**
+   * 一次认证探测（**异常也算"探不动"**，不是"被拒绝"）：异常来自我们这一侧
+   * （ECONNRESET/超时/身份文件读不出），拿它当"令牌对不上"会指错排查方向。
+   */
+  const probeAuthOnce = async (): Promise<GatewayAuthOutcome> => {
     try {
-      authenticated = await authenticate({ port, token });
+      return normalizeAuthOutcome(await authenticate({ port, token }));
     } catch (err) {
-      // 认证探测本身失败 ⇒ 当成认证没过（保守：宁可报端口被占，也不要误 kill）
-      console.error('[runtime] 网关认证探测失败，按"不是我们的"处理:', err);
-      authenticated = false;
+      console.error('[runtime] 网关认证探测失败（按"探不动"处理，继续有界多探）:', err);
+      return 'unavailable';
+    }
+  };
+
+  /** BUG-040 R1：`unavailable` 才有界多探；`rejected`/`authenticated` 一次定音。 */
+  const authenticateWithBudget = async (): Promise<GatewayAuthOutcome> => {
+    let outcome: GatewayAuthOutcome = 'unavailable';
+    for (let attempt = 1; attempt <= Math.max(1, authAttempts); attempt += 1) {
+      outcome = await probeAuthOnce();
+      if (outcome !== 'unavailable') return outcome;
+      if (attempt < authAttempts) await authSleep(authInterval);
+    }
+    return outcome;
+  };
+
+  const startupz = await probe(port);
+  const authOutcome: GatewayAuthOutcome =
+    startupz.reachable && startupz.status === 'started' ? await authenticateWithBudget() : 'unavailable';
+
+  let decision = classifyExistingGateway({
+    reachable: startupz.reachable,
+    status: startupz.status,
+    authenticated: authOutcome === 'authenticated',
+  });
+
+  /**
+   * BUG-040 R4：端口上有东西但**定不了性**（没起来 / 探不动）⇒ 先有界等待，
+   * 看它是不是自己退场（崩溃/被杀的孤儿最常见）。
+   *
+   * ⚠️ **明确拒绝**（started + rejected）不在此列 —— 那是已经问清楚的 foreign，
+   *    行为一个字不变（不等待、直接报端口被占）。
+   */
+  const unresolvedForeign =
+    decision.verdict === 'foreign' && (startupz.status !== 'started' || authOutcome === 'unavailable');
+  let waitedMs = 0;
+  if (unresolvedForeign) {
+    const timeoutMs = opts.foreignWait?.timeoutMs ?? FOREIGN_WAIT_TIMEOUT_MS;
+    const intervalMs = opts.foreignWait?.intervalMs ?? FOREIGN_WAIT_INTERVAL_MS;
+    const sleep = opts.foreignWait?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const now = opts.foreignWait?.now ?? (() => Date.now());
+    const deadline = now() + Math.max(0, timeoutMs);
+    while (now() < deadline) {
+      await sleep(intervalMs);
+      waitedMs += intervalMs;
+      const current = await probe(port);
+      if (!current.reachable) {
+        decision = { verdict: 'spawn', reason: '等待期间端口占用者已退场' };
+        break;
+      }
+      if (current.status === 'started') {
+        const outcome = await probeAuthOnce();
+        decision = classifyExistingGateway({
+          reachable: true,
+          status: 'started',
+          authenticated: outcome === 'authenticated',
+        });
+        if (decision.verdict === 'reuse') break;
+      }
     }
   }
-
-  const decision = classifyExistingGateway({ reachable: startupz.reachable, status: startupz.status, authenticated });
 
   if (decision.verdict === 'reuse') {
     return { ownership: 'reused', decision };
   }
 
   if (decision.verdict === 'foreign') {
+    const occupant = (opts.portOccupant ?? ((p: number) => describePortOccupant(p)))(port);
+    const diagnostics = [
+      `诊断：/startupz=${startupz.status ?? '无法识别'}`,
+      `认证探测=${authOutcome}`,
+      waitedMs > 0
+        ? `已等待 ${Math.round(waitedMs / 1000)}s 仍被占用`
+        : unresolvedForeign
+          ? '等待窗口为 0（未等待）'
+          : '未等待（明确拒绝）',
+      occupant ? `占用者线索：${occupant}` : '占用者线索：查不到（只读查询失败或非 Windows）',
+    ].join('；');
     throw new GatewayPortOccupiedError(
-      `端口 ${port} 被另一个 OpenClaw 网关占用：${decision.reason}。` +
+      `端口 ${port} 被另一个 OpenClaw 网关占用：${decision.reason}（${diagnostics}）。` +
         '为避免破坏它，装载器不会强制启动、也不会结束它 —— 请先停掉那个网关，或改用其它端口。',
     );
   }
@@ -676,7 +803,7 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
     defaultWaitReady(
       child,
       () => probe(port),
-      () => authenticate({ port, token }),
+      async () => normalizeAuthOutcome(await authenticate({ port, token })) === 'authenticated',
     )
   )(child);
 
@@ -729,7 +856,8 @@ export interface StopGatewayOptions {
  *   ① `gateway stop --force`（≤3s）—— 让它自己收尾
  *   ② `child.kill()`
  *   ③ `taskkill /PID <pid> /T /F` 兜底 —— Windows 上 SIGTERM **不跑 JS handler**，
- *      硬杀在这里是可接受的
+ *      硬杀在这里是可接受的；**但退出已送达（句柄已回收）时绝不执行** ——
+ *      那一刻 pid 已可能被系统复用，按数字再杀等于赌别人的进程（见下方注释）。
  *
  * ⚠️ **调用方必须先确认 ownership === 'spawned'**（见 `stopGatewayIfOwned`）。
  */
@@ -756,6 +884,23 @@ export async function stopGateway(opts: StopGatewayOptions): Promise<void> {
 
   const pid = child?.pid;
   if (pid === undefined) return;
+
+  /**
+   * ⚠️ **只对"还没退出"的子进程打 taskkill** —— `taskkill /PID` 是按**数字 pid**
+   * 现场解析的；一旦子进程已退出、Node 已回收句柄，Windows 就可以把这个 pid
+   * 发给**任何**新进程，`/T /F` 会连它整棵子树一起杀（最坏能打到主进程自己或
+   * 正在渲染的技能工）。而进程句柄还开着的时候 pid 不可能被复用 ⇒ 句柄在
+   * （`onExit` 尚未回调）才是"这个 pid 还是我们的"的**可验证判据**。
+   *
+   * 生产日志里 `taskkill … status 128`（进程已不存在）就是这条路径在打空气；
+   * 退出已送达时直接跳过——优雅 stop 与 `child.kill()`（handle 级，天然免疫
+   * pid 复用）已经把该做的做完了。
+   */
+  let exited = false;
+  child?.onExit(() => {
+    exited = true;
+  });
+  if (exited) return;
 
   const taskkill =
     opts.taskkill ??

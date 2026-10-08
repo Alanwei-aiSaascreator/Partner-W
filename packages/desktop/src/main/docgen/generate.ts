@@ -25,7 +25,8 @@ import { renderDocument } from './render.js';
  *  - **不抛**：调用方在消息收尾路径上（`ipc/data-handlers.ts`），抛出去会连带影响
  *    产物登记与"消息已完成"的记账。所以这里把错误收成 `failed` 并记日志。
  *  - **不重复存**：同一段内容在重放/重试里被处理两次时，`saveArtifactFromBuffer`
- *    的 `sourceKey` 去重会挡住（见 `artifact/save.ts` 的唯一约束）。
+ *    的 `sourceKey` 去重会把它结算成**既有行**（返回第一次那一份）——
+ *    不写第二份、不报假失败（见 `artifact/save.ts` 的"唯一约束语义"）。
  *
  * ⚠️ `failed` 是**结构化**的（`DocgenFailure`），不是一串给日志看的英文句子 ——
  *    调用方要把它推给界面、由界面按九种语言各翻一份（见 `shared/docgen-failure.ts`）。
@@ -97,7 +98,10 @@ export function documentFileNameFor(title: string, kind: DocgenKind): string {
  * 去重键：**kind + 内容哈希**。
  *
  * 原来只带「标题 + 页数/节数」—— 两份标题相同、条数相同但内容不同的文档会算出同一个键，
- * 后者被 `saveArtifactFromBuffer` 的唯一约束**静默丢掉**（用户只看到一份）。
+ * 后者被 `saveArtifactFromBuffer` 的唯一约束顶掉，用户只看到一份。
+ * ⚠️ 冲突的**结算语义**在 `artifact/save.ts` 里定死了（2026-10-07 体检 P2-4）：
+ *    "唯一约束 = 它已经存在" ⇒ 返回既有行，**不删刚渲染的新文件、不报假失败**。
+ *    （本注释原先写"静默丢掉"，与当时的实现——抛错 + 删文件 + 记一条 failed——恰好相反。）
  * 哈希用的是**校验后的请求**（键序由解析器决定，稳定），重放同一段内容仍然得到同一个键。
  */
 function sourceKeyFor(request: DocgenRequest): string {
@@ -119,6 +123,20 @@ export async function generateDocumentsFromMessage(input: {
    *    打掉一批与模板毫无关系的测试。注入还顺带让"打包态定位"能在单测里覆盖。
    */
   templatesRoot?: string;
+  skipPptx?: boolean;
+  /**
+   * ⭐ **演示意图硬门（H0，2026-10-07）**：这一轮用户要的是"给人看的演示"
+   * （调用方从用户请求算出来的 `newDeckIntent || revisionIntent`）。
+   *
+   * 为真 ⇒ `kind:"pptx"` 的请求**一律不出片**，改为记一条
+   * `presentation-slidegen-required` 失败（文案把模型导流到「幻灯版面（自己排）」）。
+   * 与 `skipPptx` 的差别只有一个字：**静默 vs 有话说** ——
+   * 那条是受控验收（native 链自己出片，用户不会缺东西），这条是生产里模型走错了路
+   * （不说一句就变成"它说做好了、面板里什么都没有"）。
+   *
+   * ⚠️ **受控优先**：两个同时为真时走 `skipPptx` 的静默处置（见下面的分支顺序）。
+   */
+  reroutePptxToSlidegen?: boolean;
 }): Promise<DocgenGenerateResult> {
   const owner = captureArtifactWorkspaceOwner();
   const result: DocgenGenerateResult = { saved: [], failed: [] };
@@ -137,6 +155,20 @@ export async function generateDocumentsFromMessage(input: {
   }
 
   for (const request of requests) {
+    if (request.kind === 'pptx') {
+      // ⚠️ **顺序就是纪律**：受控（native 链自己出片）静默跳过优先；
+      //    演示意图才回一条失败把模型导流去「幻灯版面」。
+      if (input.skipPptx) continue;
+      if (input.reroutePptxToSlidegen) {
+        result.failed.push({ code: 'presentation-slidegen-required', format: 'pptx' });
+        getDebugLogger().warn({
+          domain: 'artifact',
+          event: 'docgen.pptx-rerouted-to-slidegen',
+          data: { taskId: input.taskId, title: request.title },
+        });
+        continue;
+      }
+    }
     try {
       owner.assertCurrent();
       notifyArtifactActivity(

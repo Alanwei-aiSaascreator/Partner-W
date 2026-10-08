@@ -45,6 +45,9 @@ function runStartup(result: PortableAppDataApplyResult) {
     createPortableHealthCoordinator: () => ({}),
     expectedProgramPathFor: () => undefined,
     dirname: () => 'isolated-program',
+    // ⚠️ 部署进度的看门狗在"抢到锁"的分支里**定义时就建**（`createDeployStallWatch`）：
+    //    这个替身只回答"存在" —— vm 里不跑定时器，也不关心部署进度。
+    createDeployStallWatch: () => ({ touch: () => {}, cancel: () => {} }),
   });
   return { exit, notify, lock, owner, cache, whenReady };
 }

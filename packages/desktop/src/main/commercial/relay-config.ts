@@ -52,7 +52,6 @@ export function activeRelayBaseUrl(): string {
   return activeRelayBaseUrlOverride ?? RELAY_BASE_URL;
 }
 
-/** 媒体那条（图片/视频）基址要带 `/v1`，理由见 `RELAY_IMAGE_BASE_URL`。 */
 function activeRelayMediaBaseUrl(): string {
   return `${activeRelayBaseUrl()}/v1`;
 }
@@ -114,22 +113,12 @@ export const OPENAI_IMAGE_MODEL_ID = 'qwen-image-1';
 export const OPENAI_IMAGE_MODEL_REF = `${OPENAI_IMAGE_PROVIDER_ID}/${OPENAI_IMAGE_MODEL_ID}`;
 
 /**
- * 图片那条的 baseUrl：**要带 `/v1`**。
- *
- * OpenAI 形状的客户端会自己在后面接 `/images/generations`，所以给到 `/relay/v1`
- * 才拼得出 `/relay/v1/images/generations`（nginx 再把 `/relay` 剥掉转给 relay）。
- * 少一段的表现是请求打到 `/relay/images/generations` —— 404，而且不解释。
- */
-export const RELAY_IMAGE_BASE_URL = `${RELAY_BASE_URL}/v1`;
-
-/**
  * 视频复用随包 OpenClaw 的内置 `xai` provider。客户端只说 xAI 形状，relay
  * 在服务端把它转换成豆包 Seedance/Ark 的任务协议；供应商 Key 不下发到客户端。
  */
 export const XAI_VIDEO_PROVIDER_ID = 'xai';
 export const XAI_VIDEO_MODEL_ID = 'grok-imagine-video';
 export const XAI_VIDEO_MODEL_REF = `${XAI_VIDEO_PROVIDER_ID}/${XAI_VIDEO_MODEL_ID}`;
-export const RELAY_VIDEO_BASE_URL = `${RELAY_BASE_URL}/v1`;
 
 /**
  * 图片接线**总闸**。默认 **false** —— 不写 `models.providers.openai`、不写 `mediaModels.image`。
@@ -254,8 +243,16 @@ function isPluginExplicitlyDisabled(config: Record<string, unknown> | undefined,
  *   2. **15 RPS 限流按阿里云主账号维度**，超限**静默不搜** —— 我们所有用户共用
  *      一个账号 ⇒ 有人会悄悄搜不到，而日志里一切正常；
  *   3. 兼容模式**拿不到来源/角标**，也**无法判断是否真的搜了** ⇒ 界面不能显示"已联网"。
+ *
+ * ⭐ 2026-10-08（任务模式 · 固定综合模型 `qwen3.7-flash`）：
+ *   生产 relay 探针实测 —— `qwen3.7-flash` 带 `enable_search` **兼容且真实触发**
+ *   （同一问句输入 15 → 5974 token，网页内容确实拼进了 prompt；一次搜索型问答 ≈ 0.5 元，
+ *   与上面第 1 条"≈200 倍输入"的量级吻合）⇒ 加入白名单（搜索开）。
+ *   **快速档走别名 `qwen3.7-flash-fast`（relay 目录里的条目，upstream 指向 qwen3.7-flash）
+ *   —— 刻意不列在这里**：这个开关只认模型级配置，不进白名单 = 上游搜索硬关，
+ *   不需要任何"关搜索"的参数（会话补丁也没有这种通道）。
  */
-const ENABLE_SEARCH_MODEL_IDS = ['qwen-turbo', 'qwen-plus'] as const;
+const ENABLE_SEARCH_MODEL_IDS = ['qwen-turbo', 'qwen-plus', 'qwen3.7-flash'] as const;
 
 /**
  * 按模型注入联网开关。

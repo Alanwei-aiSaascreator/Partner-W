@@ -1,11 +1,23 @@
 import type { SlidegenToolProgress } from './slidegen-tool-stream.js';
+// `Task.mode` 的取值类型与映射都在 `./task-modes.ts`（单一真源）。
+import type { TaskModeSetting } from './task-modes.js';
 
 export type TaskStatus = 'active' | 'completed' | 'archived';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 export type ArtifactType = 'file' | 'code' | 'image' | 'link' | 'structured_data';
-export type ArtifactAvailability = 'available' | 'missing' | 'unsafe';
+/**
+ * 产物的**展示层**可用性。
+ *
+ * - `available`：文件在盘上、可打开；
+ * - `missing`：确认不在了；
+ * - `unsafe`：在，但越界/符号链接等被拦；
+ * - `unknown`（2026-10-07）：**现在判不了**（助手工作区还没解析出来 —— 冷启动 / 网关没连上）。
+ *   ⚠️ 它不是 `missing` 的近义词：`missing` 会说"文件缺失"并把整族折进"历史与问题文件"，
+ *      而 `unknown` 是"暂时不知道"（界面文案「暂不可用（连接中）」），**不参与折叠降级**。
+ */
+export type ArtifactAvailability = 'available' | 'missing' | 'unsafe' | 'unknown';
 
 export type ArtifactSaveAsResult = { status: 'cancelled' } | { status: 'saved'; filePath: string };
 
@@ -49,6 +61,14 @@ export interface Task {
   gatewayId: string;
   agentId?: string;
   ensemble?: boolean;
+  /**
+   * 任务模式（快速 / 智能 / 深度 / 高级指定模型）—— 用户选模式、不选模型。
+   *
+   * ⚠️ 缺省（`undefined`）**不是"默认模式"**，而是"**没有偏好**"：旧行与网关回填的
+   *    旧会话都长这样，语义按 `custom` 处理（其 `model` 是用户当年显式选过的，不许劫持）。
+   *    判定用 `resolveEffectiveTaskMode`（`@clawwork/shared` 的单一真源），不要在这里猜。
+   */
+  mode?: TaskModeSetting;
   model?: string;
   modelProvider?: string;
   thinkingLevel?: string;
@@ -64,6 +84,14 @@ export interface Task {
    * 排序与"只显示 5 条"的裁剪规则见 `lib/task-sort`（置顶**不吃**那 5 个名额）。
    */
   pinnedAt?: string;
+  /**
+   * 这条任务是否已按 **deck 路由**（演示文稿 → DeepSeek）处理过 —— 命中一次就粘住，
+   * 让"把标题改一下"这类不含演示名词的后续消息也继续跑 DeepSeek。
+   *
+   * 判据与落库时机在 `renderer/lib/deck-intent.ts`（纯函数）；`custom`（用户显式选过
+   * 模型）不受它影响。**空/缺省 = 没标记过**（老行语义 = 正常模式解析）。
+   */
+  deckRouted?: boolean;
 }
 
 export type TaskContextSourceKind = 'folder';
@@ -279,11 +307,18 @@ export interface Message {
  * - `'workspace'` —— 应用工作区（`<appWorkspace>/<taskId>/…`）。**老行为，也是默认值。**
  * - `'agent'` —— 该任务所属**助手自己的工作区**（网关 `agents.entries.<id>.workspace`）。
  *   助手直接在它工作区里生成的文件走这一支，见 `main/artifact/access.ts` 的说明。
+ * - `'workspace-root'` —— **应用工作区的根层**（`<appWorkspace>/<file>`，`localPath` 是**裸文件名**，
+ *   2026-10-07）。模型用 exec / CLI 把成品直接写在 `荣盈魔方工作区\` 根上的那一批：
+ *   它与 `<appWorkspace>/<taskId>` 是**父子**关系，但前两趟一条扫任务目录、一条扫助手工作区，
+ *   根层文件谁都不收 ⇒ "生成成功了、产物面板里却没有"。见 `main/artifact/reconcile.ts` 的
+ *   `trustedWorkspaceRoot`。
  *
  * ⚠️ 可选字段（`undefined` 一律按 `'workspace'` 处理）：这样老行、老 IPC 载荷、
  *    以及所有既有调用点都不用改，语义与加这一列之前**逐字相同**。
+ * ⚠️ 消费侧（`access.ts` / `artifact-handlers.ts`）**不需要**为新值写分支：它解析根就是
+ *    应用工作区本身 —— 这正是不新增第四个根目录的原因。
  */
-export type ArtifactRootKind = 'workspace' | 'agent';
+export type ArtifactRootKind = 'workspace' | 'agent' | 'workspace-root';
 
 export interface Artifact {
   id: string;

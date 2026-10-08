@@ -44,8 +44,9 @@ export function deriveGatewayDisplayPhase({
  * ⚠️ 这是个**兜底**，不是诊断：主进程自己的预算是"首次部署 2–3 分钟 + 等就绪 180 秒"，
  *    所以取 6 分钟（`STARTUP_GRACE_MS`）—— 正常首启不会撞上它，而**已经不可能起来了**
  *    的那种（端口没了、部署坏了）也不至于让用户对着"正在启动"等到地老天荒。
- *    主进程侧目前只对"端口被占用"弹框，其它启动失败只有一行日志
- *    （`runtime.bootstrap.failed`）—— 把它送到界面上是另一刀，不在本轮。
+ *    主进程侧现在会把失败**推给渲染层**（`runtime-status` 的公开闭集，含部署失败的
+ *    `deploy-failed` 与盘上那份的四类处置），准备页也有 `runtime:bootstrap-retry`
+ *    这条"应用内真重跑"的出口 —— 这里的 6 分钟只兜**还没有任何结论**的那种等待。
  */
 export const STARTUP_GRACE_MS = 360_000;
 

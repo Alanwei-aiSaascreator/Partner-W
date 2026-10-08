@@ -4,7 +4,7 @@ import { MoreHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Artifact } from '@clawwork/shared';
 import { cn, formatRelativeTime, formatFileSize } from '@/lib/utils';
-import { getArtifactLabel } from '@/lib/artifact-labels';
+import { getArtifactDisplayName } from '@/lib/artifact-labels';
 import { motion as motionPresets, motionDuration, motionEase } from '@/styles/design-tokens';
 import ArtifactThumbnail from './ArtifactThumbnail';
 
@@ -25,7 +25,8 @@ function extBadge(name: string): string {
 export default function FileCard({ artifact, taskTitle, selected, isNew, onClick, onContextMenu }: FileCardProps) {
   const { t } = useTranslation();
   const ext = extBadge(artifact.name);
-  const title = getArtifactLabel(artifact, t);
+  // 标题与可访问名都必须是**注册的文件名**（2026-10-04：类型名当成身份显示，视频显示「文件」）。
+  const title = getArtifactDisplayName(artifact, t);
 
   return (
     <div className="relative">

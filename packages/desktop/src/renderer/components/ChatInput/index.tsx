@@ -4,6 +4,7 @@ import {
   File,
   FileCode,
   FolderOpen,
+  Image as ImageIcon,
   ListTodo,
   Loader2,
   Mic,
@@ -34,6 +35,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -45,6 +47,14 @@ import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
 import { RUN_PHASE_IDS } from '@clawwork/core';
+import {
+  MODE_POLICY,
+  TASK_MODES,
+  isModeAliasModelId,
+  resolveModeModelId,
+  type ModelCatalogEntry,
+  type TaskMode,
+} from '@clawwork/shared';
 import ComposerActivity from '@/components/ComposerActivity';
 import { useMessageStore } from '@/stores/messageStore';
 import { useRoomStore } from '@/stores/roomStore';
@@ -58,7 +68,7 @@ import SlashCommandDashboard from '../SlashCommandDashboard';
 import SlashCommandMenu from '../SlashCommandMenu';
 import ToolsCatalog from '../ToolsCatalog';
 import VoiceIntroDialog from '../VoiceIntroDialog';
-import { MENTION_ALL_AGENT_ID } from './constants';
+import { MAX_SEND_MATERIAL_COUNT, MENTION_ALL_AGENT_ID, deriveMaterialByteBudget, materialBudgetMb } from './constants';
 import DraftConflictDialog from './DraftConflictDialog';
 import { modelStatusCopy } from './model-availability';
 import { relayModelStatusCopy, type StartupRelayFailure } from '@/lib/startup-readiness';
@@ -72,10 +82,28 @@ import { useAttachments } from './useAttachments';
 import { useMentionPicker } from './useMentionPicker';
 import { useSlashAutocomplete } from './useSlashAutocomplete';
 import TaskMaterials from './TaskMaterials';
+import AttachmentSuggestions from './AttachmentSuggestions';
+import { resolveImageInputSupport, type AttachmentAction } from '@/lib/attachment-actions';
 import ComputerAccessBadge from '@/components/ComputerAccessBadge';
 import { buildMentionAgents } from './mention-agents';
 import { useTaskMaterials } from './useTaskMaterials';
+import { useConversationLeaveReset } from './conversation-scope';
 import { formatContextWindow } from './utils';
+
+/**
+ * 三档模式的人话（i18n key）。**字面量常量**：键必须在源码里可被扫描到
+ *（`check:i18n` 的"代码 → 词表"方向），不能拼字符串。
+ */
+const MODE_LABEL_KEYS: Record<TaskMode, string> = {
+  fast: 'chatInput.mode.fast',
+  smart: 'chatInput.mode.smart',
+  deep: 'chatInput.mode.deep',
+};
+const MODE_DESC_KEYS: Record<TaskMode, string> = {
+  fast: 'chatInput.mode.fastDesc',
+  smart: 'chatInput.mode.smartDesc',
+  deep: 'chatInput.mode.deepDesc',
+};
 
 function SelectionTag({
   icon,
@@ -169,12 +197,50 @@ export default function ChatInput({
   const mainView = useUiStore((s) => s.mainView);
   const settingsOpen = useUiStore((s) => s.settingsOpen);
 
-  const { pendingAttachments, setPendingAttachments, removeAttachment, handlePaste } = useAttachments();
+  const {
+    pendingAttachments,
+    setPendingAttachments,
+    removeAttachment,
+    clearAttachments,
+    trimAttachments,
+    handlePaste,
+  } = useAttachments();
 
   const materials = useTaskMaterials();
 
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTaskGatewayId = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId)?.gatewayId);
+
+  // ── 材料的发送前限额（2026-10-07 · 方案 A+B+D）────────────────────────────────
+  // 口径与 `useChatSend` 逐条同源（那边是最终闸门，这里是**提前可见**）：
+  //   · 计数 = **二进制附件**（暂存附件 + 已选导入材料）；@ 文件夹文本类不计数；
+  //   · 字节 = 暂存附件 size + 已选导入材料 size（列表元数据；发送侧还会用主进程
+  //     实读的 byteLength 复核 —— UI 这一份是"预告"，不是裁决）；
+  //   · 上限 = 网关协商的单帧值按 base64 折算（拿不到协商值回落默认 25MiB→18MiB）。
+  const gatewayMaxPayloadBytes = useUiStore((s) =>
+    activeTaskGatewayId ? s.gatewayMaxPayloadByGateway?.[activeTaskGatewayId] : undefined,
+  );
+  const materialByteBudget = useMemo(() => deriveMaterialByteBudget(gatewayMaxPayloadBytes), [gatewayMaxPayloadBytes]);
+  const binaryMaterialCount = pendingAttachments.length + materials.selectedImportedFiles.length;
+  const materialBytesEstimate = useMemo(
+    () =>
+      pendingAttachments.reduce((sum, att) => sum + att.file.size, 0) +
+      materials.selectedImportedFiles.reduce((sum, file) => sum + file.size, 0),
+    [pendingAttachments, materials.selectedImportedFiles],
+  );
+  const materialLimit: 'count' | 'bytes' | null =
+    binaryMaterialCount > MAX_SEND_MATERIAL_COUNT
+      ? 'count'
+      : materialBytesEstimate > materialByteBudget
+        ? 'bytes'
+        : null;
+  /** 「只保留前 N 个」：前 N 的次序 = 材料条次序（暂存附件在前、导入材料在后）。 */
+  const trimSelectedImportedFiles = materials.trimSelectedImportedFiles;
+  const handleTrimMaterials = useCallback(() => {
+    const keepPending = Math.min(pendingAttachments.length, MAX_SEND_MATERIAL_COUNT);
+    trimAttachments(keepPending);
+    trimSelectedImportedFiles(MAX_SEND_MATERIAL_COUNT - keepPending);
+  }, [pendingAttachments.length, trimAttachments, trimSelectedImportedFiles]);
   const performers = useRoomStore((s) => (activeTaskId ? s.rooms[activeTaskId]?.performers : undefined));
   const agentCatalog = useUiStore((s) =>
     activeTaskGatewayId ? s.agentCatalogByGateway[activeTaskGatewayId] : undefined,
@@ -242,6 +308,36 @@ export default function ChatInput({
     hasAgents: mentionAgents.length > 0,
   });
 
+  /**
+   * ⭐ BUG-028（2026-10-06 真机反馈 D 组：新建对话带入了上一段对话的文件/引用/状态）：
+   * **离开一段对话时，把这段对话的临时状态清干净**。
+   *
+   * 输入框不随会话重挂载（见 `MainArea` 那条注释），所以它里面的组件内 state 会一直活着：
+   *   - `useAttachments` 的暂存附件 —— 不清的话，A 里贴的截图会被 `handleSend` 存进 B 的第一条消息；
+   *   - 不存在的、受控的 textarea —— 不清的话，A 里打了一半的话直接出现在 B 的输入框里；
+   *   - @ 选择器 / 斜杠菜单 / 仪表盘 / 草稿冲突弹窗 —— 都是"上一段对话的现场"，不该跟过来。
+   *
+   * 判据（哪些算"离开"、为什么发送时那次 `pending→真任务` 不算）在 `./conversation-scope`，
+   * 那里有完整的理由与边界用例；这里只负责"清哪几样"。**加新的会话级 state 时记得加进来。**
+   *
+   * 不在这里清的：材料/引用集合（`useTaskMaterials` 自己按 taskId 重载）、@ 提到的任务与产物
+   * （`useMentionPicker` 自己按 activeTaskId 重置）—— 它们已经有归属，重复清反而多一条口径。
+   */
+  useConversationLeaveReset(activeTaskId, () => {
+    const textarea = textareaRef.current;
+    if (textarea && textarea.value.length > 0) {
+      textarea.value = '';
+      textarea.style.height = 'auto';
+    }
+    setCanSend(false);
+    clearAttachments();
+    closeMentionPicker();
+    setSlashMenuVisible(false);
+    setDashboardOpen(false);
+    closeArgPicker();
+    setDraftConflict(null);
+  });
+
   const [whisperAvailable, setWhisperAvailable] = useState(false);
   const [whisperPlatformUnsupported, setWhisperPlatformUnsupported] = useState(false);
   const loadSettings = useSettingsStore((s) => s.load);
@@ -291,7 +387,9 @@ export default function ChatInput({
     activeTask,
     currentModel,
     currentThinking,
+    currentMode,
     modelAvailability,
+    modelCatalog,
     effectiveToolsState,
     modelLabel,
     currentModelEntry,
@@ -303,6 +401,7 @@ export default function ChatInput({
     setQuotaDegrade,
     switchToFallbackModel,
     handleSend,
+    handleModeQuickSend,
     handleModelQuickSend,
     handleThinkingQuickSend,
     handleAbort,
@@ -510,7 +609,12 @@ export default function ChatInput({
       Boolean(textarea.value.trim()) ||
         pendingAttachments.length > 0 ||
         materials.selectedImportedFiles.length > 0 ||
-        selectedLocalFiles.length > 0,
+        selectedLocalFiles.length > 0 ||
+        // ⭐ 2026-10-07（质量战役区 3）：存在任一 @ 选择也算"有内容可发"——
+        //    `stripAtQuery` 抹掉 @ 查询后输入框看起来是空的，但选择还在（否则死按钮）。
+        selectedTasks.length > 0 ||
+        selectedArtifacts.length > 0 ||
+        selectedAgents.length > 0,
     );
     if (argPickerVisible) closeArgPicker();
     updateSlashMenu();
@@ -523,6 +627,9 @@ export default function ChatInput({
     pendingAttachments.length,
     materials.selectedImportedFiles.length,
     selectedLocalFiles.length,
+    selectedTasks.length,
+    selectedArtifacts.length,
+    selectedAgents.length,
   ]);
 
   const setComposerDraft = useCallback(
@@ -544,6 +651,19 @@ export default function ChatInput({
     },
     [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length],
   );
+
+  /** 建议行只认"这一轮真的要带的文件"（选中的导入材料 + 待发附件）。 */
+  const suggestionFiles = useMemo(
+    () => [
+      ...pendingAttachments.map((att) => ({ fileName: att.file.name, mimeType: att.file.type || undefined })),
+      ...materials.selectedImportedFiles.map((file) => ({
+        fileName: file.fileName,
+        mimeType: file.mimeType || undefined,
+      })),
+    ],
+    [pendingAttachments, materials.selectedImportedFiles],
+  );
+  const imageInputSupport = useMemo(() => resolveImageInputSupport(currentModelEntry), [currentModelEntry]);
 
   useEffect(() => {
     if (!draftConflict || draftConflict.id === draftRequest?.id) return;
@@ -587,6 +707,29 @@ export default function ChatInput({
 
   const voiceActive = isVoiceListening || isVoiceTranscribing;
   const disabled = isOffline || readinessBlocked;
+
+  /**
+   * 建议操作行（F 组 BUG-030 / C 组 BUG-027）：
+   *   - 读类动作（提取文字 / 读取总结 / 分析数据）**点击即发** —— 用户已经把意图说得很明确，
+   *     再多问一步只会让人以为没反应；输入框里已经有草稿时不抢发（草稿是用户自己的话）。
+   *   - 改 / 生成类动作缺具体诉求，**只把提示词填进输入框**（`【…】` 占位选中，直接可打字），
+   *     发不发由用户定 —— 写入口只从明确意图开。
+   */
+  const handleAttachmentAction = useCallback(
+    (action: AttachmentAction) => {
+      if (disabled) return;
+      const prompt = t(action.promptKey);
+      const textarea = textareaRef.current;
+      const existing = textarea?.value.trim() ?? '';
+      if (action.autoSend && !existing) {
+        setComposerDraft(prompt);
+        void handleSend();
+        return;
+      }
+      setComposerDraft(existing ? `${existing}\n${prompt}` : prompt);
+    },
+    [disabled, t, setComposerDraft, handleSend, textareaRef],
+  );
   // ⚠️ 顺序在 `composerPlaceholderKey` 里定（纯函数 + 单测）：**预热期不许说"离线模式 — 只读"**。
   //    老写法把"还不知道"（网关状态还没有这一条）也算成离线，于是首启那 50 秒里
   //    输入框在说一件不是事实的话（2026-09-20 实机截图）。
@@ -602,7 +745,47 @@ export default function ChatInput({
   const modelIsPreparing = modelStatus?.preparing ?? false;
   const modelStatusLabel = modelStatus?.label ?? null;
   const modelStatusDetail = modelStatus?.detail ?? null;
-  const composerModelLabel = modelStatusLabel ?? (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, '');
+
+  /**
+   * 任务模式（快速 / 智能 / 深度）与高级（指定模型）——**同一个 chip 的两个层级**。
+   *
+   * · 三档：chip 显示**模式名**，这轮跑哪个模型由 `MODE_POLICY` 对着目录现解析
+   *  （别名缺席回退基础模型；两个都没有 ⇒ 不显示模型徽章、发送侧保持现状）；
+   * · `custom`（高级 / 旧任务）：chip 显示**模型名**，一切照旧。
+   *
+   * ⚠️ 这里显示的是**将要跑的东西**，不是 `task.model` 那个可能已经过期的留痕 ——
+   *    模式任务的 `task.model` 只在运行时被 composer 覆写，不能拿来当"当前模型"。
+   */
+  const modeDriven = currentMode !== 'custom';
+  const modeModelId = useMemo(
+    () =>
+      modeDriven
+        ? resolveModeModelId(
+            currentMode,
+            modelCatalog.map((entry) => entry.id),
+          )
+        : undefined,
+    [modeDriven, currentMode, modelCatalog],
+  );
+  const modeModelEntry = modeModelId ? modelCatalog.find((entry) => entry.id === modeModelId) : undefined;
+  const displayModelEntry = modeDriven ? modeModelEntry : currentModelEntry;
+  const composerModelLabel =
+    modelStatusLabel ??
+    (modeDriven ? t(MODE_LABEL_KEYS[currentMode]) : (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, ''));
+
+  /**
+   * 高级：指定模型 —— 现有模型列表，**别名除外**。
+   * 别名（`qwen3.7-flash-fast`）是模式内部用的 relay 条目，不是"某个可选模型"：
+   * 让它出现在用户可点的清单里，等于把实现细节摆上台面（点它反而会把模式踢成 custom）。
+   */
+  const advancedModelsByProvider = useMemo(() => {
+    const groups: Record<string, ModelCatalogEntry[]> = {};
+    for (const [family, models] of Object.entries(modelsByProvider)) {
+      const visible = models.filter((entry) => !isModeAliasModelId(entry.id));
+      if (visible.length > 0) groups[family] = visible;
+    }
+    return groups;
+  }, [modelsByProvider]);
 
   // 网关侧准备进度（run_status）。**不能在 `isGenerating` 里才显示** ——
   // 实测那 9 秒发生在 lifecycle.start **之前**，正是最需要提示的时候。
@@ -615,6 +798,12 @@ export default function ChatInput({
   const thinkingMenu = useMemo(() => thinkingMenuFor(currentModelEntry), [currentModelEntry]);
   // 「关不掉思考」的模型（菜单无 off 档）要挂说明文案 —— 见 thinkingAlwaysOnKey 的注释。
   const alwaysOnKey = useMemo(() => thinkingAlwaysOnKey(currentModelEntry), [currentModelEntry]);
+  /**
+   * 模式任务（快速/智能/深度）：思考档由 `MODE_POLICY` 决定，**不许在这里改**。
+   * 菜单置灰 + 一句原因（同「这个模型只有一档」的既有形态）——
+   * 让用户改而不生效，才是真的骗人。
+   */
+  const modeThinkingLevel: string | null = modeDriven ? MODE_POLICY[currentMode].thinkingLevel : null;
   const thinkingLabel = useCallback(
     (level: string) => {
       const key = thinkingLabelKey(level);
@@ -650,9 +839,20 @@ export default function ChatInput({
       Boolean(textarea?.value.trim()) ||
         pendingAttachments.length > 0 ||
         materials.selectedImportedFiles.length > 0 ||
-        selectedLocalFiles.length > 0,
+        selectedLocalFiles.length > 0 ||
+        // ⭐ 同 `handleInput`：@ 选择本身就是"可发送内容"（质量战役区 3）
+        selectedTasks.length > 0 ||
+        selectedArtifacts.length > 0 ||
+        selectedAgents.length > 0,
     );
-  }, [pendingAttachments.length, materials.selectedImportedFiles.length, selectedLocalFiles.length]);
+  }, [
+    pendingAttachments.length,
+    materials.selectedImportedFiles.length,
+    selectedLocalFiles.length,
+    selectedTasks.length,
+    selectedArtifacts.length,
+    selectedAgents.length,
+  ]);
 
   /**
    * 拖入（T05）：桌面文件拖到输入卡片上 → 任务材料导入。
@@ -695,18 +895,35 @@ export default function ChatInput({
   return (
     <div className="flex-shrink-0 px-6 pb-5">
       <div className="max-w-[var(--content-max-width)] mx-auto">
+        {/* 拖入 / 选入文件后就地给"接下来能做什么"：读类点击即发，写类只预填（BUG-030/027）。 */}
+        <AttachmentSuggestions
+          files={suggestionFiles}
+          imageInput={imageInputSupport}
+          disabled={disabled}
+          onAction={handleAttachmentAction}
+        />
         <TaskMaterials
           importedFiles={materials.importedFiles}
           selectedImportedPaths={materials.selectedImportedPaths}
           sources={materials.sources}
+          binaryCount={binaryMaterialCount}
+          countLimit={MAX_SEND_MATERIAL_COUNT}
+          onTrimToLimit={handleTrimMaterials}
           onToggleImported={materials.toggleImportedFile}
+          // 「从当前对话移除」（BUG-029）：只动引用集合，材料与 inbox 原文件都不动。
+          onRemoveReference={materials.removeImportedFileReference}
           onRevokeSource={(sourceId) => void materials.revokeSource(sourceId)}
         />
         {/*
           等待期的活动条：秒数 + "正在做什么" + 俏皮话 + 取消。
           放在这一行的位置是有意的 —— 它在**输入框正上方**，用户发完消息视线就停在这儿。
         */}
-        <ComposerActivity sessionKey={activeTask?.sessionKey ?? null} onCancel={handleAbort} />
+        <ComposerActivity
+          sessionKey={activeTask?.sessionKey ?? null}
+          // 区1 体检 P2-6：主会话没在跑时，活动条盯正在跑的 performer（候选 = 主会话 + 全部 performers）。
+          sessionKeys={[activeTask?.sessionKey ?? '', ...(performers ?? []).map((performer) => performer.sessionKey)]}
+          onCancel={handleAbort}
+        />
         <AnimatePresence>
           {pendingAttachments.length > 0 && (
             <motion.div
@@ -943,6 +1160,19 @@ export default function ChatInput({
                           <File size={15} />
                           {t('chatInput.addFiles')}
                         </DropdownMenuItem>
+                        {/* C 组（BUG-027）：能力入口要**找得到** —— 统一挂名「识别图片」，
+                            选中后建议行给出「提取文字 / 总结图片 / 分析内容」。
+                            ⚠️ 2026-10-07（vision 入口降级 · 用户拍板）：只在模型**明确自述**支持
+                            image（目录 `input` 含 'image'）时露出 —— 当前全部中转模型都没这条声明，
+                            露出即"一句兑现不了的承诺"（拖图后模型读不到）。
+                            等 relay 加 vision 模型（目录自述 image 能力）后此处**自动出现**，无需改代码；
+                            runtime 侧补丁 `rongying-provider-capability-v1` 已入包。 */}
+                        {imageInputSupport === 'supported' && (
+                          <DropdownMenuItem onClick={() => void materials.importFiles('images')}>
+                            <ImageIcon size={15} />
+                            {t('chatInput.recognizeImage')}
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem onClick={() => void materials.grantFolder()}>
                           <FolderOpen size={15} />
                           {t('chatInput.addFolder')}
@@ -953,13 +1183,26 @@ export default function ChatInput({
                     <div className="flex items-center">
                       {/* 「全权」徽章：读的是**网关回来的真值**（见 ComputerAccessBadge 的注释）。 */}
                       <ComputerAccessBadge gatewayId={activeTaskGatewayId} sessionKey={activeTask?.sessionKey} />
+                      {/*
+                        模型 chip 的**两级结构**（2026-10-08 · 任务模式）：
+                          一级 = 快速 / 智能 / 深度（用户选模式，不选模型）；
+                          分隔线；
+                          二级 = 高级：指定模型 —— 展开**既有的**模型下拉（家族分组 + R / 上下文徽章）。
+                        选具体模型 ⇒ 模式落 `custom`；选三档 ⇒ 模式覆盖一切。
+                        别名（`qwen3.7-flash-fast`）不在高级列表里露出（模式内部条目）。
+                      */}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <ToolbarButton
                             variant="ghost"
                             size="sm"
                             className="rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none"
-                            title={modelStatusLabel ?? currentModelEntry?.name ?? modelLabel}
+                            title={
+                              modelStatusLabel ??
+                              (modeDriven
+                                ? `${t(MODE_LABEL_KEYS[currentMode])}${displayModelEntry ? ` · ${displayModelEntry.name ?? displayModelEntry.id}` : ''}`
+                                : (currentModelEntry?.name ?? modelLabel))
+                            }
                             aria-busy={modelIsPreparing}
                             aria-live="polite"
                           >
@@ -971,87 +1214,124 @@ export default function ChatInput({
                               />
                             )}
                             <span className="max-w-36 truncate">{composerModelLabel}</span>
-                            {modelAvailability === 'ready' && currentModelEntry?.reasoning && (
+                            {modelAvailability === 'ready' && displayModelEntry?.reasoning && (
                               <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
                                 R
                               </span>
                             )}
-                            {modelAvailability === 'ready' && currentModelEntry?.contextWindow && (
+                            {modelAvailability === 'ready' && displayModelEntry?.contextWindow && (
                               <span className="type-badge rounded bg-[var(--info)]/15 px-1 py-px text-[var(--info)]">
-                                {formatContextWindow(currentModelEntry.contextWindow)}
+                                {formatContextWindow(displayModelEntry.contextWindow)}
                               </span>
                             )}
                             <ChevronDown size={14} className="opacity-50" />
                           </ToolbarButton>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="max-h-96 overflow-y-auto">
-                          {Object.entries(modelsByProvider).map(([provider, models]) => (
-                            <DropdownMenuSub key={provider}>
-                              <DropdownMenuSubTrigger>
-                                <span>{provider}</span>
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent className="max-h-96 overflow-y-auto">
-                                {models.map((m) => (
-                                  <DropdownMenuItem
-                                    key={m.id}
-                                    onClick={() => handleModelQuickSend(m.id)}
-                                    className={cn(m.id === currentModel && 'font-medium text-[var(--accent)]')}
-                                  >
-                                    <span className="truncate">{m.name ?? m.id}</span>
-                                    {m.reasoning && (
-                                      <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
-                                        R
-                                      </span>
-                                    )}
-                                    {m.contextWindow && (
-                                      <span className="ml-auto pl-2 type-badge rounded bg-[var(--info)]/15 px-1 py-px text-[var(--info)]">
-                                        {formatContextWindow(m.contextWindow)}
-                                      </span>
-                                    )}
-                                  </DropdownMenuItem>
-                                ))}
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                          ))}
-                          {/*
-                            ⚠️ 判据是"**有明细就渲染** + 不是准备态"，不是"目录恰好是 empty"。
-                            原来 gate 在 `modelAvailability === 'empty'` 上：已知中转失败时
-                            `preparing` 变 false、而目录还在取（实机观察到的形态）⇒ **整块不渲染**，
-                            用户只剩 chip 上一个被截断的标签，看不到"为什么"和"怎么办"
-                            （2026-09-21 复核）。取不到那一档（catalog-failed）也一样漏。
-                          */}
-                          {modelIsPreparing ? (
+                          {/* 一级：三档模式。选中态用既有口径（accent 加粗），不引入新样式。 */}
+                          {TASK_MODES.map((mode) => (
                             <DropdownMenuItem
-                              disabled
-                              className="max-w-80 items-start gap-2 py-3 opacity-100"
-                              aria-live="polite"
+                              key={mode}
+                              onClick={() => handleModeQuickSend(mode)}
+                              className={cn(currentMode === mode && 'font-medium text-[var(--accent)]')}
                             >
-                              <Loader2
-                                size={16}
-                                aria-hidden="true"
-                                className="mt-0.5 shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
-                              />
-                              <span className="flex flex-col gap-1">
-                                <span className="type-body font-medium text-[var(--text-primary)]">
-                                  {modelStatusLabel}
+                              <span className="flex flex-col items-start gap-0.5">
+                                <span className="flex items-center gap-1.5">
+                                  {t(MODE_LABEL_KEYS[mode])}
+                                  {mode === 'smart' && (
+                                    <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
+                                      {t('chatInput.mode.recommended')}
+                                    </span>
+                                  )}
                                 </span>
                                 <span className="type-support whitespace-normal text-[var(--text-muted)]">
-                                  {modelStatusDetail}
+                                  {t(MODE_DESC_KEYS[mode])}
                                 </span>
                               </span>
                             </DropdownMenuItem>
-                          ) : modelStatusDetail ? (
-                            <DropdownMenuItem disabled className="max-w-80 items-start py-3 opacity-100">
-                              <span className="flex flex-col gap-1">
-                                <span className="type-body font-medium text-[var(--text-primary)]">
-                                  {modelStatusLabel}
-                                </span>
-                                <span className="type-support whitespace-normal text-[var(--text-muted)]">
-                                  {modelStatusDetail}
-                                </span>
-                              </span>
-                            </DropdownMenuItem>
-                          ) : null}
+                          ))}
+                          <DropdownMenuSeparator />
+                          {/* 二级：高级 —— 展开既有模型下拉（别名不出现在这里）。 */}
+                          <DropdownMenuSub>
+                            <DropdownMenuSubTrigger>
+                              <span>{t('chatInput.mode.advanced')}</span>
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="max-h-96 overflow-y-auto">
+                              {Object.entries(advancedModelsByProvider).map(([family, models]) => (
+                                <DropdownMenuSub key={family}>
+                                  <DropdownMenuSubTrigger>
+                                    <span>{family}</span>
+                                  </DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent className="max-h-96 overflow-y-auto">
+                                    {models.map((m) => (
+                                      <DropdownMenuItem
+                                        key={m.id}
+                                        onClick={() => handleModelQuickSend(m.id)}
+                                        // 选中态 = **这一轮真正会跑的模型**：custom 看任务记着的，
+                                        // 模式任务看模式解析出来的（快速档用别名时列表里没有它 ⇒ 不高亮，
+                                        // 那是诚实：跑的不是这张表里的任何一条）。
+                                        className={cn(
+                                          m.id === (modeDriven ? displayModelEntry?.id : currentModel) &&
+                                            'font-medium text-[var(--accent)]',
+                                        )}
+                                      >
+                                        <span className="truncate">{m.name ?? m.id}</span>
+                                        {m.reasoning && (
+                                          <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
+                                            R
+                                          </span>
+                                        )}
+                                        {m.contextWindow && (
+                                          <span className="ml-auto pl-2 type-badge rounded bg-[var(--info)]/15 px-1 py-px text-[var(--info)]">
+                                            {formatContextWindow(m.contextWindow)}
+                                          </span>
+                                        )}
+                                      </DropdownMenuItem>
+                                    ))}
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                              ))}
+                              {/*
+                                ⚠️ 判据是"**有明细就渲染** + 不是准备态"，不是"目录恰好是 empty"。
+                                原来 gate 在 `modelAvailability === 'empty'` 上：已知中转失败时
+                                `preparing` 变 false、而目录还在取（实机观察到的形态）⇒ **整块不渲染**，
+                                用户只剩 chip 上一个被截断的标签，看不到"为什么"和"怎么办"
+                                （2026-09-21 复核）。取不到那一档（catalog-failed）也一样漏。
+                              */}
+                              {modelIsPreparing ? (
+                                <DropdownMenuItem
+                                  disabled
+                                  className="max-w-80 items-start gap-2 py-3 opacity-100"
+                                  aria-live="polite"
+                                >
+                                  <Loader2
+                                    size={16}
+                                    aria-hidden="true"
+                                    className="mt-0.5 shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
+                                  />
+                                  <span className="flex flex-col gap-1">
+                                    <span className="type-body font-medium text-[var(--text-primary)]">
+                                      {modelStatusLabel}
+                                    </span>
+                                    <span className="type-support whitespace-normal text-[var(--text-muted)]">
+                                      {modelStatusDetail}
+                                    </span>
+                                  </span>
+                                </DropdownMenuItem>
+                              ) : modelStatusDetail ? (
+                                <DropdownMenuItem disabled className="max-w-80 items-start py-3 opacity-100">
+                                  <span className="flex flex-col gap-1">
+                                    <span className="type-body font-medium text-[var(--text-primary)]">
+                                      {modelStatusLabel}
+                                    </span>
+                                    <span className="type-support whitespace-normal text-[var(--text-muted)]">
+                                      {modelStatusDetail}
+                                    </span>
+                                  </span>
+                                </DropdownMenuItem>
+                              ) : null}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -1059,7 +1339,24 @@ export default function ChatInput({
                     <div className="flex items-center">
                       {/* 只支持一档的模型（实测 11 个里有 8 个）不弹菜单，置灰并说明原因 ——
                           隐藏会让用户以为界面坏了，所以是置灰不是隐藏。 */}
-                      {thinkingMenu.locked ? (
+                      {modeThinkingLevel ? (
+                        /* 模式任务（快速/智能/深度）：档位由模式决定，改了也不会生效 ⇒ 置灰 + 说明。
+                           与"这个模型只有一档"同一形态（都是"能力/规则如此，不是界面坏了"）。 */
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <ToolbarButton
+                              variant="ghost"
+                              size="sm"
+                              disabled
+                              className="rounded-lg border-none px-2 text-[var(--text-secondary)] shadow-none"
+                            >
+                              <span>{thinkingLabel(modeThinkingLevel)}</span>
+                              <ChevronDown size={14} className="opacity-50" />
+                            </ToolbarButton>
+                          </TooltipTrigger>
+                          <TooltipContent>{t('chatInput.thinkingLockedByMode')}</TooltipContent>
+                        </Tooltip>
+                      ) : thinkingMenu.locked ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <ToolbarButton
@@ -1119,33 +1416,43 @@ export default function ChatInput({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div>
-                          <Button
-                            variant={isVoiceListening ? 'soft' : 'ghost'}
-                            size="icon"
-                            onClick={() => {
-                              if (isVoiceListening) {
-                                stopVoiceInput();
-                                return;
-                              }
-                              void startVoiceInput();
-                            }}
-                            disabled={disabled || !isVoiceSupported}
-                            aria-label={voiceTooltip}
-                            className={cn(
-                              'rounded-xl',
-                              isVoiceListening && 'text-[var(--accent)]',
-                              !isVoiceListening && 'text-[var(--text-muted)] hover:text-[var(--text-primary)]',
-                            )}
-                          >
-                            <Mic size={18} />
-                          </Button>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>{voiceTooltip}</TooltipContent>
-                    </Tooltip>
+                    {/*
+                     * 麦克风按钮（BUG-044 · 产品拍板）：whisper **不支持就整块不渲染** ——
+                     * 不是"禁用但可见"。原来 Windows 上摆着一个永远点不动的灰麦克风 +
+                     * "此版本暂不支持 Windows 语音输入"的 Tooltip（一个只解释自己为什么没用的入口）。
+                     * `whisperAvailable` 由 `checkWhisper` 链路给出（IPC 照旧保留：macOS /
+                     * 装了 whisper 的机器走同一个判断，行为不变）；未就绪的默认态也是 false，
+                     * 所以首帧不会闪一个还没确认可用的按钮出来。
+                     */}
+                    {whisperAvailable && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div>
+                            <Button
+                              variant={isVoiceListening ? 'soft' : 'ghost'}
+                              size="icon"
+                              onClick={() => {
+                                if (isVoiceListening) {
+                                  stopVoiceInput();
+                                  return;
+                                }
+                                void startVoiceInput();
+                              }}
+                              disabled={disabled || !isVoiceSupported}
+                              aria-label={voiceTooltip}
+                              className={cn(
+                                'rounded-xl',
+                                isVoiceListening && 'text-[var(--accent)]',
+                                !isVoiceListening && 'text-[var(--text-muted)] hover:text-[var(--text-primary)]',
+                              )}
+                            >
+                              <Mic size={18} />
+                            </Button>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>{voiceTooltip}</TooltipContent>
+                      </Tooltip>
+                    )}
                     {runPhaseLabel && (
                       <span className="type-meta pr-1 text-[var(--text-muted)]" aria-live="polite">
                         {runPhaseLabel}
@@ -1186,21 +1493,40 @@ export default function ChatInput({
                           whileHover={reduced ? undefined : motionPresets.scale.whileHover}
                           whileTap={reduced ? undefined : motionPresets.scale.whileTap}
                         >
-                          <Button
-                            variant={canSend ? 'default' : 'secondary'}
-                            size="icon"
-                            onClick={handleSend}
-                            disabled={disabled || !canSend}
-                            aria-label={t('chatInput.send')}
-                            className={cn(
-                              'rounded-2xl',
-                              canSend
-                                ? 'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]'
-                                : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-muted)]',
+                          {/*
+                            超限置灰 + hover 原因（2026-10-07 · 方案 D）：以前限流只在点发送
+                            那刻弹 toast（P2-4"用户挨个取消"的体感来源）；现在按钮先灰、悬停
+                            直接说哪条超了。注意外层包一层 `<div>`（同麦克风按钮的写法）——
+                            disabled 的 button 收不到 hover 事件，Tooltip 触发要落在壳上。
+                          */}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div>
+                                <Button
+                                  variant={canSend && materialLimit === null ? 'default' : 'secondary'}
+                                  size="icon"
+                                  onClick={handleSend}
+                                  disabled={disabled || !canSend || materialLimit !== null}
+                                  aria-label={t('chatInput.send')}
+                                  className={cn(
+                                    'rounded-2xl',
+                                    canSend && materialLimit === null
+                                      ? 'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]'
+                                      : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-muted)]',
+                                  )}
+                                >
+                                  <Send size={18} />
+                                </Button>
+                              </div>
+                            </TooltipTrigger>
+                            {materialLimit !== null && (
+                              <TooltipContent>
+                                {materialLimit === 'count'
+                                  ? t('chatInput.materialLimitCount', { count: MAX_SEND_MATERIAL_COUNT })
+                                  : t('chatInput.materialLimitBytes', { size: materialBudgetMb(materialByteBudget) })}
+                              </TooltipContent>
                             )}
-                          >
-                            <Send size={18} />
-                          </Button>
+                          </Tooltip>
                         </motion.div>
                       )}
                     </AnimatePresence>

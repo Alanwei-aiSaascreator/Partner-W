@@ -83,6 +83,17 @@ export const IMPORT_FILE_EXTENSIONS = [
   'pptx',
 ] as const;
 
+/**
+ * 图片子集：C 组（BUG-027）「识别图片」入口用**同一份清单**过滤对话框，
+ * 免得两处各写一份扩展名表（漏一个就是"选了图却被拒"）。
+ *
+ * ⚠️ 2026-10-07（质量战役区 2 · P3-1）：清单已收敛到 `@clawwork/shared` 的
+ *    `IMAGE_FILE_EXTENSIONS`（单一真源）——渲染层的「识别图片」建议行读的是同一份，
+ *    粘贴 .gif/.svg/.bmp 不再被承诺识别（它们也从来进不了这条导入白名单）。
+ *    此处保留 `IMPORT_IMAGE_EXTENSIONS` 这个名字导出（存量调用方零改动）。
+ */
+export { IMAGE_FILE_EXTENSIONS as IMPORT_IMAGE_EXTENSIONS } from '@clawwork/shared';
+
 const IMPORT_EXTENSIONS = new Set<string>(IMPORT_FILE_EXTENSIONS.map((extension) => `.${extension}`));
 const SPECIAL_NAMES = new Set([
   '.env',

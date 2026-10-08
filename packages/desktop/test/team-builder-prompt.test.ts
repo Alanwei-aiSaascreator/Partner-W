@@ -10,6 +10,13 @@ import {
 import { toSlug } from '../src/renderer/layouts/TeamsPanel/utils';
 
 describe('AI 创建团队提示词', () => {
+  it('carries the selected language into deliverables and generated identities, with user override', () => {
+    const prompt = buildTeamBuilderSystemPrompt(['model-a'], 'zh');
+    expect(prompt).toContain('Default response language: Simplified Chinese.');
+    expect(prompt).toContain('visible text in generated pages, documents, and presentations');
+    expect(prompt).toContain('Each generated identity must retain this response-language policy');
+    expect(prompt).toContain('user explicitly requests another language');
+  });
   it('derives stable distinct ids from Chinese AI names without changing their identity', () => {
     const names = ['\u878d\u8d44\u4e3b\u7ba1', '\u5546\u4e1a\u5206\u6790\u5e08', '\u6f14\u793a\u8bbe\u8ba1\u5e08'];
     const rawAgents = names.map((name, index) => ({

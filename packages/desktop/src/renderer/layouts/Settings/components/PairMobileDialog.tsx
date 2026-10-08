@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { isMobileGatewayAddress } from '@/lib/mobile-pairing';
 
 interface QrPayload {
   v: 1;
@@ -33,7 +34,7 @@ export default function PairMobileDialog({
   const { t } = useTranslation();
   const gatewayInfoMap = useUiStore((s) => s.gatewayInfoMap);
   const gatewayStatusMap = useUiStore((s) => s.gatewayStatusMap);
-  const gatewayConfigs = useSettingsStore((s) => s.settings?.gateways ?? []);
+  const gatewayConfigs = useSettingsStore((s) => s.settings?.gateways);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const loadSettings = useSettingsStore((s) => s.load);
 
@@ -44,11 +45,17 @@ export default function PairMobileDialog({
   const [generating, setGenerating] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const gatewayEntries = useMemo(() => Object.entries(gatewayInfoMap), [gatewayInfoMap]);
+  const gatewayEntries = useMemo(
+    () =>
+      Object.entries(gatewayInfoMap).filter(([id]) =>
+        gatewayConfigs?.some((gateway) => gateway.id === id && isMobileGatewayAddress(gateway.url)),
+      ),
+    [gatewayInfoMap, gatewayConfigs],
+  );
 
   useEffect(() => {
     if (!open) return;
-    const firstConnectedId = Object.entries(gatewayStatusMap).find(([, s]) => s === 'connected')?.[0] ?? null;
+    const firstConnectedId = gatewayEntries.find(([id]) => gatewayStatusMap[id] === 'connected')?.[0] ?? null;
     const firstGatewayId = gatewayEntries[0]?.[0] ?? null;
     setSelectedGatewayId(firstConnectedId ?? firstGatewayId);
     setShareIdentity(true);
@@ -77,6 +84,8 @@ export default function PairMobileDialog({
   const handleGenerate = useCallback(
     async (identity = shareIdentity, gatewayId = selectedGatewayId) => {
       if (!gatewayId) return;
+      const cfg = gatewayConfigs?.find((gateway) => gateway.id === gatewayId);
+      if (!cfg || !isMobileGatewayAddress(cfg.url)) return;
       setGenerating(true);
 
       try {
@@ -84,9 +93,6 @@ export default function PairMobileDialog({
         if (identity) {
           payload.s = await window.clawwork.getDeviceId();
         }
-
-        const cfg = gatewayConfigs.find((g) => g.id === gatewayId);
-        if (!cfg) return;
 
         const mode: 'token' | 'password' | 'pairingCode' =
           cfg.authMode ?? (cfg.pairingCode ? 'pairingCode' : cfg.password ? 'password' : 'token');
@@ -129,6 +135,8 @@ export default function PairMobileDialog({
     },
     [gatewayConfigs, selectedGatewayId, shareIdentity, t],
   );
+
+  if (gatewayEntries.length === 0) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -45,6 +45,7 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
             if (
               importer?.replaceAll('\\', '/').endsWith('/src/main/ipc/data-handlers.ts') &&
               ![
+                '../artifact/delivery-activity.js',
                 '../artifact/delivery-operation.js',
                 '../artifact/workspace-owner.js',
                 '../slidegen/tool-receipts.js',
@@ -70,6 +71,7 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 export const DISPLAY_TRUNCATION_MARKER = '[truncated]';
                 export const EXPECTED_ARTIFACT_LABELS = {};
                 export const autoExtractArtifacts = async () => undefined;
+                export const saveArtifact = async () => undefined;
                 export const captureTaskArtifactBaseline = async () => new Map();
                 export const reconcileTaskArtifacts = async () => [];
                 export const resolveAgentWorkspace = () => undefined;
@@ -83,6 +85,9 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 export const historyFetcherFrom = () => undefined;
                 export const recoverFullReply = async () => undefined;
                 export const checkClaimedFiles = () => [];
+                // 2026-10-08 集成：BUG-042-c 的新导出（data-handlers 同批 import 它）——
+                // 桩必须跟着长，否则整个 probe 构建 RollupError（同下方"在途子系统"纪律）。
+                export const claimedFilesRejectedByIntegrity = () => [];
                 export const expectedArtifactKindsFromRequest = () => [];
                 export const missingExpectedArtifactKinds = () => [];
                 // native PPT 在途子系统（codex 在途，data-handlers 新 import）——桩必须跟着长，
@@ -108,7 +113,10 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
         rollupOptions: { output: { entryFileNames: 'probe.mjs' } },
       },
     });
-  });
+    // This cold Vite/Electron fixture competes with the full Windows suite.
+    // Bound setup like the existing 35s test budget; keep every SQLite probe's
+    // separate 30s timeout and all persistence assertions unchanged.
+  }, 35_000);
   afterAll(() => {
     if (runnerDir) rmSync(runnerDir, { recursive: true, force: true });
   });

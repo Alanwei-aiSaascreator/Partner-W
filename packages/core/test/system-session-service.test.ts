@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSystemSessionStore } from '../src/stores/system-session-store';
-import { createSystemSessionService } from '../src/services/system-session-service';
+import { SYSTEM_SESSION_BUSY, createSystemSessionService } from '../src/services/system-session-service';
 import type { GatewayEvent } from '../src/ports/gateway-transport';
 
 type EventCallback = (data: GatewayEvent) => void;
@@ -125,13 +125,18 @@ describe('system session service', () => {
     expect(listeners.size).toBe(0);
   });
 
-  it('start() rejects when a session is already active', async () => {
-    const { service } = setup();
+  it('start() rejects when a session is already active —— 且必须带 SESSION_BUSY 错误码', async () => {
+    const { service, storeApi } = setup();
     await service.start({ gatewayId: 'gw-1', agentId: 'main', purpose: 'test' });
+    const ownerKey = storeApi.getState().sessionKey;
 
     const res = await service.start({ gatewayId: 'gw-1', agentId: 'main', purpose: 'other' });
     expect(res.ok).toBe(false);
     expect(res.error).toBe('system session already active');
+    // ⚠️ 调用方靠它判断"store 里这条会话不是我的"（卸载时不许 end() 别人的会话）。
+    //    其它失败（createSession / patchSession / 首条消息）都没有这个码。
+    expect(res.errorCode).toBe(SYSTEM_SESSION_BUSY);
+    expect(storeApi.getState().sessionKey).toBe(ownerKey);
   });
 
   it('send() appends user + assistant placeholder and calls gateway', async () => {

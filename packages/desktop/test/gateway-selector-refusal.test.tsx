@@ -49,6 +49,24 @@ function setCatalog(agents: string[], defaultId: string): void {
 }
 
 describe('useGatewaySelector 拒绝不在本机的请求', () => {
+  it('honors a newly requested team manager when the selector remains mounted', () => {
+    setCatalog(['main', 'finance-lead'], 'main');
+    const view = render(<Harness initialAgentId="main" requestedAgentId="main" />);
+    view.rerender(<Harness initialAgentId="finance-lead" requestedAgentId="finance-lead" />);
+    expect(captured?.effectiveAgentId).toBe('finance-lead');
+    view.unmount();
+  });
+
+  it('honors the latest requested manager after a same-gateway catalog arrives late', () => {
+    act(() => useUiStore.setState({ agentCatalogByGateway: {} }));
+    const view = render(<Harness initialAgentId="main" requestedAgentId="main" />);
+    view.rerender(<Harness initialAgentId="finance-lead" requestedAgentId="finance-lead" />);
+    expect(captured?.effectiveAgentId).toBe('');
+    setCatalog(['main', 'finance-lead'], 'main');
+    expect(captured?.effectiveAgentId).toBe('finance-lead');
+    view.unmount();
+  });
+
   beforeEach(() => {
     captured = null;
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -144,6 +162,48 @@ describe('useGatewaySelector 拒绝不在本机的请求', () => {
     //    而那半边是**既有行为**（由 `welcome-screen.test.tsx` 的 "uses the destination gateway
     //    default label before stale pending state is normalized" 钉住）。复核建议把它也压成
     //    空串，实测会让那条既有用例红，且"网关本身没了"时用户会更糟 —— 已登记为待拍（见账本）。
+    view.unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-07（质检 P2-2）：默认当前助手 = 网关给的 defaultId（须在目录里）→
+   * **缺省固定主罗盘**。老写法 `gwAgents?.defaultId ?? agentCatalog[0]?.id` 会在网关
+   * 没给默认值时把**目录里的第一个**能力助手当成默认 —— 与「默认=主罗盘」契约相悖。
+   */
+  it('⭐ 网关没给默认值时，不拿"目录第一个"顶替：默认固定主罗盘', () => {
+    // ⚠️ 这组用例要**显式**钉住网关与目录（上一条用例把 gatewayInfoMap 改成了 gw-2；
+    //    只 setCatalog 的话 hook 会把 selectedGwId 回落到 gw-2、读到空目录）。
+    act(() => {
+      useUiStore.setState({
+        gatewayInfoMap: { 'gw-1': { id: 'gw-1' } } as never,
+        defaultGatewayId: 'gw-1',
+        // 目录顺序刻意把能力助手放前面：老实现（目录第一个）会选它。
+        agentCatalogByGateway: {
+          'gw-1': { agents: [{ id: 'rongying-content' }, { id: 'main' }], defaultId: '' },
+        } as never,
+      });
+    });
+    const view = render(<Harness initialAgentId="" />);
+
+    expect(captured?.defaultAgentId).toBe('main');
+    expect(captured?.effectiveAgentId).toBe('main');
+    view.unmount();
+  });
+
+  it('⭐ 目录里根本没有主罗盘时不冒充：默认留空（effectiveAgentId 也留空）', () => {
+    act(() => {
+      useUiStore.setState({
+        gatewayInfoMap: { 'gw-1': { id: 'gw-1' } } as never,
+        defaultGatewayId: 'gw-1',
+        agentCatalogByGateway: {
+          'gw-1': { agents: [{ id: 'rongying-content' }, { id: 'rongying-video' }], defaultId: '' },
+        } as never,
+      });
+    });
+    const view = render(<Harness initialAgentId="" />);
+
+    expect(captured?.defaultAgentId).toBe('');
+    expect(captured?.effectiveAgentId).toBe('');
     view.unmount();
   });
 });

@@ -154,6 +154,29 @@ describe('错误消息上的重试入口', () => {
     delete document.documentElement.dataset.theme;
   });
 
+  /**
+   * 区1 体检 P3-3：便签里的内部码（`[artifact.claim-guard.missing]` 这类）是**给模型看的判据**，
+   * 但它原来连同全文一起渲染进聊天红框 —— 用户看到一串内部方括号码。
+   * 只在渲染这一层剥掉；存下来的原文与送给模型的内容都不动（见 artifact-delivery-feedback 的用例）。
+   */
+  it('⭐ 红框剥掉内部码前缀（用户面），但正文一句不少', () => {
+    const { container, unmount } = render(
+      <ChatMessage
+        message={buildMessage({
+          content:
+            '[artifact-delivery-failed]\n' +
+            '[artifact.claim-guard.missing] 回复里提到了 report.pptx，工作区里没有这些文件。',
+        })}
+      />,
+    );
+    cleanups.push(unmount);
+
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain('回复里提到了 report.pptx，工作区里没有这些文件。');
+    expect(alert?.textContent).not.toContain('[artifact.claim-guard.missing]');
+    expect(alert?.textContent).not.toContain('[artifact-delivery-failed]');
+  });
+
   it('普通消息（用户 / 助手）不会长出重试按钮', () => {
     const user = render(
       <ChatMessage message={buildMessage({ role: 'user', content: '你好' })} retryable onRetry={vi.fn()} />,

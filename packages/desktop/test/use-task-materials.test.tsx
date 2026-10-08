@@ -95,7 +95,13 @@ function Harness({
       <button type="button" onClick={() => void materials.importFiles()}>
         import
       </button>
-      <button type="button" onClick={() => materials.toggleImportedFile('tasks/task-1/inbox/a.txt')}>
+      {/* 按**当前列表里第一份材料**取路径：用例的任务 id 不同，写死一条路径会让点击落空。 */}
+      <button
+        type="button"
+        onClick={() =>
+          materials.toggleImportedFile(materials.importedFiles[0]?.localPath ?? 'tasks/task-1/inbox/a.txt')
+        }
+      >
         toggle
       </button>
       <button type="button" onClick={() => void materials.grantFolder()}>
@@ -106,6 +112,16 @@ function Harness({
       </button>
       <button type="button" onClick={() => void materials.loadSourceFiles()}>
         load source files
+      </button>
+      {/* ⚠️ 新按钮一律**追加在最后**：上面那几条按序号取按钮（[0] import / [1] toggle /
+          [2] grant / [3] revoke / [4] load source files），插在中间会把它们全部错位。 */}
+      <button
+        type="button"
+        onClick={() =>
+          materials.removeImportedFileReference(materials.importedFiles[0]?.localPath ?? 'tasks/task-1/inbox/a.txt')
+        }
+      >
+        remove reference
       </button>
     </div>
   );
@@ -173,6 +189,158 @@ describe('useTaskMaterials', () => {
     expect(view.container.querySelector('[data-testid="imported"]')?.textContent).toBe('task-2.txt');
     expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('');
     expect(view.container.querySelector('[data-testid="sources"]')?.textContent).toBe('task-2');
+    view.unmount();
+  });
+
+  /**
+   * BUG-028 的验收原句：**Conversation A 引用 file-A → 新建 B（B 中无 file-A）→ 回 A
+   * （file-A 引用仍正常）**。这里钉的是"材料/引用这件事本身不跨对话"：
+   * 换到 B 之后 A 的文件一个都不许在 B 的列表里；回到 A 时它照旧在、照旧能引用。
+   */
+  /**
+   * ⭐ 2026-10-07（质量战役区 2 · P2-2）：导入侧放行 100MB、发送侧预算 18MiB ——
+   * "收得下但发不出"的文件必须在**进来这一刻**点破（只提示、不拦截：
+   * 用户可能就是要先挑别的再发）。
+   */
+  it('⭐ 导入的单文件超发送预算 ⇒ 立刻提示且照常选中（不拦、不静默）', async () => {
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    mocks.importTaskFiles.mockResolvedValue({
+      ok: true,
+      result: {
+        imported: [
+          {
+            fileName: 'huge.bin',
+            localPath: 'tasks/task-1/inbox/huge.bin',
+            mimeType: 'application/octet-stream',
+            size: 19 * 1024 * 1024,
+          },
+        ],
+        rejected: [],
+      },
+    });
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    const buttons = view.container.querySelectorAll('button');
+    await act(async () => void (await (buttons[0] as HTMLButtonElement).click()));
+
+    expect(mocks.toastWarning).toHaveBeenCalledWith(
+      'chatInput.materialSingleTooLarge',
+      expect.objectContaining({ description: 'huge.bin' }),
+    );
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent, '只提示，不拦截').toBe('huge.bin');
+    view.unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-07（质量战役区 3 · 问题 6）：重载（`listImportedTaskFiles`）与在途导入的竞态。
+   *
+   * 列表 IPC 的响应可能**早于导入完成**（列表生成时文件还没拷完）：整表替换会把导入
+   * 刚加进来、用户已经看到"本次使用"的文件当场抹掉。重载改走 `mergeImported` 后，
+   * 迟到的列表只会补齐/打标，不会吞掉新文件。
+   */
+  it('⭐ 迟到的重载响应不许抹掉刚导入的文件（merge 而非整表替换）', async () => {
+    let releaseList!: (value: unknown) => void;
+    mocks.listImportedTaskFiles.mockReturnValueOnce(
+      new Promise((resolve) => {
+        releaseList = resolve;
+      }),
+    );
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    mocks.importTaskFiles.mockResolvedValue({
+      ok: true,
+      result: {
+        imported: [
+          {
+            fileName: 'late.txt',
+            localPath: 'tasks/task-1/inbox/late.txt',
+            mimeType: 'text/plain',
+            size: 10,
+          },
+        ],
+        rejected: [],
+      },
+    });
+    const view = render(<Harness taskId="task-1" />);
+
+    // 列表还在飞的时候，导入完成了（用户在等列表的这半秒里点了添加）
+    const buttons = view.container.querySelectorAll('button');
+    await act(async () => void (await (buttons[0] as HTMLButtonElement).click()));
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('late.txt');
+
+    // 迟到的列表响应到达（它在导入之前生成 ⇒ 不含 late.txt）
+    await act(async () => {
+      releaseList({ ok: true, result: [] });
+      await Promise.resolve();
+    });
+
+    expect(
+      view.container.querySelector('[data-testid="selected"]')?.textContent,
+      '迟到的列表不许抹掉刚导入的文件',
+    ).toBe('late.txt');
+    expect(view.container.querySelector('[data-testid="imported"]')?.textContent).toBe('late.txt');
+    view.unmount();
+  });
+
+  it('⭐ A 引用的材料不会出现在 B；回到 A 时材料与引用能力都还在', async () => {
+    mocks.listImportedTaskFiles.mockImplementation(async (taskId: string) => ({
+      ok: true,
+      result: [
+        {
+          fileName: `${taskId}.txt`,
+          localPath: `tasks/${taskId}/inbox/${taskId}.txt`,
+          mimeType: 'text/plain',
+          size: 10,
+        },
+      ],
+    }));
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    act(() => (view.container.querySelectorAll('button')[1] as HTMLButtonElement).click());
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('task-1.txt');
+
+    view.rerender(<Harness taskId="task-2" />);
+    await act(async () => void (await Promise.resolve()));
+    expect(view.container.querySelector('[data-testid="imported"]')?.textContent).toBe('task-2.txt');
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent, 'B 里不许有 A 的引用').toBe('');
+
+    view.rerender(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    expect(view.container.querySelector('[data-testid="imported"]')?.textContent).toBe('task-1.txt');
+    // 引用能力照常：再点一次就能引用（引用本身不跨对话复活，但材料在）
+    act(() => (view.container.querySelectorAll('button')[1] as HTMLButtonElement).click());
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('task-1.txt');
+    view.unmount();
+  });
+
+  /**
+   * BUG-029：移除的是**当前对话的引用**，不是材料、更不是文件。
+   * 材料行里它还在（用户还能再点回来），inbox 也没被动过。
+   */
+  it('⭐ 移除引用：只掉"本次使用"，材料仍在，能再加回来', async () => {
+    mocks.listImportedTaskFiles.mockResolvedValue({ ok: true, result: [] });
+    mocks.listTaskContextSources.mockResolvedValue({ ok: true, result: [] });
+    mocks.importTaskFiles.mockResolvedValue({
+      ok: true,
+      result: {
+        imported: [{ fileName: 'a.txt', localPath: 'tasks/task-1/inbox/a.txt', mimeType: 'text/plain', size: 12 }],
+        rejected: [],
+      },
+    });
+    const view = render(<Harness taskId="task-1" />);
+    await act(async () => void (await Promise.resolve()));
+    const buttons = view.container.querySelectorAll('button');
+    await act(async () => void (await (buttons[0] as HTMLButtonElement).click()));
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('a.txt');
+
+    act(() => (buttons[5] as HTMLButtonElement).click()); // remove reference（追加在最后那个）
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent).toBe('');
+    expect(view.container.querySelector('[data-testid="imported"]')?.textContent, '材料本身还在').toBe('a.txt');
+    expect(mocks.importTaskFiles, '移除引用不是重新导入').toHaveBeenCalledTimes(1);
+
+    act(() => (buttons[1] as HTMLButtonElement).click());
+    expect(view.container.querySelector('[data-testid="selected"]')?.textContent, '可以再加回来').toBe('a.txt');
     view.unmount();
   });
 

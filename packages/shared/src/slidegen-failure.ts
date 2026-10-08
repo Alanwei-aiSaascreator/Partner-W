@@ -73,13 +73,35 @@ export interface ArtifactDeliveryFailure {
   taskId: string;
   sessionKey: string;
   messageId: string;
+  /** 声称了、但在工作区里**物理上找不到**的文件名。 */
   missing: string[];
+  /**
+   * 本轮要求了、成果列表里**没有登记到**的格式（人话标签，如「PPT/PPTX 演示文稿」）。
+   *
+   * ⭐ 与 `missing` 分开（2026-10-04 真机）：文件可能就在盘上，只是版本关联或成果登记
+   *    没走完。两者合成一句「工作区里没有这些文件」时，界面就在对用户撒谎。
+   */
+  missingKinds?: string[];
+  /**
+   * ⭐⭐ **写出来了、但字节不是那份格式**的文件名（BUG-042-c，2026-10-08）。
+   *
+   * 真机形状：模型自己把 JSON / 纯文本改名成 `.docx` 写进工作区，回复说"已生成 报告.docx"。
+   * 它**在盘上**（所以既不是 `missing` 也满足存在性判据），只在登记门的字节校验那一步被拒
+   * （进 `skipped`）—— 结果回复说做好了、产物列表空的、界面上**一条提示都没有**（静默丢弃）。
+   *
+   * 与另两档的差别（三个都要说得出不同的话）：
+   *   · `missing`       = 声称了，**盘上根本找不到**；
+   *   · `missingKinds`  = 格式对，**只是没登记上**；
+   *   · `invalidArtifacts` = 盘上有，**但它不是一份能打开的文档**（假装成了别的格式）。
+   */
+  invalidArtifacts?: string[];
   slideFailures?: SlidegenFailure[];
   docFailures?: DocgenFailure[];
   htmlFailures?: HtmlgenFailure[];
   mediaFailures?: { fileName: string; reason: 'unavailable' }[];
 }
 
+/** Emitted only after generation and workspace reconciliation have settled. */
 export interface ArtifactDeliverySettled {
   taskId: string;
   sessionKey: string;

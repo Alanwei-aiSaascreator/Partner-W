@@ -100,3 +100,41 @@ describe('网关 id 的文案覆盖', () => {
     }
   });
 });
+
+/**
+ * **本机运行时部署**那四个阶段（+ 慢盘提示）的文案覆盖（2026-10-07 体检问题 2/5）。
+ *
+ * 为什么和上面那组同一个文件：它们分居的两边是同一种 —— 阶段清单在主进程代码里
+ * （`DeployProgress['phase']`），文案在 9 个 locale 文件里，中间没有东西连着。
+ * 少一个语言的后果同样是"那个语言的用户看到裸 key 或泛化兜底"，而**代码里看不出来**。
+ *
+ * ⚠️ 前四个是**阶段**（要能在同一块屏幕上区分开："解压中"和"装 Node"不是一回事）；
+ *    第五个 `deployStalled` 是**慢盘提示**（不中止，只说"在等系统响应"），
+ *    它天然与阶段不同类，所以分开钉。
+ */
+const DEPLOY_PHASE_KEYS = ['deployVerify', 'deployExtract', 'deployNode', 'deployFinalize'] as const;
+
+describe('部署阶段文案覆盖（每个语言都要有四阶段 + 停滞提示）', () => {
+  const locales = readdirSync(localeDir).filter((f) => f.endsWith('.json'));
+
+  it('⭐ 四个阶段在**每个**语言里都有文案，且互不相同', () => {
+    for (const file of locales) {
+      const entry = at(localeJson(file), 'entryPreparation');
+      for (const key of DEPLOY_PHASE_KEYS) {
+        const text = entry[key];
+        expect(text, `${file} 缺 entryPreparation.${key}`).toBeTypeOf('string');
+        expect(text, `${file} 的 entryPreparation.${key} 是空串`).toBeTruthy();
+      }
+      const texts = DEPLOY_PHASE_KEYS.map((k) => entry[k]);
+      expect(new Set(texts).size, `${file} 里有阶段共用同一句文案：${texts.join(' / ')}`).toBe(texts.length);
+    }
+  });
+
+  it('停滞提示每个语言也得有（它说的是"慢"，不是"失败"）', () => {
+    for (const file of locales) {
+      const entry = at(localeJson(file), 'entryPreparation');
+      expect(entry.deployStalled, `${file} 缺 entryPreparation.deployStalled`).toBeTypeOf('string');
+      expect(entry.deployStalled, `${file} 的 entryPreparation.deployStalled 是空串`).toBeTruthy();
+    }
+  });
+});

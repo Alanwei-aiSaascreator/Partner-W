@@ -27,6 +27,90 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+function controlledContent(slug: string, content: string): string {
+  if (process.env.ROYIN_NATIVE_PPT_VALIDATION !== '1' || !parseOurSkillFrontmatter(content)) return content;
+  const normalized = stripBom(content).replace(/\r\n/g, '\n');
+  const close = normalized.indexOf('\n---', 3);
+  const header = normalized.slice(0, close);
+  let body = normalized.slice(close + 4);
+  let description: string;
+  if (slug === 'presentation-deck-v2') {
+    // ⭐ 2026-10-03 版本对齐：受控环境**只教一个契约** = 固定槽位 templateDeck（16 版式，
+    //    唯一真源 TEMPLATE-DECK.md / TEMPLATE-DECK-SLOTS.json）。原先这里讲的是
+    //    business-deck-v5（四页型试运行）——而实际出片与认可成品走的都是 templateDeck
+    //    槽位引擎（收据 sourceFormat 可对），模型被教 v5、验收要 16 版式，两套口径打架。
+    // ⭐ P0-A（2026-10-08 pre19，用户指令）：契约拆两层——
+    //    A) Machine Contract = TEMPLATE-DECK-SLOTS.json（84KB，渲染器/校验器读，模型不读）；
+    //    B) Model Quick Reference = 正文里的版式索引 + 每版式一个 `layouts/layout-NN.md`
+    //       （由 SLOTS.json 程序生成，每个只几十行 = read 单窗内；一致性由
+    //       test/our-skills-bundled.test.ts「P0-A 两层契约」钉住）。
+    //    真机实证：read 工具单窗 = 2000 行（内核 DEFAULT_MAX_LINES=2e3，offset 为行偏移）；
+    //    run6b 模型读 SLOTS.json 3 次都只拿首窗（4/5/6 的定义本就在首窗内，但模型侧
+    //    计数仍错且未用 offset 续读其余版式）→ 41 次写入从未同时满足计数。
+    //    证据：V1-CLOSEOUT-LEDGER-20261008.md「PPT 失败机制剖析」。
+    description =
+      'Controlled fixed slot PPT generation and revisions. For every selected layout read only its layouts/layout-NN.md in this skill directory. Never read TEMPLATE-DECK-SLOTS.json (84KB machine contract).';
+    body =
+      '\n\n# Controlled fixed slot PPT contract (templateDeck-v2)\n\n' +
+      'Write one file ending .native-ppt.json:\n\n' +
+      '```json\n{\n  "kind": "pptx",\n  "template": "templateDeck",\n  "title": "User requested title",\n  "content": {\n    "1": ["Each ordered slot receives one string"],\n    "4": ["标题", "导语", "1", "卡片标题", "卡片正文", "2", "卡片标题", "卡片正文", "3", "卡片标题", "卡片正文", "底部结论"]\n  }\n}\n```\n\n' +
+      'Choose a nonempty subset of the 16 existing layouts using content keys 1 through 16, naturally ordered once. ' +
+      'Only replace text and chart data; never author geometry, fonts, CSS or layouts.\n\n' +
+      'Layout index（只读你选中版式的 layouts/layout-NN.md；禁止读 TEMPLATE-DECK-SLOTS.json）：\n\n' +
+      '1 封面(4)｜2 目录(17)｜3 章节过渡(3)｜4 三段并列(12)｜5 四段并列(14)｜6 两列对比(21)｜' +
+      '7 三列对比(22)｜8 三步递进(10)｜9 时间线(18)｜10 柱状数据(8+chart)｜11 折线趋势(8+chart)｜' +
+      '12 KPI看板(20)｜13 原生表格(26)｜14 层级结构(10)｜15 编号清单(14)｜16 结尾页(4)\n\n' +
+      'For each selected layout read ONLY its layouts/layout-NN.md（槽位顺序与角色、每槽 max chars/chars per line/max lines/字号、溢出行为、禁止项、完整示例；每个文件只几十行，一次 read 读完）。' +
+      ' Do not read TEMPLATE-DECK-SLOTS.json：84KB 机器契约，渲染器与校验器读它，模型不读。TEMPLATE-DECK.md 是总览（按需）。\n\n' +
+      'Hard rules：\n' +
+      '① 每个选中版式的**全部槽位非空**，空串 "" 直接判失败；没有可选槽位；\n' +
+      '② **目录恒为 17 项 = 页面标题 + 8×(目录序号、目录项)**——大纲不足 8 条时扩写成 8 条真实条目，**禁止用空串凑数**；\n' +
+      '③ 写完源文件后**必须运行 deck-layout helper 且渲染成功**才可收尾——只写文件不渲染 = 未完成；诊断报 `slot-content-count … expected N`（含角色清单）/"nonempty string required" 时，**按 layouts/layout-NN.md 补数量/补真实内容**，不要加空行凑数；\n' +
+      '④ 图表版式 10/11 只在有来源的数字数据时选用；文本槽位与图表数据都要填满。\n\n' +
+      'Use the installed deck-layout helper, retain the final receipt, and use --previous for user revisions. ' +
+      'The final reply must use the exact generated filename and path from that receipt, including its hash suffix. ' +
+      'Missing evidence or capacity failure must be reported; do not invent data to fill charts or omit required text. ' +
+      'The managed executor verifies, reviews and registers the final version. Never claim completion from text alone.\n';
+  } else if (slug === 'deck-layout') {
+    description =
+      'Controlled native PPT render helper. PPT content and revisions use presentation-deck-v2; this helper renders its .native-ppt.json source. Free JSX/CSS layouts are unavailable inside controlled A validation.';
+    body =
+      '\n\n# Controlled native PPT render helper\n\n' +
+      // ⭐ 2026-10-08 真机实证：网关不替换 {baseDir} 占位（安装盘上仍是字面量），
+      //    run6b 模型拿着占位符在 runtime node_modules 里瞎找 helper 路径浪费一整轮。
+      //    改成自定位指引：helper 与本 SKILL.md 同目录。
+      'PPT content and revisions use the presentation-deck-v2 skill (its SKILL.md and TEMPLATE-DECK.md overview). ' +
+      'This helper renders its .native-ppt.json source with the trusted bundled Node executable.\n\n' +
+      "The helper script is scripts/generate.cjs inside THIS skill's directory（与本 SKILL.md 同目录）。" +
+      " First resolve this directory's absolute path (list the skills directory or read this file's path), then run:\n\n" +
+      '```text\nnode "<this-skill-dir>/scripts/generate.cjs" "report.native-ppt.json"\n' +
+      'node "<this-skill-dir>/scripts/generate.cjs" "report.native-ppt.json" --previous "verified.receipt.json"\n```\n\n' +
+      'Poll the available process tool if exec is still running. Keep the final JSON receipt. ' +
+      'Use the exact generated filename and path from the receipt in the final reply, including its hash suffix. ' +
+      'The managed product executor verifies the output, checks the final version, registers it and ends the task. ' +
+      'Do not duplicate export in chat, invoke absent tools or announce completion from text alone. ' +
+      'Native font sizes use points; CSS uses pixels (24px = 18pt) only on the separate legacy route.\n';
+  } else if (slug === 'document-deck') {
+    description =
+      'Generate Word, Excel and PDF documents using the existing document contract. All PPT tasks in controlled validation use presentation-deck-v2 and the deck-layout native helper.';
+    body = body
+      .replace(
+        /### 1\.[\s\S]*?(?=### 2\.)/,
+        '### PPT\n\nUse presentation-deck-v2 and its .native-ppt.json contract for this controlled test.\n\n',
+      )
+      .replace(/### \u6f14\u793a\u6587\u7a3f\n[\s\S]*?(?=### Word)/, '')
+      .replace('.pptx / .docx / .xlsx / .pdf', '.docx / .xlsx / .pdf')
+      .replace(/^.*`kind`.*`"pptx"`.*$/m, '- `kind` is docx, xlsx or pdf here. PPT uses presentation-deck-v2 only.')
+      .replace(/^.*\u666e\u901a\u8981\u70b9\u7248\u6b63\u6587.*\n.*\u6a21\u677f\u5b57\u6bb5.*$/m, '')
+      .replaceAll('PPT / Word / Excel', 'Word / Excel')
+      .replace(
+        /\u4e00(?:\u4efd|\u9875)\s*PPT\s*\+\s*\u4e00\u4efd(?:\u8bb2\u7a3f\s*)?Word/iu,
+        'a Word document and an Excel sheet',
+      );
+  } else return content;
+  return header.replace(/^description:.*$/m, `description: '${description}'`) + '\n---' + body;
+}
+
 export interface BundledSkill {
   slug: string;
   /** ⚠️ `undefined` 表示**这份文件格式不对**（不是"还没加载"）。由内容闸判红。 */
@@ -151,7 +235,7 @@ export function readBundledSkills(root: string | undefined): BundledSkill[] {
       let parsed: ParsedFrontmatter | null = null;
       let content: string | undefined;
       try {
-        content = fs.readFileSync(file, 'utf-8');
+        content = controlledContent(e.name, fs.readFileSync(file, 'utf-8'));
         parsed = parseOurSkillFrontmatter(content);
       } catch {
         /* 没有 SKILL.md / 读不动 —— 字段留空，交给内容闸报 */
@@ -325,6 +409,13 @@ export function installBundledSkill(opts: {
     // 覆盖语义：先删旧的再拷，避免源里删掉的文件残留在目标里。
     fs.rmSync(target, { recursive: true, force: true });
     fs.cpSync(source, target, { recursive: true });
+    if (
+      process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' &&
+      ['presentation-deck-v2', 'deck-layout', 'document-deck'].includes(slug)
+    ) {
+      const file = path.join(target, 'SKILL.md');
+      fs.writeFileSync(file, controlledContent(slug, fs.readFileSync(file, 'utf8')));
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'unknown' };

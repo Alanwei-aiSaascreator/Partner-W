@@ -109,6 +109,10 @@ export function registerVoiceHandlers(): void {
 
   ipcMain.handle('voice:check-whisper', (): WhisperCheckResult => {
     if (process.platform === 'win32') {
+      // ⚠️ 产品层口径（BUG-044，2026-10-08 拍板）：whisper 不支持的平台**整块隐藏**
+      //    麦克风按钮（`ChatInput/index.tsx` 按 `whisperAvailable` 条件渲染）——
+      //    这条 `available: false` 就是那个判断的输入，**不是**"禁用但可见"。
+      //    链路保留：装了 whisper 的 macOS 走下面同一套探测，行为不变。
       return {
         available: false,
         binaryPath: null,

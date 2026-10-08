@@ -9,8 +9,9 @@ import type {
   SkillStatusReport,
 } from '@clawwork/shared';
 import { TEAM_POSITIONS, type TeamPosition } from '@clawwork/shared';
-import { parseIdentityMd } from '@clawwork/core';
+import { parseIdentityMd, resolveCatalogAgentId } from '@clawwork/core';
 import { normalizePosition } from '@/lib/team-roundtable';
+import { userMdContentFromReadResult } from '@/lib/identity-persona';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 import { cn } from '@/lib/utils';
@@ -74,8 +75,18 @@ export default function AgentDraftCard({
   const skillSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skillSearchEpoch = useRef(0);
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
-  const skillsStatus = useUiStore((s) => (gatewayId ? s.skillsStatusByGateway[gatewayId] : undefined));
-  const setSkillsStatusForGateway = useUiStore((s) => s.setSkillsStatusForGateway);
+  const cachedSkillsStatus = useUiStore((s) => s.skillsStatusByGateway[gatewayId]);
+  const agentCatalog = useUiStore((s) => s.agentCatalogByGateway[gatewayId]);
+  const skillOwner = resolveCatalogAgentId(agentCatalog, agent.existingAgentId);
+  const [loadedSkillsStatus, setLoadedSkillsStatus] = useState<{ gatewayId: string; report: SkillStatusReport } | null>(
+    null,
+  );
+  const skillsStatus =
+    skillOwner && cachedSkillsStatus?.agentId === skillOwner
+      ? cachedSkillsStatus
+      : skillOwner && loadedSkillsStatus?.gatewayId === gatewayId && loadedSkillsStatus.report.agentId === skillOwner
+        ? loadedSkillsStatus.report
+        : undefined;
   const catalog = (gatewayId ? modelCatalogByGateway[gatewayId] : null) ?? EMPTY_MODELS;
   const models = useMemo(() => relayModelsFrom(catalog).filter((model) => model.available !== false), [catalog]);
   const isExisting = !!agent.existingAgentId;
@@ -116,16 +127,17 @@ export default function AgentDraftCard({
       if (abortController.signal.aborted) return;
       const patch: Partial<AgentDraft> = {};
       if (identityRes.status === 'fulfilled' && identityRes.value.ok && identityRes.value.result) {
-        const data = identityRes.value.result as Record<string, unknown>;
-        if (typeof data.content === 'string') {
-          const parsed = parseIdentityMd(data.content);
+        // 2026-10-07 质量战役：真机形状 result.file.content（同族读错位修复）。
+        const content = userMdContentFromReadResult(identityRes.value.result);
+        if (content !== null) {
+          const parsed = parseIdentityMd(content);
           patch.description = parsed.description ?? '';
           patch.agentMd = parsed.body;
         }
       }
       if (soulRes.status === 'fulfilled' && soulRes.value.ok && soulRes.value.result) {
-        const data = soulRes.value.result as Record<string, unknown>;
-        if (typeof data.content === 'string') patch.soulMd = data.content;
+        const content = userMdContentFromReadResult(soulRes.value.result);
+        if (content !== null) patch.soulMd = content;
       }
       if (Object.keys(patch).length > 0) onUpdate(patch);
       setDetailsLoadedFor(agent.existingAgentId!);
@@ -148,18 +160,32 @@ export default function AgentDraftCard({
   };
 
   useEffect(() => {
-    if (activeTab !== 'skills' || !gatewayId || skillsStatus) return;
+    if (activeTab !== 'skills' || !gatewayId || !skillOwner || skillsStatus) {
+      setLoadingSkills(false);
+      return;
+    }
     let cancelled = false;
     setLoadingSkills(true);
-    window.clawwork.getSkillsStatus(gatewayId).then((res) => {
-      if (cancelled) return;
-      if (res.ok && res.result) setSkillsStatusForGateway(gatewayId, res.result as unknown as SkillStatusReport);
-      setLoadingSkills(false);
-    });
+    window.clawwork
+      .getSkillsStatus(gatewayId, skillOwner)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.ok && res.result) {
+          const report = res.result as unknown as SkillStatusReport;
+          if (!report.agentId || report.agentId === skillOwner)
+            setLoadedSkillsStatus({ gatewayId, report: { ...report, agentId: skillOwner } });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedSkillsStatus(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSkills(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [activeTab, gatewayId, skillsStatus, setSkillsStatusForGateway]);
+  }, [activeTab, gatewayId, skillOwner, skillsStatus]);
 
   const runSkillSearch = useCallback(
     async (query: string) => {

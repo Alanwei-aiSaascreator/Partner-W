@@ -4,6 +4,7 @@ import type { TaskContextFile } from './useTaskMaterials';
 import type { MentionItem, MentionTab, AgentMentionEntry } from '../MentionPicker';
 import { useFileStore } from '../../stores/fileStore';
 import { useTaskStore } from '../../stores/taskStore';
+import { shouldResetComposerOnConversationChange } from './conversation-scope';
 import { MENTION_ALL_AGENT_ID } from './constants';
 
 interface UseMentionPickerOpts {
@@ -29,7 +30,22 @@ export function useMentionPicker(opts: UseMentionPickerOpts) {
 
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
 
+  /**
+   * ⭐ 2026-10-07（质量战役区 3）：@ 选择的清理**换成"离开一段对话"的边界规则**。
+   *
+   * 原来 `useEffect(..., [activeTaskId])` **无条件清** —— 于是发送时那次
+   * `pending → 真任务`（`activeTaskId: null → task-1`）也被当成"换了对话"：
+   * 发送失败时用户刚 @ 的任务/产物/助手**当场没了**（与 BUG-028 定义的边界直接矛盾，
+   * 见 `conversation-scope.ts` 的头注：`null → X` 是"这段对话刚开始"，不是"换了一段"）。
+   *
+   * 判据与输入框其余会话级状态**同一份纯函数**：`null→X` 不清 / `A→B` 清 / `A→null` 清。
+   * `A→A`（原地重渲染）不算切换。前一个 id 用 ref 记（只关心"上一个"）。
+   */
+  const previousActiveTaskIdRef = useRef<string | null>(activeTaskId);
   useEffect(() => {
+    const previousTaskId = previousActiveTaskIdRef.current;
+    previousActiveTaskIdRef.current = activeTaskId;
+    if (!shouldResetComposerOnConversationChange(previousTaskId, activeTaskId)) return;
     setSelectedTasks([]);
     setSelectedArtifacts([]);
     setSelectedLocalFiles([]);

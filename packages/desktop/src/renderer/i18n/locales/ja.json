@@ -47,7 +47,7 @@
     "title": "License activation"
   },
   "agent": {
-    "missingBody": "別のパソコンにのみインストールされている可能性があります。別のアシスタントを選ぶか、チームページを開いてください。",
+    "missingBody": "別のパソコンにしかない可能性があります。コンパスアシスタントで確認するか、チームページを開いてください。",
     "missingOpenTeams": "チームを開く",
     "missingSwitch": "「{{assistant}}」に切り替える",
     "missingTitle": "「{{agentId}}」はこのパソコンにありません",
@@ -77,12 +77,16 @@
     "error": "操作を完了できませんでした",
     "locateMessage": "{{name}} を作成したメッセージへ移動",
     "missing": "ファイルが見つかりません",
+    "noAppToOpen": "このシステムには {{ext}} ファイルを開けるアプリがありません（Word/WPS をインストールして再試行）",
     "open": "開く",
+    "openFailed": "開けませんでした：ファイルが破損しているか、書き込みが未完了の可能性があります",
+    "openFailedHint": "「フォルダーに表示」して手動で開いてください。開けない場合は再生成してください。",
     "recoveryHint": "ファイルを再生成するか、ワークスペースに戻してから操作してください。",
     "refresh": "成果物を更新",
     "saveAs": "名前を付けて保存",
     "saved": "コピーを保存しました",
     "showInFolder": "フォルダーで表示",
+    "unknown": "一時的に利用できません（接続中）",
     "unsafe": "ファイルをブロックしました"
   },
   "artifactKinds": {
@@ -396,6 +400,26 @@
     "aiServiceStarting": "AI サービスを起動しています…",
     "aiServiceStartingDetail": "初回起動には約 1 分かかる場合があります。しばらくお待ちください。",
     "artifactTooLarge": "{{name}} は大きすぎるため、コンテキストとして添付できません。",
+    "attachmentActions": {
+      "analyzeData": "データを分析",
+      "analyzeImage": "内容を分析",
+      "extractImageText": "文字を抽出",
+      "generateReport": "レポートを作成",
+      "imageUnsupported": "現在のモデルは画像を見られません。画像の認識には視覚対応モデルへの切り替えが必要です。",
+      "modifyFile": "ファイルを編集",
+      "promptAnalyzeData": "この表を読み取り、データの要点と異常を分析して提案してください。",
+      "promptAnalyzeImage": "この画像を認識して、内容を分析してください。",
+      "promptExtractImageText": "この画像を認識して、含まれている文字を抽出してください。",
+      "promptGenerateReport": "このファイルをもとにレポートを作成してください。用途は：【用途や読み手】",
+      "promptModifyFile": "このファイルを編集してください：【変更したい内容】",
+      "promptReadDocument": "このファイルを読み取り、主な内容と重要な結論を要約し、次にできることを提案してください。",
+      "promptSummarizeImage": "この画像を認識して、内容を要約してください。",
+      "promptSummarizeSlides": "このプレゼン資料を読み取り、各ページの要点と結論をまとめてください。",
+      "readDocument": "読み取って要約",
+      "summarizeImage": "画像を要約",
+      "summarizeSlides": "要点をまとめる",
+      "title": "おすすめの操作"
+    },
     "attachmentSaveFailed": "添付ファイル {{fileName}} の保存に失敗しました",
     "attachmentTooLarge": "{{fileName}} が 100MB の上限を超えています",
     "compacting": "コンテキストを圧縮しています…",
@@ -411,6 +435,7 @@
       "canceled": "処理をキャンセルしました",
       "details": "処理の記録",
       "failed": "処理に失敗しました",
+      "jumpToMessage": "このメッセージに戻る",
       "needs-review": "処理完了・確認が必要です",
       "phaseTypes": {
         "downloading-media": "画像・動画のダウンロード",
@@ -438,12 +463,26 @@
       "unavailable": "{{fileName}}: could not be read (moved or deleted?), not added",
       "unsupported": "{{fileName}}: file type not supported, not added"
     },
-    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
+    "materialCountBadge": "{{count}}/{{max}} 選択中",
+    "materialLimitBytes": "1回の送信で添付は合計 {{size}} MB までです。送信前に一部を削除するか圧縮してください。",
+    "materialLimitCount": "1回に送信できる添付は最大 {{count}} 個です。送信前に一部を削除してください。",
     "materialMissing": "利用不可",
     "materials": "タスク資料",
     "materialSelected": "今回使用",
+    "materialSingleTooLarge": "1回の送信上限（{{size}} MB）を超えるファイルがあります。送信時には含まれません——先に圧縮するか分割してください。",
     "materialsLoadFailed": "タスク資料を読み込めませんでした",
+    "materialTrimToLimit": "先頭の {{count}} 個のみ保持",
     "materialUnavailable": "{{fileName}} は移動されたか利用できません",
+    "mode": {
+      "advanced": "詳細設定：モデルを指定",
+      "deep": "深層",
+      "deepDesc": "深く考え、複雑な分析や長文の作業に適しています",
+      "fast": "高速",
+      "fastDesc": "簡単な質問に素早く回答します",
+      "recommended": "おすすめ",
+      "smart": "スマート",
+      "smartDesc": "速度と品質のバランス重視、ほとんどの作業に最適"
+    },
     "modelGone": "「{{model}}」は利用できなくなりました。下のメニューから別のモデルを選んでください",
     "modelsLoading": "モデルを準備しています…",
     "modelsLoadingDetail": "準備が完了すると、モデルが自動的に表示されます。",
@@ -455,11 +494,13 @@
     "offlineReadOnly": "オフライン — 読み取り専用",
     "openFailed": "{{fileName}} を開けませんでした",
     "partialSendFailed": "Some assistants did not receive the message",
+    "recognizeImage": "画像を認識",
     "relayActivationLimitReachedDetail": "この認証は端末数の上限に達しています。別のカードをご利用いただくか、サポートにお問い合わせください。",
     "relayActivationRequiredDetail": "「設定 → Activation」で認証を完了してください。",
     "relayEntitlementRejectedDetail": "この認証はもう使用できません。「設定 → Activation」で再度認証するか、別のカードをご利用ください。",
     "relayOrganizationMismatchDetail": "この認証は別の組織に紐づいています。「設定 → Activation」をご確認ください。",
     "relayRetryableDetail": "商用サービスの準備がまだ整っていません。もう一度お試しください。",
+    "removeReference": "この会話から外す",
     "revokeFolder": "フォルダ {{name}} の使用を停止",
     "revokeFolderFailed": "フォルダの許可を解除できませんでした",
     "runPhase": {
@@ -480,6 +521,7 @@
     "thinking": "思考",
     "thinkingAlwaysOn": "深い思考は常時オンで、オフにできません",
     "thinkingHigh": "高",
+    "thinkingLockedByMode": "思考の深さはタスクモードで決まります",
     "thinkingLockedByModel": "このモデルは思考「オフ」のみ対応しています",
     "thinkingLow": "低",
     "thinkingMax": "最大",
@@ -489,6 +531,10 @@
     "thinkingResetByModel": "{{model}} に切り替えました。思考レベルを既定値に戻しました",
     "thinkingUltra": "ウルトラ",
     "thinkingXhigh": "超高",
+    "unsupportedCapability": "この機能は現在ご利用いただけません。ワークスペースで利用できる機能を代わりにお使いください。",
+    "unsupportedModel": "このモデルは現在ご利用いただけません。モデル一覧から利用可能なモデルをお選びください。",
+    "visionFallbackSwitched": "この画像には画像を認識できるモデルを使用しました：{{model}}",
+    "visionUnavailable": "画像認識は一時的に利用できません：このメッセージはそのまま送信されますが、画像が認識されない可能性があります。",
     "waiting": {
       "awaitingApproval": "承認待ち：{{what}}",
       "line": {
@@ -509,6 +555,7 @@
     }
   },
   "chatMessage": {
+    "autoRetryNotice": "前回は完了しませんでした。自動でもう一度だけ再試行します（再課金されます）。",
     "conductor": "コーディネーター",
     "copied": "コピーしました",
     "copyCode": "コードをコピー",
@@ -521,9 +568,13 @@
     "toolCallSummaryWithErrors": "{{count}} 件のツール呼び出しを実行（{{errorCount}} 件失敗）"
   },
   "claimGuard": {
+    "invalidArtifactBody": "{{names}} の中身は標準の文書形式ではありません（例：テキストの拡張子を変えただけ）。開けないため成果一覧に登録していません。アシスタントに再生成させてください。",
+    "invalidArtifactTitle": "書き出されたファイルは有効な文書ではありません",
     "mediaUnavailableBody": "{{names}} を読み込むか取り込むことができませんでした。ファイルが見つからない、アクセスできない、または取り込み上限の 25 MB を超えている可能性があります。",
     "mediaUnavailableTitle": "生成されたメディアを取り込めませんでした",
     "missingBody": "返信に {{names}} とありますが、そのファイルはワークスペースにありません。",
+    "missingKindsBody": "今回要求された {{names}} は成果リストに登録されませんでした。ファイルは生成済みでも、バージョン関連付けや登録が完了していない可能性があります。",
+    "missingKindsTitle": "成果が未登録です",
     "missingTitle": "約束されたファイルがありません"
   },
   "commandPalette": {
@@ -924,6 +975,7 @@
     "replyUnavailable": "このターンの完全な回答を取得できなかったため、**ファイルを生成しませんでした**（中途半端なものは出しません）。少し待って再試行するとたいてい直ります。",
     "requestInvalid": "内容の形式が正しくないファイルが 1 つあり、作成しませんでした。アシスタントにもう一度出力させるか、内容を確認してください。",
     "slideBulletMultiline": "スライド {{page}} の箇条書き {{bullet}} 番目に改行が含まれているため、作成しませんでした。各項目は 1 行で書いてください。段落を分けたい場合は項目を増やすか別のスライドにしてください。",
+    "slidegenRequired": "この .pptx は生成されませんでした：人に見せるプレゼンは「幻灯版面（自己排）」の経路で作ります —— レイアウト全体をワークスペースの .slidegen ファイルに書き（返信本文には貼らないこと）、そのスキルの SKILL.md に従って作成します。",
     "slideTitleMultiline": "スライド {{page}} のタイトルに改行が含まれているため、作成しませんでした。タイトルは 1 行で書いてください。",
     "templateFieldMissing": "スライド {{page}}（{{templateId}}）に必須フィールド「{{field}}」がないため、生成されませんでした。",
     "templateFieldTooLong": "スライド {{page}}（{{templateId}}）の「{{field}}」が長すぎるため、生成されませんでした。{{maxChars}} 文字以内に短くしてください。",
@@ -932,24 +984,31 @@
   },
   "entryPreparation": {
     "account": "アカウントと利用資格",
-    "animationNote": "無音のローカルアニメーションです。準備完了後に進めます。",
+    "animationNote": "準備ができたら続行できます。映像と音は待機に影響しません。",
     "assistants": "基本の仕事アシスタント",
     "checked": "接続と保存条件を確認しました。モデルへのタスクは送信していません。",
     "checkFailed": "準備中に問題が発生しました。再確認してください。",
     "checks": "準備状況",
     "chooseWorkspace": "作業領域を確認",
-    "continue": "仕事プロフィールへ進む",
+    "continue": "マイキューブの設定を開始",
+    "deployExtract": "ローカル実行環境を準備しています",
+    "deployFinalize": "ローカル実行環境の準備を完了しています",
+    "deployNode": "同梱の Node 実行環境を準備しています",
+    "deployStalled": "このディスクの読み書きが遅く、システムの応答を待っています…",
+    "deployVerify": "ランタイムのファイルを確認しています",
     "detail": "サービスの接続と作業領域を確認しています。実際の状態を以下に表示します。",
+    "mediaMute": "ミュート",
+    "mediaUnmute": "サウンドをオン",
     "models": "利用可能なモデル一覧",
     "needsAttention": "準備状態を確認してください",
     "ready": "基本サービスの準備ができました",
-    "readyDetail": "仕事プロフィールへ進むか、この画面で確認結果をご覧ください。",
+    "readyDetail": "キューブの設定を開始するか、この画面で確認結果をご覧ください。",
     "recheckFailed": "最新の確認が完了しませんでした。再試行するかアカウントを確認してください。",
     "relay": "サービス接続設定",
     "runtime": "ローカルサービス起動",
     "runtimeProcessExited": "The local AI service exited during startup.",
     "runtimeReadyTimeout": "The local AI service did not become ready before startup timed out.",
-    "runtimeRestartRequired": "Resolve the startup issue shown above, fully exit Royin Cube, then reopen it to start the local AI service again.",
+    "runtimeRetryHint": "上の案内を確認したうえで、下の「もう一度準備する」を押すとアプリ内でやり直せます（再インストールは不要です）。",
     "title": "Cubeを準備しています",
     "workspace": "作業領域の読み書き"
   },
@@ -1155,11 +1214,8 @@
     "unsupportedField": "プロトコルが受け付けないフィールド「{{field}}」が含まれていたため生成されませんでした。アシスタントが出せるのは内容だけで、レイアウトはこちら側です。そのフィールドを削って再出力するよう伝えてください。"
   },
   "identity": {
-    "appliedToast": "「{{role}}」を適用しました",
-    "apply": "このペルソナを適用",
     "applyFailed": "ゲートウェイに接続していないため適用できません",
-    "cardHint": "アイデンティティタグを選ぶと、ガイドに沿って専用ペルソナを生成し、推奨の役割とスキルをワンクリックで適用できます。",
-    "cardTitle": "ペルソナ生成",
+    "editProfile": "Edit my profile",
     "group": {
       "ecommerce": {},
       "educator": {},
@@ -1167,14 +1223,22 @@
       "legal": {}
     },
     "needTag": "タグを1つ以上選んでください",
+    "nickname": "Nickname",
+    "portraitHint": "Saved by the first-run guide. Read-only.",
+    "profileEmpty": "No fun profile yet. Finish the first-run guide and your character card will appear here.",
     "reselect": "選び直す",
-    "roleLabel": "推奨の役割",
     "save": "このアイデンティティ設定を保存して適用",
+    "section": {
+      "preferences": "My preferences",
+      "profile": "My portrait",
+      "skills": "My core skills",
+      "team": "My AI team",
+      "work": "My work identity"
+    },
     "shuffle": "タグを変える",
     "skill": {},
-    "skillsLabel": "推奨スキル",
-    "startTask": "「{{role}}」で新しいタスクを開始",
-    "subtitle": "客群を選ぶと、AI がそのアイデンティティに合わせて役割・スキル構成・話し方を提案します。いつでも切替可能。",
+    "skillsHint": "These six capability sets ship with the app. Describe what you need in chat and the team will use them.",
+    "subtitle": "Your portrait, work identity, AI team, core skills and preferences — all in one place. Saving writes them into every assistant's memory.",
     "tag": {
       "efficiency": "効率重視",
       "goalOriented": "目標志向",
@@ -1182,8 +1246,31 @@
       "reporting": "報告頻度高",
       "timeManagement": "時間管理"
     },
-    "tagsLabel": "ペルソナタグ",
-    "title": "アイデンティティセンター"
+    "tagsLabel": "Preference tags",
+    "teamLead": "Lead",
+    "teamPosition": {
+      "analyst": {
+        "duty": "Breaks the problem down, works the numbers, gives checkable conclusions.",
+        "name": "Analyst"
+      },
+      "creator": {
+        "duty": "Writes the draft, the outline and the first full version.",
+        "name": "Creator"
+      },
+      "inspector": {
+        "duty": "Checks the result against the brief and lists what to fix.",
+        "name": "Quality inspector"
+      },
+      "producer": {
+        "duty": "Turns drafts into deliverable documents, sheets or decks.",
+        "name": "Producer"
+      },
+      "researcher": {
+        "duty": "Finds sources, benchmarks and verifiable facts.",
+        "name": "Researcher"
+      }
+    },
+    "title": "Personalization Center"
   },
   "kb": {
     "addDone": "{{count}} 件の資料を追加しました",
@@ -1239,10 +1326,11 @@
     "addAssistant": "アシスタントを追加",
     "appSettings": "アプリ設定",
     "archivedChats": "アーカイブ済みチャット",
+    "bountyComingSoon": "近日公開予定",
     "collapseNav": "サイドバーを折りたたむ",
     "expandNav": "サイドバーを展開",
-    "identityCenter": "アカウント",
-    "independentAssistants": "個別のアシスタント",
+    "identityCenter": "Personalization",
+    "independentAssistants": "スキルと能力",
     "myAssistants": "マイアシスタント",
     "pages": {
       "agents": "エージェント市場",
@@ -1304,7 +1392,7 @@
     "welcomeTitle": "今日は何をしますか？"
   },
   "market": {
-    "alreadyInstalled": "You already have this assistant.",
+    "actionFailed": "Could not open it. Please try again.",
     "byAuthor": "by {{name}}",
     "cancel": "Cancel",
     "categoryAll": "All",
@@ -1318,31 +1406,46 @@
     "createDone": "Template created (draft)",
     "createTitle": "New template",
     "delete": "Delete",
-    "deleteBlocked": "Already installed by someone — you can unpublish, but not delete",
-    "deleteConfirm": "Delete this template? Teammates who already installed it are unaffected.",
+    "deleteBlocked": "Already in use by someone — you can unpublish it, but not delete it",
+    "deleteConfirm": "Delete this template? Teammates already using it are unaffected.",
     "deleteDone": "Deleted",
     "descriptionLabel": "Description (max 300)",
     "edit": "Edit",
     "emojiLabel": "Emoji",
-    "empty": "No templates available yet",
-    "install": "Install",
-    "installCount": "{{count}} installs",
-    "installDone": "\"{{name}}\" is ready — check your assistant list.",
-    "installed": "Installed",
-    "installFailed": "Install did not finish. Please try again.",
-    "installing": "Installing…",
-    "instructionsLabel": "Prompt (what the assistant should do — used right after install)",
+    "empty": "No assistant templates available yet",
+    "error": {
+      "assistantConflict": "同じ名前で内容の異なるアシスタントがこの PC にあります。上書きを避けるため、そのままは使いませんでした。そのアシスタントを削除してから再試行してください。",
+      "forbidden": "この操作はテンプレートの作者またはチーム管理者のみ実行できます。",
+      "invalidCategory": "有効なカテゴリを選択してください。",
+      "invalidDescription": "説明が長すぎます。300 文字以内に収めてください。",
+      "invalidEmoji": "絵文字を 1 つ入力してください（最大 8 文字）。",
+      "invalidInstructions": "プロンプトは 1〜8000 文字にしてください。",
+      "invalidName": "名前は 1〜60 文字にしてください。",
+      "invalidStatus": "対応していない状態です。",
+      "network": "サーバーに接続できません。ネットワークを確認して再試行してください。",
+      "noGateway": "ローカルサービスにまだ接続していません。準備ができてから再試行してください。",
+      "noOrganization": "まだチームに所属していません。先にチームを作成してください。",
+      "notAuthenticated": "先にログインしてください。",
+      "publicMarketClosed": "公開マーケットは閉鎖中のため、現在は公開できません。プライベートテンプレートには影響しません。",
+      "templateInstalledCannotDelete": "すでに誰かが使っているため、非公開にはできますが削除はできません。",
+      "templateNotFound": "このアシスタントテンプレートは存在しないか、表示できません。",
+      "unknown": "操作に失敗しました。しばらくして再試行してください。",
+      "workspaceUnavailable": "ワークスペースの準備ができていません。設定でワークスペースを指定してから、この機能を使ってください。",
+      "workspaceUnsupported": "ワークスペースのあるディスクはアシスタントファイルに対応していません。ワークスペースを NTFS ディスクに変更して再試行してください。"
+    },
+    "instructionsLabel": "Prompt (what the assistant should do — used as soon as it is selected)",
     "loadFailed": "Could not load. Try again.",
     "loading": "Loading…",
     "mineEmpty": "You have not created any template yet",
     "nameLabel": "Name (max 60)",
     "official": "Official",
+    "preparing": "Preparing…",
     "prompt": "Prompt",
-    "publicClosedBody": "公開販売・出品は停止中です。プライベートテンプレートは「クリエイターセンター・マイテンプレート」に残り、引き続き利用・編集・書き出しできます。公式ツールのインストールには影響しません。",
+    "publicClosedBody": "Public listing and trading are disabled. Your private templates stay under Creator Center — My Templates and can still be used, edited, and exported; official capabilities are unaffected.",
     "publicClosedTitle": "公開マーケットは終了しました",
     "publish": "Publish",
     "publishDone": "Published — teammates in your organisation can see it now",
-    "recordWarning": "Assistant installed, but the install count was not recorded (no impact on usage).",
+    "recordWarning": "Ready in your Compass Assistant; only the usage count was not recorded (no impact on use).",
     "retry": "Retry",
     "save": "Save",
     "saveDone": "Saved",
@@ -1354,17 +1457,9 @@
     "tabMine": "My templates",
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
+    "usageCount": "{{count}} 人のクリエイターが使用",
+    "useInCompass": "Use in Compass Assistant",
     "views": "{{count}} views"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "チャットで Seed を選んでも、動画生成モデルは選択されません。",
-    "image": "画像",
-    "probe-failed": "確認できませんでした",
-    "ready": "利用可能",
-    "relayLabel": "リレーのメディア機能",
-    "unavailable": "リレーでは利用不可",
-    "unknown": "未確認",
-    "video": "動画"
   },
   "meeting": {
     "abort": {
@@ -1375,6 +1470,10 @@
     },
     "artifactsHint": "各段階を開くと、実際の回答と生成されたファイルを右側の成果物パネルで確認できます。",
     "chooseModel": "モデルを選択",
+    "collabMembers": "参加役割と状態",
+    "collabNoMeeting": "チーム会議の記録はまだありません。会議を開始すると実際の役割ステータスが表示されます。",
+    "collabNotTeam": "この会話はチームに属していません。",
+    "collabTitle": "チーム協働",
     "costWarning": "各段階で選択したモデルを呼び出し、クレジットを消費します。このウィンドウを閉じても会議は停止しません。",
     "description": "利用可能なチームメンバー2〜3名が、提案、レビュー、結論の順に発言します。",
     "failed": "会議を開始できませんでした。",
@@ -1414,7 +1513,9 @@
       "stopped": "停止済み",
       "syncing": "回答を保存中"
     },
-    "unavailable": "先にゲートウェイに接続し、少なくとも2名のチームメンバーが利用可能な状態にしてください。"
+    "turnUsage": "{{model}} · input {{input}} / output {{output}} tokens",
+    "unavailable": "先にゲートウェイに接続し、少なくとも2名のチームメンバーが利用可能な状態にしてください。",
+    "vendorRequired": "The reviewing member must use a model from a different vendor; self-review by the same vendor does not count."
   },
   "mentionPicker": {
     "agents": "Agents",
@@ -1474,6 +1575,130 @@
     },
     "filePermission": "File access",
     "finish": "Enter workspace",
+    "firstRun": {
+      "answerNo": "B. No",
+      "answerYes": "A. Yes",
+      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
+      "assistantTitle": "Recommended work assistants",
+      "basicDescription": "A basic configuration based on your selected work needs.",
+      "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
+      "confirm": "Enter the workbench",
+      "customRole": "Job or responsibility (optional)",
+      "editProfile": "Edit my details",
+      "generate": "Generate my AI team",
+      "goal": "What would you like help with?",
+      "industries": {
+        "C": "Manufacturing",
+        "general": "General · Outside these industries",
+        "H": "Accommodation and food services",
+        "J": "Finance",
+        "K": "Real estate",
+        "L": "Leasing and business services",
+        "P": "Education",
+        "R": "Culture, sports and entertainment"
+      },
+      "industry": "Your main industry",
+      "introduction": "A brief introduction (optional)",
+      "model": "Actual model",
+      "nicknameFallback": "My work profile",
+      "personaSourceDefault": "Character source: default artwork",
+      "personaSourceRule": "Character source: saved approved rule",
+      "personaSourceUser": "Character source: saved user choice",
+      "personaUnavailable": "Character artwork is being prepared.",
+      "profileNotice": "Your main industry is separate from your role and tasks. Choose General if none applies. Details and all four questions are editable and do not trigger AI calls.",
+      "questionBack": "Previous question",
+      "questionNotice": "Optional fun profile questions, not a psychological or ability assessment.",
+      "questions": {
+        "math": "Are you good at mathematics?",
+        "popular": "Were you popular in high school?",
+        "sport": "Do you like sports?",
+        "tidy": "Is your room tidy?"
+      },
+      "questionSkip": "Skip this question",
+      "role": "Role",
+      "sourceAi": "Source: AI suggestion",
+      "sourceBasic": "Source: basic template",
+      "steps": {
+        "portrait": "Fun profile",
+        "profile": "Work details",
+        "result": "Confirm the team"
+      },
+      "tasks": "Common tasks (optional)",
+      "titles": {
+        "portrait": "A quick fun profile",
+        "profile": "Tell us about your work",
+        "result": "Your work configuration"
+      },
+      "types": {
+        "ENFJ": {
+          "line": "A charismatic, inspiring natural leader.",
+          "name": "Protagonist"
+        },
+        "ENFP": {
+          "line": "An enthusiastic, creative and sociable free spirit.",
+          "name": "Campaigner"
+        },
+        "ENTJ": {
+          "line": "A bold, imaginative leader with a strong will and a taste for challenge.",
+          "name": "Commander"
+        },
+        "ENTP": {
+          "line": "A clever, curious thinker who never backs down from an intellectual challenge.",
+          "name": "Debater"
+        },
+        "ESFJ": {
+          "line": "Compassionate and sociable, always ready to lend a hand.",
+          "name": "Consul"
+        },
+        "ESFP": {
+          "line": "Bold and sociable, talkative and witty — a natural performer.",
+          "name": "Entertainer"
+        },
+        "ESTJ": {
+          "line": "An excellent administrator who values order and organisation.",
+          "name": "Executive"
+        },
+        "ESTP": {
+          "line": "Energetic and action-oriented, happy to take risks.",
+          "name": "Entrepreneur"
+        },
+        "INFJ": {
+          "line": "A quiet and inspiring idealist with a clear sense of purpose.",
+          "name": "Advocate"
+        },
+        "INFP": {
+          "line": "A poetic, kind-hearted altruist with plenty of empathy.",
+          "name": "Mediator"
+        },
+        "INTJ": {
+          "line": "An imaginative and strategic thinker with a plan for everything.",
+          "name": "Architect"
+        },
+        "INTP": {
+          "line": "A creative inventor with an unquenchable thirst for knowledge.",
+          "name": "Logician"
+        },
+        "ISFJ": {
+          "line": "A dedicated and warm protector, diligent and loyal.",
+          "name": "Defender"
+        },
+        "ISFP": {
+          "line": "A flexible and charming artist.",
+          "name": "Adventurer"
+        },
+        "ISTJ": {
+          "line": "Practical and fact-minded, honest and dependable.",
+          "name": "Logistician"
+        },
+        "ISTP": {
+          "line": "A bold and practical experimenter who is good with tools.",
+          "name": "Virtuoso"
+        },
+        "partial": "Some questions were skipped — this result is for reference only."
+      },
+      "usagePending": "Usage: pending verification",
+      "usageSettled": "Usage: settled against the actual receipt"
+    },
     "goalAnalysisHint": "仕事の目標を保存します。AI は自動で呼び出しません。ワークスペースでアシスタントを選び、タスクを開始できます。",
     "multipleHint": "Choose more than one",
     "next": "Next",
@@ -1482,6 +1707,58 @@
     "optional": "Optional",
     "personalizeSubtitle": "Choose your display name, response detail, and file access preference.",
     "personalizeTitle": "Make it yours",
+    "portrait": {
+      "ageLabel": "Age",
+      "agePlaceholder": "Optional",
+      "allSkipped": "You skipped all four questions, so no character is generated. You can retest at any time.",
+      "backToProfile": "Back to work details",
+      "dimensions": {
+        "empathy": "Empathy",
+        "exploration": "Curiosity",
+        "extraversion": "Outgoing",
+        "orderliness": "Order",
+        "rationality": "Logic"
+      },
+      "editEntry": "Fun profile questions",
+      "gender": {
+        "female": "Female",
+        "male": "Male"
+      },
+      "genderLabel": "Gender",
+      "letters": "Fun code",
+      "next": "Next: confirm the team",
+      "radarLabel": "Five-dimension fun profile radar",
+      "resultTitle": "Your fun profile",
+      "retest": "Retest",
+      "roles": {
+        "baina": {
+          "description": "Everything can sell and every ledger is clear — a shopkeeper who can count.",
+          "name": "Baina"
+        },
+        "hengchuan": {
+          "description": "Numbers that survive an audit, money that keeps moving.",
+          "name": "Hengchuan"
+        },
+        "hewei": {
+          "description": "Craft amid the bustle — turns first orders into regular customers.",
+          "name": "Hewei"
+        },
+        "yangsheng": {
+          "description": "Content with a point of view, traffic with a method — the voice in front of the camera.",
+          "name": "Yangsheng"
+        },
+        "zhenshan": {
+          "description": "Makes every guest feel at home — a steady, gentle host.",
+          "name": "Zhenshan"
+        },
+        "zhiwei": {
+          "description": "Sees the small things and turns experience into lessons.",
+          "name": "Zhiwei"
+        }
+      },
+      "subtitle": "Four quick questions make a fun five-dimension profile and a character card. This is not a psychological or ability assessment.",
+      "typeLabel": "Type"
+    },
     "previewAssignment": "Recommendations use your role, common tasks, and goal. Turn off anything you do not need.",
     "previewPersonalize": "You can change these preferences later without affecting existing tasks.",
     "previewPurpose": "Tell us what you do most often so the home page and assistants fit your work.",
@@ -1623,6 +1900,7 @@
     "title": "確認が必要です"
   },
   "rightPanel": {
+    "archivedArtifacts": "旧版と問題ファイル",
     "artifacts": "成果物",
     "context": "コンテキスト",
     "contextUsage": "コンテキスト",
@@ -1922,7 +2200,7 @@
     "updateError": "アップデートに失敗しました: {{message}}",
     "version": "バージョン",
     "webSearch": "Let the assistant search the web",
-    "webSearchHint": "When on, the assistant searches the web on models that support it. The pages it reads count as input, costing roughly a hundred times a question of the same length. Only qwen-plus and qwen-turbo support this today; other models stay offline even with the switch on. Changing this prepares the service again.",
+    "webSearchHint": "When on, the assistant searches the web on models that support it. The pages it reads count as input, costing roughly a hundred times a question of the same length. Only qwen-plus, qwen-turbo and qwen3.7-flash support this today; other models stay offline even with the switch on. Changing this prepares the service again.",
     "webSearchSection": "Web search",
     "workspace": "ワークスペース",
     "workspaceChange": "変更",
@@ -2008,7 +2286,7 @@
       "fileNoFence": "アシスタントがレイアウトファイルを作成しましたが、中にレイアウトのコードがありませんでした。そのため生成できませんでした。ファイルに書き足すよう伝えてください。",
       "fileTooLarge": "レイアウトファイルが大きすぎます（{{got}} バイト、上限 {{max}} バイト）。内容を減らすか、2 つに分けるようアシスタントに伝えてください。",
       "fileUnreadable": "アシスタントが作成したレイアウトファイルを読み取れませんでした。書き込み途中か、削除された可能性があります。もう一度試すとたいてい直ります。",
-      "outputUnconfirmed": "生成結果を確認できませんでした。ファイルはすでに存在する可能性があります。重複を避けるため、自動生成を一時停止しました。再試行する前に既存の成果物を確認してください。",
+      "outputUnconfirmed": "生成を一時停止しました。右側の「成果物」で最新のファイルを確認してください。開けばそのまま使えます。開かない、または無い場合は、もう一度生成してください。",
       "renderFailed": "レイアウト中にエラーが発生しました。これはこちら側の問題で、内容の問題ではありません。",
       "replyIncomplete": "内容が長すぎて今回は全文を取得できなかったため、スライドを生成しませんでした。内容を短くして、もう一度お試しください。",
       "replyUnavailable": "このターンの完全な回答を取得できなかったため、**スライドを生成しませんでした**（中途半端なものは出しません）。少し待って再試行するとたいてい直ります。",
@@ -2018,7 +2296,7 @@
       "unparsable": "レイアウトに構文エラーがあり、読み取れませんでした。"
     },
     "failedTitle": "プレゼンテーションを生成できませんでした",
-    "unconfirmedTitle": "プレゼンテーションの結果を確認してください",
+    "unconfirmedTitle": "プレゼンテーションを自動確認できませんでした",
     "warn": {
       "footerOverlap": "ページ {{page}} のフッターが本文カードに重なっています",
       "head": "ファイルは右側の「産物」にあります。次の箇所だけ調整が必要です：",
@@ -2040,12 +2318,13 @@
     "assistantsWaiting": "AIサービスの起動を待っています",
     "elapsed": "Waiting {{time}}",
     "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayDeployFailed": "ディスクからローカル実行環境を準備できませんでした。ランタイム用ディスクが挿さっているか確認してください。別のディスクに差し替えた場合は、付属のディスクに戻してください。ディスクが書き込み禁止の場合は解除してから再試行してください。挿し直しても同じ表示なら、ディスク内の実行環境が壊れている可能性があります。完全なディスクと交換してください。",
     "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
     "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
     "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "gatewayStateMigrationBlocked": "Portable data migration did not finish; the original data is preserved. Close the previous gateway and app, then restart. If it still fails, export diagnostics and keep the original data.",
     "keepOpen": "アプリを開いたままお待ちください。操作を繰り返す必要はありません。",
-    "notAnInstall": "これはインストールではありません。システムには何も書き込まれず、デスクトップにショートカットも作成されません。初回起動時に実行環境をローカルキャッシュに準備するため、USB メモリを抜いても続けて使えます。",
+    "notAnInstall": "これはインストールではありません。システムには書き込まれず、デスクトップアイコンも作成されません。初回起動時、実行環境はこのディスクに追随するローカル実行データフォルダーに準備されます。",
     "openActivation": "認証を開く",
     "openWorkspaceSettings": "ワークスペースを変更",
     "overallProgress": "Overall progress",
@@ -2085,7 +2364,7 @@
     "viewArtifacts": "View artifacts"
   },
   "teams": {
-    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
+    "agentNotInstalled": "このチームのメンバーがこのパソコンにないため、まだ会話を開始できません。チームの「編集」で準備し直すか、別のチームを選んでください。",
     "confirmDeleteDesc": "「{{name}}」を削除しますか？チーム設定が削除されます。エージェントは Gateway に残り、設定から管理できます。",
     "confirmDeleteTitle": "チームを削除",
     "createTeam": "チームを作成",
@@ -2110,7 +2389,7 @@
     "gateway": "ゲートウェイ",
     "memberCount": "{{count}} メンバー",
     "namePlaceholder": "チーム名を入力",
-    "needsInstall": "Install required",
+    "needsInstall": "メンバーがこのパソコンにありません",
     "noAgents": "利用可能なエージェントがありません",
     "position": {
       "challenger": "反論役",
@@ -2118,15 +2397,34 @@
       "moderator": "司会",
       "scribe": "記録係"
     },
+    "roundtable": {
+      "compass": "メインコンパス",
+      "emptyHint": "チームを作成すると、ここに 5 つの役割の実際の連携状況が表示されます。",
+      "latest": "直近の会議：{{question}}",
+      "status": {
+        "attention": "対応が必要",
+        "disabled": "未設定",
+        "done": "完了",
+        "idle": "待機",
+        "working": "作業中"
+      },
+      "subtitle": "メインコンパスが統括し、5 つの役割が協働します。状態は実際のチーム会議の記録に基づきます。",
+      "title": "マイ AI チーム"
+    },
     "startChat": "チャットを開始",
+    "teamBuilderConnecting": "Connecting to the assistant…",
     "teamBuilderCreate": "チームを作成",
     "teamBuilderCreated": "チームが作成されました",
     "teamBuilderDesc": "AIとの対話でチームを作成",
     "teamBuilderDescPlaceholder": "チームの目的を簡潔に...",
+    "teamBuilderIncomplete": "The assistant has not produced a complete team config yet: at least 2 members (1 coordinator), each with name, description, model and identity.",
     "teamBuilderInputPlaceholder": "作成したいチームを説明...",
     "teamBuilderNewAgent": "新しいAgent",
     "teamBuilderNoAgents": "AIが提案するAgentがここに表示されます",
+    "teamBuilderNoGateway": "No gateway is available yet. Finish setup before creating a team.",
     "teamBuilderPreviewTitle": "新しいチーム",
+    "teamBuilderSessionBusy": "Another AI feature is using the assistant session. Wait for it to finish, then click Retry.",
+    "teamBuilderSessionFailed": "The creation guide could not start (no assistant session). Click Retry to try again.",
     "teamBuilderTitle": "AIビルダー",
     "teamName": "チーム名",
     "wizard": {
@@ -2153,12 +2451,12 @@
       "errSkillUnsupported": "この提供元のスキルはまだ対応していません。",
       "errUpdate": "チームを更新できませんでした。",
       "existing": "既存",
-      "install": "チームをインストール",
-      "installComplete": "チームのインストールが完了しました",
+      "install": "チームを作成",
+      "installComplete": "チームを作成しました",
       "installDegraded": "チームを一部保存しました。未完了の項目があります",
       "installDegradedHint": "利用可能なメンバーは保持されました。以下の問題を解決して再試行してください。未完了の項目は実行準備ができていません。",
-      "installError": "インストールに失敗しました",
-      "installing": "インストール中...",
+      "installError": "作成に失敗しました",
+      "installing": "作成中...",
       "installSummary": "メンバー：成功 {{agentsSucceeded}}、失敗 {{agentsFailed}}；スキル：成功 {{skillsSucceeded}}、失敗 {{skillsFailed}}",
       "model": "モデル",
       "modelDefault": "デフォルト",
@@ -2167,7 +2465,7 @@
       "next": "次へ",
       "position": "役割",
       "prev": "戻る",
-      "reviewInstall": "確認・インストール",
+      "reviewInstall": "確認して作成",
       "reviewSave": "確認して保存",
       "role": "役割",
       "save": "変更を保存",
@@ -2191,9 +2489,9 @@
     "all": "すべて",
     "emptyDesc": "レジストリを追加してコミュニティチームを閲覧",
     "emptyTitle": "利用可能なチームがありません",
-    "install": "インストール",
-    "installed": "インストール済み",
-    "installSuccess": "チームのインストールが完了しました",
+    "install": "マイチームに追加",
+    "installed": "マイチームに追加済み",
+    "installSuccess": "チームをマイチームに追加しました",
     "manageRegistries": "レジストリ",
     "notFetched": "未同期 — 更新をクリック",
     "refresh": "レジストリを更新",
@@ -2219,9 +2517,25 @@
     },
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
+    "failure": {
+      "cannotContinue": "この手順は現在完了できません。",
+      "continueWithMaterials": "この失敗をスキップ",
+      "degradedContinue": "この手順はスキップしました。続けて質問できます。",
+      "network": "オンライン資料は一時的に利用できません。再試行できます",
+      "rateLimit": "リクエストが多すぎます。少し後で再試行してください",
+      "retryAction": "再試行",
+      "timeout": "このステップはタイムアウトしました。再試行できます"
+    },
+    "failureClass": {
+      "network": "エラーの種類：ネットワーク利用不可",
+      "rateLimit": "エラーの種類：リクエスト過多",
+      "timeout": "エラーの種類：タイムアウト"
+    },
     "groupCount": "× {{count}}",
-    "noResult": "この手順は結果を返さなかったため、完了していません。",
+    "noResult": "この手順は結果を返しませんでした。",
+    "repeatedFailure": "繰り返し失敗 ×{{count}}",
     "running": "Working · completed {{count}} steps",
+    "unreported": "{{count}} 件の手順が結果を返しませんでした",
     "viewDetails": "View details",
     "waitingElapsed": "待機時間 {{time}}"
   },

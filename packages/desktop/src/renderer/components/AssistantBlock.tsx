@@ -113,7 +113,9 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
           ))}
         </div>
       ) : null}
-      {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} settled />}
+      {/* BUG-026：把**真实**重试通道传下去 —— 工具失败"无法继续"时才有「重新尝试」按钮
+          （没有回调就不给假按钮，见 ToolCallSummary 的 props 注释）。 */}
+      {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} settled onRetry={onRetry} />}
       {!hasVisibleAnswer ? (
         <div
           data-testid="assistant-no-visible-answer"

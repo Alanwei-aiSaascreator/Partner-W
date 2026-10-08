@@ -12,8 +12,10 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { SYSTEM_SESSION_BUSY } from '@clawwork/core';
 import { toast } from '@/lib/toast';
 import type { ModelCatalogEntry, InstallEvent, TeamPosition } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
@@ -35,6 +37,7 @@ import type { AgentDraft, TeamInfo, InstallStatus } from '@/layouts/TeamsPanel/t
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { buildResponseLanguageContext } from '@/lib/response-language';
 
 export interface AgentConfig {
   id?: string;
@@ -54,6 +57,24 @@ export interface TeamConfig {
 }
 
 const EMPTY_CONFIG: TeamConfig = { name: '', emoji: '🤖', description: '', agents: [] };
+
+/**
+ * 「AI 创建」失败路径上的中文文案（**暂时硬编码**，与 `lib/install-workspace.ts`
+ * 的同族消息一致）。
+ *
+ * ⚠️ 为什么不走 `t()`：`scripts/check-i18n.mjs` 有两条硬门禁 ——
+ *    ① 代码里出现的**字面量键**必须在 9 个 locale 里都存在；
+ *    ② 不许用 `t(key, { defaultValue })` 兜底。
+ *    而 i18n 文件当前由另一条并行任务持有，本任务不得改动 ⇒ 先落常量，
+ *    需要翻译时按下面注释里的键名补进 locale（键名已按 teams.* 命名约定起好）。
+ */
+export const TEAM_BUILDER_SESSION_BUSY_MESSAGE =
+  '助手会话正被另一个 AI 功能占用（目标分析或 AI 建助手），请等它结束后点「重试」。'; // → teams.teamBuilderSessionBusy
+export const TEAM_BUILDER_SESSION_FAILED_MESSAGE = '创建引导没能开始（助手会话没建起来），请点「重试」再试一次。'; // → teams.teamBuilderSessionFailed
+export const TEAM_BUILDER_CONNECTING_MESSAGE = '正在连接助手…'; // → teams.teamBuilderConnecting
+export const TEAM_BUILDER_INCOMPLETE_MESSAGE =
+  '助手还没给出完整配置：至少 2 位成员（含 1 位协调者），每位成员要有名称、说明、模型和身份。'; // → teams.teamBuilderIncomplete
+export const TEAM_BUILDER_NO_GATEWAY_MESSAGE = '还没有可用的网关，先完成初始化再创建团队。'; // → teams.teamBuilderNoGateway
 
 const EMPTY_MODELS: ModelCatalogEntry[] = [];
 
@@ -180,7 +201,12 @@ export function buildTeamBuilderSystemPrompt(modelRefs: string[], language: stri
       : language || 'the user language';
   return SYSTEM_PROMPT_TEMPLATE.replace('{{modelList}}', modelRefs.join(', ') || 'default')
     .replaceAll('{{displayLanguage}}', displayLanguage)
-    .replace('{{exampleConfig}}', localizedTeamConfigExample(language, modelRefs[0] ?? ''));
+    .replace('{{exampleConfig}}', localizedTeamConfigExample(language, modelRefs[0] ?? ''))
+    .concat(
+      '\n\n',
+      buildResponseLanguageContext(language),
+      '\nEach generated identity must retain this response-language policy in the requested language, including the user override.',
+    );
 }
 
 const CONFIG_BLOCK_RE = /\n?```team-config\n([\s\S]*?)\n```\n?/g;
@@ -320,6 +346,25 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   const prevStatusRef = useRef(status);
   const startedRef = useRef(false);
 
+  /**
+   * 引导会话的三态：`starting` → `ready`（可以聊了）/ `failed`（起不来，给原因 + 重试）。
+   *
+   * ⚠️ 2026-10-05 排查「AI 创建」创建失败：`start()` 的返回值**以前从来没人看**。
+   *    会话是**全局单例**（`systemSessionService`），被别的功能占着时（目标分析、
+   *    AI 建助手）`start()` 会立刻回 `SESSION_BUSY`，而 store 里留着的是**别人那条会话** ——
+   *    于是这个对话框把别人的对话显示出来、输入框还能把消息发进别人的会话，
+   *    界面上却没有一句提示（用户报的现象就是"点了 AI 创建，什么都没发生"）。
+   */
+  const [sessionPhase, setSessionPhase] = useState<'starting' | 'ready' | 'failed'>('starting');
+  const [sessionFailure, setSessionFailure] = useState<{ message: string; detail: string } | null>(null);
+  /** 重试计数：只用来把下面那个 start effect 再触发一次。 */
+  const [startAttempt, setStartAttempt] = useState(0);
+  /** 「这条会话是我们建的」——只有它才允许 `end()`，别人占着的会话不许替他关。 */
+  const sessionOwnedRef = useRef(false);
+  /** 防连点：`handleCreate` 里 `await end()` 那段窗口里按钮还点得动（同 tick 双击 = 装两次）。 */
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+
   const isDirty = useCallback(() => {
     if (installStatus === 'installing') return true;
     if (installStatus === 'done' || installStatus === 'degraded' || installStatus === 'error') return false;
@@ -327,7 +372,12 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   }, [installStatus, messages.length]);
 
   const doClose = useCallback(() => {
-    end();
+    // ⚠️ 只有**我们自己建的**会话才关（见 `sessionPhase` 的说明）：会话被别的功能占着时
+    //    `end()` 关的是**别人那条**——目标分析正跑到一半会被这里掐掉。
+    if (sessionOwnedRef.current) {
+      sessionOwnedRef.current = false;
+      void end();
+    }
     resetInstall();
     onOpenChange(false);
   }, [end, resetInstall, onOpenChange]);
@@ -352,6 +402,9 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
     setEmojiOpen(false);
     setExpandedAgent(null);
     resetInstall();
+    setSessionFailure(null);
+    setSessionPhase('starting');
+    sessionOwnedRef.current = false;
 
     const modelRefs = relayModels.map(canonicalModelRef);
     const prompt = buildTeamBuilderSystemPrompt(modelRefs, i18n.language);
@@ -362,8 +415,45 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
       purpose: 'team-builder',
       model: resolveTeamModelRef(resolveCommercialDefaultModel(relayModels)?.id, relayModels) || modelRefs[0],
       initialMessage: prompt,
-    });
-  }, [open, gatewayId, defaultAgentId, relayModels, start, i18n.language, resetInstall]);
+    })
+      .then((res) => {
+        if (res?.ok === false) {
+          sessionOwnedRef.current = false;
+          // 允许「重试」再建一次（重试按钮把 `startAttempt` +1，effect 会重新跑）
+          startedRef.current = false;
+          setSessionFailure({
+            message:
+              res.errorCode === SYSTEM_SESSION_BUSY
+                ? t('teams.teamBuilderSessionBusy')
+                : t('teams.teamBuilderSessionFailed'),
+            detail: res.error ?? '',
+          });
+          setSessionPhase('failed');
+          return;
+        }
+        sessionOwnedRef.current = true;
+        setSessionPhase('ready');
+      })
+      .catch((err: unknown) => {
+        sessionOwnedRef.current = false;
+        startedRef.current = false;
+        setSessionFailure({
+          message: t('teams.teamBuilderSessionFailed'),
+          detail: err instanceof Error ? err.message : String(err),
+        });
+        setSessionPhase('failed');
+      });
+  }, [open, gatewayId, defaultAgentId, relayModels, start, i18n.language, resetInstall, startAttempt, t]);
+
+  /** 会话建失败后的「重试」：重新走一遍上面的 start effect。 */
+  const retryStart = useCallback(() => {
+    if (installStatus !== 'idle') return;
+    startedRef.current = false;
+    sessionOwnedRef.current = false;
+    setSessionFailure(null);
+    setSessionPhase('starting');
+    setStartAttempt((attempt) => attempt + 1);
+  }, [installStatus]);
 
   useEffect(() => {
     if (status === 'streaming' || (prevStatusRef.current === 'streaming' && status === 'active')) {
@@ -423,16 +513,51 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   }, []);
 
   const isValid = useMemo(() => {
-    return isTeamConfigValid(config, i18n.language);
-  }, [config, i18n.language]);
+    // 网关是安装的必要条件（没它每个助手都会以 `gateway not connected` 收场）；
+    // 会话建失败时（`sessionFailure` 非空）也不许创建。
+    return sessionFailure === null && gatewayId.length > 0 && isTeamConfigValid(config, i18n.language);
+  }, [config, i18n.language, gatewayId, sessionFailure]);
 
-  const handleCreate = useCallback(async () => {
-    if (!isValid) return;
-    await end();
+  const runInstallFromConfig = useCallback(async () => {
     const teamInfo = configToTeamInfo(config, gatewayId);
     const agentDrafts = configToAgentDrafts(config, relayModels);
-    runInstall(teamInfo, agentDrafts);
-  }, [isValid, config, gatewayId, end, runInstall, relayModels]);
+    await runInstall(teamInfo, agentDrafts);
+  }, [config, gatewayId, relayModels, runInstall]);
+
+  const handleCreate = useCallback(async () => {
+    if (!isValid || submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      if (sessionOwnedRef.current) {
+        sessionOwnedRef.current = false;
+        await end();
+      }
+      await runInstallFromConfig();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }, [isValid, end, runInstallFromConfig]);
+
+  /**
+   * 失败/部分失败后的「重试」：直接照当前配置重装一次，**不用重开对话框**。
+   *
+   * 之前没有这个入口：装挂了只能关掉再打开，而重开会把整段对话与 AI 给出的配置
+   * **全部清空**（见上面 start effect 里的 `setConfig(EMPTY_CONFIG)`）——
+   * 用户花了五分钟聊出来的团队就这么没了，等于「创建失败」还附带一次数据丢失。
+   */
+  const retryInstall = useCallback(async () => {
+    if (!isValid || submittingRef.current || installStatus === 'installing') return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    try {
+      await runInstallFromConfig();
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }, [isValid, installStatus, runInstallFromConfig]);
 
   useEffect(() => {
     if (!open) return;
@@ -478,7 +603,33 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
 
         <div className="flex h-144 border-t border-[var(--border-subtle)]">
           <div className="flex flex-1 flex-col border-r border-[var(--border-subtle)]">
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+            {sessionPhase !== 'ready' && (
+              /**
+               * ⚠️ 会话没就绪时**不渲染消息列表**：被 `SESSION_BUSY` 拒掉时 store 里是
+               *    别人那条会话，照着渲染就等于把别的功能的对话摆在这里（2026-10-05 排查）。
+               */
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+                {sessionPhase === 'starting' ? (
+                  <span className="flex items-center gap-2 type-support text-[var(--text-muted)]">
+                    <Loader2 size={14} className="animate-spin" />
+                    {t('teams.teamBuilderConnecting')}
+                  </span>
+                ) : (
+                  <>
+                    <p className="type-support text-[var(--text-danger)]">{sessionFailure?.message}</p>
+                    {/* 原因原文（英文）不许丢：中文人话在上、原文在下，与安装失败面板同一规矩 */}
+                    {sessionFailure?.detail && (
+                      <p className="type-meta break-all text-[var(--text-muted)] opacity-80">{sessionFailure.detail}</p>
+                    )}
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={retryStart}>
+                      <RefreshCw size={14} />
+                      {t('common.retry')}
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            <div className={cn('flex-1 overflow-y-auto px-4 py-3 space-y-4', sessionPhase !== 'ready' && 'hidden')}>
               {visibleMessages.map((msg, i) => (
                 <div
                   key={`${msg.role}-${msg.timestamp}-${i}`}
@@ -533,14 +684,14 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={t('teams.teamBuilderInputPlaceholder')}
-                disabled={status === 'streaming' || status === 'idle' || installing}
+                disabled={sessionPhase !== 'ready' || status === 'streaming' || status === 'idle' || installing}
                 className={cn(inputClass, 'w-full')}
               />
               <Button
                 variant="default"
                 size="icon"
                 onClick={handleSend}
-                disabled={!input.trim() || status === 'streaming' || installing}
+                disabled={sessionPhase !== 'ready' || !input.trim() || status === 'streaming' || installing}
               >
                 {status === 'streaming' ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               </Button>
@@ -554,6 +705,8 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
                 events={installEvents}
                 progressPercent={progressPercent}
                 agents={config.agents}
+                onRetry={() => void retryInstall()}
+                onClose={() => guardedOpenChange(false)}
               />
             ) : (
               <>
@@ -688,11 +841,21 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
                 </div>
 
                 <div className="border-t border-[var(--border-subtle)] p-4">
+                  {/*
+                    ⚠️ 「按钮为什么是灰的」必须写出来：以前这里只有一颗 disabled 的按钮，
+                    AI 少给一个 `identity` 或者模型偏航成英文（中文界面的硬校验）时，
+                    用户看到的就是「点了没反应 = 创建失败」，而我们这边什么也收不到。
+                  */}
+                  {!isValid && sessionFailure === null && (
+                    <p className="type-meta mb-2 text-[var(--text-muted)]">
+                      {gatewayId.length === 0 ? t('teams.teamBuilderNoGateway') : t('teams.teamBuilderIncomplete')}
+                    </p>
+                  )}
                   <Button
                     variant="default"
                     size="default"
                     className="w-full gap-2"
-                    disabled={!isValid}
+                    disabled={!isValid || submitting}
                     onClick={handleCreate}
                   >
                     {t('teams.teamBuilderCreate')}
@@ -722,19 +885,28 @@ export function InstallProgress({
   events,
   progressPercent,
   agents,
+  onRetry,
+  onClose,
 }: {
   status: InstallStatus;
   events: InstallEvent[];
   progressPercent: number;
   /**
-   * 只收「它真正用到的那部分」：这个面板只读助手的 `name`（换算成 slug 去对事件），
-   * 而 `buildInstallEventView` 收的也正是 `ReadonlyArray<{ name: string }>`。
+   * 只收「它真正用到的那部分」：`id` 对齐事件，`name` 保留用户的显示名称；
+   * 没有显式 `id` 时，由共享事件视图生成稳定标识。
    *
    * ⚠️ 写成 `AgentConfig[]` 是**过度约束**：`test/install-progress-reason.test.tsx`
    *    要造的就是"两个只有名字的助手"，于是 `typecheck:tests` 报
    *    「缺少 role/description/model/identity」（既有红，2026-09-20 修）。
    */
-  agents: ReadonlyArray<{ name: string }>;
+  agents: ReadonlyArray<{ id?: string; name: string }>;
+  /**
+   * 失败 / 部分失败之后的出路（2026-10-05）：
+   * 以前 `error`/`degraded` 落在这个面板上就**没有下一步** —— 关掉重开会把 AI 给的
+   * 整段配置清空，用户只能重聊一遍。重试走同一份配置，不再重新对话。
+   */
+  onRetry?: () => void;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -781,7 +953,7 @@ export function InstallProgress({
               {agent.status === 'creating' && <Loader2 size={12} className="animate-spin text-[var(--text-muted)]" />}
               {agent.status === 'created' && <Check size={12} className="text-[var(--accent)]" />}
               {agent.status === 'warning' && <AlertTriangle size={12} className="text-[var(--text-warning)]" />}
-              <span className="type-body text-[var(--text-primary)] flex-1 truncate">{agent.slug}</span>
+              <span className="type-body text-[var(--text-primary)] flex-1 truncate">{agent.displayName}</span>
             </div>
             {/* ⚠️ 逐助手的失败原文：**必须上屏**，否则用户和我们都没有可读的原因 */}
             {agent.warnings.length > 0 && (
@@ -818,6 +990,23 @@ export function InstallProgress({
           </div>
         )}
       </div>
+
+      {/* 失败 / 部分失败的出路：直接拿同一份配置重试，或关掉面板（都不丢 AI 给的配置） */}
+      {(status === 'error' || status === 'degraded') && (onRetry || onClose) && (
+        <div className="mt-3 flex items-center gap-2 border-t border-[var(--border-subtle)] pt-3">
+          {onRetry && (
+            <Button variant="outline" size="sm" className="flex-1 gap-1.5" onClick={onRetry}>
+              <RefreshCw size={14} />
+              {t('common.retry')}
+            </Button>
+          )}
+          {onClose && (
+            <Button variant={onRetry ? 'ghost' : 'default'} size="sm" className="flex-1" onClick={onClose}>
+              {t('common.close')}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

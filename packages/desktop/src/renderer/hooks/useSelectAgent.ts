@@ -43,7 +43,9 @@ export function useSelectAgent(): (agentId: string) => void {
     (agentId: string) => {
       setSelectedAgent(selectedGwId, agentId);
       setPending(resolvePendingAfterAgentSwitch(useTaskStore.getState().pendingNewTask, selectedGwId, agentId));
-      setActiveTask(mostRecentTaskIdForAgent(useTaskStore.getState().tasks, agentId));
+      // ⚠️ 第 2 步的 pending 是**本动作专门设定**的（改挂到新助手）——setActiveTask 默认会清它，
+      //    这里必须 clearPending:false（2026-10-07 质量战役全量集成回归：use-select-agent 两条用例）。
+      setActiveTask(mostRecentTaskIdForAgent(useTaskStore.getState().tasks, agentId), { clearPending: false });
       setMainView('chat');
     },
     [selectedGwId, setActiveTask, setMainView, setPending, setSelectedAgent],

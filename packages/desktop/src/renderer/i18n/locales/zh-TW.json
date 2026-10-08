@@ -47,7 +47,7 @@
     "title": "啟用授權"
   },
   "agent": {
-    "missingBody": "它可能只裝在另一台電腦上。換一個助手就能繼續，或者去團隊頁看看。",
+    "missingBody": "它可能只在另一台電腦上。可以前往羅盤助手查看，或者去團隊頁看看。",
     "missingOpenTeams": "去團隊頁",
     "missingSwitch": "切換到「{{assistant}}」",
     "missingTitle": "「{{agentId}}」這個助手不在本機",
@@ -77,12 +77,16 @@
     "error": "操作未完成",
     "locateMessage": "前往產生 {{name}} 的訊息",
     "missing": "檔案已遺失",
+    "noAppToOpen": "系統裡沒有可開啟 {{ext}} 檔案的程式（可安裝 Word/WPS 後重試）",
     "open": "開啟",
+    "openFailed": "開啟失敗：檔案可能已損毀或未寫完",
+    "openFailedHint": "可先「在資料夾中顯示」後手動開啟；仍打不開請重新生成。",
     "recoveryHint": "請重新產生此檔案，或將它還原到工作區後再操作。",
     "refresh": "重新整理成果",
     "saveAs": "另存新檔",
     "saved": "副本已儲存",
     "showInFolder": "開啟檔案位置",
+    "unknown": "暫不可用（連線中）",
     "unsafe": "檔案已被封鎖"
   },
   "artifactKinds": {
@@ -396,6 +400,26 @@
     "aiServiceStarting": "正在啟動 AI 服務…",
     "aiServiceStartingDetail": "首次啟動可能需要約 1 分鐘，請稍候。",
     "artifactTooLarge": "{{name}} 太大，無法作為上下文帶上。",
+    "attachmentActions": {
+      "analyzeData": "分析資料",
+      "analyzeImage": "分析內容",
+      "extractImageText": "提取文字",
+      "generateReport": "產生報告",
+      "imageUnsupported": "目前模型不支援看圖，辨識圖片需要切換到支援視覺的模型。",
+      "modifyFile": "修改檔案",
+      "promptAnalyzeData": "請讀取這份表格，分析資料重點與異常，並給出建議。",
+      "promptAnalyzeImage": "請辨識這張圖片，分析其中的內容。",
+      "promptExtractImageText": "請辨識這張圖片，提取其中的文字。",
+      "promptGenerateReport": "請根據這份檔案產生一份報告，用途是：【說明用途或對象】",
+      "promptModifyFile": "請修改這份檔案：【說明要改什麼】",
+      "promptReadDocument": "請讀取這份檔案，總結主要內容與關鍵結論，並給出建議的下一步操作。",
+      "promptSummarizeImage": "請辨識這張圖片，總結內容重點。",
+      "promptSummarizeSlides": "請讀取這份簡報，總結每頁重點與關鍵結論。",
+      "readDocument": "讀取並總結",
+      "summarizeImage": "總結圖片",
+      "summarizeSlides": "總結重點",
+      "title": "可以這樣處理"
+    },
     "attachmentSaveFailed": "儲存附件 {{fileName}} 失敗",
     "attachmentTooLarge": "{{fileName}} 超出 100MB 上限",
     "compacting": "正在壓縮上下文…",
@@ -411,6 +435,7 @@
       "canceled": "處理已取消",
       "details": "查看處理記錄",
       "failed": "處理失敗",
+      "jumpToMessage": "回到這則訊息",
       "needs-review": "處理完成，需檢查",
       "phaseTypes": {
         "downloading-media": "下載圖片或影片",
@@ -438,12 +463,26 @@
       "unavailable": "{{fileName}} 讀不到（檔案可能已被移動或刪除），未能加入",
       "unsupported": "{{fileName}} 的類型不支援，未能加入"
     },
-    "materialLimitExceeded": "每次最多新增 {{count}} 個材料，總計不超過 {{size}} MB",
+    "materialCountBadge": "已選 {{count}}/{{max}}",
+    "materialLimitBytes": "一次傳送的附件總計不能超過 {{size}} MB，請先移除或壓縮一些再傳送",
+    "materialLimitCount": "一次最多傳送 {{count}} 個附件，請先移除一些再傳送",
     "materialMissing": "無法使用",
     "materials": "任務材料",
     "materialSelected": "本次使用",
+    "materialSingleTooLarge": "有檔案超過單次傳送上限（{{size}} MB），傳送時會帶不上 —— 可先壓縮或拆分",
     "materialsLoadFailed": "載入任務材料失敗",
+    "materialTrimToLimit": "只保留前 {{count}} 個",
     "materialUnavailable": "材料 {{fileName}} 已移動或無法使用",
+    "mode": {
+      "advanced": "進階：指定模型",
+      "deep": "深度",
+      "deepDesc": "深入思考，適合複雜分析與長文任務",
+      "fast": "快速",
+      "fastDesc": "快速回答，適合簡單直接的問題",
+      "recommended": "推薦",
+      "smart": "智慧",
+      "smartDesc": "平衡速度與品質，適合大多數任務"
+    },
     "modelGone": "「{{model}}」已無法使用，請在下方模型選單裡換一個",
     "modelsLoading": "正在準備模型…",
     "modelsLoadingDetail": "準備完成後會自動顯示，無需重複操作。",
@@ -455,11 +494,13 @@
     "offlineReadOnly": "離線 — 唯讀模式",
     "openFailed": "開啟 {{fileName}} 失敗",
     "partialSendFailed": "部分助理未收到訊息",
+    "recognizeImage": "辨識圖片",
     "relayActivationLimitReachedDetail": "這張啟用卡的啟用名額已滿，請換一張卡，或聯絡客服處理。",
     "relayActivationRequiredDetail": "請到「設定 → 啟用授權」完成啟用。",
     "relayEntitlementRejectedDetail": "這張啟用卡已經不能用了，請到「設定 → 啟用授權」重新啟用或換一張卡。",
     "relayOrganizationMismatchDetail": "啟用卡綁定的組織與目前帳號不一致，請到「設定 → 啟用授權」查看。",
     "relayRetryableDetail": "商業服務還沒準備好，可以再試一次。",
+    "removeReference": "從目前對話移除",
     "revokeFolder": "停止使用資料夾 {{name}}",
     "revokeFolderFailed": "取消資料夾授權失敗",
     "runPhase": {
@@ -480,6 +521,7 @@
     "thinking": "思考",
     "thinkingAlwaysOn": "深度思考常開，無法關閉",
     "thinkingHigh": "高",
+    "thinkingLockedByMode": "思考深度由任務模式決定",
     "thinkingLockedByModel": "此模型僅支援關閉思考，無法調整檔位",
     "thinkingLow": "低",
     "thinkingMax": "最高",
@@ -489,6 +531,10 @@
     "thinkingResetByModel": "已切換至 {{model}}，思考檔位已重設為預設",
     "thinkingUltra": "極限",
     "thinkingXhigh": "超高",
+    "unsupportedCapability": "目前暫不支援該能力，可以改用工作台中已有的能力完成。",
+    "unsupportedModel": "目前暫不支援該模型，請從工作台的模型清單中選擇可用模型。",
+    "visionFallbackSwitched": "已為該圖片使用支援看圖的模型：{{model}}",
+    "visionUnavailable": "圖片辨識暫時無法使用：本次訊息會照常送出，但圖片可能無法被辨識。",
     "waiting": {
       "awaitingApproval": "等待批准：{{what}}",
       "line": {
@@ -509,6 +555,7 @@
     }
   },
   "chatMessage": {
+    "autoRetryNotice": "剛才沒有完成，正在自動重試一次（會再扣一次積分）。",
     "conductor": "協調者",
     "copied": "已複製",
     "copyCode": "複製程式碼",
@@ -521,9 +568,13 @@
     "toolCallSummaryWithErrors": "已執行 {{count}} 次工具呼叫（{{errorCount}} 次失敗）"
   },
   "claimGuard": {
+    "invalidArtifactBody": "{{names}} 的內容不是標準的文件格式（例如只是把文字改成了這個副檔名），打不開，所以沒有登記到成果列表。請讓助手重新產生一份。",
+    "invalidArtifactTitle": "寫出的檔案不是有效文件",
     "mediaUnavailableBody": "無法讀取或匯入 {{names}}。檔案可能已遺失、無法存取，或超過 25 MB 匯入上限。",
     "mediaUnavailableTitle": "無法匯入生成的媒體",
     "missingBody": "回覆裡提到了 {{names}}，工作區裡沒有這些檔案。",
+    "missingKindsBody": "本輪要求的 {{names}} 沒有登記到成果列表。檔案可能已產生，只是未完成版本關聯或登記。",
+    "missingKindsTitle": "成果未登記",
     "missingTitle": "說好的檔案不在"
   },
   "commandPalette": {
@@ -924,6 +975,7 @@
     "replyUnavailable": "沒能取回這一輪的完整回覆，所以**沒有產生檔案**（不給半份）。稍後再試一次通常就好了。",
     "requestInvalid": "有一份檔案的內容格式不對，沒有生成。可以請助理重新輸出一次。",
     "slideBulletMultiline": "簡報第 {{page}} 頁第 {{bullet}} 條要點裡有換行，沒有生成。請把每條要點寫成一行；需要分段就拆成多條要點或另起一頁。",
+    "slidegenRequired": "這份 .pptx 沒有產生：給人看的簡報必須走「幻灯版面（自己排）」—— 把整份版面寫進工作區的 .slidegen 檔案（不要貼進回覆正文），再依該技能的 SKILL.md 完成。",
     "slideTitleMultiline": "簡報第 {{page}} 頁的標題裡有換行，沒有生成。請把標題寫成一行。",
     "templateFieldMissing": "簡報第 {{page}} 頁（{{templateId}}）缺少必填欄位「{{field}}」，沒有產生。",
     "templateFieldTooLong": "簡報第 {{page}} 頁（{{templateId}}）的「{{field}}」過長，沒有產生。請把它縮短到 {{maxChars}} 字以內。",
@@ -932,24 +984,31 @@
   },
   "entryPreparation": {
     "account": "帳號與使用資格",
-    "animationNote": "準備好後即可繼續，動畫不影響等待",
+    "animationNote": "準備好後即可繼續；畫面與聲音不影響等待",
     "assistants": "基礎工作助手",
     "checked": "已完成連接及儲存條件檢查，尚未發起模型任務。",
     "checkFailed": "準備遇到問題，請重新檢查。",
     "checks": "準備檢查",
     "chooseWorkspace": "檢查工作區",
-    "continue": "繼續填寫工作資料",
+    "continue": "開始設定我的魔方",
+    "deployExtract": "正在準備本機執行環境",
+    "deployFinalize": "正在完成本機執行環境部署",
+    "deployNode": "正在準備本機 Node 執行階段",
+    "deployStalled": "這塊碟讀寫很慢，正在等系統回應…",
+    "deployVerify": "正在校驗執行階段檔案",
     "detail": "背景正在連接服務並檢查工作區。下方會顯示實際準備情況。",
+    "mediaMute": "靜音",
+    "mediaUnmute": "開啟聲音",
     "models": "可用模型目錄",
     "needsAttention": "準備需要處理",
     "ready": "基礎服務準備好了",
-    "readyDetail": "你可以繼續填寫工作資料，或留在此處查看準備情況。",
+    "readyDetail": "你可以開始設定我的魔方，或留在此處查看準備情況。",
     "recheckFailed": "本次檢查未確認成功，請重試或檢查帳號。",
     "relay": "服務連接設定",
     "runtime": "本機服務啟動",
     "runtimeProcessExited": "本机 AI 服务在启动过程中退出了。",
     "runtimeReadyTimeout": "本机 AI 服务启动超时，尚未准备好。",
-    "runtimeRestartRequired": "请先按上方提示处理启动问题，再完全退出荣盈魔方并重新打开，重新启动本机 AI 服务。",
+    "runtimeRetryHint": "處理完上方提示後，點下方「重新準備」即可在本應用程式內重試，無需重新安裝。",
     "title": "正在準備你的魔方",
     "workspace": "工作區讀寫"
   },
@@ -1155,11 +1214,8 @@
     "unsupportedField": "內容裡帶了協定不接受的欄位「{{field}}」，沒有產生。助手只提供內容、版式由用戶端決定 —— 請它把這個欄位刪掉再輸出一次。"
   },
   "identity": {
-    "appliedToast": "已套用「{{role}}」",
-    "apply": "套用此畫像",
     "applyFailed": "還沒連上閘道，暫時無法套用",
-    "cardHint": "選一個身分標籤，跟著引導生成你的專屬人群畫像，一鍵套用推薦角色與技能。",
-    "cardTitle": "畫像生成",
+    "editProfile": "編輯我的資料",
     "group": {
       "ecommerce": {},
       "educator": {},
@@ -1167,14 +1223,22 @@
       "legal": {}
     },
     "needTag": "請至少選一個標籤",
+    "nickname": "暱稱",
+    "portraitHint": "Saved by the first-run guide. Read-only.",
+    "profileEmpty": "還沒有趣味畫像。完成首次設定後，這裡會顯示你的角色卡。",
     "reselect": "重新選擇",
-    "roleLabel": "推薦角色",
     "save": "儲存並套用此身分設定",
+    "section": {
+      "preferences": "我的偏好",
+      "profile": "我的畫像",
+      "skills": "我的常用技能",
+      "team": "我的 AI 團隊",
+      "work": "我的工作身分"
+    },
     "shuffle": "換一個標籤",
     "skill": {},
-    "skillsLabel": "推薦技能",
-    "startTask": "用「{{role}}」開個新任務",
-    "subtitle": "選擇你的客群，AI 將依身分為你推薦角色、技能組合與話術基調，隨時可切換。",
+    "skillsHint": "這六類能力已隨包提供；在對話裡直接說需求，團隊會用它。",
+    "subtitle": "你的畫像、工作身分、AI 團隊、常用技能與偏好都收在這一頁；儲存後會寫進每個助手的記憶。",
     "tag": {
       "efficiency": "注重效率",
       "goalOriented": "目標導向",
@@ -1182,8 +1246,31 @@
       "reporting": "匯報頻繁",
       "timeManagement": "時間管理"
     },
-    "tagsLabel": "人群畫像標籤組合",
-    "title": "身分中心"
+    "tagsLabel": "偏好標籤",
+    "teamLead": "主腦",
+    "teamPosition": {
+      "analyst": {
+        "duty": "拆問題、算數據，給出可驗證的結論。",
+        "name": "分析師"
+      },
+      "creator": {
+        "duty": "寫正文、擬方案，把想法落成第一稿。",
+        "name": "創作師"
+      },
+      "inspector": {
+        "duty": "按需求逐條核對，挑出問題並給出改法。",
+        "name": "質檢師"
+      },
+      "producer": {
+        "duty": "把初稿做成可交付的檔案、表格或簡報。",
+        "name": "製作師"
+      },
+      "researcher": {
+        "duty": "查資料、做對標，把事實和來源找齊。",
+        "name": "調研員"
+      }
+    },
+    "title": "個人化中心"
   },
   "kb": {
     "addDone": "已加入 {{count}} 份資料",
@@ -1239,10 +1326,11 @@
     "addAssistant": "新增助手",
     "appSettings": "應用程式設定",
     "archivedChats": "已封存對話",
+    "bountyComingSoon": "敬請期待",
     "collapseNav": "收合側邊欄",
     "expandNav": "展開側邊欄",
-    "identityCenter": "身分中心",
-    "independentAssistants": "獨立助手",
+    "identityCenter": "個人化中心",
+    "independentAssistants": "技能與能力",
     "myAssistants": "我的助手",
     "pages": {
       "agents": "智能體市集",
@@ -1304,7 +1392,7 @@
     "welcomeTitle": "今天想完成什麼？"
   },
   "market": {
-    "alreadyInstalled": "這個助手你已經有了。",
+    "actionFailed": "沒能開啟這個能力，請稍後重試。",
     "byAuthor": "{{name}} 發布",
     "cancel": "取消",
     "categoryAll": "全部",
@@ -1318,31 +1406,46 @@
     "createDone": "範本已建立（草稿）",
     "createTitle": "新增範本",
     "delete": "刪除",
-    "deleteBlocked": "已經有人裝過，只能下架、不能刪除",
-    "deleteConfirm": "確定刪除這個範本嗎？已經裝過它的同事不受影響。",
+    "deleteBlocked": "已經有人用過，只能下架、不能刪除",
+    "deleteConfirm": "確定刪除這個範本嗎？已經用上它的同事不受影響。",
     "deleteDone": "已刪除",
     "descriptionLabel": "描述（不超過 300 字）",
     "edit": "編輯",
     "emojiLabel": "表情",
-    "empty": "還沒有可安裝的範本",
-    "install": "安裝",
-    "installCount": "{{count}} 次安裝",
-    "installDone": "「{{name}}」已裝好，去助手欄看看吧。",
-    "installed": "已安裝",
-    "installFailed": "安裝沒成功，請稍後重試。",
-    "installing": "安裝中…",
-    "instructionsLabel": "提示詞（助手要做什麼，裝完即用）",
+    "empty": "還沒有可用的助手範本",
+    "error": {
+      "assistantConflict": "本機已有一個內容不一致的同名助手；為了避免覆蓋它，這次沒有直接重用。刪除那個助手後再試一次。",
+      "forbidden": "這個操作只有範本作者或團隊管理員能做。",
+      "invalidCategory": "請選擇一個有效的分類。",
+      "invalidDescription": "描述太長了，控制在 300 字以內。",
+      "invalidEmoji": "請填一個表情符號（最多 8 個字元）。",
+      "invalidInstructions": "提示詞要在 1 到 8000 字之間。",
+      "invalidName": "名字要在 1 到 60 個字之間。",
+      "invalidStatus": "不支援的狀態。",
+      "network": "連不上伺服器，請檢查網路後重試。",
+      "noGateway": "還沒連上本機服務，先等它準備好再試。",
+      "noOrganization": "你還沒有團隊，先建立一個再試。",
+      "notAuthenticated": "請先登入再試。",
+      "publicMarketClosed": "公開市場已關閉，暫時不能上架；你的私人範本不受影響。",
+      "templateInstalledCannotDelete": "已經有人用過這個範本，只能下架、不能刪除。",
+      "templateNotFound": "這個助手範本不存在，或者你看不到它。",
+      "unknown": "操作沒成功，請稍後重試。",
+      "workspaceUnavailable": "工作區還沒準備好。先到設定裡指定工作區，再回來使用這個能力。",
+      "workspaceUnsupported": "目前工作區所在的磁碟不支援助手檔案，請把工作區換到 NTFS 磁碟再試。"
+    },
+    "instructionsLabel": "提示詞（助手要做什麼，選中即用）",
     "loadFailed": "載入失敗，請重試",
     "loading": "載入中…",
     "mineEmpty": "你還沒有建立範本",
     "nameLabel": "名稱（不超過 60 字）",
     "official": "官方",
+    "preparing": "正在準備…",
     "prompt": "提示詞",
-    "publicClosedBody": "公開販售與上架已停用。你的私有範本保留在「創作者中心 · 我的範本」，可繼續使用、編輯與匯出；官方工具安裝不受影響。",
+    "publicClosedBody": "公開售賣與上架已停用。你的私有範本保留在「創作者中心 · 我的範本」，可繼續使用、編輯與匯出；官方能力不受影響。",
     "publicClosedTitle": "公開市場已關閉",
     "publish": "發布",
     "publishDone": "已發布，同組織的成員可以在市集裡看到它了",
-    "recordWarning": "助手裝好了，只是安裝次數沒記上（不影響使用）。",
+    "recordWarning": "已在羅盤助手中備好，只是使用次數沒記上（不影響使用）。",
     "retry": "重試",
     "save": "儲存",
     "saveDone": "已儲存",
@@ -1354,17 +1457,9 @@
     "tabMine": "我的範本",
     "unpublish": "下架",
     "unpublishDone": "已下架",
+    "usageCount": "被 {{count}} 位創作者使用",
+    "useInCompass": "在羅盤助手中使用",
     "views": "{{count}} 次瀏覽"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "聊天中選擇 Seed 不會選擇影片生成模型。",
-    "image": "圖片",
-    "probe-failed": "未能確認",
-    "ready": "可用",
-    "relayLabel": "中轉媒體能力",
-    "unavailable": "中轉暫不可用",
-    "unknown": "尚未檢查",
-    "video": "影片"
   },
   "meeting": {
     "abort": {
@@ -1375,6 +1470,10 @@
     },
     "artifactsHint": "點擊階段可查看真實回覆及右側產物；檔案以實際產生結果為準。",
     "chooseModel": "請選擇模型",
+    "collabMembers": "參與崗位與狀態",
+    "collabNoMeeting": "還沒有團隊會議記錄；召開團隊會議後這裡會顯示真實的崗位狀態。",
+    "collabNotTeam": "當前對話不屬於任何團隊。",
+    "collabTitle": "團隊協作",
     "costWarning": "每個階段都會呼叫所選模型並消耗點數。關閉此視窗不會停止會議。",
     "description": "由 2–3 位真實成員依序提出方案、審核，再彙總結論。",
     "failed": "會議未能開始。",
@@ -1414,7 +1513,9 @@
       "stopped": "已停止",
       "syncing": "正在儲存回覆"
     },
-    "unavailable": "請先連接閘道，並確保至少兩位團隊成員可用。"
+    "turnUsage": "{{model}} · input {{input}} / output {{output}} tokens",
+    "unavailable": "請先連接閘道，並確保至少兩位團隊成員可用。",
+    "vendorRequired": "The reviewing member must use a model from a different vendor; self-review by the same vendor does not count."
   },
   "mentionPicker": {
     "agents": "智慧體",
@@ -1474,6 +1575,130 @@
     },
     "filePermission": "File access",
     "finish": "Enter workspace",
+    "firstRun": {
+      "answerNo": "B. No",
+      "answerYes": "A. Yes",
+      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
+      "assistantTitle": "Recommended work assistants",
+      "basicDescription": "A basic configuration based on your selected work needs.",
+      "chargeNotice": "生成團隊在你的電腦本地完成，不會呼叫模型。",
+      "confirm": "進入工作台",
+      "customRole": "Job or responsibility (optional)",
+      "editProfile": "Edit my details",
+      "generate": "生成我的 AI 團隊",
+      "goal": "What would you like help with?",
+      "industries": {
+        "C": "製造業",
+        "general": "通用（以上行業未涵蓋）",
+        "H": "住宿和餐飲業",
+        "J": "金融業",
+        "K": "房地產業",
+        "L": "租賃和商務服務業",
+        "P": "教育",
+        "R": "文化、體育和娛樂業"
+      },
+      "industry": "Your main industry",
+      "introduction": "A brief introduction (optional)",
+      "model": "Actual model",
+      "nicknameFallback": "My work profile",
+      "personaSourceDefault": "Character source: default artwork",
+      "personaSourceRule": "Character source: saved approved rule",
+      "personaSourceUser": "Character source: saved user choice",
+      "personaUnavailable": "Character artwork is being prepared.",
+      "profileNotice": "Your main industry is separate from your role and tasks. Choose General if none applies. Details and all four questions are editable and do not trigger AI calls.",
+      "questionBack": "Previous question",
+      "questionNotice": "Optional fun profile questions, not a psychological or ability assessment.",
+      "questions": {
+        "math": "Are you good at mathematics?",
+        "popular": "Were you popular in high school?",
+        "sport": "Do you like sports?",
+        "tidy": "Is your room tidy?"
+      },
+      "questionSkip": "Skip this question",
+      "role": "Role",
+      "sourceAi": "Source: AI suggestion",
+      "sourceBasic": "Source: basic template",
+      "steps": {
+        "portrait": "Fun profile",
+        "profile": "Work details",
+        "result": "團隊確認"
+      },
+      "tasks": "Common tasks (optional)",
+      "titles": {
+        "portrait": "A quick fun profile",
+        "profile": "Tell us about your work",
+        "result": "Your work configuration"
+      },
+      "types": {
+        "ENFJ": {
+          "line": "A charismatic, inspiring natural leader.",
+          "name": "Protagonist"
+        },
+        "ENFP": {
+          "line": "An enthusiastic, creative and sociable free spirit.",
+          "name": "Campaigner"
+        },
+        "ENTJ": {
+          "line": "A bold, imaginative leader with a strong will and a taste for challenge.",
+          "name": "Commander"
+        },
+        "ENTP": {
+          "line": "A clever, curious thinker who never backs down from an intellectual challenge.",
+          "name": "Debater"
+        },
+        "ESFJ": {
+          "line": "Compassionate and sociable, always ready to lend a hand.",
+          "name": "Consul"
+        },
+        "ESFP": {
+          "line": "Bold and sociable, talkative and witty — a natural performer.",
+          "name": "Entertainer"
+        },
+        "ESTJ": {
+          "line": "An excellent administrator who values order and organisation.",
+          "name": "Executive"
+        },
+        "ESTP": {
+          "line": "Energetic and action-oriented, happy to take risks.",
+          "name": "Entrepreneur"
+        },
+        "INFJ": {
+          "line": "A quiet and inspiring idealist with a clear sense of purpose.",
+          "name": "Advocate"
+        },
+        "INFP": {
+          "line": "A poetic, kind-hearted altruist with plenty of empathy.",
+          "name": "Mediator"
+        },
+        "INTJ": {
+          "line": "An imaginative and strategic thinker with a plan for everything.",
+          "name": "Architect"
+        },
+        "INTP": {
+          "line": "A creative inventor with an unquenchable thirst for knowledge.",
+          "name": "Logician"
+        },
+        "ISFJ": {
+          "line": "A dedicated and warm protector, diligent and loyal.",
+          "name": "Defender"
+        },
+        "ISFP": {
+          "line": "A flexible and charming artist.",
+          "name": "Adventurer"
+        },
+        "ISTJ": {
+          "line": "Practical and fact-minded, honest and dependable.",
+          "name": "Logistician"
+        },
+        "ISTP": {
+          "line": "A bold and practical experimenter who is good with tools.",
+          "name": "Virtuoso"
+        },
+        "partial": "Some questions were skipped — this result is for reference only."
+      },
+      "usagePending": "Usage: pending verification",
+      "usageSettled": "Usage: settled against the actual receipt"
+    },
     "goalAnalysisHint": "先記錄工作目標，不會自動呼叫 AI。進入工作台後可選擇助手發起任務。",
     "multipleHint": "可以多選",
     "next": "Next",
@@ -1482,6 +1707,58 @@
     "optional": "選填",
     "personalizeSubtitle": "Choose your display name, response detail, and file access preference.",
     "personalizeTitle": "Make it yours",
+    "portrait": {
+      "ageLabel": "年齡",
+      "agePlaceholder": "選填",
+      "allSkipped": "You skipped all four questions, so no character is generated. You can retest at any time.",
+      "backToProfile": "Back to work details",
+      "dimensions": {
+        "empathy": "Empathy",
+        "exploration": "Curiosity",
+        "extraversion": "Outgoing",
+        "orderliness": "Order",
+        "rationality": "Logic"
+      },
+      "editEntry": "Fun profile questions",
+      "gender": {
+        "female": "女",
+        "male": "男"
+      },
+      "genderLabel": "性別",
+      "letters": "Fun code",
+      "next": "下一步：團隊確認",
+      "radarLabel": "Five-dimension fun profile radar",
+      "resultTitle": "Your fun profile",
+      "retest": "Retest",
+      "roles": {
+        "baina": {
+          "description": "Everything can sell and every ledger is clear — a shopkeeper who can count.",
+          "name": "Baina"
+        },
+        "hengchuan": {
+          "description": "Numbers that survive an audit, money that keeps moving.",
+          "name": "Hengchuan"
+        },
+        "hewei": {
+          "description": "Craft amid the bustle — turns first orders into regular customers.",
+          "name": "Hewei"
+        },
+        "yangsheng": {
+          "description": "Content with a point of view, traffic with a method — the voice in front of the camera.",
+          "name": "Yangsheng"
+        },
+        "zhenshan": {
+          "description": "Makes every guest feel at home — a steady, gentle host.",
+          "name": "Zhenshan"
+        },
+        "zhiwei": {
+          "description": "Sees the small things and turns experience into lessons.",
+          "name": "Zhiwei"
+        }
+      },
+      "subtitle": "Four quick questions make a fun five-dimension profile and a character card. This is not a psychological or ability assessment.",
+      "typeLabel": "類型"
+    },
     "previewAssignment": "Recommendations use your role, common tasks, and goal. Turn off anything you do not need.",
     "previewPersonalize": "You can change these preferences later without affecting existing tasks.",
     "previewPurpose": "Tell us what you do most often so the home page and assistants fit your work.",
@@ -1623,6 +1900,7 @@
     "title": "需要你確認一下"
   },
   "rightPanel": {
+    "archivedArtifacts": "歷史與問題檔案",
     "artifacts": "產出檔案",
     "context": "上下文",
     "contextUsage": "上下文",
@@ -1922,7 +2200,7 @@
     "updateError": "更新失敗：{{message}}",
     "version": "版本",
     "webSearch": "允许助手联网搜索",
-    "webSearchHint": "开着时，助手在支持的模型上会搜网页——网页内容会一起计入输入，费用大约是同长度提问的百倍。目前只有 qwen-plus 和 qwen-turbo 支持；其他模型即使开着也不会联网。改完会自动重新准备一次。",
+    "webSearchHint": "开着时，助手在支持的模型上会搜网页——网页内容会一起计入输入，费用大约是同长度提问的百倍。目前只有 qwen-plus、qwen-turbo 和 qwen3.7-flash 支持；其他模型即使开着也不会联网。改完会自动重新准备一次。",
     "webSearchSection": "联网搜索",
     "workspace": "工作區",
     "workspaceChange": "變更",
@@ -2008,7 +2286,7 @@
       "fileNoFence": "助手寫了一個版面檔案，但檔案裡沒有版面程式碼，所以沒能生成。可以讓助手在那個檔案裡補上。",
       "fileTooLarge": "版面檔案太大了（{{got}} 位元組，上限 {{max}} 位元組）。可以讓助手把內容精簡一些，或者拆成兩份來做。",
       "fileUnreadable": "助手寫的版面檔案讀不出來 —— 可能正寫到一半，或者被刪掉了。再試一次通常就好了。",
-      "outputUnconfirmed": "暫時無法確認生成結果，檔案可能已經存在。已暫停自動重複生成，請先檢查現有產物，再決定是否重試。",
+      "outputUnconfirmed": "生成流程已暫停。請開啟右側「產物」核對最新檔案：能開啟就直接使用；打不開或沒有檔案，重新生成一次即可。",
       "renderFailed": "排版時出錯了。這是我們這邊的問題，不是您的內容有問題。",
       "replyIncomplete": "內容太長，這一次沒能完整取回，所以沒有產生投影片。請把內容精簡一些再試。",
       "replyUnavailable": "沒能取回這一輪的完整回覆，所以**沒有產生投影片**（不給半份）。稍後再試一次通常就好了。",
@@ -2018,7 +2296,7 @@
       "unparsable": "版面寫法有語法錯誤，讀不出來。"
     },
     "failedTitle": "簡報沒能生成",
-    "unconfirmedTitle": "PPT結果需要確認",
+    "unconfirmedTitle": "簡報未能自動確認",
     "warn": {
       "footerOverlap": "第 {{page}} 頁的頁腳侵入了正文卡片區域",
       "head": "檔案已經在右側「產物」裡了，只是這幾處版式要調整：",
@@ -2040,12 +2318,13 @@
     "assistantsWaiting": "等待 AI 服務啟動",
     "elapsed": "已等 {{time}}",
     "gatewayAuthRejected": "网关拒绝了这次连接。请检查激活状态，或换一张卡后重新准备。",
+    "gatewayDeployFailed": "沒能從碟上準備好本機執行環境。請先確認執行階段碟已插好；如果換過碟，請換回隨附的那塊；如果碟有寫入保護，請解除後再試；如果重插後仍是這個提示，表示碟上那份執行階段可能已損壞，請更換一塊完整的碟。",
     "gatewayPortOccupied": "18789 端口被其他程序占用，本应用不会关闭它。请先关掉占用它的程序，再重新准备。",
     "gatewayProcessExited": "AI 服务启动后很快就退出了。可以重新准备再试一次。",
     "gatewayReadyTimeout": "等 AI 服务就绪超时了。这台机器上它没能起来，可以重新准备再试一次。",
     "gatewayStateMigrationBlocked": "便携数据迁移未完成，原数据已保留。请退出之前运行的网关和应用后重启；若仍失败，请导出诊断日志，勿删除旧数据。",
     "keepOpen": "請保持應用程式開啟，無需重複操作。",
-    "notAnInstall": "這不是安裝：程式不寫進系統，也不建立桌面圖示。首次啟動會把執行環境準備到本機快取，拔掉隨身碟後仍可繼續用。",
+    "notAnInstall": "這不是安裝：程式不寫進系統，也不建立桌面圖示。首次啟動會把執行環境準備到本機執行資料目錄，跟著這塊碟走。",
     "openActivation": "前往啟用",
     "openWorkspaceSettings": "換工作區",
     "overallProgress": "總體進度",
@@ -2085,7 +2364,7 @@
     "viewArtifacts": "檢視成果"
   },
   "teams": {
-    "agentNotInstalled": "这个团队的助手还没装到本机，先把它装上再开始对话。",
+    "agentNotInstalled": "這個團隊的成員不在這台電腦上，暫時不能開始對話。可打開團隊的「編輯」把它準備好，或換一個團隊。",
     "confirmDeleteDesc": "確定刪除「{{name}}」？此操作將移除團隊配置。智慧體將保留在閘道器上，可在設定中管理。",
     "confirmDeleteTitle": "刪除團隊",
     "createTeam": "建立團隊",
@@ -2110,7 +2389,7 @@
     "gateway": "閘道器",
     "memberCount": "{{count}} 位成員",
     "namePlaceholder": "輸入團隊名稱",
-    "needsInstall": "需要安装",
+    "needsInstall": "成員不在本機",
     "noAgents": "暫無可用智慧體",
     "position": {
       "challenger": "質疑者",
@@ -2118,15 +2397,34 @@
       "moderator": "主持人",
       "scribe": "記錄員"
     },
+    "roundtable": {
+      "compass": "主羅盤",
+      "emptyHint": "建立團隊後，這裡會依五個崗位顯示真實的協作狀態。",
+      "latest": "最近會議：{{question}}",
+      "status": {
+        "attention": "需要處理",
+        "disabled": "未啟用",
+        "done": "已完成",
+        "idle": "待命",
+        "working": "工作中"
+      },
+      "subtitle": "主羅盤統籌，五個崗位協作；狀態取自真實的團隊會議記錄。",
+      "title": "我的 AI 團隊"
+    },
     "startChat": "發起對話",
+    "teamBuilderConnecting": "Connecting to the assistant…",
     "teamBuilderCreate": "建立團隊",
     "teamBuilderCreated": "團隊已建立",
     "teamBuilderDesc": "透過 AI 對話引導建立團隊",
     "teamBuilderDescPlaceholder": "簡述團隊用途...",
+    "teamBuilderIncomplete": "The assistant has not produced a complete team config yet: at least 2 members (1 coordinator), each with name, description, model and identity.",
     "teamBuilderInputPlaceholder": "描述你想建立的團隊...",
     "teamBuilderNewAgent": "新智慧體",
     "teamBuilderNoAgents": "AI 建議的智慧體將顯示在此",
+    "teamBuilderNoGateway": "No gateway is available yet. Finish setup before creating a team.",
     "teamBuilderPreviewTitle": "新團隊",
+    "teamBuilderSessionBusy": "Another AI feature is using the assistant session. Wait for it to finish, then click Retry.",
+    "teamBuilderSessionFailed": "The creation guide could not start (no assistant session). Click Retry to try again.",
     "teamBuilderTitle": "AI 建立",
     "teamName": "團隊名稱",
     "wizard": {
@@ -2153,12 +2451,12 @@
       "errSkillUnsupported": "技能「{{name}}」這種來源暫不支援。",
       "errUpdate": "團隊沒能更新。",
       "existing": "已有",
-      "install": "安裝團隊",
-      "installComplete": "團隊安裝成功",
+      "install": "建立團隊",
+      "installComplete": "團隊建立成功",
       "installDegraded": "團隊部分設定已儲存，仍有項目未完成",
       "installDegradedHint": "已保留可用成員。請依下方原因修復後重試；未完成項目不代表可執行。",
-      "installError": "安裝失敗",
-      "installing": "安裝中...",
+      "installError": "建立失敗",
+      "installing": "建立中...",
       "installSummary": "成員：成功 {{agentsSucceeded}}，失敗 {{agentsFailed}}；技能：成功 {{skillsSucceeded}}，失敗 {{skillsFailed}}",
       "model": "模型",
       "modelDefault": "預設",
@@ -2167,7 +2465,7 @@
       "next": "下一步",
       "position": "職位",
       "prev": "上一步",
-      "reviewInstall": "確認安裝",
+      "reviewInstall": "確認建立",
       "reviewSave": "確認並儲存",
       "role": "角色",
       "save": "儲存變更",
@@ -2191,9 +2489,9 @@
     "all": "全部",
     "emptyDesc": "新增 Registry 以瀏覽社群團隊",
     "emptyTitle": "暫無可用團隊",
-    "install": "安裝",
-    "installed": "已安裝",
-    "installSuccess": "團隊安裝成功",
+    "install": "加入我的團隊",
+    "installed": "已在我的團隊",
+    "installSuccess": "團隊已加入我的團隊",
     "manageRegistries": "Registry",
     "notFetched": "尚未同步 — 點擊重新整理",
     "refresh": "重新整理註冊表",
@@ -2219,9 +2517,25 @@
     },
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
+    "failure": {
+      "cannotContinue": "這一步暫時無法完成。",
+      "continueWithMaterials": "跳過這個失敗",
+      "degradedContinue": "這一步已跳過，可以繼續提問。",
+      "network": "聯網資料暫時不可用，可重試",
+      "rateLimit": "請求過於頻繁，稍後重試即可",
+      "retryAction": "重新嘗試",
+      "timeout": "這一步等待逾時，可重試"
+    },
+    "failureClass": {
+      "network": "錯誤類別：網路無法使用",
+      "rateLimit": "錯誤類別：請求過於頻繁",
+      "timeout": "錯誤類別：等待逾時"
+    },
     "groupCount": "× {{count}}",
-    "noResult": "這一步沒有回傳結果，所以沒有完成。",
+    "noResult": "這一步沒有回傳結果。",
+    "repeatedFailure": "重複失敗 ×{{count}}",
     "running": "Working · completed {{count}} steps",
+    "unreported": "{{count}} 個步驟沒有回傳結果",
     "viewDetails": "View details",
     "waitingElapsed": "已等待 {{time}}"
   },

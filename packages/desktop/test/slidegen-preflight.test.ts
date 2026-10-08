@@ -142,7 +142,7 @@ it('reports invalid UTF-8 instead of accepting silent replacement characters', (
 
 it('guides actual in-turn execution without claiming a generated or visually reviewed artifact', () => {
   const guide = fs.readFileSync(path.join(managedDir, 'deck-layout/SKILL.md'), 'utf8');
-  expect(guide).toContain('node "{baseDir}/scripts/preflight.cjs"');
+  expect(guide).toContain('node "<this-skill-dir>/scripts/preflight.cjs"');
   expect(guide).toContain('source-valid');
   expect(guide).toContain('artifactCreated:false');
   expect(guide).toContain('sourceSha256');

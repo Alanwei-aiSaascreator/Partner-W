@@ -6,7 +6,8 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { copyTextToClipboard } from '@/lib/clipboard';
-import { ARTIFACT_FAILURE_MARKER } from '@/lib/artifact-delivery-feedback';
+import type { PortraitGender, PortraitRoleCode } from '@/lib/user-portrait';
+import { ARTIFACT_FAILURE_MARKER, stripInternalFailureCodes } from '@/lib/artifact-delivery-feedback';
 import { parseArtifactQualityNote } from '@/lib/artifact-quality-feedback';
 import AssistantBlock from './AssistantBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
@@ -40,6 +41,19 @@ interface ChatMessageProps {
   retryable?: boolean;
   /** 点「重试」要做什么（重发上一条用户消息 —— 由调用方决定，组件不碰发送）。 */
   onRetry?: () => void;
+  /**
+   * 本人画像的六角色 code（来自 App 下发的 profile；`MainArea` 传进来）。
+   *
+   * 2026-10-07 体检问题 5/12b：用户头像的立绘**由调用方给**（账号级真值），
+   * 不再让每条消息自己去扫 localStorage；`null` = 这份档案没有画像。
+   */
+  portraitRole?: PortraitRoleCode | null;
+  /**
+   * 16 型形象（2026-10-08）：趣味四字码 + 性别，与 `portraitRole` 同源（App 下发的 profile）。
+   * 两件都有才用 MBTI 圆头像，否则退回六角色立绘（详见 `MessageAvatar`）。
+   */
+  portraitLetters?: string | null;
+  portraitGender?: PortraitGender | null;
 }
 
 function parseFileBlocks(content: string): {
@@ -103,6 +117,9 @@ const ChatMessage = memo(function ChatMessage({
   onFileClick,
   retryable = false,
   onRetry,
+  portraitRole,
+  portraitLetters,
+  portraitGender,
 }: ChatMessageProps) {
   const { t } = useTranslation();
   const isUser = message.role === 'user';
@@ -185,7 +202,12 @@ const ChatMessage = memo(function ChatMessage({
             role="alert"
             className="type-support whitespace-pre-wrap break-words rounded-xl border border-[var(--danger)] bg-[var(--danger-bg)] px-3 py-2 text-[var(--text-primary)]"
           >
-            {message.content.slice(ARTIFACT_FAILURE_MARKER.length).trimStart()}
+            {/*
+              ⚠️ 区1 体检 P3-3：便签正文里带内部码（`[artifact.claim-guard.missing]` 这类）——
+              它是**给模型看的判据**（`artifactFailureContext` 照旧原样送给模型），但这里是
+              **用户可见文本**：只在渲染这一层剥掉方括号码，原文一个字符都不改。
+            */}
+            {stripInternalFailureCodes(message.content.slice(ARTIFACT_FAILURE_MARKER.length))}
           </div>
         </div>
       );
@@ -279,6 +301,9 @@ const ChatMessage = memo(function ChatMessage({
         agentEmoji={agentEmoji}
         localAvatarUrl={localAvatarUrl}
         gatewayAvatarUrl={gatewayAvatarUrl}
+        portraitRole={portraitRole}
+        portraitLetters={portraitLetters}
+        portraitGender={portraitGender}
       />
 
       <div className="min-w-0 flex-1 text-right">

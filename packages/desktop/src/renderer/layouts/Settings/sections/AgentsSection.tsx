@@ -19,6 +19,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { userMdContentFromReadResult } from '@/lib/identity-persona';
 import { motion as motionPresets } from '@/styles/design-tokens';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -659,6 +660,15 @@ export default function AgentsSection() {
   const [editingFileContent, setEditingFileContent] = useState<string | null>(null);
   const [savingFile, setSavingFile] = useState(false);
   const [showBuilder, setShowBuilder] = useState(false);
+  const gatewayScopeEpoch = useRef(0);
+
+  useEffect(() => {
+    setLoadingFilesFor(null);
+    setLoadingSkillsFor(null);
+    return () => {
+      gatewayScopeEpoch.current += 1;
+    };
+  }, [selectedGatewayId]);
 
   useEffect(() => {
     if (selectedGatewayId && connectedGatewayIds.includes(selectedGatewayId)) return;
@@ -695,9 +705,11 @@ export default function AgentsSection() {
   const fetchAgentMeta = useCallback(
     async (agentId: string) => {
       if (!selectedGatewayId) return;
+      const epoch = gatewayScopeEpoch.current;
       setLoadingFilesFor(agentId);
       try {
         const res = await window.clawwork.listAgentFiles(selectedGatewayId, agentId);
+        if (epoch !== gatewayScopeEpoch.current) return;
         if (res.ok && res.result) {
           const data = res.result as unknown as { workspace?: string; files: AgentFileEntry[] };
           setAgentFilesMap((prev) => (prev[agentId] ? prev : { ...prev, [agentId]: data.files ?? [] }));
@@ -706,9 +718,11 @@ export default function AgentsSection() {
           }
         }
       } catch (err) {
-        console.error('AgentsSection: fetchAgentMeta failed', { agentId, err });
+        if (epoch === gatewayScopeEpoch.current)
+          console.error('AgentsSection: fetchAgentMeta failed', { agentId, err });
       } finally {
-        setLoadingFilesFor((current) => (current === agentId ? null : current));
+        if (epoch === gatewayScopeEpoch.current)
+          setLoadingFilesFor((current) => (current === agentId ? null : current));
       }
     },
     [selectedGatewayId],
@@ -717,23 +731,31 @@ export default function AgentsSection() {
   const fetchAgentSkills = useCallback(
     async (agentId: string) => {
       if (!selectedGatewayId) return;
+      const epoch = gatewayScopeEpoch.current;
       setLoadingSkillsFor(agentId);
-      const res = await window.clawwork.getSkillsStatus(selectedGatewayId, agentId);
-      setLoadingSkillsFor((current) => (current === agentId ? null : current));
-      if (res.ok && res.result) {
-        const data = res.result as unknown as SkillStatusReport;
-        setAgentSkillsMap((prev) => {
-          const existing = prev[agentId];
-          if (existing && JSON.stringify(existing) === JSON.stringify(data.skills ?? [])) return prev;
-          return { ...prev, [agentId]: data.skills ?? [] };
-        });
+      try {
+        const res = await window.clawwork.getSkillsStatus(selectedGatewayId, agentId);
+        if (epoch !== gatewayScopeEpoch.current) return;
+        if (res.ok && res.result) {
+          const data = res.result as unknown as SkillStatusReport;
+          setAgentSkillsMap((prev) => {
+            const existing = prev[agentId];
+            if (existing && JSON.stringify(existing) === JSON.stringify(data.skills ?? [])) return prev;
+            return { ...prev, [agentId]: data.skills ?? [] };
+          });
+        }
+      } catch {
+        if (epoch === gatewayScopeEpoch.current) toast.error(t('settings.skillUpdateFailed'));
+      } finally {
+        if (epoch === gatewayScopeEpoch.current)
+          setLoadingSkillsFor((current) => (current === agentId ? null : current));
       }
     },
-    [selectedGatewayId],
+    [selectedGatewayId, t],
   );
 
   useEffect(() => {
-    if (!gatewaySkillStatus || !catalog?.defaultId) return;
+    if (!gatewaySkillStatus || !catalog?.defaultId || gatewaySkillStatus.agentId !== catalog.defaultId) return;
     setAgentSkillsMap((prev) =>
       prev[catalog.defaultId] ? prev : { ...prev, [catalog.defaultId]: gatewaySkillStatus.skills },
     );
@@ -790,10 +812,12 @@ export default function AgentsSection() {
         window.clawwork.getAgentFile(selectedGatewayId, agent.id, 'IDENTITY.md').then((res) => {
           if (seq !== editSeqRef.current) return;
           if (res.ok && res.result) {
-            const data = res.result as Record<string, unknown>;
-            if (typeof data.content === 'string') {
-              const parsed = parseIdentityMd(data.content);
-              setForm((f) => ({ ...f, description: parsed.description ?? '', identityRaw: data.content as string }));
+            // 2026-10-07 质量战役：真机形状是 result.file.content（顶层 content 恒 undefined ⇒ 预填恒失败，
+            // 用户随手保存会把 IDENTITY.md 整份覆盖）——走唯一读法。
+            const content = userMdContentFromReadResult(res.result);
+            if (content !== null) {
+              const parsed = parseIdentityMd(content);
+              setForm((f) => ({ ...f, description: parsed.description ?? '', identityRaw: content }));
             }
           }
         });

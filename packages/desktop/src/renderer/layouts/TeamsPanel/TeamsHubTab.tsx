@@ -84,10 +84,24 @@ export default function TeamsHubTab({ onSelectEntry }: TeamsHubTabProps) {
     setRefreshing(true);
     try {
       const results = await Promise.allSettled(registries.map((reg) => window.clawwork.hubFetchRegistry(reg.id)));
-      const failed = results.filter((r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.ok));
+      /**
+       * ⚠️ 失败原因不许丢（2026-10-05）：原来这里只有一句 `请求出错`，而默认官方源是
+       *    **GitHub raw**（国内常常不可达）—— 用户只看到"坏了"，我们也不知道是哪一步、
+       *    哪个源。这里把**第一条真实原因**（里面带着 URL：见 `teamshub/registry.ts`
+       *    的 `Failed to reach <url>: network unreachable / timed out`）附在人话后面。
+       */
+      const failures = results
+        .map((result) =>
+          result.status === 'rejected'
+            ? String(result.reason instanceof Error ? result.reason.message : result.reason)
+            : result.value.ok
+              ? null
+              : (result.value.error ?? t('errors.unknown')),
+        )
+        .filter((message): message is string => !!message);
       await loadRegistries();
-      if (failed.length > 0) {
-        toast.error(t('errors.requestFailed'));
+      if (failures.length > 0) {
+        toast.error(`${t('errors.requestFailed')}：${failures[0]}`);
       } else {
         toast.success(t('teamshub.refreshed'));
       }

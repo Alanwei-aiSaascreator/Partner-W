@@ -7,6 +7,16 @@ import { classifyTier, getMimeType } from './file-types.js';
 
 const MAX_TEXT_SIZE = 100 * 1024;
 const MAX_BINARY_SIZE = 10 * 1024 * 1024;
+/**
+ * 发送读（`readContextFileForSend`）的**单文件**上限 —— 二进制 tier 专用
+ *（text tier 已放开：只内联 100KB，见读取分支的注释）。
+ *
+ * ⚠️ 这是"单文件整份 base64 出去"的合理边界，不是**单帧**预算 —— 帧预算是渲染层
+ *    按网关协商值（`hello-ok.policy.maxPayload`）折算的**聚合**闸门（2026-10-07 ·
+ *    质量战役区 2 · P1-1，见 `ChatInput/constants.ts` 的 `deriveMaterialByteBudget`）。
+ *    这层保持静态：IPC 形状里没有 gatewayId，且此处只需拦"单个文件离谱地大"。
+ *    （text tier 走这条时 sendSizeCap=undefined：30MB 的 .log 只带 100KB 上模型。）
+ */
 const MAX_SEND_FILE_BYTES = 25 * 1024 * 1024;
 
 function canonicalPath(targetPath: string): string {
@@ -117,7 +127,6 @@ function readContextFileInternal(
     if (!sameIdentityWithFallback(selected.targetIdentity, openedIdentity, true)) {
       throw new Error('context file changed');
     }
-    if (maxBytes !== undefined && openedSize > maxBytes) throw new Error('context file is too large to send');
 
     validateRoot(selected.canonicalRoot, selected.rootIdentity);
     const fdRealPath = resolveFdRealPath(fd, absolutePath);
@@ -130,6 +139,20 @@ function readContextFileInternal(
     const ext = extname(selected.realTarget).toLowerCase();
     const tier = classifyTier(ext);
     if (tier === 'unsupported') throw new Error(`unsupported file type: ${ext}`);
+
+    /**
+     * ⭐ 2026-10-07（质量战役区 2 · P2-1）：单文件闸门**对 text tier 不适用**。
+     *
+     * text tier 只会内联 `min(size, 100KB)`（见下面读取分支）—— 30MB 的 .log 带上去的
+     * 就是 100KB。旧口径在打开文件前就按整份体积拒掉（"file is too large to send"），
+     * 用户只知道"加不进来"，完全不知道其实只有 100KB 会上模型；发送侧还按 30MB 记账。
+     * 现在：text tier 放行（大小由 MAX_TEXT_SIZE 内联截断兜底），byteLength 按实际内联
+     * 字节回报（`readContextFileForSend`）；二进制 tier（整份 base64 发送）照旧受闸门约束。
+     */
+    const sendSizeCap = tier === 'text' ? undefined : maxBytes;
+    if (sendSizeCap !== undefined && openedSize > sendSizeCap) {
+      throw new Error('context file is too large to send');
+    }
 
     const size = openedSize;
     let result: FileReadResult;
@@ -160,7 +183,10 @@ function readContextFileInternal(
     }
     const finalOpenedIdentity = fstatSync(fd, { bigint: true });
     if (maxBytes !== undefined) {
-      if (Number(finalOpenedIdentity.size) > maxBytes || Number(finalTarget.identity.size) > maxBytes) {
+      if (
+        sendSizeCap !== undefined &&
+        (Number(finalOpenedIdentity.size) > sendSizeCap || Number(finalTarget.identity.size) > sendSizeCap)
+      ) {
         throw new Error('context file is too large to send');
       }
       if (finalOpenedIdentity.size !== openedIdentity.size || finalTarget.identity.size !== openedIdentity.size) {
@@ -182,7 +208,17 @@ export function readContextFileForSend(
   contextFolders: string[],
 ): FileReadResult & { byteLength: number } {
   const result = readContextFileInternal(absolutePath, contextFolders, undefined, MAX_SEND_FILE_BYTES);
-  return { ...result, byteLength: result.size };
+  /**
+   * ⭐ 2026-10-07（质量战役区 2 · P2-1）：`byteLength` = **实际会上模型的字节**。
+   *
+   *   - text tier：内容已截到 100KB（含截断标记）⇒ 按 `result.content` 的真实
+   *     UTF-8 字节回报。30MB 的 .log 不再按 30MB 吃掉发送预算（旧口径 = 明文虚耗，
+   *     还让「@ 大文本」在字节闸门里被冤杀）。
+   *   - 二进制 tier：content 是整份 base64（上限 10MB），消费侧按 base64 折算的预算
+   *     比原始字节保守 ⇒ 回报原始 `size`（宁可更早拦，不可放行超帧）。
+   */
+  const byteLength = result.tier === 'text' ? Buffer.byteLength(result.content, 'utf8') : result.size;
+  return { ...result, byteLength };
 }
 
 export const __testing = Object.freeze({

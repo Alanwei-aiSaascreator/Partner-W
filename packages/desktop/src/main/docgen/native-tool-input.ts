@@ -1,0 +1,102 @@
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
+import type { ToolCall } from '@clawwork/shared';
+import { readWorkspaceBytes } from '../slidegen/source-file.js';
+
+const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+const WRITE_TOOLS = new Set(['write', 'write_file']);
+const EDIT_TOOLS = new Set(['edit', 'apply_patch']);
+
+export interface NativeInputOptions {
+  /**
+   * 本轮 run 的开始时刻（`run.createdAt`）。
+   *
+   * ⭐ BUG-046 ③（2026-10-08 真机 69 次 `native-current-write-required` 误诊）：
+   * 判据从「write 工具 args 的 sha 必须与盘上一致」放宽为两层证据——
+   *   ① 最强：本轮 write 的内容与盘上字节一致（sha 匹配，未变）；
+   *   ② 本轮被 edit/apply_patch 改过、且盘上 mtime 不早于 run 开始（edit 的 args
+   *      不是全文，没有 sha 可对；freshness 就是它的"这是本轮产物"证明）。
+   * 守卫强度不松：**run 开始前就存在、本轮没碰过的旧文件永不入选**（旧 Artifact
+   * 冒充新 Artifact 的那个洞，一字没放宽）。
+   */
+  sinceMs?: number;
+}
+
+/**
+ * 从本轮已完成的工具调用里挑出「当前这轮的 .native-ppt.json 源文件」。
+ *
+ * ⭐ BUG-046 ③：候选排序**按盘上 mtime**，不再按工具调用数组序——数组序是模型
+ * 写回的顺序，mtime 才是执行序（10-04/10-05/10-08 三度复发实证）。只有 mtime
+ * 完全相同才判 `native-input-ambiguous`（真的分不出谁最新）。
+ */
+export function nativeInputFromCompletedWrites(
+  workspace: string,
+  tools: ToolCall[],
+  options: NativeInputOptions = {},
+): string | undefined {
+  const sinceMs = options.sinceMs;
+  const candidates = new Map<string, { content?: string; edited: boolean }>();
+  for (const tool of tools) {
+    if (tool.status !== 'done' || !tool.args) continue;
+    const write = WRITE_TOOLS.has(tool.name);
+    if (!write && !EDIT_TOOLS.has(tool.name)) continue;
+    const file = tool.args.path ?? tool.args.file_path;
+    if (typeof file !== 'string' || !file.endsWith('.native-ppt.json')) continue;
+    const relative = path.isAbsolute(file) ? path.relative(workspace, file) : file;
+    const entry = candidates.get(relative) ?? { edited: false };
+    // 同一文件多次写入：最后一次 write 的内容胜出（Map 顺序语义不变）。
+    if (write && typeof tool.args.content === 'string') entry.content = tool.args.content;
+    // ⭐ F-A2：edit 证据与 write 证据**独立记账**——同 run 先 write 后 edit 同一文件时，
+    //    write 记录的 args 是 edit 前的旧内容（第一层 sha 必不匹配），若第二层再因
+    //    "该文件有 write 记录"跳过，候选两落空 → case A 误诊 native-current-write-required。
+    if (EDIT_TOOLS.has(tool.name)) entry.edited = true;
+    candidates.set(relative, entry);
+  }
+  const fresh = (relative: string): boolean => {
+    if (sinceMs === undefined) return true;
+    try {
+      return statSync(path.resolve(workspace, relative)).mtimeMs >= sinceMs;
+    } catch {
+      return false;
+    }
+  };
+  // 第一层：sha 匹配（内容逐字节一致）——最强证据。
+  const verified: Array<{ relative: string; mtimeMs: number }> = [];
+  for (const [relative, entry] of candidates) {
+    if (typeof entry.content !== 'string') continue;
+    try {
+      const disk = readWorkspaceBytes(workspace, relative, 1024 * 1024);
+      if (sha(disk) !== sha(Buffer.from(entry.content))) continue;
+      if (!fresh(relative)) continue;
+      verified.push({ relative, mtimeMs: statSync(path.resolve(workspace, relative)).mtimeMs });
+    } catch {
+      continue;
+    }
+  }
+  // 第二层：本轮有 edit/apply_patch 证据 + 盘上够新（只在调用方给了 run 起点时才启用）。
+  //    判据就是"本轮改过 + freshness"，不再排除同时有 write 记录的候选（F-A2）。
+  const edited: Array<{ relative: string; mtimeMs: number }> = [];
+  if (sinceMs !== undefined) {
+    for (const [relative, entry] of candidates) {
+      if (!entry.edited) continue;
+      try {
+        const stat = statSync(path.resolve(workspace, relative));
+        if (!stat.isFile() || stat.mtimeMs < sinceMs) continue;
+        edited.push({ relative, mtimeMs: stat.mtimeMs });
+      } catch {
+        continue;
+      }
+    }
+  }
+  // 两层证据合并（同一文件两层都命中时按 relative 去重、取较大 mtime）。
+  const merged = new Map<string, number>();
+  for (const item of [...verified, ...edited])
+    merged.set(item.relative, Math.max(merged.get(item.relative) ?? 0, item.mtimeMs));
+  const chosen = [...merged.entries()]
+    .map(([relative, mtimeMs]) => ({ relative, mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (chosen.length === 0) return undefined;
+  if (chosen.length > 1 && chosen[0].mtimeMs === chosen[1].mtimeMs) throw Error('native-input-ambiguous');
+  return chosen[0].relative;
+}

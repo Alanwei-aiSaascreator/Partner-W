@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Message, ToolCall } from '@clawwork/shared';
 import { writeSlideGenerationReceipt } from '../src/main/slidegen/receipt.js';
 import * as collector from '../src/main/slidegen/tool-receipts.js';
@@ -178,6 +178,57 @@ it('accepts a complete successful process poll without taking running or log out
   expect(
     collect([message({ toolCalls: [{ ...poll, result: report() + '\n\nProcess still running.' }] })]).receipts,
   ).toEqual([]);
+});
+it('claims a report printed before the process exited only when that session exits cleanly', () => {
+  const poll = tool({
+    id: 'poll-1',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'child-1' },
+    result: report() + '\n\nProcess still running.',
+  });
+  const cleanExit = {
+    ...poll,
+    id: 'poll-2',
+    result: '(no new output)\n\nProcess exited with code 0.',
+  };
+  expect(collect([message({ toolCalls: [poll, cleanExit] })]).receipts).toHaveLength(1);
+  expect(
+    collect([
+      message({ toolCalls: [poll, { ...cleanExit, result: '(no new output)\n\nProcess exited with code 1.' }] }),
+    ]).receipts,
+  ).toEqual([]);
+  expect(
+    collect([message({ toolCalls: [poll, { ...cleanExit, args: { action: 'poll', sessionId: 'other-child' } }] })])
+      .receipts,
+  ).toEqual([]);
+});
+it('resolves a background generation whose report arrived before its silent clean exit', () => {
+  const launch = tool({
+    args: { command: 'node deck-layout/scripts/generate.cjs' },
+    result: 'Command still running (session quiet-river, pid 42). Use process for follow-up.',
+  });
+  const reportPoll = tool({
+    id: 'poll-1',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'quiet-river' },
+    result: report() + '\n\nProcess still running.',
+  });
+  const silentExit = tool({
+    id: 'poll-2',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'quiet-river' },
+    result: '(no new output)\n\nProcess exited with code 0.',
+  });
+  const entries = collect([message({ toolCalls: [reportPoll, silentExit] })]).receipts;
+  expect(entries).toHaveLength(1);
+  expect(collector.hasUnconfirmedSlideToolOutput([launch, reportPoll, silentExit], entries)).toBe(false);
+  // Unrecognized output on the exit poll still poisons the launch (fail-closed).
+  expect(
+    collector.hasUnconfirmedSlideToolOutput(
+      [launch, reportPoll, { ...silentExit, result: 'boom\n\nProcess exited with code 0.' }],
+      entries,
+    ),
+  ).toBe(true);
 });
 it('rejects contradictory completed proofs sharing the same tool id', () => {
   const tools = [tool(), tool({ result: report({ outputSha256: 'b'.repeat(64) }) })];
@@ -412,4 +463,210 @@ it('recognizes a verified failure after real page telemetry without claiming a f
   const call = tool({ args: { command: 'node "managed/deck-layout/scripts/generate.cjs" "report.slidegen"' }, result });
   expect(collect([message({ toolCalls: [call] })]).receipts).toEqual([]);
   expect(collector.hasUnconfirmedSlideToolOutput([call], [])).toBe(false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// native 直通流（2026-10-06 attempt02 真机）：receipt.sourceFile 是**暂存副本**
+// `.royin-native-*/source.json`，生成命令里的源参数是工作区文件
+// `门店客户反馈处理培训.native-ppt.json` —— 两者永不相等。
+// `superseded` 必须在该不等时回退比对「更晚且已被 receipt 认领」那次渲染**命令里的源参数**，
+// 否则模型每一次引号/JSON 试错都会把整单毒化成 `slidegen-output-unconfirmed`。
+const nativeEntry: collector.ToolSlideReceipt = {
+  receiptFile: '.royin-ppt-receipt-07341805-6cdf-4ceb-968b-d837b1c25f12.json',
+  source: '{"kind":"pptx"}',
+  receipt: {
+    schemaVersion: 1,
+    sourceFormat: 'native-template-v5',
+    templateContract: 'templateDeck-v2',
+    revision: 0,
+    sourceFile: '.royin-native-4eRF4u/source.json',
+    sourceSha256: 'c'.repeat(64),
+    fileName: '门店客户反馈处理培训-8f01e198.pptx',
+    outputSha256: 'd'.repeat(64),
+    bytes: 51173,
+    pages: 11,
+    resources: [],
+    warnings: [],
+    workspaceIdentity: { dev: '1', ino: '2' },
+    visualReview: 'not-performed',
+    artifactIndexed: false,
+  },
+};
+function nativeReport(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    status: 'file-generated',
+    fileCreated: true,
+    artifactIndexed: false,
+    visualReview: 'not-performed',
+    receiptStatus: 'ready',
+    receiptFile: nativeEntry.receiptFile,
+    sourceSha256: nativeEntry.receipt.sourceSha256,
+    fileName: nativeEntry.receipt.fileName,
+    outputSha256: nativeEntry.receipt.outputSha256,
+    bytes: nativeEntry.receipt.bytes,
+    pages: nativeEntry.receipt.pages,
+    contentReview: 'field-coverage-passed',
+    officeReview: 'not-performed',
+    qualityStatus: 'needs-review',
+    ...overrides,
+  });
+}
+const nativeSourceArgument = '"门店客户反馈处理培训.native-ppt.json"';
+function failedNativeAttempt(id = 'exec-quote-error'): ToolCall {
+  return tool({
+    id,
+    args: {
+      command: `set "ROYIN_NATIVE_PPT_VALIDATION=1" && node "Q:\\skills\\deck-layout\\scripts\\generate.cjs" ${nativeSourceArgument}`,
+    },
+    result: '标记“&&”不是此版本中的有效语句分隔符。\n\n(Command exited with code 1)',
+  });
+}
+
+it('supersedes an earlier failed native exec when a later claimed render used the same workspace source', () => {
+  const succeeded = tool({
+    id: 'exec-succeeded',
+    args: {
+      command: `$env:ROYIN_NATIVE_PPT_VALIDATION="1"; node "Q:\\skills\\deck-layout\\scripts\\generate.cjs" ${nativeSourceArgument}`,
+    },
+    result: nativeReport(),
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([failedNativeAttempt(), succeeded], [nativeEntry])).toBe(false);
+});
+
+it('supersedes an earlier failed native exec from its own claimed background session', () => {
+  const launch = tool({
+    id: 'exec-launch',
+    args: {
+      command: `$env:ROYIN_NATIVE_PPT_VALIDATION="1"; node "Q:\\skills\\deck-layout\\scripts\\generate.cjs" ${nativeSourceArgument}`,
+    },
+    result: 'Command still running (session native-render-1, pid 4242). Use process for follow-up.',
+  });
+  const poll = tool({
+    id: 'poll-1',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'native-render-1' },
+    result: nativeReport() + '\n\nProcess exited with code 0.',
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([failedNativeAttempt(), launch, poll], [nativeEntry])).toBe(false);
+});
+
+it('does not supersede a failed native attempt when the later claim used a different source file', () => {
+  const succeeded = tool({
+    id: 'exec-succeeded',
+    args: {
+      command:
+        '$env:ROYIN_NATIVE_PPT_VALIDATION="1"; node "Q:\\skills\\deck-layout\\scripts\\generate.cjs" "门店客户反馈处理培训-v2.native-ppt.json"',
+    },
+    result: nativeReport(),
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([failedNativeAttempt(), succeeded], [nativeEntry])).toBe(true);
+});
+
+it('keeps a failed native attempt unconfirmed when the later claim cannot name its source', () => {
+  const launch = tool({
+    id: 'exec-launch',
+    args: { command: 'node "Q:\\skills\\deck-layout\\scripts\\generate.cjs"' },
+    result: 'Command still running (session native-render-2, pid 7). Use process for follow-up.',
+  });
+  const poll = tool({
+    id: 'poll-1',
+    name: 'process',
+    args: { action: 'poll', sessionId: 'native-render-2' },
+    result: nativeReport() + '\n\nProcess exited with code 0.',
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([failedNativeAttempt(), launch, poll], [nativeEntry])).toBe(true);
+});
+
+it('keeps the non-native supersede path unchanged when receipt and command agree on the source', () => {
+  const failed = tool({
+    id: 'exec-failed',
+    args: { command: 'node "Q:\\skills\\deck-layout\\scripts\\generate.cjs" "report.slidegen"' },
+    result: 'Error: unexpected token\n\n(Command exited with code 1)',
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([failed, tool()], collect().receipts)).toBe(false);
+});
+
+/**
+ * ⭐ **B 包（2026-10-07）：收据读哪去 —— 报告里那句"东西写在哪"。**
+ *
+ * 现场（真机）：模型把 CLI 的 cwd 设成了**应用工作区根层**（不是助手工作区），
+ * 于是收据与成品都落在那里。主进程只按助手工作区找收据 ⇒ 读不到 ⇒
+ * "已确认的输出"变成 `slidegen-output-unconfirmed`（一条假失败），而那份真文件
+ * 只能靠扫描兜（2026-10-07 起第三个根会收它，但那是**兜底**，不是"这条链通了"）。
+ *
+ * 判据：报告里的 `outputDir` 若落在**我们认的根**里（助手工作区，或调用方额外
+ * 交进来的应用工作区），就从**那个目录**读收据；收据自己带着目录身份
+ * （`workspaceIdentity` 的 dev/ino），读错目录会在 `verify` 那一步被拒。
+ * ⚠️ 报告会经过模型（工具结果原文）⇒ 它**可以编**：所以只有"落在我们认的根里"
+ * 才认，其余一律回落原行为（fail-closed，不是放宽）。
+ */
+describe('报告里的输出位置（B 包）', () => {
+  let appWorkspace = '';
+  beforeEach(() => {
+    appWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-app-workspace-'));
+    fs.writeFileSync(path.join(appWorkspace, input.sourceFile), source);
+    fs.writeFileSync(path.join(appWorkspace, input.fileName), 'output');
+  });
+  afterEach(() => {
+    if (!path.resolve(appWorkspace).startsWith(path.resolve(os.tmpdir()) + path.sep)) throw new Error('outside temp');
+    fs.rmSync(appWorkspace, { recursive: true, force: true });
+  });
+  function appReceipt(): string {
+    return path.basename(writeSlideGenerationReceipt(appWorkspace, input));
+  }
+  function collectAt(reportOverrides: Record<string, unknown>, allowed?: string[]) {
+    return collector.collectToolSlideReceipts({
+      workspacePath: root,
+      taskId: 'task-1',
+      sessionKey: 'session-1',
+      runId: 'run-1',
+      messages: [message({ toolCalls: [tool({ result: report(reportOverrides) })] })],
+      ...(allowed ? { allowedReceiptRoots: allowed } : {}),
+    });
+  }
+
+  it('⭐ 认下报告指认的那个根，并从**那里**把收据读回来（成品不在助手工作区也算数）', () => {
+    const result = collectAt({ receiptFile: appReceipt(), outputDir: appWorkspace }, [appWorkspace]);
+    expect(result.rejected).toBe(0);
+    expect(result.receipts).toHaveLength(1);
+    // 条目记住自己在哪 —— 后面"复制进任务目录"要按它算源文件的绝对路径
+    expect(result.receipts[0]?.outputDir).toBe(fs.realpathSync(appWorkspace));
+  });
+
+  it('⭐ 没把那个目录交进来 ⇒ 一个字都不认（回落原行为，不是放宽）', () => {
+    const result = collectAt({ receiptFile: appReceipt(), outputDir: appWorkspace });
+    expect(result.receipts).toEqual([]);
+    expect(result.rejected).toBe(1);
+  });
+
+  it('⭐ 报告指认的目录不在我们认的根里 ⇒ 不认（模型编的路径不作数）', () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-elsewhere-'));
+    try {
+      const result = collectAt({ receiptFile: appReceipt(), outputDir: elsewhere }, [appWorkspace]);
+      expect(result.receipts).toEqual([]);
+      expect(result.rejected).toBe(1);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('⭐ 收据被搬到别的目录 ⇒ 目录身份对不上，照样不认（dev/ino 绑定）', () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'slidegen-moved-receipt-'));
+    try {
+      fs.writeFileSync(path.join(elsewhere, input.sourceFile), source);
+      fs.writeFileSync(path.join(elsewhere, input.fileName), 'output');
+      const receiptFile = appReceipt();
+      fs.copyFileSync(path.join(appWorkspace, receiptFile), path.join(elsewhere, receiptFile));
+      const result = collectAt({ receiptFile, outputDir: elsewhere }, [elsewhere]);
+      expect(result.receipts).toEqual([]);
+      expect(result.rejected).toBe(1);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('负对照：报告不写输出位置 ⇒ 老行为一字不变（助手工作区里那份照旧认）', () => {
+    expect(collect()).toMatchObject({ receipts: [{ receiptFile, receipt: input }], rejected: 0 });
+  });
 });

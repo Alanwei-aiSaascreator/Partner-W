@@ -29,11 +29,10 @@
  *   skills list --json --agent main
  * ```
  *
- * `--agent main` 是必须的，而且**正好是这一页看到的视角**：
- * 客户端 `getSkillsStatus(gatewayId)` 不带 agentId，网关侧解析
- * `params.agentId ?? tryResolveAmbientOwnerAgentId(cfg)`，本机配置里
- * `agents.defaults.systemAgent.agentId = "main"` ⇒ 落到 `main`。
- * 普通 agent（如 `rongying-office`）只报 **14** 个 —— 少 4 个 `openclaw-custodian`。
+ * `--agent main` 是当时采集清单的显式视角。现在客户端通过
+ * `getSkillsStatus(gatewayId, agentId)` 传入有效管理默认助手或唯一助手，
+ * 不依赖 ambient owner；不同助手的实际清单可能不同。
+ * 当时普通 agent（如 `rongying-office`）只报 **14** 个 —— 少 4 个 `openclaw-custodian`。
  *
  * ⚠️ **要刷新这份清单**（网关升级后）：重跑上面那条命令，
  * 把新的 name/description 抄进 `GATEWAY_SKILL_DESCRIPTIONS`，

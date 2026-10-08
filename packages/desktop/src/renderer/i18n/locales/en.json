@@ -47,7 +47,7 @@
     "title": "License activation"
   },
   "agent": {
-    "missingBody": "It may only be installed on another computer. Pick another assistant to continue, or check the teams page.",
+    "missingBody": "It may only exist on another computer. Look for it in the Compass Assistant, or check the teams page.",
     "missingOpenTeams": "Open teams",
     "missingSwitch": "Switch to {{assistant}}",
     "missingTitle": "\"{{agentId}}\" is not on this machine",
@@ -77,12 +77,16 @@
     "error": "Could not complete the action",
     "locateMessage": "Go to the message that created {{name}}",
     "missing": "File missing",
+    "noAppToOpen": "No app on this system can open {{ext}} files (install Word/WPS and try again)",
     "open": "Open",
+    "openFailed": "Could not open: the file may be corrupted or incomplete",
+    "openFailedHint": "Show it in the folder and open it manually; if it still will not open, regenerate it.",
     "recoveryHint": "Regenerate this file or restore it to the workspace to use these actions.",
     "refresh": "Refresh results",
     "saveAs": "Save as",
     "saved": "Copy saved",
     "showInFolder": "Show in folder",
+    "unknown": "Temporarily unavailable (connecting)",
     "unsafe": "File blocked"
   },
   "artifactKinds": {
@@ -396,6 +400,26 @@
     "aiServiceStarting": "Starting AI service…",
     "aiServiceStartingDetail": "The first startup may take about a minute. Please wait.",
     "artifactTooLarge": "{{name}} is too large to attach as context.",
+    "attachmentActions": {
+      "analyzeData": "Analyze data",
+      "analyzeImage": "Analyze content",
+      "extractImageText": "Extract text",
+      "generateReport": "Generate a report",
+      "imageUnsupported": "The current model cannot see images; recognizing images needs a vision-capable model.",
+      "modifyFile": "Modify file",
+      "promptAnalyzeData": "Please read this spreadsheet, analyze the key figures and anomalies, and give recommendations.",
+      "promptAnalyzeImage": "Please recognize this image and analyze its content.",
+      "promptExtractImageText": "Please recognize this image and extract the text in it.",
+      "promptGenerateReport": "Please generate a report based on this file, for: [purpose or audience]",
+      "promptModifyFile": "Please modify this file: [describe what to change]",
+      "promptReadDocument": "Please read this file, summarize the main content and key conclusions, and suggest the next steps.",
+      "promptSummarizeImage": "Please recognize this image and summarize what it shows.",
+      "promptSummarizeSlides": "Please read this deck, and summarize the key points and conclusions of each page.",
+      "readDocument": "Read & summarize",
+      "summarizeImage": "Summarize image",
+      "summarizeSlides": "Summarize key points",
+      "title": "Suggested actions"
+    },
     "attachmentSaveFailed": "Failed to save attachment {{fileName}}",
     "attachmentTooLarge": "{{fileName}} exceeds 100MB limit",
     "compacting": "Compacting context…",
@@ -411,6 +435,7 @@
       "canceled": "Processing canceled",
       "details": "Observed actions",
       "failed": "Processing failed",
+      "jumpToMessage": "Back to this message",
       "needs-review": "Completed; review needed",
       "phaseTypes": {
         "downloading-media": "Download images or video",
@@ -438,12 +463,26 @@
       "unavailable": "{{fileName}}: could not be read (moved or deleted?), not added",
       "unsupported": "{{fileName}}: file type not supported, not added"
     },
-    "materialLimitExceeded": "Add up to {{count}} materials totaling {{size}} MB per message",
+    "materialCountBadge": "{{count}} of {{max}} selected",
+    "materialLimitBytes": "Attachments can't total more than {{size}} MB per send. Remove or shrink some before sending.",
+    "materialLimitCount": "Up to {{count}} attachments per send. Remove some before sending.",
     "materialMissing": "Unavailable",
     "materials": "Task materials",
     "materialSelected": "Using now",
+    "materialSingleTooLarge": "A file is over the per-send limit ({{size}} MB) and won't be included when sending — compress or split it first.",
     "materialsLoadFailed": "Failed to load task materials",
+    "materialTrimToLimit": "Keep the first {{count}} only",
     "materialUnavailable": "{{fileName}} was moved or is unavailable",
+    "mode": {
+      "advanced": "Advanced: choose a model",
+      "deep": "Deep",
+      "deepDesc": "Deeper reasoning for complex analysis and long tasks",
+      "fast": "Fast",
+      "fastDesc": "Quick answers for simple, direct questions",
+      "recommended": "Recommended",
+      "smart": "Smart",
+      "smartDesc": "Balanced speed and quality — right for most tasks"
+    },
     "modelGone": "\"{{model}}\" is no longer available — pick another model below",
     "modelsLoading": "Preparing models…",
     "modelsLoadingDetail": "Models will appear automatically when they are ready.",
@@ -455,11 +494,13 @@
     "offlineReadOnly": "Offline — read-only",
     "openFailed": "Failed to open {{fileName}}",
     "partialSendFailed": "Some assistants did not receive the message",
+    "recognizeImage": "Recognize image",
     "relayActivationLimitReachedDetail": "This activation has reached its device limit. Use a different card, or contact support.",
     "relayActivationRequiredDetail": "Finish activation in Settings → Activation.",
     "relayEntitlementRejectedDetail": "This activation can no longer be used. Activate again or use a different card in Settings → Activation.",
     "relayOrganizationMismatchDetail": "This activation is bound to a different organization. Check Settings → Activation.",
     "relayRetryableDetail": "The commercial service is not ready yet. You can try again.",
+    "removeReference": "Remove from this chat",
     "revokeFolder": "Stop using folder {{name}}",
     "revokeFolderFailed": "Failed to revoke folder access",
     "runPhase": {
@@ -480,6 +521,7 @@
     "thinking": "Thinking",
     "thinkingAlwaysOn": "Deep thinking is always on and cannot be turned off",
     "thinkingHigh": "High",
+    "thinkingLockedByMode": "Thinking depth is set by the task mode",
     "thinkingLockedByModel": "This model only supports thinking off",
     "thinkingLow": "Low",
     "thinkingMax": "Max",
@@ -489,6 +531,10 @@
     "thinkingResetByModel": "Switched to {{model}}; thinking level reset to default",
     "thinkingUltra": "Ultra",
     "thinkingXhigh": "Extra high",
+    "unsupportedCapability": "This capability isn't supported yet. You can use the capabilities already available in the workspace instead.",
+    "unsupportedModel": "This model isn't supported yet. Please pick an available model from the model list.",
+    "visionFallbackSwitched": "Switched to a vision-capable model for this image: {{model}}",
+    "visionUnavailable": "Image recognition is temporarily unavailable: your message will still be sent, but the image may not be recognized.",
     "waiting": {
       "awaitingApproval": "Waiting for approval: {{what}}",
       "line": {
@@ -509,6 +555,7 @@
     }
   },
   "chatMessage": {
+    "autoRetryNotice": "The previous run didn't finish — retrying once automatically (you'll be charged again).",
     "conductor": "Coordinator",
     "copied": "Copied",
     "copyCode": "Copy code",
@@ -521,9 +568,13 @@
     "toolCallSummaryWithErrors": "{{count}} tool calls executed ({{errorCount}} failed)"
   },
   "claimGuard": {
+    "invalidArtifactBody": "{{names}} is not a standard document format (for example, text renamed to that extension), so it cannot be opened and was not added to your results. Ask the assistant to generate it again.",
+    "invalidArtifactTitle": "The written file is not a valid document",
     "mediaUnavailableBody": "Could not read or import {{names}}. The file may be missing, inaccessible, or larger than the 25 MB import limit.",
     "mediaUnavailableTitle": "Could not import generated media",
     "missingBody": "The reply mentions {{names}}, but no such files are in the workspace.",
+    "missingKindsBody": "This turn's requested {{names}} was not registered to the artifact list. The file may exist without a completed version link or registration.",
+    "missingKindsTitle": "Artifact was not registered",
     "missingTitle": "The promised file is not there"
   },
   "commandPalette": {
@@ -924,6 +975,7 @@
     "replyUnavailable": "The full reply for this turn could not be retrieved, so **no file was generated** — a half file is worse than none. Trying again usually fixes it.",
     "requestInvalid": "One file had malformed content and was not created. Ask the assistant to output it again.",
     "slideBulletMultiline": "Bullet {{bullet}} on slide {{page}} contains a line break, so the presentation was not created. Keep each bullet on one line; split it into separate bullets or a new slide if you need paragraphs.",
+    "slidegenRequired": "This .pptx was not produced: decks meant for people must go through \"幻灯版面（自己排）\" (the layout route) — write the whole layout into a .slidegen file in the workspace (do not paste it into the reply), then follow that skill's SKILL.md.",
     "slideTitleMultiline": "The title of slide {{page}} contains a line break, so the presentation was not created. Write the title on one line.",
     "templateFieldMissing": "Slide {{page}} ({{templateId}}) is missing the required field \"{{field}}\", so nothing was generated.",
     "templateFieldTooLong": "\"{{field}}\" on slide {{page}} ({{templateId}}) is too long, so nothing was generated. Shorten it to {{maxChars}} characters or fewer.",
@@ -932,24 +984,31 @@
   },
   "entryPreparation": {
     "account": "Account and entitlement",
-    "animationNote": "Silent local animation. Continue when ready.",
+    "animationNote": "Local animation with sound. Continue when ready.",
     "assistants": "Basic work assistants",
     "checked": "Connection and storage checks passed. No model task has been sent.",
     "checkFailed": "Preparation encountered a problem. Check again.",
     "checks": "Preparation checks",
     "chooseWorkspace": "Check workspace",
-    "continue": "Continue to work profile",
+    "continue": "Start setting up my cube",
+    "deployExtract": "Preparing the local runtime",
+    "deployFinalize": "Finishing the local runtime setup",
+    "deployNode": "Preparing the bundled Node runtime",
+    "deployStalled": "This disk is responding slowly — waiting for the system…",
+    "deployVerify": "Verifying the runtime files",
     "detail": "Connecting services and checking your workspace. The checklist shows actual status.",
+    "mediaMute": "Mute",
+    "mediaUnmute": "Unmute",
     "models": "Available model catalog",
     "needsAttention": "Preparation needs attention",
     "ready": "Basic services are ready",
-    "readyDetail": "Continue to your work profile, or stay here to view the checks.",
+    "readyDetail": "Start setting up your cube, or stay here to view the checks.",
     "recheckFailed": "The latest check could not be confirmed. Retry or check your account.",
     "relay": "Service connection configuration",
     "runtime": "Local service startup",
     "runtimeProcessExited": "The local AI service exited during startup.",
     "runtimeReadyTimeout": "The local AI service did not become ready before startup timed out.",
-    "runtimeRestartRequired": "Resolve the startup issue shown above, fully exit Royin Cube, then reopen it to start the local AI service again.",
+    "runtimeRetryHint": "After following the note above, press “Prepare again” below to retry inside the app — no reinstall needed.",
     "title": "Preparing your Cube",
     "workspace": "Workspace read and write"
   },
@@ -1155,11 +1214,8 @@
     "unsupportedField": "The content carries a field the protocol does not accept (\"{{field}}\"), so nothing was created. The assistant supplies content only - the layout is ours - so ask it to drop that field and send it again."
   },
   "identity": {
-    "appliedToast": "Applied \"{{role}}\"",
-    "apply": "Apply persona",
     "applyFailed": "Gateway not connected — cannot apply yet",
-    "cardHint": "Pick an identity tag, follow the guide to build your persona, then apply the recommended role and skills in one click.",
-    "cardTitle": "Persona generation",
+    "editProfile": "Edit my profile",
     "group": {
       "ecommerce": {},
       "educator": {},
@@ -1167,14 +1223,22 @@
       "legal": {}
     },
     "needTag": "Pick at least one tag",
+    "nickname": "Nickname",
+    "portraitHint": "Saved by the first-run guide. Read-only.",
+    "profileEmpty": "No fun profile yet. Finish the first-run guide and your character card will appear here.",
     "reselect": "Choose again",
-    "roleLabel": "Recommended role",
     "save": "Save and apply this identity",
+    "section": {
+      "preferences": "My preferences",
+      "profile": "My portrait",
+      "skills": "My core skills",
+      "team": "My AI team",
+      "work": "My work identity"
+    },
     "shuffle": "Shuffle tag",
     "skill": {},
-    "skillsLabel": "Recommended skills",
-    "startTask": "Start a new task with {{role}}",
-    "subtitle": "Pick your audience group. Roles, skills and tone are recommended for that identity — switch any time.",
+    "skillsHint": "These six capability sets ship with the app. Describe what you need in chat and the team will use them.",
+    "subtitle": "Your portrait, work identity, AI team, core skills and preferences — all in one place. Saving writes them into every assistant's memory.",
     "tag": {
       "efficiency": "Efficiency-minded",
       "goalOriented": "Goal-driven",
@@ -1182,8 +1246,31 @@
       "reporting": "Frequent reporting",
       "timeManagement": "Time management"
     },
-    "tagsLabel": "Persona tags",
-    "title": "Identity Center"
+    "tagsLabel": "Preference tags",
+    "teamLead": "Lead",
+    "teamPosition": {
+      "analyst": {
+        "duty": "Breaks the problem down, works the numbers, gives checkable conclusions.",
+        "name": "Analyst"
+      },
+      "creator": {
+        "duty": "Writes the draft, the outline and the first full version.",
+        "name": "Creator"
+      },
+      "inspector": {
+        "duty": "Checks the result against the brief and lists what to fix.",
+        "name": "Quality inspector"
+      },
+      "producer": {
+        "duty": "Turns drafts into deliverable documents, sheets or decks.",
+        "name": "Producer"
+      },
+      "researcher": {
+        "duty": "Finds sources, benchmarks and verifiable facts.",
+        "name": "Researcher"
+      }
+    },
+    "title": "Personalization Center"
   },
   "kb": {
     "addDone": "Added {{count}} source(s)",
@@ -1239,10 +1326,11 @@
     "addAssistant": "Add assistant",
     "appSettings": "App Settings",
     "archivedChats": "Archived Chats",
+    "bountyComingSoon": "Coming soon",
     "collapseNav": "Collapse sidebar",
     "expandNav": "Expand sidebar",
-    "identityCenter": "Identity center",
-    "independentAssistants": "Independent assistants",
+    "identityCenter": "Personalization",
+    "independentAssistants": "Skills & capabilities",
     "myAssistants": "My assistants",
     "pages": {
       "agents": "Agent market",
@@ -1304,7 +1392,7 @@
     "welcomeTitle": "What would you like to accomplish?"
   },
   "market": {
-    "alreadyInstalled": "You already have this assistant.",
+    "actionFailed": "Could not open it. Please try again.",
     "byAuthor": "by {{name}}",
     "cancel": "Cancel",
     "categoryAll": "All",
@@ -1318,31 +1406,46 @@
     "createDone": "Template created (draft)",
     "createTitle": "New template",
     "delete": "Delete",
-    "deleteBlocked": "Already installed by someone — you can unpublish, but not delete",
-    "deleteConfirm": "Delete this template? Teammates who already installed it are unaffected.",
+    "deleteBlocked": "Already in use by someone — you can unpublish it, but not delete it",
+    "deleteConfirm": "Delete this template? Teammates already using it are unaffected.",
     "deleteDone": "Deleted",
     "descriptionLabel": "Description (max 300)",
     "edit": "Edit",
     "emojiLabel": "Emoji",
-    "empty": "No templates available yet",
-    "install": "Install",
-    "installCount": "{{count}} installs",
-    "installDone": "\"{{name}}\" is ready — check your assistant list.",
-    "installed": "Installed",
-    "installFailed": "Install did not finish. Please try again.",
-    "installing": "Installing…",
-    "instructionsLabel": "Prompt (what the assistant should do — used right after install)",
+    "empty": "No assistant templates available yet",
+    "error": {
+      "assistantConflict": "An assistant with the same name but different content already exists on this computer. To avoid overwriting it, it was not reused. Delete that assistant and try again.",
+      "forbidden": "Only the template author or a team admin can do this.",
+      "invalidCategory": "Pick a valid category.",
+      "invalidDescription": "The description is too long — keep it under 300 characters.",
+      "invalidEmoji": "Enter one emoji (up to 8 characters).",
+      "invalidInstructions": "The prompt must be between 1 and 8000 characters.",
+      "invalidName": "The name must be between 1 and 60 characters.",
+      "invalidStatus": "Unsupported status.",
+      "network": "Cannot reach the server. Check your network and try again.",
+      "noGateway": "The local service is not connected yet — wait for it to be ready and try again.",
+      "noOrganization": "You are not in a team yet. Create one first.",
+      "notAuthenticated": "Sign in first.",
+      "publicMarketClosed": "The public market is closed, so you cannot publish right now. Your private templates are unaffected.",
+      "templateInstalledCannotDelete": "Someone is already using this template — you can unpublish it, but not delete it.",
+      "templateNotFound": "This assistant template does not exist, or you cannot see it.",
+      "unknown": "That did not work. Try again in a moment.",
+      "workspaceUnavailable": "The workspace is not ready. Pick a workspace in Settings, then come back and use this capability.",
+      "workspaceUnsupported": "The disk that holds your workspace does not support assistant files. Switch the workspace to an NTFS disk and try again."
+    },
+    "instructionsLabel": "Prompt (what the assistant should do — used as soon as it is selected)",
     "loadFailed": "Could not load. Try again.",
     "loading": "Loading…",
     "mineEmpty": "You have not created any template yet",
     "nameLabel": "Name (max 60)",
     "official": "Official",
+    "preparing": "Preparing…",
     "prompt": "Prompt",
-    "publicClosedBody": "Public listing and trading are disabled. Your private templates remain under Creator Center · My Templates and can still be used, edited, and exported; official tool installation is unaffected.",
+    "publicClosedBody": "Public listing and trading are disabled. Your private templates stay under Creator Center — My Templates and can still be used, edited, and exported; official capabilities are unaffected.",
     "publicClosedTitle": "Public market is closed",
     "publish": "Publish",
     "publishDone": "Published — teammates in your organisation can see it now",
-    "recordWarning": "Assistant installed, but the install count was not recorded (no impact on usage).",
+    "recordWarning": "Ready in your Compass Assistant; only the usage count was not recorded (no impact on use).",
     "retry": "Retry",
     "save": "Save",
     "saveDone": "Saved",
@@ -1354,17 +1457,9 @@
     "tabMine": "My templates",
     "unpublish": "Unpublish",
     "unpublishDone": "Unpublished",
+    "usageCount": "Used by {{count}} creators",
+    "useInCompass": "Use in Compass Assistant",
     "views": "{{count}} views"
-  },
-  "mediaReadiness": {
-    "chatModelNote": "Choosing Seed for chat does not select the video-generation model.",
-    "image": "Image",
-    "probe-failed": "Could not confirm",
-    "ready": "Available",
-    "relayLabel": "Relay media",
-    "unavailable": "Unavailable in relay",
-    "unknown": "Not checked",
-    "video": "Video"
   },
   "meeting": {
     "abort": {
@@ -1375,6 +1470,10 @@
     },
     "artifactsHint": "Open a stage to view its real replies and files in the right-hand artifact panel.",
     "chooseModel": "Select a model",
+    "collabMembers": "Roles and status",
+    "collabNoMeeting": "No team meeting records yet; real role status appears here after a meeting starts.",
+    "collabNotTeam": "This conversation does not belong to a team.",
+    "collabTitle": "Team collaboration",
     "costWarning": "Each stage calls its selected model and consumes credits. Closing this window does not stop the discussion.",
     "description": "Two or three real members speak in order: proposal, review, then conclusion.",
     "failed": "The discussion could not be started.",
@@ -1414,7 +1513,9 @@
       "stopped": "Stopped",
       "syncing": "Saving reply"
     },
-    "unavailable": "Connect the gateway and make at least two team members available first."
+    "turnUsage": "{{model}} · in {{input}} / out {{output}} tokens",
+    "unavailable": "Connect the gateway and make at least two team members available first.",
+    "vendorRequired": "The review member must use a model from a different vendor than the first member."
   },
   "mentionPicker": {
     "agents": "Agents",
@@ -1474,6 +1575,130 @@
     },
     "filePermission": "File access",
     "finish": "Enter workspace",
+    "firstRun": {
+      "answerNo": "B. No",
+      "answerYes": "A. Yes",
+      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
+      "assistantTitle": "Recommended work assistants",
+      "basicDescription": "A basic configuration based on your selected work needs.",
+      "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
+      "confirm": "Enter the workbench",
+      "customRole": "Job or responsibility (optional)",
+      "editProfile": "Edit my details",
+      "generate": "Generate my AI team",
+      "goal": "What would you like help with?",
+      "industries": {
+        "C": "Manufacturing",
+        "general": "General · Outside these industries",
+        "H": "Accommodation and food services",
+        "J": "Finance",
+        "K": "Real estate",
+        "L": "Leasing and business services",
+        "P": "Education",
+        "R": "Culture, sports and entertainment"
+      },
+      "industry": "Your main industry",
+      "introduction": "A brief introduction (optional)",
+      "model": "Actual model",
+      "nicknameFallback": "My work profile",
+      "personaSourceDefault": "Character source: default artwork",
+      "personaSourceRule": "Character source: saved approved rule",
+      "personaSourceUser": "Character source: saved user choice",
+      "personaUnavailable": "Character artwork is being prepared.",
+      "profileNotice": "Your main industry is separate from your role and tasks. Choose General if none applies. Details and all four questions are editable and do not trigger AI calls.",
+      "questionBack": "Previous question",
+      "questionNotice": "Optional fun profile questions, not a psychological or ability assessment.",
+      "questions": {
+        "math": "Are you good at mathematics?",
+        "popular": "Were you popular in high school?",
+        "sport": "Do you like sports?",
+        "tidy": "Is your room tidy?"
+      },
+      "questionSkip": "Skip this question",
+      "role": "Role",
+      "sourceAi": "Source: AI suggestion",
+      "sourceBasic": "Source: basic template",
+      "steps": {
+        "portrait": "Fun profile",
+        "profile": "Work details",
+        "result": "Confirm the team"
+      },
+      "tasks": "Common tasks (optional)",
+      "titles": {
+        "portrait": "A quick fun profile",
+        "profile": "Tell us about your work",
+        "result": "Your work configuration"
+      },
+      "types": {
+        "ENFJ": {
+          "line": "A charismatic, inspiring natural leader.",
+          "name": "Protagonist"
+        },
+        "ENFP": {
+          "line": "An enthusiastic, creative and sociable free spirit.",
+          "name": "Campaigner"
+        },
+        "ENTJ": {
+          "line": "A bold, imaginative leader with a strong will and a taste for challenge.",
+          "name": "Commander"
+        },
+        "ENTP": {
+          "line": "A clever, curious thinker who never backs down from an intellectual challenge.",
+          "name": "Debater"
+        },
+        "ESFJ": {
+          "line": "Compassionate and sociable, always ready to lend a hand.",
+          "name": "Consul"
+        },
+        "ESFP": {
+          "line": "Bold and sociable, talkative and witty — a natural performer.",
+          "name": "Entertainer"
+        },
+        "ESTJ": {
+          "line": "An excellent administrator who values order and organisation.",
+          "name": "Executive"
+        },
+        "ESTP": {
+          "line": "Energetic and action-oriented, happy to take risks.",
+          "name": "Entrepreneur"
+        },
+        "INFJ": {
+          "line": "A quiet and inspiring idealist with a clear sense of purpose.",
+          "name": "Advocate"
+        },
+        "INFP": {
+          "line": "A poetic, kind-hearted altruist with plenty of empathy.",
+          "name": "Mediator"
+        },
+        "INTJ": {
+          "line": "An imaginative and strategic thinker with a plan for everything.",
+          "name": "Architect"
+        },
+        "INTP": {
+          "line": "A creative inventor with an unquenchable thirst for knowledge.",
+          "name": "Logician"
+        },
+        "ISFJ": {
+          "line": "A dedicated and warm protector, diligent and loyal.",
+          "name": "Defender"
+        },
+        "ISFP": {
+          "line": "A flexible and charming artist.",
+          "name": "Adventurer"
+        },
+        "ISTJ": {
+          "line": "Practical and fact-minded, honest and dependable.",
+          "name": "Logistician"
+        },
+        "ISTP": {
+          "line": "A bold and practical experimenter who is good with tools.",
+          "name": "Virtuoso"
+        },
+        "partial": "Some questions were skipped — this result is for reference only."
+      },
+      "usagePending": "Usage: pending verification",
+      "usageSettled": "Usage: settled against the actual receipt"
+    },
     "goalAnalysisHint": "Your work goal is saved without an automatic AI call. Choose an assistant in the workbench to start a task.",
     "multipleHint": "Choose more than one",
     "next": "Next",
@@ -1482,6 +1707,58 @@
     "optional": "Optional",
     "personalizeSubtitle": "Choose your display name, response detail, and file access preference.",
     "personalizeTitle": "Make it yours",
+    "portrait": {
+      "ageLabel": "Age",
+      "agePlaceholder": "Optional",
+      "allSkipped": "You skipped all four questions, so no character is generated. You can retest at any time.",
+      "backToProfile": "Back to work details",
+      "dimensions": {
+        "empathy": "Empathy",
+        "exploration": "Curiosity",
+        "extraversion": "Outgoing",
+        "orderliness": "Order",
+        "rationality": "Logic"
+      },
+      "editEntry": "Fun profile questions",
+      "gender": {
+        "female": "Female",
+        "male": "Male"
+      },
+      "genderLabel": "Gender",
+      "letters": "Fun code",
+      "next": "Next: confirm the team",
+      "radarLabel": "Five-dimension fun profile radar",
+      "resultTitle": "Your fun profile",
+      "retest": "Retest",
+      "roles": {
+        "baina": {
+          "description": "Everything can sell and every ledger is clear — a shopkeeper who can count.",
+          "name": "Baina"
+        },
+        "hengchuan": {
+          "description": "Numbers that survive an audit, money that keeps moving.",
+          "name": "Hengchuan"
+        },
+        "hewei": {
+          "description": "Craft amid the bustle — turns first orders into regular customers.",
+          "name": "Hewei"
+        },
+        "yangsheng": {
+          "description": "Content with a point of view, traffic with a method — the voice in front of the camera.",
+          "name": "Yangsheng"
+        },
+        "zhenshan": {
+          "description": "Makes every guest feel at home — a steady, gentle host.",
+          "name": "Zhenshan"
+        },
+        "zhiwei": {
+          "description": "Sees the small things and turns experience into lessons.",
+          "name": "Zhiwei"
+        }
+      },
+      "subtitle": "Four quick questions make a fun five-dimension profile and a character card. This is not a psychological or ability assessment.",
+      "typeLabel": "Type"
+    },
     "previewAssignment": "Recommendations use your role, common tasks, and goal. Turn off anything you do not need.",
     "previewPersonalize": "You can change these preferences later without affecting existing tasks.",
     "previewPurpose": "Tell us what you do most often so the home page and assistants fit your work.",
@@ -1623,6 +1900,7 @@
     "title": "I need your input"
   },
   "rightPanel": {
+    "archivedArtifacts": "Older & problem files",
     "artifacts": "Artifacts",
     "context": "Context",
     "contextUsage": "Context",
@@ -1922,7 +2200,7 @@
     "updateError": "Update failed: {{message}}",
     "version": "Version",
     "webSearch": "Let the assistant search the web",
-    "webSearchHint": "When on, the assistant searches the web on models that support it. The pages it reads count as input, costing roughly a hundred times a question of the same length. Only qwen-plus and qwen-turbo support this today; other models stay offline even with the switch on. Changing this prepares the service again.",
+    "webSearchHint": "When on, the assistant searches the web on models that support it. The pages it reads count as input, costing roughly a hundred times a question of the same length. Only qwen-plus, qwen-turbo and qwen3.7-flash support this today; other models stay offline even with the switch on. Changing this prepares the service again.",
     "webSearchSection": "Web search",
     "workspace": "Workspace",
     "workspaceChange": "Change",
@@ -2008,7 +2286,7 @@
       "fileNoFence": "The assistant wrote a layout file, but it has no layout code in it, so nothing was generated. Ask the assistant to fill that file in.",
       "fileTooLarge": "The layout file is too large ({{got}} bytes, the limit is {{max}}). Ask the assistant to trim it down or split it into two.",
       "fileUnreadable": "The assistant's layout file could not be read — it may have been half-written or deleted. Trying again usually fixes it.",
-      "outputUnconfirmed": "The result could not be confirmed; a file may already exist. Automatic generation is paused to avoid duplicates. Check the existing outputs before trying again.",
+      "outputUnconfirmed": "Generation is paused. Open the Artifacts panel on the right and check the latest file: if it opens, use it as is; if it does not open or is missing, simply generate again.",
       "renderFailed": "Something went wrong while laying out the slides. That is on our side, not your content.",
       "replyIncomplete": "The content was too long to be retrieved in full this time, so no slides were generated. Try trimming it and asking again.",
       "replyUnavailable": "The full reply for this turn could not be retrieved, so **no slides were generated** — half a deck is worse than none. Trying again usually fixes it.",
@@ -2018,7 +2296,7 @@
       "unparsable": "The layout has a syntax error and could not be read."
     },
     "failedTitle": "The presentation couldn't be generated",
-    "unconfirmedTitle": "Presentation delivery needs checking",
+    "unconfirmedTitle": "Presentation was not auto-confirmed",
     "warn": {
       "footerOverlap": "The footer on page {{page}} overlaps a content card",
       "head": "The file is already in 产物 on the right. These spots need adjusting:",
@@ -2040,12 +2318,13 @@
     "assistantsWaiting": "Waiting for the AI service",
     "elapsed": "Waiting {{time}}",
     "gatewayAuthRejected": "The gateway rejected this connection. Check the activation state, or use another card and prepare again.",
+    "gatewayDeployFailed": "The local runtime could not be prepared from the disk. Check that the runtime disk is inserted; if you swapped disks, put back the one that came with the app; if the disk is write-protected, remove the protection and try again; if this message persists after re-inserting, the runtime on the disk may be damaged — replace it with a complete one.",
     "gatewayPortOccupied": "Port 18789 is held by another program. This app will not close it - close that program, then prepare again.",
     "gatewayProcessExited": "The AI service started and then exited. Prepare again to retry.",
     "gatewayReadyTimeout": "Timed out waiting for the AI service to become ready. It did not come up on this machine - prepare again to retry.",
     "gatewayStateMigrationBlocked": "Portable data migration did not finish; the original data is preserved. Close the previous gateway and app, then restart. If it still fails, export diagnostics and keep the original data.",
     "keepOpen": "Keep the app open. No repeated action is needed.",
-    "notAnInstall": "Not an installation: nothing is written into the system and no desktop shortcut is created. On first launch the runtime is prepared into a local cache so it still works after you unplug the USB drive.",
+    "notAnInstall": "This is not an installation: nothing is written to the system and no desktop icon is created. On first launch the runtime is prepared into the local runtime data folder, which travels with this disk.",
     "openActivation": "Open activation",
     "openWorkspaceSettings": "Change workspace",
     "overallProgress": "Overall progress",
@@ -2085,7 +2364,7 @@
     "viewArtifacts": "View artifacts"
   },
   "teams": {
-    "agentNotInstalled": "This team's assistant is not installed on this machine yet. Install it before starting a chat.",
+    "agentNotInstalled": "This team's members are not on this computer, so the conversation cannot start yet. Open the team's Edit to set it up again, or pick another team.",
     "confirmDeleteDesc": "Delete \"{{name}}\"? This removes the team configuration. Agents will remain on the Gateway and can be managed in Settings.",
     "confirmDeleteTitle": "Delete Team",
     "createTeam": "Create Team",
@@ -2110,7 +2389,7 @@
     "gateway": "Gateway",
     "memberCount": "{{count}} members",
     "namePlaceholder": "Enter team name",
-    "needsInstall": "Install required",
+    "needsInstall": "Members not on this computer",
     "noAgents": "No agents available",
     "position": {
       "challenger": "Challenger",
@@ -2118,15 +2397,34 @@
       "moderator": "Moderator",
       "scribe": "Note-taker"
     },
+    "roundtable": {
+      "compass": "Main compass",
+      "emptyHint": "Once you create a team, real collaboration status for the five roles appears here.",
+      "latest": "Latest meeting: {{question}}",
+      "status": {
+        "attention": "Needs attention",
+        "disabled": "Not enabled",
+        "done": "Done",
+        "idle": "Idle",
+        "working": "Working"
+      },
+      "subtitle": "The main compass leads, five roles collaborate. Status comes from real team meeting records.",
+      "title": "My AI Team"
+    },
     "startChat": "Start Chat",
+    "teamBuilderConnecting": "Connecting to the assistant…",
     "teamBuilderCreate": "Create Team",
     "teamBuilderCreated": "Team created",
     "teamBuilderDesc": "Create a Team through guided AI conversation",
     "teamBuilderDescPlaceholder": "Brief description of the team's purpose...",
+    "teamBuilderIncomplete": "The assistant has not produced a complete team config yet: at least 2 members (1 coordinator), each with name, description, model and identity.",
     "teamBuilderInputPlaceholder": "Describe your team...",
     "teamBuilderNewAgent": "New Agent",
     "teamBuilderNoAgents": "Agents will appear here as the AI suggests them",
+    "teamBuilderNoGateway": "No gateway is available yet. Finish setup before creating a team.",
     "teamBuilderPreviewTitle": "New Team",
+    "teamBuilderSessionBusy": "Another AI feature is using the assistant session. Wait for it to finish, then click Retry.",
+    "teamBuilderSessionFailed": "The creation guide could not start (no assistant session). Click Retry to try again.",
     "teamBuilderTitle": "AI Builder",
     "teamName": "Team Name",
     "wizard": {
@@ -2153,12 +2451,12 @@
       "errSkillUnsupported": "Skills from this source are not supported yet.",
       "errUpdate": "The team could not be updated.",
       "existing": "Existing",
-      "install": "Install Team",
-      "installComplete": "Team installed successfully",
+      "install": "Create team",
+      "installComplete": "Team created",
       "installDegraded": "Team partially saved; some items need attention",
       "installDegradedHint": "Usable members were kept. Resolve the issues below and retry; unfinished items are not ready to run.",
-      "installError": "Installation failed",
-      "installing": "Installing...",
+      "installError": "Creation failed",
+      "installing": "Creating...",
       "installSummary": "Agents: {{agentsSucceeded}} succeeded, {{agentsFailed}} failed; skills: {{skillsSucceeded}} succeeded, {{skillsFailed}} failed",
       "model": "Model",
       "modelDefault": "Default",
@@ -2167,7 +2465,7 @@
       "next": "Next",
       "position": "Position",
       "prev": "Back",
-      "reviewInstall": "Review & Install",
+      "reviewInstall": "Review & create",
       "reviewSave": "Review & Save",
       "role": "Role",
       "save": "Save Changes",
@@ -2191,9 +2489,9 @@
     "all": "All",
     "emptyDesc": "Add a registry to browse community teams",
     "emptyTitle": "No teams available",
-    "install": "Install",
-    "installed": "Installed",
-    "installSuccess": "Team installed successfully",
+    "install": "Add to My Teams",
+    "installed": "In My Teams",
+    "installSuccess": "Team added to My Teams",
     "manageRegistries": "Registries",
     "notFetched": "Not synced yet — click refresh",
     "refresh": "Refresh Registries",
@@ -2219,9 +2517,25 @@
     },
     "completed": "Completed {{count}} steps",
     "duration": "{{seconds}} sec",
+    "failure": {
+      "cannotContinue": "This step can't be completed right now.",
+      "continueWithMaterials": "Skip this failure",
+      "degradedContinue": "This step was skipped — you can keep asking questions.",
+      "network": "Online sources are temporarily unavailable — you can retry",
+      "rateLimit": "Too many requests — try again shortly",
+      "retryAction": "Try again",
+      "timeout": "This step timed out; you can retry"
+    },
+    "failureClass": {
+      "network": "Failure type: network unavailable",
+      "rateLimit": "Failure type: too many requests",
+      "timeout": "Failure type: timed out"
+    },
     "groupCount": "× {{count}}",
-    "noResult": "This step returned no result, so it did not finish.",
+    "noResult": "This step returned no result.",
+    "repeatedFailure": "Repeated failures ×{{count}}",
     "running": "Working · completed {{count}} steps",
+    "unreported": "{{count}} steps returned no result",
     "viewDetails": "View details",
     "waitingElapsed": "Waiting {{time}}"
   },

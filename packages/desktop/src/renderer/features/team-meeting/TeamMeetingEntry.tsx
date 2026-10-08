@@ -12,6 +12,7 @@ import TeamMeetingPanel from './TeamMeetingPanel';
 import { buildMeetingPlan, type MeetingMember } from './plan';
 import { meetingCatalog } from './catalog';
 import { teamMeetingController, useTeamMeetingStore } from './instance';
+import { vendorsDistinct } from './vendor';
 
 export default function TeamMeetingEntry({ team }: { team: Team }) {
   const { t } = useTranslation();
@@ -75,6 +76,8 @@ export default function TeamMeetingEntry({ team }: { team: Team }) {
       )
     )
       throw new Error(t('meeting.unavailable'));
+    if (!vendorsDistinct(members[0]?.model ?? '', members[1]?.model ?? ''))
+      throw new Error(t('meeting.vendorRequired'));
     await teamMeetingController.start(
       buildMeetingPlan({ team, members, question, title: `${team.name} · ${t('meeting.title')}`, deviceId }),
     );

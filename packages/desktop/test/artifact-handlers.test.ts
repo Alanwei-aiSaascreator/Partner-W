@@ -15,6 +15,7 @@ import {
   MAX_PLAIN_TEXT_SOURCE_BYTES,
 } from '../src/main/artifact/too-large.js';
 import { resolve } from 'node:path';
+import JSZip from 'jszip';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 const allMock = vi.fn();
@@ -89,6 +90,23 @@ vi.mock('../src/main/debug/index.js', () => ({
 }));
 
 let analytics: AnalyticsReporter;
+
+/** 最小合法 PPTX / PDF（打开前复核要读真字节判完整性）。 */
+async function minimalPptx(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types/>');
+  zip.file('ppt/presentation.xml', '<?xml version="1.0"?><p:presentation/>');
+  zip.file('ppt/slides/slide1.xml', '<?xml version="1.0"?><p:sld/>');
+  return (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer;
+}
+
+/** 最小合法 DOCX（BUG-042-b 用：文件是好的，只是系统里没有程序能打开它）。 */
+async function minimalDocx(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types/>');
+  zip.file('word/document.xml', '<?xml version="1.0"?><w:document/>');
+  return (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer;
+}
 
 describe('artifact handlers', () => {
   beforeEach(() => {
@@ -394,6 +412,7 @@ describe('artifact handlers', () => {
       availability: 'available',
       absolutePath: '/agent-ws/deck.pptx',
     });
+    readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from(await minimalPptx()));
 
     const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
     registerArtifactHandlers();
@@ -411,6 +430,7 @@ describe('artifact handlers', () => {
       availability: 'available',
       absolutePath: '/workspace/task-1/report.pdf',
     });
+    readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('%PDF-1.7\n%%EOF\n'));
 
     const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
     registerArtifactHandlers();
@@ -419,5 +439,149 @@ describe('artifact handlers', () => {
     expect(inspectArtifactFileMock).toHaveBeenCalledWith('/workspace', 'task-1/report.pdf');
     // 老行**不该**去问助手工作区（一次网关调用都不发）
     expect(getGatewayClientMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⭐ 2026-10-07 体检 P2-6：**打开前复核**。
+   *
+   * 登记门只覆盖"新变更"那两条路径；已登记、此后没再被动过的坏件（写坏/崩溃半截/外部改坏）
+   * 会永远留在列表里，而 `shell.openPath` 这条路以前**不复核** —— "能点开但打不开"就在这儿回归。
+   */
+  describe('artifact:open-file 打开前复核', () => {
+    const deck = [{ id: 'a1', taskId: 'task-1', name: 'deck.pptx', localPath: 'task-1/deck.pptx' }];
+
+    it('⭐ 受检格式字节是坏的 ⇒ 拒绝并回 `artifact invalid`（不回落到"让它打开试试"）', async () => {
+      allMock.mockReturnValue(deck);
+      inspectArtifactFileMock.mockResolvedValue({
+        availability: 'available',
+        absolutePath: '/workspace/task-1/deck.pptx',
+      });
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('PK broken, not a zip'));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: false,
+        error: 'artifact invalid',
+      });
+      expect(openPathMock).not.toHaveBeenCalled();
+    });
+
+    it('受检格式字节是好的 ⇒ 照常交给系统打开', async () => {
+      allMock.mockReturnValue(deck);
+      inspectArtifactFileMock.mockResolvedValue({
+        availability: 'available',
+        absolutePath: '/workspace/task-1/deck.pptx',
+      });
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from(await minimalPptx()));
+      openPathMock.mockResolvedValue('');
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: true,
+      });
+      expect(openPathMock).toHaveBeenCalledWith('/workspace/task-1/deck.pptx');
+    });
+
+    it('不受检的扩展名（.txt）⇒ 一个字节都不读（不把这条门变成所有文件的读门）', async () => {
+      allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: 'report.txt', localPath: 'task-1/report.txt' }]);
+      inspectArtifactFileMock.mockResolvedValue({
+        availability: 'available',
+        absolutePath: '/workspace/task-1/report.txt',
+      });
+      openPathMock.mockResolvedValue('');
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' });
+
+      expect(readVerifiedArtifactFileMock).not.toHaveBeenCalled();
+      expect(openPathMock).toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * ⭐⭐ BUG-042-b（2026-10-08 亲验）：**打开失败的原因说错话**。
+   *
+   * 机器里没装 Word/WPS 时 `shell.openPath` 回的是系统错误串，界面却统一说
+   * 「文件可能已损坏或未写完」—— 文件明明是好的，用户会白白重做一遍。
+   * 判据：**没有可打开它的程序**（系统的 "No application…" / "Failed to open…" 族）
+   * ⇒ 回稳定的机器可读标记 `artifact no-opener`（界面据此说"装个程序再试"）；
+   * 只有"打开前复核"判坏件的 `artifact invalid` 才是"损坏"。
+   * 认不出的系统错误**原样回**（不发明结论）。
+   */
+  describe('artifact:open-file 打开失败分类（BUG-042-b）', () => {
+    const doc = [{ id: 'a1', taskId: 'task-1', name: '报告.docx', localPath: 'task-1/报告.docx' }];
+
+    beforeEach(async () => {
+      allMock.mockReturnValue(doc);
+      inspectArtifactFileMock.mockResolvedValue({
+        availability: 'available',
+        absolutePath: '/workspace/task-1/报告.docx',
+      });
+      readVerifiedArtifactFileMock.mockResolvedValue(await minimalDocx());
+    });
+
+    it.each([
+      'No application is associated with the specified file for this operation.',
+      'Failed to open document',
+      'This file does not have a program associated with it for performing this action. Please install a program or, if one is already installed, create an association in the Default Programs control panel.',
+    ])('⭐ 没有可打开它的程序 ⇒ 稳定标记 `artifact no-opener`：%s', async (systemMessage) => {
+      openPathMock.mockResolvedValue(systemMessage);
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: false,
+        error: 'artifact no-opener',
+      });
+    });
+
+    it('⭐ 认不出的系统错误 ⇒ 原样回（不许冒充任何一类结论）', async () => {
+      openPathMock.mockResolvedValue('Access is denied.');
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: false,
+        error: 'Access is denied.',
+      });
+    });
+
+    it('⭐ 负对照：坏件复核不过 ⇒ 仍是 `artifact invalid`（不许被分类成 no-opener）', async () => {
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('不是 zip 的文本'));
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(handleMap.get('artifact:open-file')?.({}, { artifactId: 'a1', taskId: 'task-1' })).resolves.toEqual({
+        ok: false,
+        error: 'artifact invalid',
+      });
+      expect(openPathMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * ⭐ 2026-10-07 体检 P2-3：根解析不出来是 **`unknown`（连接中）**，不是 `missing`（缺失）。
+   *
+   * 助手工作区依赖网关 RPC；冷启动那几十秒里它是真的"读不到"，而旧口径把这一瞬说成
+   * "文件缺失"并让整族折进折叠区（渲染层）。IPC 层必须先把这两件事分开。
+   */
+  it('⭐ 助手工作区解析不出来（网关没连上）⇒ availability = unknown，不是 missing', async () => {
+    allMock.mockReturnValue([
+      { id: 'agent-1', taskId: 'task-1', name: 'deck.pptx', localPath: 'deck.pptx', root: 'agent' },
+    ]);
+    // getGatewayClient 默认 null ⇒ agentWorkspaceForTask 拿不到工作区
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+
+    const result = (await handleMap.get('artifact:list')?.({}, { taskId: 'task-1' })) as {
+      ok: boolean;
+      result: Array<{ availability: string }>;
+    };
+
+    expect(result.result[0].availability).toBe('unknown');
+    expect(getArtifactAvailabilityMock, '根解析不出来时不许去判"文件在不在"').not.toHaveBeenCalled();
   });
 });

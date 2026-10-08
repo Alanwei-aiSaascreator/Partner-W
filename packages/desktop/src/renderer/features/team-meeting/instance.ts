@@ -5,7 +5,6 @@ import { useCommercialStore } from '../../stores/commercialStore';
 import { evaluateCommercialSendAccess, quotaBlockCopy } from '../../lib/quota';
 import { buildResponseLanguageContext } from '../../lib/response-language';
 import { artifactFailureContext } from '../../lib/artifact-delivery-feedback';
-import { buildArtifactsIndex } from '../../lib/artifact-index';
 import { syncRun } from '../../lib/session-sync';
 import { isThinkingSupported } from '../../components/ChatInput/thinking-levels';
 import { canonicalModelRef } from '../../lib/team-model-ref';
@@ -79,16 +78,17 @@ export const teamMeetingController = createTeamMeetingController({
     await checkQuota(signal);
     validateTask(task);
   },
+  /**
+   * ⚠️ 2026-10-07（质量战役区 3 · 用户授权代决）：**产物索引注入已切断**。
+   *
+   * 原实现每一轮会议都把**全库**产物索引（≤20 条其它会话的文件名 + 标题）塞给模型，
+   * 而且产物库读失败会 `throw` ⇒ **整场会议 run 中断**（一个背景信息成了硬依赖）。
+   * 现在只剩：响应语言上下文 + 本任务的产物失败反馈 —— 两者都是本地读取、不会打断会议。
+   * 模型要在会议里看到某份产物，走用户显式 `@`（与主对话同一条纪律）。
+   */
   context: async (task) => {
-    const artifacts = await window.clawwork.listArtifacts();
-    if (!artifacts.ok || !artifacts.result) throw new Error(artifacts.error ?? 'Artifact index unavailable');
     return [
       buildResponseLanguageContext(i18n.resolvedLanguage ?? i18n.language ?? 'zh-CN'),
-      buildArtifactsIndex(artifacts.result, new Map(useTaskStore.getState().tasks.map((row) => [row.id, row.title])), {
-        now: Date.now(),
-        excludeTaskId: task.id,
-        unknownTaskLabel: i18n.t('rightPanel.historyUnknownTask'),
-      }),
       artifactFailureContext(useMessageStore.getState().messagesByTask[task.id] ?? [], task.sessionKey),
     ]
       .filter(Boolean)

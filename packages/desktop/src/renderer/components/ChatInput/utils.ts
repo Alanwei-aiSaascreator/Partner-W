@@ -1,6 +1,6 @@
 import { toast } from '@/lib/toast';
 import type { PendingAttachment } from './types';
-import { MAX_ATTACHMENT_SIZE, GATEWAY_INJECTED_MODEL } from './constants';
+import { MAX_ATTACHMENT_SIZE, MAX_SEND_MATERIAL_BYTES, GATEWAY_INJECTED_MODEL, materialBudgetMb } from './constants';
 
 type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -17,12 +17,29 @@ export function formatContextWindow(tokens: number): string {
 
 export function processAttachmentFiles(files: File[], t: TranslateFn): PendingAttachment[] {
   const accepted: PendingAttachment[] = [];
+  /**
+   * 单文件超过**发送字节预算**的名字（P2-2，2026-10-07）。
+   *
+   * 入料侧的 100MB 闸门（`MAX_ATTACHMENT_SIZE`）与发送侧预算（默认 18MiB 折算）之间
+   * 差着一大截：以前收得进、发不出、**而且一句话都没有** —— 文件躺进暂存条，直到点发送
+   * 才被字节闸门拦下（"收得进发不出还不说"，质量战役区 2 · P2-2）。
+   * 这里**只提示、不拦截**（用户可能就是要先加进来、再手动配别的）；发送侧闸门仍在。
+   * 预算取默认值：协商值在网关侧（本函数无 store 上下文）；默认值与随包网关一致，
+   * 差异只在"网关被配置得更宽/更窄"时，提示可能偏保守 —— 提示不拦人，可以接受。
+   */
+  const overSendBudget: string[] = [];
   for (const file of files) {
     if (file.size > MAX_ATTACHMENT_SIZE) {
       toast.error(t('chatInput.attachmentTooLarge', { fileName: file.name }));
       continue;
     }
+    if (file.size > MAX_SEND_MATERIAL_BYTES) overSendBudget.push(file.name);
     accepted.push({ file, previewUrl: URL.createObjectURL(file) });
+  }
+  if (overSendBudget.length > 0) {
+    toast.warning(t('chatInput.materialSingleTooLarge', { size: materialBudgetMb(MAX_SEND_MATERIAL_BYTES) }), {
+      description: overSendBudget.join('、'),
+    });
   }
   return accepted;
 }

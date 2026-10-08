@@ -47,6 +47,7 @@ import type {
   RelayBootstrapPublicState,
   RelayLivenessPublicState,
   RuntimeBootstrapStatus,
+  RuntimeDeployProgress,
   SaveTeamMeetingInput,
   SessionsPreviewResult,
   SkillBinsResult,
@@ -89,6 +90,8 @@ interface GatewayStatusEvent {
   connected: boolean;
   error?: string;
   serverVersion?: string;
+  /** 见 `GatewayStatusInfo`（hello-ok.policy.maxPayload 协商值）。 */
+  maxPayloadBytes?: number;
   reconnectAttempt?: number;
   maxAttempts?: number;
   gaveUp?: boolean;
@@ -136,7 +139,14 @@ export interface GatewayServerConfig {
 }
 
 interface GatewayStatusMap {
-  [gatewayId: string]: { connected: boolean; name: string; error?: string; serverVersion?: string };
+  [gatewayId: string]: {
+    connected: boolean;
+    name: string;
+    error?: string;
+    serverVersion?: string;
+    /** 单帧字节上限（hello-ok.policy.maxPayload 的协商值）；缺席 = 没谈到。 */
+    maxPayloadBytes?: number;
+  };
 }
 
 interface GatewayListItem extends GatewayServerConfig {
@@ -291,6 +301,8 @@ interface PersistedTask {
   title: string;
   status: string;
   ensemble?: boolean;
+  /** 任务模式；老数据是 NULL（按 custom 语义处理，见 `@clawwork/shared` 的 task-modes）。 */
+  mode?: string | null;
   createdAt: string;
   updatedAt: string;
   tags: string[];
@@ -509,6 +521,15 @@ export interface ClawWorkAPI {
   /** 初始读（渲染层挂载时补读一次）：`null` = 还没有结论，**不是**"没问题"。 */
   runtimeStatus: () => Promise<RuntimeStatusEvent | null>;
   onRuntimeStatus: (callback: (status: RuntimeStatusEvent) => void) => () => void;
+  /** 部署进度的初始读：`null` = **现在没有部署在进行**（不是"部署完成"）。 */
+  runtimeDeployProgress: () => Promise<RuntimeDeployProgress | null>;
+  /** 部署进度事件；`null` = 这一轮部署结束了（成功/失败都算）。 */
+  onRuntimeDeployProgress: (callback: (progress: RuntimeDeployProgress | null) => void) => () => void;
+  /**
+   * 「重新准备」：让主进程重跑一轮本机运行时 bootstrap（与启动同一条路）。
+   * 返回跑完之后的主进程快照（`null` = 还没跑过任何一轮）。
+   */
+  runtimeBootstrapRetry: () => Promise<RuntimeStatusEvent | null>;
   onDebugEvent: (callback: (event: DebugEvent) => void) => () => void;
   exportDebugBundle: (filter?: {
     gatewayId?: string;
@@ -687,6 +708,8 @@ export interface ClawWorkAPI {
     title: string;
     status: string;
     ensemble?: boolean;
+    /** 任务模式（快速/智能/深度/高级指定模型）。 */
+    mode?: string;
     model?: string;
     modelProvider?: string;
     thinkingLevel?: string;
@@ -705,6 +728,8 @@ export interface ClawWorkAPI {
     title?: string;
     status?: string;
     ensemble?: boolean;
+    /** 任务模式（快速/智能/深度/高级指定模型）。 */
+    mode?: string;
     model?: string;
     modelProvider?: string;
     thinkingLevel?: string;
@@ -716,6 +741,8 @@ export interface ClawWorkAPI {
     sessionKey?: string;
     /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
     pinnedAt?: string | null;
+    /** deck 路由标记（演示文稿 → DeepSeek 的粘性开关）；见 `@clawwork/shared` 的 `Task.deckRouted`。 */
+    deckRouted?: boolean;
     updatedAt: string;
   }) => Promise<IpcResult>;
 
@@ -802,8 +829,15 @@ export interface ClawWorkAPI {
 
   getDeviceId: () => Promise<string>;
 
-  /** 不传 filePaths = 主进程弹对话框；传 = 走同一条导入管线的**拖入**路径（T05）。 */
-  importTaskFiles: (taskId: string, filePaths?: string[]) => Promise<IpcResult<ImportFilesResult>>;
+  /**
+   * 不传 filePaths = 主进程弹对话框；传 = 走同一条导入管线的**拖入**路径（T05）。
+   * `purpose: 'images'` = 「识别图片」入口：对话框只列图片，其余语义完全一致（C 组 BUG-027）。
+   */
+  importTaskFiles: (
+    taskId: string,
+    filePaths?: string[],
+    purpose?: 'files' | 'images',
+  ) => Promise<IpcResult<ImportFilesResult>>;
   /** 拖入文件取绝对路径（preload 里的 `webUtils.getPathForFile`，Electron ≥32 官方形状）。 */
   getPathForFile: (file: File) => string;
   listImportedTaskFiles: (taskId: string) => Promise<IpcResult<ImportedTaskFile[]>>;

@@ -4,6 +4,7 @@ import type {
   IpcResult,
   MessageAttachment,
   RuntimeBootstrapStatus,
+  RuntimeDeployProgress,
 } from '@clawwork/shared';
 
 export interface GatewayEvent {
@@ -18,6 +19,14 @@ export interface GatewayStatusEvent {
   connected: boolean;
   error?: string;
   serverVersion?: string;
+  /**
+   * 网关**协商下来**的单帧字节上限（`hello-ok.policy.maxPayload`）。
+   *
+   * ⚠️ 缺席 = 没谈到（旧网关 / 没连上）⇒ 发送侧预算回落默认值，**不是** 0 或无限。
+   * 用途唯一：渲染层发送字节预算的推导（`ChatInput/constants.ts` 的
+   * `deriveMaterialByteBudget`）；不是给界面直接显示的数字。
+   */
+  maxPayloadBytes?: number;
   reconnectAttempt?: number;
   maxAttempts?: number;
   gaveUp?: boolean;
@@ -47,6 +56,8 @@ export interface GatewayStatusInfo {
   name: string;
   error?: string;
   serverVersion?: string;
+  /** 见 `GatewayStatusEvent.maxPayloadBytes`（初始读与事件同源）。 */
+  maxPayloadBytes?: number;
 }
 
 export interface GatewayStatusMap {
@@ -130,4 +141,10 @@ export interface GatewayTransportPort {
    * （窗口不在时 `sendToWindow` 返回 false）。`null` = 还没有结论，**不是**"没问题"。
    */
   runtimeStatus?: (() => Promise<RuntimeStatusEvent | null>) | undefined;
+  /**
+   * ⚠️ **可选**（与 `onRuntimeStatus` 同一个理由：pwa / 出厂形态没有"本机部署"这件事）。
+   *    部署进度事件：`null` = 这一轮部署结束了（成功/失败都算）。
+   *    缺了它只影响"准备页看不看得见进度"，别的一概照旧。
+   */
+  onRuntimeDeployProgress?: ((callback: (progress: RuntimeDeployProgress | null) => void) => () => void) | undefined;
 }

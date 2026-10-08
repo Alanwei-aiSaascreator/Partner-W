@@ -46,4 +46,12 @@ describe('全新工作区：initDatabase 必须一次建齐', () => {
     const columns = sqlite!.prepare('PRAGMA table_info(team_agents)').all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain('position');
   });
+
+  it('tasks.mode 在全新库上一把建齐（任务模式：快速/智能/深度）', () => {
+    expect(() => initDatabase(dir)).not.toThrow();
+
+    const sqlite = getSqlite();
+    const columns = sqlite!.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('mode');
+  });
 });

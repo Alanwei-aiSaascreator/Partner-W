@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { extname, resolve, sep } from 'path';
 import { extractImagesFromMarkdown, extractCodeBlocksFromMarkdown } from './extract.js';
 import { saveArtifactFromBuffer } from './save.js';
+import { isUniqueArtifactError } from './unique-error.js';
 import { notifyArtifactActivity, type ArtifactActivityCallback } from './activity-callback.js';
 import { getDb } from '../db/index.js';
 import { getWorkspacePath } from '../workspace/config.js';
@@ -45,12 +46,6 @@ function sourceKey(kind: string, value: string): string {
 
 function canonicalSavedName(name: string): string {
   return name.replace(/-[0-9a-f]{8}(\.[^.]+)$/i, '$1');
-}
-
-function isUniqueArtifactError(err: unknown): boolean {
-  return (
-    err instanceof Error && err.message.includes('UNIQUE constraint failed: artifacts.message_id, artifacts.source_key')
-  );
 }
 
 function extFromMime(mimeType: string | undefined): string {

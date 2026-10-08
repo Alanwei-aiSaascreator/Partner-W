@@ -40,6 +40,35 @@ describe('initDatabase', () => {
     expect(alterSql).toContain('ALTER TABLE messages ADD COLUMN model TEXT');
   });
 
+  // 任务模式列（tasks.mode）：老库靠这条 ALTER 补列。缺了它，老用户升级后
+  // 「快速/智能/深度」永远存不住（写库静默丢、重启回到"没有偏好"）。
+  it('adds the task-mode column on existing databases', () => {
+    initDatabase('/tmp/workspace-a');
+
+    // ⚠️ 匹配串必须带上 ` TEXT`：`tasks` 表另有一列叫 `model`，光比 `ADD COLUMN mode`
+    //    会把那条老 ALTER 认成这一条（自己踩过，测试假绿）。
+    const alterSql = mockDbInstance.exec.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('ALTER TABLE tasks ADD COLUMN mode TEXT'));
+
+    expect(alterSql).toContain('ALTER TABLE tasks ADD COLUMN mode TEXT');
+  });
+
+  // deck 路由列（tasks.deck_routed）：**两份 DDL 缺一不可** —— 新库靠 CREATE TABLE、
+  // 老库靠这条 ALTER。少了 ALTER，老用户升级后这个标记永远存不住（写了静默丢，
+  // 重启后"改稿又跑回 qwen"——正是这一列要治的病）。
+  it('adds the deck-routing column on existing databases（老库 ALTER 与新库 CREATE 都在）', () => {
+    initDatabase('/tmp/workspace-a');
+
+    const statements = mockDbInstance.exec.mock.calls.map(([sql]) => String(sql));
+    expect(statements.find((sql) => sql.includes('ALTER TABLE tasks ADD COLUMN deck_routed'))).toContain(
+      'ALTER TABLE tasks ADD COLUMN deck_routed INTEGER NOT NULL DEFAULT 0',
+    );
+    expect(statements.find((sql) => sql.includes('CREATE TABLE IF NOT EXISTS tasks'))).toContain(
+      'deck_routed INTEGER NOT NULL DEFAULT 0',
+    );
+  });
+
   it('does not purge media-only assistant messages during startup cleanup', () => {
     initDatabase('/tmp/workspace-a');
 

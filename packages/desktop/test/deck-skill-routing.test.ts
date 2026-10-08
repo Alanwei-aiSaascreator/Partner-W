@@ -105,4 +105,43 @@ describe('出 PPT 的三条路：触发词分工互斥', () => {
     expect(幻灯片版面全文).toMatch(/不要固定三页/);
     expect(幻灯片版面全文).not.toMatch(/一页三块，位置钉死/);
   });
+
+  /**
+   * 2026-10-07 加固（施工图 §4-H3）。
+   *
+   * 背景：`description` 是模型**选技能时唯一能看见的东西**，而它现在只是"温和的介绍"——
+   * 真机上的形状是模型压根没去 read 那份 SKILL.md，转头用 docgen 出白底素版，
+   * 甚至自写脚本把文件写在工作区（产物面板之外）。所以：
+   * ①把"必须走这条路"提到**第一句**（读一半也能读到）；
+   * ②"素版"警告前置到「文档生成」的最前（别让模型只看开头就把它当默认）；
+   * ③三条都在**截断预算**内 —— 运行时预算紧张时会把 description 截到 220 字符，
+   *   越过这条线，被砍掉的正好是句尾那句关键指路。
+   */
+  it('⭐ 三条 description 都在运行时截断预算内（>220 字符时句尾先被砍）', () => {
+    const entries: ReadonlyArray<readonly [string, string]> = [
+      ['deck-layout', 幻灯版面],
+      ['document-deck', 文档生成],
+      ['presentation-deck-v2', 模板版],
+    ];
+    for (const [slug, description] of entries) {
+      expect([...description].length, `${slug} 的 description 越过 220 字符截断线`).toBeLessThanOrEqual(220);
+    }
+  });
+
+  it('⭐「幻灯版面」把"必须走这条路"放在第一句，并堵上 docgen / 自写脚本的口子', () => {
+    expect(幻灯版面.startsWith('给人看的演示必须走这条路')).toBe(true);
+    expect(幻灯版面, '要在这里提前堵住"用文档生成的 pptx / 自写脚本交付演示"').toMatch(
+      /禁止用文档生成的 pptx 或自写脚本/,
+    );
+  });
+
+  it('⭐「文档生成」把"素版"警告提到最前（开头就是它，别让模型把它当默认）', () => {
+    expect(文档生成.startsWith('只出白底 + 项目符号的**素版**')).toBe(true);
+    expect(文档生成).toMatch(/给人看的演示不要用这条/);
+  });
+
+  it('⭐「模板版」写明只在用户明确指定时才用，且不得当默认', () => {
+    expect(模板版).toContain('仅当用户**明确指定本产品现成模板**');
+    expect(模板版).toContain('不得拿这条当默认');
+  });
 });

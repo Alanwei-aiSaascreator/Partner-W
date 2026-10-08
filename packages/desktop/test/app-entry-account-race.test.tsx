@@ -1,7 +1,18 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { NormalizedOnboardingProfile, OnboardingProfile } from '../src/renderer/lib/user-onboarding';
+import type { EntryPreparationProps } from '../src/renderer/layouts/EntryPreparation';
+
+interface OnboardingViewProps {
+  userId: string;
+  mode?: 'first-run' | 'edit';
+  initialProfile?: OnboardingProfile | null;
+  onComplete: (profile: OnboardingProfile) => void;
+}
+
+type AppProfileFixture = Omit<NormalizedOnboardingProfile, 'version'> & Pick<OnboardingProfile, 'version'>;
 
 const entryFactsFixture = vi.hoisted(() => ({
   startup: {
@@ -21,6 +32,10 @@ const entryFactsFixture = vi.hoisted(() => ({
   runtime: { ok: true } as { ok: true } | { ok: false; reason: 'process-exited' },
   connected: true,
   catalogFailed: false,
+  settingsOpen: false,
+  onboardingProps: null as OnboardingViewProps | null,
+  onboardingInstances: 0,
+  changeAccount: null as (() => Promise<void>) | null,
 }));
 
 vi.mock('react-i18next', () => ({
@@ -34,13 +49,34 @@ vi.mock('../src/renderer/lib/toast', () => ({
   toast: { success: vi.fn() },
 }));
 vi.mock('../src/renderer/layouts/LeftNav', () => ({ default: () => null }));
-vi.mock('../src/renderer/layouts/MainArea', () => ({ default: () => null }));
+vi.mock('../src/renderer/layouts/MainArea', () => ({
+  default: ({ onboardingProfile }: { onboardingProfile: OnboardingProfile }) => (
+    <div data-workspace-profile={onboardingProfile.userId} data-profile-nickname={onboardingProfile.nickname} />
+  ),
+}));
 vi.mock('../src/renderer/layouts/RightPanel', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/Setup', () => ({ default: () => null }));
-vi.mock('../src/renderer/layouts/Settings', () => ({ default: () => null }));
-vi.mock('../src/renderer/layouts/Onboarding', () => ({
-  default: ({ userId }: { userId: string }) => <div data-account={userId} />,
+vi.mock('../src/renderer/layouts/Settings', () => ({
+  default: ({ onEditOnboardingProfile }: { onEditOnboardingProfile: () => void }) => (
+    <button data-edit-profile onClick={onEditOnboardingProfile} />
+  ),
 }));
+vi.mock('../src/renderer/layouts/Onboarding', () => ({
+  default: function OnboardingView(props: OnboardingViewProps) {
+    const [instance] = useState(() => ++entryFactsFixture.onboardingInstances);
+    entryFactsFixture.onboardingProps = props;
+    return <div data-account={props.userId} data-onboarding-instance={instance} />;
+  },
+}));
+vi.mock('../src/renderer/layouts/EntryPreparation', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../src/renderer/layouts/EntryPreparation')>();
+  return {
+    default: (props: EntryPreparationProps) => {
+      entryFactsFixture.changeAccount = props.onChangeAccount;
+      return <original.default {...props} />;
+    },
+  };
+});
 vi.mock('../src/renderer/components/ApprovalDialog', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/CommandPalette', () => ({ default: () => null }));
 vi.mock('../src/renderer/platform', () => ({ composer: {} }));
@@ -58,14 +94,18 @@ vi.mock('../src/renderer/stores/uiStore', () => {
     runtimeBootstrapFailure: null,
     rightPanelOpen: false,
     leftNavCollapsed: false,
-    settingsOpen: false,
+    get settingsOpen() {
+      return entryFactsFixture.settingsOpen;
+    },
     commandPaletteOpen: false,
     mainView: 'chat',
     theme: 'dark',
     leftNavWidth: 224,
     rightPanelWidth: 320,
     toggleRightPanel: vi.fn(),
-    setSettingsOpen: vi.fn(),
+    setSettingsOpen: vi.fn((value: boolean) => {
+      entryFactsFixture.settingsOpen = value;
+    }),
     setMainView: vi.fn(),
     toggleCommandPalette: vi.fn(),
     toggleLeftNavCollapsed: vi.fn(),
@@ -109,6 +149,7 @@ vi.mock('../src/renderer/hooks/useHtmlgenFailureToast', () => ({ useHtmlgenFailu
 vi.mock('../src/renderer/hooks/useSlidegenToast', () => ({ useSlidegenToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useClaimGuardToast', () => ({ useClaimGuardToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useDeliveryActivitySubscription', () => ({ useDeliveryActivitySubscription: vi.fn() }));
+vi.mock('../src/renderer/hooks/useAutoRetryFailedTurn', () => ({ useAutoRetryFailedTurn: vi.fn() }));
 vi.mock('../src/renderer/lib/gateway-disappearance', () => ({ useGatewayDisappearanceNotice: vi.fn() }));
 
 vi.mock('../src/renderer/hooks/useEntryRuntimeStatus', () => ({
@@ -118,7 +159,7 @@ vi.mock('../src/renderer/lib/preset-agent-bootstrap', () => ({
   presetAgentBootstrapCoordinator: { getSnapshot: () => entryFactsFixture.startup.assistants },
 }));
 import App from '../src/renderer/App';
-import { loadOnboardingProfile } from '../src/renderer/lib/user-onboarding';
+import { loadOnboardingProfile, saveOnboardingProfile } from '../src/renderer/lib/user-onboarding';
 
 vi.mock('../src/renderer/lib/user-onboarding', () => ({
   loadOnboardingProfile: vi.fn(() => null),
@@ -133,6 +174,12 @@ beforeEach(() => {
   entryFactsFixture.connected = true;
   entryFactsFixture.runtime = { ok: true };
   entryFactsFixture.catalogFailed = false;
+  entryFactsFixture.settingsOpen = false;
+  entryFactsFixture.onboardingProps = null;
+  entryFactsFixture.onboardingInstances = 0;
+  entryFactsFixture.changeAccount = null;
+  vi.mocked(loadOnboardingProfile).mockReset().mockReturnValue(null);
+  vi.mocked(saveOnboardingProfile).mockReset();
 });
 afterEach(() => vi.useRealTimers());
 
@@ -604,3 +651,215 @@ it.each(['relay', 'runtime'] as const)(
     }
   },
 );
+
+function onboardingProfileFor(userId: string, version: OnboardingProfile['version'] = 3): AppProfileFixture {
+  const profile: AppProfileFixture = {
+    version,
+    userId,
+    nickname: 'Saved account profile',
+    role: 'finance',
+    customRole: 'Hotel finance',
+    useCases: ['office'],
+    customGoal: 'Prepare monthly reports',
+    selectedAssistantIds: ['family', 'research'],
+    responseDetail: 'balanced',
+    filePermission: 'ask-every-time',
+    completedAt: '2026-10-04T00:00:00.000Z',
+  };
+  if (version === 3) {
+    profile.introduction = 'Prepare hotel budgets';
+    profile.industry = { code: 'H', generalConfirmed: false, source: 'user', catalogVersion: 1 };
+    profile.questionnaire = { version: 1, answers: ['yes', 'no', null, 'yes'] };
+    profile.persona = { id: null, source: 'default', ruleVersion: null };
+    profile.workMatch = {
+      source: 'ai',
+      profileVersion: 'original-profile-version',
+      requestId: 'saved-request',
+      runId: 'saved-run',
+      modelId: 'approved-model',
+      summary: 'Original work recommendations',
+      starters: ['Keep the selected assistants'],
+      usageStatus: 'pending',
+    };
+  }
+  return profile;
+}
+
+async function continueToOnboarding(ui: ReturnType<typeof mountEntry>): Promise<void> {
+  await ui.render();
+  await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+  expect(entryFactsFixture.onboardingProps?.userId).toBe('account-A');
+}
+
+it.each([1, 2, 3] as const)(
+  'saves the current account profile version %s without changing its receipt or selections',
+  async (version) => {
+    installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+    const ui = mountEntry();
+    const profile = onboardingProfileFor('account-A', version);
+    try {
+      await continueToOnboarding(ui);
+      act(() => entryFactsFixture.onboardingProps!.onComplete(profile));
+      expect(saveOnboardingProfile).toHaveBeenCalledExactlyOnceWith(profile);
+      expect(ui.container.querySelector('[data-workspace-profile="account-A"]')).not.toBeNull();
+      expect(ui.container.querySelector('[data-account]')).toBeNull();
+    } finally {
+      ui.unmount();
+    }
+  },
+);
+
+it('refuses a profile belonging to another account at the final App save boundary', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  try {
+    await continueToOnboarding(ui);
+    act(() => entryFactsFixture.onboardingProps!.onComplete(onboardingProfileFor('account-B')));
+    expect(saveOnboardingProfile).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-workspace-profile]')).toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('refuses final save when the live workspace store changed before React receives it', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  try {
+    await continueToOnboarding(ui);
+    const complete = entryFactsFixture.onboardingProps!.onComplete;
+    entryFactsFixture.storeWorkspaceEpoch = 1;
+    act(() => complete(onboardingProfileFor('account-A')));
+    expect(saveOnboardingProfile).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('refuses a retained local save callback after a newer workspace has rendered', async () => {
+  installEntryBridge({
+    commercialGetConfig: async () => ({ ok: true, result: { supabaseUrl: '', hasAnonKey: false } }),
+  });
+  const ui = mountEntry();
+  try {
+    await ui.render();
+    const complete = entryFactsFixture.onboardingProps!.onComplete;
+    entryFactsFixture.workspaceEpoch = 1;
+    await ui.render();
+    act(() => complete(onboardingProfileFor('local')));
+    expect(saveOnboardingProfile).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-account="local"]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it.each(['first-run', 'edit'] as const)(
+  'remounts the local %s form when its workspace generation changes',
+  async (mode) => {
+    if (mode === 'edit')
+      vi.mocked(loadOnboardingProfile).mockReturnValue({ ...onboardingProfileFor('local'), version: 3 });
+    installEntryBridge({
+      commercialGetConfig: async () => ({ ok: true, result: { supabaseUrl: '', hasAnonKey: false } }),
+    });
+    const ui = mountEntry();
+    try {
+      await ui.render();
+      if (mode === 'edit') {
+        entryFactsFixture.settingsOpen = true;
+        await ui.render();
+        act(() => ui.container.querySelector<HTMLButtonElement>('[data-edit-profile]')?.click());
+        expect(entryFactsFixture.onboardingProps?.mode).toBe('edit');
+      }
+      const originalInstance = ui.container
+        .querySelector('[data-onboarding-instance]')!
+        .getAttribute('data-onboarding-instance');
+      entryFactsFixture.workspaceEpoch = 1;
+      await ui.render();
+      const currentInstance = ui.container
+        .querySelector('[data-onboarding-instance]')!
+        .getAttribute('data-onboarding-instance');
+      expect(currentInstance).not.toBe(originalInstance);
+      expect(saveOnboardingProfile).not.toHaveBeenCalled();
+    } finally {
+      ui.unmount();
+    }
+  },
+);
+
+it('refuses final save as soon as an account change starts while the same account is still rendered', async () => {
+  let finish!: (value: { ok: true }) => void;
+  installEntryBridge({
+    commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })),
+    commercialSignOut: vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  });
+  const ui = mountEntry();
+  let changing: Promise<void> | null = null;
+  try {
+    await continueToOnboarding(ui);
+    const complete = entryFactsFixture.onboardingProps!.onComplete;
+    act(() => {
+      changing = entryFactsFixture.changeAccount!();
+      complete(onboardingProfileFor('account-A'));
+    });
+    expect(saveOnboardingProfile).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+  } finally {
+    await act(async () => {
+      finish({ ok: true });
+      await changing;
+    });
+    ui.unmount();
+  }
+});
+
+it('refuses a retained save callback after App unmount invalidates authentication', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  await continueToOnboarding(ui);
+  const complete = entryFactsFixture.onboardingProps!.onComplete;
+  ui.unmount();
+  complete(onboardingProfileFor('account-A'));
+  expect(saveOnboardingProfile).not.toHaveBeenCalled();
+});
+
+it('keeps the profile editor mounted when storage throws and permits a current-scope retry', async () => {
+  const original = { ...onboardingProfileFor('account-A'), version: 3 as const };
+  vi.mocked(loadOnboardingProfile).mockReturnValue(original);
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  const failure = new DOMException('Storage unavailable', 'QuotaExceededError');
+  const updated = { ...original, nickname: 'Edited nickname' };
+  try {
+    await ui.render();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    entryFactsFixture.settingsOpen = true;
+    await ui.render();
+    act(() => ui.container.querySelector<HTMLButtonElement>('[data-edit-profile]')?.click());
+    expect(entryFactsFixture.onboardingProps?.mode).toBe('edit');
+    const instance = ui.container.querySelector('[data-onboarding-instance]')!.getAttribute('data-onboarding-instance');
+    const complete = entryFactsFixture.onboardingProps!.onComplete;
+    vi.mocked(saveOnboardingProfile).mockImplementationOnce(() => {
+      throw failure;
+    });
+    act(() => expect(() => complete(updated)).toThrow('Storage unavailable'));
+    expect(ui.container.querySelector('[data-onboarding-instance]')!.getAttribute('data-onboarding-instance')).toBe(
+      instance,
+    );
+    expect(entryFactsFixture.onboardingProps?.initialProfile).toBe(original);
+    expect(ui.container.querySelector('[data-workspace-profile]')).toBeNull();
+    act(() => entryFactsFixture.onboardingProps!.onComplete(updated));
+    expect(saveOnboardingProfile).toHaveBeenNthCalledWith(2, updated);
+    expect(ui.container.querySelector('[data-profile-nickname="Edited nickname"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});

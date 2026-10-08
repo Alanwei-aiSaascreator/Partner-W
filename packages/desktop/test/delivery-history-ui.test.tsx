@@ -81,7 +81,7 @@ it('active details expose only actually observed phases and times', () => {
 });
 
 it.each(['succeeded', 'needs-review', 'failed', 'canceled'] as const)(
-  'retains the actual %s terminal result with nonnegative elapsed time',
+  'retains the actual %s terminal result without showing elapsed time',
   (status) => {
     useDeliveryActivityStore.getState().record({ ...activity(), status, startedAt: 5000, endedAt: 1000 }, 0);
     render();
@@ -89,26 +89,83 @@ it.each(['succeeded', 'needs-review', 'failed', 'canceled'] as const)(
     expect(row).not.toBeNull();
     expect(row?.textContent).toContain('chatInput.deliveryHistory.' + status);
     expect(row?.textContent).toContain('chatInput.deliveryHistory.phaseTypes.downloading-media');
-    expect(row?.textContent).toContain('0.0s');
+    // 图13（2026-10-06）：不再展示耗时——"0.0s" 曾被当场当成"假流程"（契约有意反转）。
+    expect(row?.textContent).not.toContain('0.0s');
     expect(container.querySelector('[data-testid="artifact-delivery-activity"]')).toBeNull();
   },
 );
 
-it('terminal context uses an actually observed initial action rather than an ongoing final-stage label', () => {
+it('⭐ 纯聊天收尾（只有 reconciling-artifacts、无实质阶段）不进"最近的文件处理"（图13）', () => {
   useDeliveryActivityStore.getState().record(
     {
-      ...activity('saving-artifacts'),
+      ...activity('reconciling-artifacts'),
       status: 'succeeded',
       endedAt: 1000,
-      observedPhases: [{ phase: 'generating-presentation', observedAt: 100, sequence: 1 }],
+      observedPhases: [{ phase: 'reconciling-artifacts', observedAt: 100, sequence: 1 }],
     },
     0,
   );
   render();
-  expect(container.querySelector('summary')?.textContent).toContain(
+  expect(container.querySelector('[data-testid="artifact-delivery-history"]')).toBeNull();
+});
+
+it('失败终态即使只有收尾阶段也可见（不许把失败藏起来）', () => {
+  useDeliveryActivityStore.getState().record(
+    {
+      ...activity('reconciling-artifacts'),
+      status: 'failed',
+      endedAt: 1000,
+      observedPhases: [{ phase: 'reconciling-artifacts', observedAt: 100, sequence: 1 }],
+    },
+    0,
+  );
+  render();
+  expect(container.querySelector('[data-testid="artifact-delivery-history"]')).not.toBeNull();
+});
+
+/**
+ * ⚠️ 区1 体检 P3-12（有意反转）：终态记录的摘要原来固定取 **`observedPhases[0]`** ——
+ * 失败记录显示的是"第一个阶段 · 失败"，真正的失败点得展开才看得到。
+ * 现在取**最后**观测到的阶段（成功 = 最后做到哪一步；失败 = 失败发生在哪一步）。
+ * ⚠️ 仍然只认 `observedPhases`（实际观测过的事实），不看可能过期的 `phase` 字段。
+ */
+it('terminal summary uses the last actually observed phase (failure point), not the first', () => {
+  useDeliveryActivityStore.getState().record(
+    {
+      ...activity('saving-artifacts'),
+      status: 'failed',
+      endedAt: 1000,
+      observedPhases: [
+        { phase: 'generating-presentation', observedAt: 100, sequence: 1 },
+        { phase: 'saving-artifacts', observedAt: 200, sequence: 2 },
+      ],
+    },
+    0,
+  );
+  render();
+  const summary = container.querySelector('summary')?.textContent ?? '';
+  expect(summary).toContain('chatInput.deliveryHistory.phaseTypes.saving-artifacts');
+  expect(summary, '失败点才是要摊在摘要上的那一步').not.toContain(
     'chatInput.deliveryHistory.phaseTypes.generating-presentation',
   );
-  expect(container.querySelector('summary')?.textContent).not.toContain('chatInput.deliveryActivity.saving-artifacts');
+});
+
+it('⭐ 失败记录给一个真实的跳转入口（回到那条消息），成功记录不给', () => {
+  const jump = vi.fn();
+  const original = useMessageStore.getState().setHighlightedMessage;
+  useMessageStore.setState({ setHighlightedMessage: jump });
+  useDeliveryActivityStore.getState().record({ ...activity(), status: 'failed', endedAt: 1000 }, 0);
+  useDeliveryActivityStore
+    .getState()
+    .record({ ...activity(), operationId: 'operation-ok', status: 'succeeded', endedAt: 2000 }, 0);
+  render();
+
+  const buttons = [...container.querySelectorAll('[data-testid="artifact-delivery-jump"]')];
+  expect(buttons, '只给失败记录入口').toHaveLength(1);
+  act(() => (buttons[0] as HTMLButtonElement).click());
+  expect(jump).toHaveBeenCalledWith('message');
+
+  useMessageStore.setState({ setHighlightedMessage: original });
 });
 
 it('shows a truncation notice rather than claiming a full history', () => {
@@ -155,6 +212,7 @@ it('all supported locales have the same nonempty minimal history labels', () => 
       'canceled',
       'details',
       'failed',
+      'jumpToMessage',
       'needs-review',
       'phaseTypes',
       'recent',

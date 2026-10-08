@@ -24,15 +24,24 @@
 
 import type { DocgenFailure } from '@clawwork/shared';
 import { findPptxTemplate, PPTX_TEMPLATE_SET_ID, type PptxTemplateSpec } from './catalog.js';
+import {
+  CONTROLLED_LAYOUTS,
+  CONTROLLED_TEMPLATE_ID,
+  controlledCapacityFailure,
+  parseNativeChart,
+  type NativeBarChart,
+} from './controlled.js';
 
 /** 一页：用哪个模板 + 每个占位符写什么（已归一化，**含全部占位符**，缺的补空串）。 */
 export interface TemplateSlideSpec {
   templateId: string;
   data: Readonly<Record<string, string>>;
+  chart?: NativeBarChart;
 }
 
 export interface TemplateDeckSpec {
   slides: readonly TemplateSlideSpec[];
+  controlledNative?: true;
 }
 
 export type ParseTemplateDeckResult = { ok: true; deck: TemplateDeckSpec } | { ok: false; failure: DocgenFailure };
@@ -79,6 +88,7 @@ function failureFor(
 function parseSlide(
   raw: unknown,
   page: number,
+  controlledNative = false,
 ): { ok: true; slide: TemplateSlideSpec } | { ok: false; failure: DocgenFailure } {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, failure: { code: 'request-invalid' } };
@@ -86,7 +96,7 @@ function parseSlide(
   const record = raw as Record<string, unknown>;
   const templateId = typeof record.templateId === 'string' ? record.templateId : '';
   const spec = findPptxTemplate(templateId);
-  if (!spec) {
+  if (!spec || (controlledNative && !CONTROLLED_LAYOUTS.includes(templateId))) {
     return { ok: false, failure: { code: 'template-page-unknown', format: 'pptx', page, templateId } };
   }
 
@@ -126,7 +136,19 @@ function parseSlide(
     normalized[name] = value;
   }
 
-  return { ok: true, slide: { templateId: spec.id, data: normalized } };
+  if (controlledNative) {
+    if (Object.keys(record).some((key) => !['templateId', 'data', 'chart'].includes(key)))
+      return { ok: false, failure: { code: 'request-invalid' } };
+    const failure = controlledCapacityFailure(spec.id, normalized, page, record.chart !== undefined);
+    if (failure) return { ok: false, failure };
+  }
+  let chart: NativeBarChart | undefined;
+  if (controlledNative && record.chart !== undefined) {
+    const parsedChart = controlledNative && spec.id === 'metrics' ? parseNativeChart(record.chart) : null;
+    if (!parsedChart) return { ok: false, failure: failureFor(spec, page, 'chart', 'unknown') };
+    chart = parsedChart;
+  }
+  return { ok: true, slide: { templateId: spec.id, data: normalized, ...(chart ? { chart } : {}) } };
 }
 
 /**
@@ -136,27 +158,31 @@ function parseSlide(
  *    是实现细节（这一版只有一套）；模型只需要挑**每一页的版式**。
  *    真给了又不认识 ⇒ 明说 `request-invalid`，不假装没看见。
  */
-export function parseTemplateDeck(input: unknown): ParseTemplateDeckResult {
+export function parseTemplateDeck(
+  input: unknown,
+  options: { controlledNative?: boolean } = {},
+): ParseTemplateDeckResult {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, failure: { code: 'request-invalid' } };
   }
   const record = input as Record<string, unknown>;
 
-  if (record.template !== undefined && record.template !== PPTX_TEMPLATE_SET_ID) {
+  const controlledNative = options.controlledNative === true && record.template === CONTROLLED_TEMPLATE_ID;
+  if (record.template !== undefined && record.template !== PPTX_TEMPLATE_SET_ID && !controlledNative) {
     return { ok: false, failure: { code: 'request-invalid' } };
   }
 
   const rawSlides = record.slides;
-  if (!Array.isArray(rawSlides) || rawSlides.length === 0) {
+  if (!Array.isArray(rawSlides) || rawSlides.length === 0 || (controlledNative && rawSlides.length > 60)) {
     return { ok: false, failure: { code: 'request-invalid' } };
   }
 
   const slides: TemplateSlideSpec[] = [];
   for (let i = 0; i < rawSlides.length; i++) {
-    const parsed = parseSlide(rawSlides[i], i + 1);
+    const parsed = parseSlide(rawSlides[i], i + 1, controlledNative);
     if (!parsed.ok) return { ok: false, failure: parsed.failure };
     slides.push(parsed.slide);
   }
 
-  return { ok: true, deck: { slides } };
+  return { ok: true, deck: { slides, ...(controlledNative ? { controlledNative: true as const } : {}) } };
 }

@@ -137,6 +137,18 @@ export async function renderSlideSourceFile(
       schemaVersion: 1,
       status: 'file-generated',
       sourceSha256,
+      /**
+       * ⭐ **东西写在哪**（B 包，2026-10-07）：成品与收据所在目录的**真实路径**。
+       *
+       * 为什么必须报告它：落点 = 跑这条命令时的 cwd（`process.cwd()`），**主进程对此
+       * 零控制、也不知墙**。模型把 cwd 设成应用工作区根层（或任何别的目录）时，
+       * 主进程只按助手工作区找收据 ⇒ 读不到 ⇒ 那份真产出被判成"未确认"。
+       * 收据就写在同一目录里、且绑定了该目录的身份（dev/ino），所以这一句是
+       * "把收据找回来、再把成品登记进任务目录"的唯一线索。
+       * ⚠️ 必须是 `root` 的 realpath（`root = fs.realpathSync(workspace)`），与收据里的
+       *    `workspaceIdentity` 同一口径 —— 写别的形状，另一头拿去读会直接读不到。
+       */
+      outputDir: root,
       fileName,
       pages: result.pages,
       bytes: result.bytes,

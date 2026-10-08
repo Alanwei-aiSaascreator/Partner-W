@@ -86,6 +86,8 @@ const taskStoreApi = createTaskStore({
     // ⚠️ 没加载 ⇒ **`undefined`**，不是"空目录"：这两者 core 必须分得开（见 `TaskStoreDeps`）。
     return entry ? { agents: entry.agents, defaultId: entry.defaultId } : undefined;
   },
+  // 任务删除 ⇒ 顺手清掉它的消息（区 3 问题 10；与 desktop 宿主同一接线）。
+  clearTaskMessages: (taskId) => messageStoreApi.getState().clearMessages(taskId),
   onTaskCreated: () => uiStoreApi.getState().setMainView('chat'),
 });
 

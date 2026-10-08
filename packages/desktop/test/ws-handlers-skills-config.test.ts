@@ -17,11 +17,16 @@ const listSessionsBySpawnerMock = vi.fn();
 const sendChatMessageMock = vi.fn();
 const abortChatMock = vi.fn();
 const beginArtifactRunForGatewayDispatchMock = vi.fn();
+const isArtifactRunPendingCurrentMock = vi.fn();
 const bindArtifactRunMock = vi.fn();
 const cancelArtifactRunMock = vi.fn();
 const cancelArtifactRunsForSessionMock = vi.fn();
 const createAgentMock = vi.fn();
 const workflowRuntime = vi.hoisted(() => ({ owned: true, supplied: true }));
+const nativeBudgetGuardMock = vi.fn();
+vi.mock('../src/main/docgen/native-dispatch-guard.js', () => ({
+  requireNativeTestBudget: nativeBudgetGuardMock,
+}));
 vi.mock('../src/main/runtime/index.js', () => ({
   captureOwnedLocalGatewayRuntime: () =>
     workflowRuntime.owned ? { deployedRoot: 'owned-runtime', current: () => workflowRuntime.owned } : null,
@@ -76,6 +81,7 @@ vi.mock('../src/main/debug/index.js', () => ({
 
 vi.mock('../src/main/ipc/data-handlers.js', () => ({
   beginArtifactRunForGatewayDispatch: beginArtifactRunForGatewayDispatchMock,
+  isArtifactRunPendingCurrent: isArtifactRunPendingCurrentMock,
   bindArtifactRun: bindArtifactRunMock,
   cancelArtifactRun: cancelArtifactRunMock,
   cancelArtifactRunsForSession: cancelArtifactRunsForSessionMock,
@@ -98,6 +104,19 @@ async function invoke(channel: string, payload: unknown): Promise<unknown> {
   const handler = handleMap.get(channel);
   if (!handler) throw new Error(`no handler registered for ${channel}`);
   return handler({}, payload);
+}
+
+function simulatePendingRuns(): void {
+  let current: string | null = null;
+  let sequence = 0;
+  beginArtifactRunForGatewayDispatchMock.mockImplementation(() => (current = `pending-run-${++sequence}`));
+  isArtifactRunPendingCurrentMock.mockImplementation((_taskId, _sessionKey, token) => current === token);
+  cancelArtifactRunMock.mockImplementation((_taskId, _sessionKey, token) => {
+    if (current === token) current = null;
+  });
+  cancelArtifactRunsForSessionMock.mockImplementation(() => {
+    current = null;
+  });
 }
 
 /**
@@ -161,12 +180,15 @@ describe('ws-handlers: skills + config IPC channels', () => {
     },
   );
   beforeEach(async () => {
+    vi.unstubAllEnvs();
     handleMap.clear();
     vi.clearAllMocks();
     getChatHistoryMock.mockReset();
     sendChatMessageMock.mockReset().mockResolvedValue(undefined);
     abortChatMock.mockReset().mockResolvedValue(undefined);
     beginArtifactRunForGatewayDispatchMock.mockReset().mockReturnValue('artifact-run-1');
+    isArtifactRunPendingCurrentMock.mockReset().mockReturnValue(true);
+    nativeBudgetGuardMock.mockReset().mockResolvedValue({ guardVersion: 'ppt-budget-v1' });
     bindArtifactRunMock.mockReset();
     cancelArtifactRunMock.mockReset();
     cancelArtifactRunsForSessionMock.mockReset();
@@ -286,6 +308,93 @@ describe('ws-handlers: skills + config IPC channels', () => {
 
     expect(result).toEqual({ ok: true });
     expect(sendChatMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['native-task-state-unavailable', 'SQLITE_BUSY'])(
+    'does not dispatch a controlled paid request when managed state cannot start: %s',
+    async (message) => {
+      vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+      try {
+        beginArtifactRunForGatewayDispatchMock.mockImplementationOnce(() => {
+          throw new Error(message);
+        });
+        const result = await invoke('ws:send-message', {
+          gatewayId: 'gw-1',
+          sessionKey: 'agent:main:clawwork:task-1',
+          content: '做一份PPT',
+        });
+        expect(result).toEqual(expect.objectContaining({ ok: false, errorCode: 'NATIVE_TASK_STATE_UNAVAILABLE' }));
+        expect(sendChatMessageMock).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it('does not dispatch after a user stops while the controlled budget guard is pending', async () => {
+    vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+    simulatePendingRuns();
+    let release!: () => void;
+    nativeBudgetGuardMock.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
+    const pending = invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: '做一份PPT',
+    });
+    await vi.waitFor(() => expect(nativeBudgetGuardMock).toHaveBeenCalledOnce());
+    await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task-1' });
+    release();
+    expect(await pending).toEqual(expect.objectContaining({ ok: false, errorCode: 'NATIVE_TASK_CANCELED' }));
+    expect(sendChatMessageMock).not.toHaveBeenCalled();
+    expect(bindArtifactRunMock).not.toHaveBeenCalled();
+  });
+
+  it('does not revive an older controlled dispatch after a newer dispatch passes its budget guard', async () => {
+    vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+    simulatePendingRuns();
+    let release!: () => void;
+    nativeBudgetGuardMock.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
+    const older = invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: '旧PPT请求',
+    });
+    await vi.waitFor(() => expect(nativeBudgetGuardMock).toHaveBeenCalledOnce());
+    const newer = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: '新PPT请求',
+    });
+    expect(newer).toEqual(expect.objectContaining({ ok: true }));
+    release();
+    expect(await older).toEqual(expect.objectContaining({ ok: false, errorCode: 'NATIVE_TASK_CANCELED' }));
+    expect(sendChatMessageMock).toHaveBeenCalledExactlyOnceWith('agent:main:clawwork:task-1', '新PPT请求', undefined);
+  });
+
+  it('rejects a controlled dispatch with no managed token before checking budget or sending', async () => {
+    vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+    beginArtifactRunForGatewayDispatchMock.mockReturnValueOnce(null);
+    const result = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: '做一份PPT',
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: false, errorCode: 'NATIVE_TASK_STATE_UNAVAILABLE' }));
+    expect(nativeBudgetGuardMock).not.toHaveBeenCalled();
+    expect(sendChatMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels the pending controlled token when budget verification fails', async () => {
+    vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+    nativeBudgetGuardMock.mockRejectedValueOnce(Error('budget-unavailable'));
+    const result = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: '做一份PPT',
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: false, errorCode: 'NATIVE_TEST_GUARD_UNAVAILABLE' }));
+    expect(cancelArtifactRunMock).toHaveBeenCalledWith('task-1', 'agent:main:clawwork:task-1', 'artifact-run-1');
+    expect(sendChatMessageMock).not.toHaveBeenCalled();
   });
 
   it.each(['ws:abort-chat', 'ws:session-reset', 'ws:session-delete'])(

@@ -2,7 +2,13 @@ import { link, mkdtemp, mkdir, readFile, readdir, rename, symlink, writeFile } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { __testing, copyArtifactToDestination, inspectArtifactFile, rootDirFor } from '../src/main/artifact/access.js';
+import {
+  __testing,
+  copyArtifactToDestination,
+  inspectArtifactFile,
+  readVerifiedArtifactFile,
+  rootDirFor,
+} from '../src/main/artifact/access.js';
 
 const roots: string[] = [];
 
@@ -96,6 +102,36 @@ describe('artifact file access', () => {
     await symlink(join(root, 'task-1', 'real.txt'), join(root, 'task-1', 'alias.txt'));
 
     await expect(inspectArtifactFile(root, 'task-1/alias.txt')).resolves.toEqual({ availability: 'unsafe' });
+  });
+
+  /**
+   * ⭐ 2026-10-06（真机 S: 盘回归）：工作区**本身**是目录链接时（U 盘 `subst` / junction
+   *    —— 本产品分发形态的标准形态），打开路径不许把全部产物判 `unsafe`。
+   *
+   * 修复点在 `reconcile.ts:getArtifactAvailability`（去掉"字面路径 vs canonical 必须同名"
+   * 那条）；这条用例钉的是**另一条腿**：`access.ts` 的打开/读取路径。它天生安全是因为
+   * **先把工作区 realpath 了再拼路径**（`candidate` 从 canonical 根长出），这里把这条
+   * 不变式用真 junction 固定下来 —— 谁哪天把 `realpath(workspacePath)` 改成字面路径，
+   * 这条立刻红。
+   */
+  it('⭐ 工作区是目录链接（subst/junction 同构）→ 检查与读取仍判 available', async () => {
+    const root = await workspace();
+    await writeFile(join(root, 'task-1', 'report.txt'), 'trusted');
+
+    const linkedParent = await mkdtemp(join(tmpdir(), 'mofang-artifact-access-link-'));
+    roots.push(linkedParent);
+    const linkedRoot = join(linkedParent, 'workspace');
+    try {
+      await symlink(root, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') return; // 受限环境建不出链接：缺省放行
+      throw error;
+    }
+
+    await expect(inspectArtifactFile(linkedRoot, 'task-1/report.txt')).resolves.toMatchObject({
+      availability: 'available',
+    });
+    await expect(readVerifiedArtifactFile(linkedRoot, 'task-1/report.txt')).resolves.toEqual(Buffer.from('trusted'));
   });
 
   it('copies an available artifact without changing the source', async () => {
@@ -268,6 +304,10 @@ describe('第二个受信根（助手工作区）', () => {
     const both = { workspacePath: '/ws', agentWorkspacePath: '/agent' };
     expect(rootDirFor(both, undefined)).toBe('/ws');
     expect(rootDirFor(both, 'workspace')).toBe('/ws');
+    // 第三个根（应用工作区**根层**，2026-10-07）：`local_path` 是裸文件名，
+    // 解析根就是应用工作区本身 —— 消费侧**零改动**（不是"未知值回落"那条，
+    // 是它的语义就是应用工作区）。
+    expect(rootDirFor(both, 'workspace-root')).toBe('/ws');
   });
 
   it('rootDirFor：agent 根读得到就用它', () => {

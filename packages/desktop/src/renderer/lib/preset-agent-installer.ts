@@ -34,10 +34,24 @@ export interface PresetAgentInstallProgress {
 export interface PresetAgentInstallResult {
   installed: string[];
   skipped: string[];
-  /** 本地目录陈旧，创建冲突后通过网关实时目录安全对账复用的项。 */
-  reconciled?: string[];
+  /**
+   * 本地目录陈旧，创建冲突后通过网关实时目录安全对账复用的项。
+   *
+   * ⚠️ 带 `agentId`（网关里的**真实** id）：对账可能匹配到一个与定义 id 只差
+   *    大小写/规格化的既有助手，调用方（市场「在罗盘助手中使用」）要拿它去切助手，
+   *    拿定义 id 会在目录里找不到人（2026-10-07 质检 P3-4）。
+   */
+  reconciled?: Array<{ id: string; agentId: string }>;
   failed: Array<{ id: string; error: string }>;
 }
+
+/**
+ * 「网关里那个同 id 助手不是这个模板的东西」——市场链用它把错误翻成人话。
+ *
+ * ⚠️ 市场模板（`rongying-tpl-*`）**不许**"id 存在即跳过"：跳过前必须读回
+ *    IDENTITY.md 比对正文，对不上就**不复用**（2026-10-07 质检 P2-1）。
+ */
+export const TEMPLATE_AGENT_IDENTITY_MISMATCH = 'template-agent-identity-mismatch';
 
 interface InstallPresetAgentPackParams {
   gatewayId: string;
@@ -45,7 +59,10 @@ interface InstallPresetAgentPackParams {
   currentAgentIds: string[];
   /** 已存在但目录名称仍是稳定 ID 的半成品；只修名称，不覆盖非空用户文件。 */
   repairAgentIds?: string[];
-  /** 启动内置助手时校验关键文件；市场模板沿用“ID 存在即跳过”的既有语义。 */
+  /**
+   * 启动内置助手时校验关键文件。
+   * ⚠️ 市场模板**不走**这条开关，它一律读回 IDENTITY.md 比对正文（见 `isTemplateAgentId`）。
+   */
   verifyExisting?: boolean;
   /** U 盘预置助手保留半成品供下一轮修复，避免 exFAT 删除 tombstone。 */
   preservePartialOnFailure?: boolean;
@@ -165,6 +182,24 @@ function isBuiltInPresetId(id: string): boolean {
   return PRESET_AGENT_DEFINITIONS.some((preset) => preset.id === id);
 }
 
+/**
+ * 是不是**市场模板装出来的助手**（`rongying-tpl-<哈希>`，见 core `templateSlug`）。
+ *
+ * ⚠️ 它们与内置预置的**跳过语义不同**：内置的"文件都在 ⇒ 跳过"是安全的
+ *    （版本标记那套只管它们），而模板的 id 是模板 id 的哈希 ⇒ **跳过前必须校验
+ *    正文属于本模板**，否则撞 id/手改过的助手会被静默复用（2026-10-07 质检 P2-1）。
+ */
+const TEMPLATE_AGENT_ID_PREFIX = 'rongying-tpl-';
+
+function isTemplateAgentId(id: string): boolean {
+  return id.startsWith(TEMPLATE_AGENT_ID_PREFIX);
+}
+
+/** 比对正文时统一换行与首尾空白（网关落盘/读回可能带尾换行，与内容无关）。 */
+function normalizeIdentityText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
 async function rollbackNewAgent(
   api: PresetAgentInstallerApi,
   gatewayId: string,
@@ -192,7 +227,7 @@ export async function installPresetAgentPack({
 }: InstallPresetAgentPackParams): Promise<PresetAgentInstallResult> {
   const installed: string[] = [];
   const skipped: string[] = [];
-  const reconciled: string[] = [];
+  const reconciled: Array<{ id: string; agentId: string }> = [];
   const failed: Array<{ id: string; error: string }> = [];
   const knownAgentIds = new Set(currentAgentIds);
   const repairAgentIdSet = new Set(repairAgentIds);
@@ -226,7 +261,7 @@ export async function installPresetAgentPack({
           alreadyExists = true;
           createdAgentId = reconciledId;
           knownAgentIds.add(definition.id);
-          reconciled.push(definition.id);
+          reconciled.push({ id: definition.id, agentId: reconciledId });
         } else {
           createdAgentId = readCreatedAgentId(createResult.result);
           createdNewAgent = Boolean(createdAgentId);
@@ -242,7 +277,11 @@ export async function installPresetAgentPack({
       }
 
       if (alreadyExists) {
-        if (!verifyExisting && !repairAgentIdSet.has(definition.id)) {
+        // ⚠️ 市场模板不享受"id 存在即跳过"：跳过前必须读回 IDENTITY.md 比对正文
+        //    （见 `isTemplateAgentId` 的说明）—— 对不上就**报错不复用**，
+        //    不能把别人的内容当成这个模板装好的结果（2026-10-07 质检 P2-1）。
+        const templateAgent = isTemplateAgentId(definition.id);
+        if (!verifyExisting && !repairAgentIdSet.has(definition.id) && !templateAgent) {
           skipped.push(definition.id);
           completed++;
           onProgress?.({ completed, total: definitions.length, currentId: definition.id });
@@ -250,6 +289,13 @@ export async function installPresetAgentPack({
         }
         createdAgentId ||= definition.id;
         identityFile = await readAgentFile(api, gatewayId, createdAgentId, 'IDENTITY.md');
+        if (
+          templateAgent &&
+          identityFile.exists &&
+          normalizeIdentityText(identityFile.content) !== normalizeIdentityText(definition.identityMd)
+        ) {
+          throw new Error(`${TEMPLATE_AGENT_IDENTITY_MISMATCH}: ${definition.id}`);
+        }
         soulFile = await readAgentFile(api, gatewayId, createdAgentId, 'SOUL.md');
         // ⭐ **升级路**：文件都在、也**没有**"我们盖的旧版本标记"要处理时，才算跳过。
         //    ⚠️ 少了这两个 `needsPromptUpgrade` 条件，**老盘永远升不上来** ——

@@ -25,33 +25,8 @@ const readyAssistants: PresetAgentBootstrapSnapshot = {
 
 const relayModel = { id: 'deepseek-v4-flash', provider: 'clawrouter' } as ModelCatalogEntry;
 
-describe('media readiness locale contract', () => {
-  it.each(['en', 'zh', 'zh-TW', 'de', 'es', 'fr', 'ja', 'ko', 'pt'])(
-    'provides relay-specific copy and the chat/video distinction in %s',
-    (locale) => {
-      const content = JSON.parse(
-        readFileSync(new URL(`../src/renderer/i18n/locales/${locale}.json`, import.meta.url), 'utf8'),
-      ) as {
-        mediaReadiness: Record<string, string>;
-      };
-      expect(Object.keys(content.mediaReadiness).sort()).toEqual([
-        'chatModelNote',
-        'image',
-        'probe-failed',
-        'ready',
-        'relayLabel',
-        'unavailable',
-        'unknown',
-        'video',
-      ]);
-      expect(
-        new Set(['ready', 'unavailable', 'unknown', 'probe-failed'].map((state) => content.mediaReadiness[state])).size,
-      ).toBe(4);
-      expect(content.mediaReadiness.chatModelNote).toContain('Seed');
-      expect(Object.values(content.mediaReadiness).every((value) => value.trim().length > 0)).toBe(true);
-    },
-  );
-});
+// mediaReadiness.* 文案块已按 BUG-023（2026-10-06）从 9 语言整块移除（媒体就绪横幅已删）。
+// 原「media readiness locale contract」断言块同步删除——键若复活，i18n 门禁的 unused 检查会拦。
 
 describe('deriveStartupReadiness', () => {
   it.each(['ready', 'unavailable', 'unknown', 'probe-failed'] as const)(
@@ -717,7 +692,16 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
       }
     ).startupReadiness;
   const strip = (fullKey: string | null): string => (fullKey ?? '').replace('startupReadiness.', '');
-  const withReason = (reason: 'port-occupied' | 'auth-rejected' | 'process-exited' | 'ready-timeout' | 'unknown') =>
+  const withReason = (
+    reason:
+      | 'port-occupied'
+      | 'auth-rejected'
+      | 'process-exited'
+      | 'ready-timeout'
+      | 'state-migration-blocked'
+      | 'deploy-failed'
+      | 'unknown',
+  ) =>
     deriveStartupReadiness({
       gatewayId: 'gw-1',
       gatewayStatus: 'disconnected',
@@ -740,6 +724,10 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
     expect(gatewayFailureText(withReason('ready-timeout'), key)).toBe('startupReadiness.gatewayReadyTimeout');
   });
 
+  it('⭐ 从盘上准备运行环境失败 ⇒ 说得出"是盘的问题"（四类盘的下一步）', () => {
+    expect(gatewayFailureText(withReason('deploy-failed'), key)).toBe('startupReadiness.gatewayDeployFailed');
+  });
+
   it('⭐ `unknown` **不冒充**具体原因：交给通用那句', () => {
     expect(gatewayFailureText(withReason('unknown'), key)).toBeNull();
   });
@@ -755,15 +743,15 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
     expect(gatewayFailureText(clean, key)).toBeNull();
   });
 
-  it('⭐⭐ 四句中文**两两不同**（抄错一句就会两处一模一样）', () => {
+  it('⭐⭐ 五句中文**两两不同**（抄错一句就会两处一模一样）', () => {
     // 用**真文案**而不是 key：key 天然互不相同，那样这条就白测了。
     const zh = readZh();
     // ⚠️ 返回的是**带前缀**的 key，查表前要去掉前缀（第一版就是栽在这里）。
-    const texts = (['port-occupied', 'auth-rejected', 'process-exited', 'ready-timeout'] as const).map(
+    const texts = (['port-occupied', 'auth-rejected', 'process-exited', 'ready-timeout', 'deploy-failed'] as const).map(
       (reason) => zh[strip(gatewayFailureText(withReason(reason), key))],
     );
     expect(texts.every((text) => typeof text === 'string' && text.length > 0)).toBe(true);
-    expect(new Set(texts).size, '四句话必须互不相同').toBe(4);
+    expect(new Set(texts).size, '五句话必须互不相同').toBe(5);
   });
 
   it('⭐⭐ 被拒那句**不许带凭据类字样**（它要过 IPC、上界面、进截图）', () => {

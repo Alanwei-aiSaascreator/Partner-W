@@ -368,7 +368,11 @@ export async function* installTeam(
 async function* rollback(agentIds: string[], deps: InstallerDeps): AsyncGenerator<InstallEvent> {
   for (const agentId of agentIds) {
     try {
-      const result = await deps.deleteAgent({ agentId });
+      // ⚠️ `deleteFiles: true`：只删**这次安装刚建出来**的助手（清单里已有的不在 agentIds 里），
+      //    连它的工作区文件一起收走 —— 否则失败的安装会在工作区里留下一堆"有身份文件、
+      //    却没有注册"的半成品目录。另两条创建路径（预置助手、AI 建单个助手）一直是这么收尾的，
+      //    这条是漏网的（2026-10-05「AI 创建」排查）。
+      const result = await deps.deleteAgent({ agentId, deleteFiles: true });
       if (!result.ok) {
         yield { type: 'warning', agentId, message: `Rollback: failed to delete agent ${agentId}: ${result.error}` };
       }

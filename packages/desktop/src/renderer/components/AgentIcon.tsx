@@ -1,5 +1,20 @@
 import { useEffect, useState } from 'react';
-import { Bot } from 'lucide-react';
+import {
+  Bot,
+  Compass,
+  PenLine,
+  Clapperboard,
+  ClipboardList,
+  ShoppingBag,
+  Search,
+  House,
+  Network,
+  Lightbulb,
+  ShieldCheck,
+  NotebookPen,
+  UserRound,
+} from 'lucide-react';
+import type { TeamPosition } from '@clawwork/shared';
 import { useLocalAvatarUrl } from '@/lib/local-avatar';
 
 interface AgentIconProps {
@@ -7,6 +22,8 @@ interface AgentIconProps {
   agentId: string;
   gatewayAvatarUrl?: string;
   emoji?: string;
+  role?: string;
+  position?: TeamPosition;
   imgClass?: string;
   emojiClass?: string;
   iconSize?: number;
@@ -18,6 +35,8 @@ export default function AgentIcon({
   agentId,
   gatewayAvatarUrl,
   emoji,
+  role,
+  position,
   imgClass = 'w-4 h-4 rounded-full object-cover',
   emojiClass = 'emoji-sm',
   iconSize = 14,
@@ -38,5 +57,19 @@ export default function AgentIcon({
     return <img src={resolved} alt="" className={imgClass} onError={() => setFailCount((c) => c + 1)} />;
   }
   if (emoji) return <span className={emojiClass}>{emoji}</span>;
-  return <Bot size={iconSize} className={iconClass} />;
+  const presetIcons = {
+    main: Compass,
+    'rongying-content': PenLine,
+    'rongying-video': Clapperboard,
+    'rongying-office': ClipboardList,
+    'rongying-ecommerce': ShoppingBag,
+    'rongying-research': Search,
+    'rongying-family': House,
+  };
+  const positionIcons = { moderator: Network, expert: Lightbulb, challenger: ShieldCheck, scribe: NotebookPen };
+  const Icon =
+    (position && Object.hasOwn(positionIcons, position) && positionIcons[position]) ||
+    (Object.hasOwn(presetIcons, agentId) ? presetIcons[agentId as keyof typeof presetIcons] : undefined) ||
+    (role === 'coordinator' ? Network : role === 'worker' ? UserRound : Bot);
+  return <Icon size={iconSize} className={iconClass} />;
 }

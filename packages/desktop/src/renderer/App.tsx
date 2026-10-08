@@ -32,8 +32,10 @@ import { useStartupReadiness } from './hooks/useStartupReadiness';
 import { useDocgenFailureToast } from './hooks/useDocgenFailureToast';
 import { useHtmlgenFailureToast } from './hooks/useHtmlgenFailureToast';
 import { useSlidegenToast } from './hooks/useSlidegenToast';
+import { useArtifactPanelReveal } from './hooks/useArtifactPanelReveal';
 import { useClaimGuardToast } from './hooks/useClaimGuardToast';
 import { useDeliveryActivitySubscription } from './hooks/useDeliveryActivitySubscription';
+import { useAutoRetryFailedTurn } from './hooks/useAutoRetryFailedTurn';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LEFT_NAV_RAIL_WIDTH, motionDuration, motionEase } from '@/styles/design-tokens';
@@ -122,6 +124,9 @@ export default function App() {
   const createTask = useTaskStore((s) => s.createTask);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
   const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
+  const onboardingGeneration = authGeneration.current;
+  const currentOnboardingOwner = useRef({ authState, userId: onboardingAccount?.userId });
+  currentOnboardingOwner.current = { authState, userId: onboardingAccount?.userId };
 
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
   const toggleLeftNavCollapsed = useUiStore((s) => s.toggleLeftNavCollapsed);
@@ -188,8 +193,13 @@ export default function App() {
   useDocgenFailureToast();
   useHtmlgenFailureToast();
   useSlidegenToast();
+  // 产物一落盘就把右侧「产物」面板展开 —— 用户反馈 #2：以前要手动点「切换上下文面板」才看得到。
+  useArtifactPanelReveal();
   useClaimGuardToast();
   useDeliveryActivitySubscription();
+  // 「整轮失败自动重发 1 次」（包 D）：空转型失败（零最终交付）自动重发一次，先明示再发。
+  // 挂 App 不挂 MainArea：打开设置会卸载 MainArea —— 那期间被漏掉的失败就再也不会重发了。
+  useAutoRetryFailedTurn();
   useTraySync();
   useSettingsBootstrap(ready);
   useModuleOpenTracking();
@@ -431,11 +441,24 @@ export default function App() {
     setPreparationRetry((value) => value + 1);
     await startupReadiness.retry();
   };
-  const handleOnboardingComplete = useCallback((profile: OnboardingProfile) => {
-    saveOnboardingProfile(profile);
-    setOnboardingProfile(profile);
-    setEditingOnboardingProfile(false);
-  }, []);
+  const handleOnboardingComplete = useCallback(
+    (profile: OnboardingProfile) => {
+      if (
+        authState !== 'ok' ||
+        currentOnboardingOwner.current.authState !== 'ok' ||
+        !onboardingAccount ||
+        currentOnboardingOwner.current.userId !== onboardingAccount.userId ||
+        profile.userId !== onboardingAccount.userId ||
+        onboardingGeneration !== authGeneration.current ||
+        useTaskStore.getState().workspaceEpoch !== workspaceEpoch
+      )
+        return;
+      saveOnboardingProfile(profile);
+      setOnboardingProfile(profile);
+      setEditingOnboardingProfile(false);
+    },
+    [authState, onboardingAccount, onboardingGeneration, workspaceEpoch],
+  );
 
   useEffect(() => {
     window.clawwork.setWindowButtonVisibility(!leftNavCollapsed);
@@ -516,6 +539,7 @@ export default function App() {
     return (
       <TooltipProvider>
         <Onboarding
+          key={JSON.stringify([onboardingAccount.userId, onboardingGeneration, workspaceEpoch])}
           userId={onboardingAccount.userId}
           defaultNickname={onboardingAccount.nickname}
           onComplete={handleOnboardingComplete}
@@ -529,6 +553,7 @@ export default function App() {
     return (
       <TooltipProvider>
         <Onboarding
+          key={JSON.stringify([onboardingAccount.userId, onboardingGeneration, workspaceEpoch])}
           userId={onboardingAccount.userId}
           defaultNickname={onboardingAccount.nickname}
           mode="edit"
@@ -610,6 +635,8 @@ export default function App() {
               onboardingProfile={onboardingProfile}
               startupReadiness={startupReadiness}
               onRetryStartup={startupReadiness.retry}
+              // 个性化中心「编辑我的资料」入口（B 的 IdentityCenter 按需渲染；MainArea 透传）
+              onEditOnboardingProfile={() => setEditingOnboardingProfile(true)}
             />
           )}
         </main>

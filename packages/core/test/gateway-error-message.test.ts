@@ -126,3 +126,53 @@ describe('运行整体失败的出口（截断的工具调用）', () => {
     expect(translateGatewayError('some brand-new gateway failure mode')).toBeNull();
   });
 });
+
+/**
+ * 请求超时（10-01 用户实测反馈 #1；调查报告 `D:\backup\issue1-investigation-20261006.md`）。
+ *
+ * 现场原文：`TimeoutError: request timed out` —— 由随包运行时在 fetch 超时时自造
+ * （`openclaw/dist/fetch-timeout-*.mjs`：`new Error("request timed out")`、`error.name="TimeoutError"`）。
+ * 此前桌面端**没有超时翻译器** → 英文原文直接上屏（用户可见的"推流失败"提示里带英文）。
+ */
+describe('请求超时（运行时 fetch 超时）', () => {
+  it('⭐ `TimeoutError: request timed out` ⇒ 中文人话（不出现英文原文）', () => {
+    const raw = 'TimeoutError: request timed out';
+    const text = translateGatewayError(raw);
+
+    expect(text).toBeTruthy();
+    expect(text).toContain('超时');
+    expect(text).toContain('重试');
+    expect(text).not.toContain('TimeoutError');
+    expect(text).not.toContain('timed out');
+  });
+
+  it('无前缀的裸 "request timed out" 同样识别', () => {
+    const text = translateGatewayError('request timed out');
+    expect(text).toBeTruthy();
+    expect(text).toContain('超时');
+  });
+});
+
+/**
+ * 单帧超限被网关断连（close code 1009，2026-10-07 质量战役区 2 · P1-1）。
+ *
+ * 原文由我们自己的主进程造（`main/ws/gateway-client.ts` 的 `GATEWAY_MESSAGE_TOO_BIG_ERROR`，
+ * 在收到 1009 断连时用来拒绝在途发送请求）。没有这一层，用户看到的是通用"连接断开"，
+ * 完全看不出是"这次发的内容太大"，只会对着同一句话反复重试。
+ */
+describe('单帧超限断连（close code 1009）', () => {
+  it('⭐ 主进程的 1009 失败原文 ⇒ 说清"内容太大、没发出去、减附件重试"', () => {
+    const raw = 'message too large for gateway frame limit (close code 1009)';
+    const text = translateGatewayError(raw);
+
+    expect(text).toBeTruthy();
+    expect(text).toContain('太大');
+    expect(text).toContain('没有发出去');
+    expect(text).toContain('重试');
+    expect(text).not.toContain('1009');
+  });
+
+  it('普通断线的 "connection closed" 不吃这条（那还是通用失败）', () => {
+    expect(translateGatewayError('connection closed')).toBeNull();
+  });
+});

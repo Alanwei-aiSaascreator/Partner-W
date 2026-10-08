@@ -166,7 +166,25 @@ export function createDebugLogger(options: CreateDebugLoggerOptions): DebugLogge
   }
 
   function log(input: LogEventInput & { level: DebugLevel }, logOptions?: LogEventOptions): DebugEvent {
-    if (closing) throw new Error('Debug logger is closing or closed');
+    if (closing) {
+      // ⚠️ 2026-10-08 真机（用户点退出弹「A JavaScript error occurred in the main process」，
+      //    Uncaught Exception: Debug logger is closing or closed，栈落在网关子进程的
+      //    ChildProcess close 回调 → runtime.gateway.output 处理器）：
+      //    关闭之后仍有**在途回调**要写日志 —— teardown 已把网关进程杀掉，但它的
+      //    stdout/stderr 'data'/'close' 事件还躺在事件循环里，回调进来时 `closing` 已置位。
+      //    旧行为在这里 `throw` ⇒ 事件处理器里的同步异常冒到 Electron 主进程 ⇒ 退出时弹
+      //    模态错误框（恰在用户以为"用完了"的一刻，观感等于"崩了"）。
+      //    **日志器永远不该有能力弄崩应用** ⇒ 关闭后的写入**降级为丢弃**：
+      //      · 仍然进 `recentEvents`（排障现场不丢，调试导出照常可读）；
+      //      · **绝不重新开流**（原契约的关切保持不变：不复用/不复活未受管的 writer，
+      //        本分支不碰 writeStream / enqueue）。
+      const dropped: DebugEvent = sanitizeForLog({ ts: new Date().toISOString(), ...input });
+      recentEvents.push(dropped);
+      if (recentEvents.length > maxEvents) {
+        recentEvents.splice(0, recentEvents.length - maxEvents);
+      }
+      return dropped;
+    }
     const now = new Date();
     const event: DebugEvent = sanitizeForLog({
       ts: now.toISOString(),

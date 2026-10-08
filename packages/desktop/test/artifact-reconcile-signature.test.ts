@@ -35,10 +35,20 @@ describe('产物扫描的身份字符串', () => {
   const sourceKey = (stats: BigIntStats, relativePath = 'task-1/x.txt'): string =>
     __testing.sourceKeyFor(__testing.WORKSPACE_SOURCE_PREFIX, relativePath, stats);
 
-  it('⭐ 两个根的来源键前缀必须**不同** —— 否则后跑的那趟会改写先跑那趟的行', () => {
+  it('⭐ 三个根的来源键前缀必须**两两不同** —— 否则后跑的那趟会改写先跑那趟的行', () => {
     // `reconcileTaskArtifacts` 用"前缀是不是我的"判「这行归不归我改」。
     // 共用前缀 ⇒ 助手根那趟把应用根的行当成自己的 ⇒ 改写别人的行。
-    expect(__testing.AGENT_SOURCE_PREFIX).not.toBe(__testing.WORKSPACE_SOURCE_PREFIX);
+    // 第三个根（应用工作区根层，2026-10-07）同样：它收的是**裸文件名**，
+    // 与应用根的 `<taskId>/…` 混在一起时，前缀就是唯一的归属判据。
+    const prefixes = [
+      __testing.WORKSPACE_SOURCE_PREFIX,
+      __testing.AGENT_SOURCE_PREFIX,
+      __testing.WORKSPACE_ROOT_SOURCE_PREFIX,
+    ];
+    // ⚠️ 先钉"第三个前缀**存在**且是字符串"：`undefined` 与任何字符串都"不相等"，
+    //    只写 pairwise 不等的话，漏掉导出这条用例会**假绿**。
+    expect(typeof __testing.WORKSPACE_ROOT_SOURCE_PREFIX).toBe('string');
+    expect(new Set(prefixes).size, `前缀撞了：${prefixes.join(' / ')}`).toBe(3);
   });
 
   it('⭐ 两个 64 位 ino 不同、但转 Number 后相同 ⇒ 签名与来源键都必须不同', () => {

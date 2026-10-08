@@ -1,43 +1,25 @@
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronDown, Plus } from 'lucide-react';
-import type { AgentInfo } from '@clawwork/shared';
-import CubeFaceIcon from '@/components/CubeFaceIcon';
+import { Check, ChevronDown, ChevronRight, Plus, Sparkles, Users } from 'lucide-react';
+import type { AgentInfo, Team, TeamAgent } from '@clawwork/shared';
+import AgentIcon from '@/components/AgentIcon';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { groupAssistants } from '@/lib/assistant-grouping';
 import { resolveAgentDisplayNameKey } from '@/lib/preset-agents';
 import { cn } from '@/lib/utils';
 
-/**
- * 「我的助手」——**导航列表里的一行**，点开才选角色（2026-09-19）。
- *
- * ## 为什么改成这样
- *
- * 原来是**常驻展开的助手列表**（4 行 + 滚动），用户反馈两点：
- * 「把他放身份中心上面，点击后可以选择这几个角色」+「现在不好看」。
- * ⇒ 收成一行：平时只显示**当前助手**，点开才列角色。
- * 好处是侧栏只剩**一个**列表（导航），不用再和助手列表抢高度。
- *
- * ⚠️ 这是全应用**唯一**切助手的地方 —— 别把 Popover 去掉只留展示。
- */
 export interface AssistantSwitcherProps {
   agents: AgentInfo[];
+  teams?: Team[];
+  gatewayId?: string;
+  defaultAgentId?: string;
   selectedAgentId: string;
   onSelect: (agentId: string) => void;
   onAddAssistant: () => void;
-  /**
-   * 收纳态（2026-09-29）：只留头像图标。
-   *
-   * ⚠️ **不叠 Tooltip** —— 这个按钮已经是 `Popover` 的触发器，两个 Radix portal
-   * 抢同一个元素会互相打架（Popover 自己的 `side="right"` 在窄条旁边本来就够用）。
-   *
-   * ⭐ 「当前助手不在本机」时，展开态由紧跟其后的 `AgentMissingNotice` 说明；
-   * 收纳态那点宽度放不下那句说明，所以**落成一个警示角点**。
-   *
-   * ⚠️ 只留一个 2px 的点，对**读屏**等于什么都没说（独立复核指出：那句话是
-   * "不许悄悄消化掉"，而当时对 AT 恰恰就是消化的）。所以警示也折进了
-   * `aria-label` —— 见下面那个三元。
-   */
   collapsed?: boolean;
 }
+
+const EMPTY_TEAMS: Team[] = [];
 
 function agentLabel(agent: AgentInfo, t: (k: string) => string): string {
   const key = resolveAgentDisplayNameKey(agent.id);
@@ -46,38 +28,97 @@ function agentLabel(agent: AgentInfo, t: (k: string) => string): string {
 
 export default function AssistantSwitcher({
   agents,
+  teams = EMPTY_TEAMS,
+  gatewayId,
+  defaultAgentId,
   selectedAgentId,
   onSelect,
   onAddAssistant,
   collapsed = false,
 }: AssistantSwitcherProps) {
   const { t } = useTranslation();
+  const groupId = useId();
+  const [open, setOpen] = useState(false);
+  const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({});
   /**
-   * ⚠️ 2026-09-24：`selectedAgentId` **非空但不在目录里**时**不许**拿 `agents[0]` 顶上 ——
-   * 那会把别的助手显示成「当前助手」，而用户点的是另一个（与欢迎屏同一个病，
-   * 也就是 [[team-agent-404-405-brief]] 里的层 2）。
-   *
-   * 区分两种"找不到"：**空串 = 没有选择**（退回第一个是对的）；**非空且找不到 = 拒绝**
-   * （下面的中性格子 + `leftNav.myAssistants` 文案本来就有，正好是诚实的落点），
-   * 说明由 `LeftNav` 紧跟其后渲染的 `AgentMissingNotice` 给出。
+   * ⭐ 2026-10-06（V1 收口 · 呈现层降级）：六类预置助手（内容创作/电商运营/拍摄剪辑/高效办公/
+   * 学习研究/生活家庭）**不再是一级身份**，它们是 Skill/能力。默认视图 = 主罗盘 + 用户团队；
+   * 这组助手收进**次级折叠组**（文案「技能与能力」，`leftNav.independentAssistants`），
+   * 默认收起、点开才出现 —— 别把它们删掉，也别改成一级列表。
    */
-  const current = agents.find((a) => a.id === selectedAgentId) ?? (selectedAgentId ? undefined : agents[0]);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const groups = useMemo(
+    () => groupAssistants({ agents, teams, gatewayId, defaultAgentId }),
+    [agents, teams, gatewayId, defaultAgentId],
+  );
+  const selectedTeam = groups.teams.find((group) => group.agents.some((agent) => agent.id === selectedAgentId));
+  const selectedTeamId = selectedTeam?.team.id;
+  useEffect(() => {
+    if (selectedTeamId) setExpandedTeams((previous) => ({ ...previous, [selectedTeamId]: true }));
+  }, [selectedTeamId]);
+
+  const current =
+    agents.find((agent) => agent.id === selectedAgentId) ??
+    (selectedAgentId ? undefined : (groups.defaultAgent ?? agents[0]));
   const currentLabel = current ? agentLabel(current, t) : t('leftNav.myAssistants');
-  /** 点了名却不在目录里 —— 展开态由 `AgentMissingNotice` 说，收纳态落成角点。 */
   const missing = !current && Boolean(selectedAgentId);
+  const currentMember = selectedTeam?.team.agents.find((member) => member.agentId === current?.id);
+
+  function icon(agent: AgentInfo, member?: TeamAgent) {
+    return (
+      <AgentIcon
+        gatewayId={gatewayId}
+        agentId={agent.id}
+        gatewayAvatarUrl={agent.identity?.avatarUrl}
+        emoji={agent.identity?.emoji}
+        position={member?.position}
+        role={member?.role}
+        iconSize={18}
+        imgClass="h-5 w-5 shrink-0 rounded object-cover"
+        iconClass="shrink-0 text-[var(--text-secondary)]"
+      />
+    );
+  }
+
+  function agentRow(agent: AgentInfo, member?: TeamAgent) {
+    const selected = agent.id === selectedAgentId;
+    return (
+      <li key={agent.id}>
+        <button
+          type="button"
+          data-agent={agent.id}
+          aria-current={selected ? 'true' : undefined}
+          onClick={() => {
+            onSelect(agent.id);
+            setOpen(false);
+          }}
+          className={cn(
+            'glow-focus flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left type-body transition-colors',
+            selected
+              ? 'bg-[var(--state-selected)] text-[var(--text-primary)]'
+              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+          )}
+        >
+          {icon(agent, member)}
+          <span className="min-w-0 flex-1 truncate" title={agentLabel(agent, t)}>
+            {agentLabel(agent, t)}
+          </span>
+          {agent.id === groups.defaultAgent?.id && (
+            <span className="type-meta text-[var(--text-muted)]">{t('settings.agentDefault')}</span>
+          )}
+          {selected && <Check size={14} className="shrink-0 text-[var(--accent)]" />}
+        </button>
+      </li>
+    );
+  }
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           data-testid="assistant-switcher"
           data-missing={missing ? 'true' : undefined}
-          /**
-           * ⚠️ 收纳态那句说明放不下，只落了一个 2px 的角点 —— 对读屏**等于什么都没说**。
-           * 所以把"当前助手不在本机"折进**可访问名**（展开态同样无害，只是与下面的
-           * `AgentMissingNotice` 重复一次，而重复远好过沉默）。
-           */
           aria-label={
             missing
               ? `${t('leftNav.myAssistants')} — ${t('agent.missingTitle', { agentId: selectedAgentId })}`
@@ -89,12 +130,12 @@ export default function AssistantSwitcher({
           )}
         >
           {current ? (
-            <CubeFaceIcon agentId={current.id} size={18} />
+            icon(current, currentMember)
           ) : (
-            <span className="size-[18px] flex-shrink-0 rounded bg-[var(--bg-tertiary)]" />
+            <span className="h-5 w-5 shrink-0 rounded bg-[var(--bg-tertiary)]" />
           )}
           <span className={cn('min-w-0 flex-1 truncate font-semibold', collapsed && 'hidden')}>{currentLabel}</span>
-          <ChevronDown size={14} className={cn('flex-shrink-0 opacity-70', collapsed && 'hidden')} />
+          <ChevronDown size={14} className={cn('shrink-0 opacity-70', collapsed && 'hidden')} />
           {collapsed && missing && (
             <span
               data-testid="assistant-missing-dot"
@@ -103,41 +144,83 @@ export default function AssistantSwitcher({
           )}
         </button>
       </PopoverTrigger>
-
-      <PopoverContent side="right" align="start" className="w-56 p-1">
-        <ul aria-label={t('leftNav.myAssistants')} className="max-h-72 overflow-y-auto">
-          {agents.map((agent) => {
-            const selected = agent.id === selectedAgentId;
+      <PopoverContent side="right" align="start" className="w-72 p-1">
+        <ul aria-label={t('leftNav.myAssistants')} className="max-h-96 overflow-y-auto">
+          {groups.defaultAgent && agentRow(groups.defaultAgent)}
+          {groups.teams.map(({ team, agents: members }) => {
+            const expanded = expandedTeams[team.id] ?? false;
+            const contentId = `${groupId}-${team.id}`;
             return (
-              <li key={agent.id}>
+              <li key={team.id} data-team={team.id} className="border-t border-[var(--border-subtle)] py-1">
                 <button
                   type="button"
-                  data-agent={agent.id}
-                  aria-current={selected ? 'true' : undefined}
-                  onClick={() => onSelect(agent.id)}
-                  className={cn(
-                    'glow-focus flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left type-body transition-colors',
-                    selected
-                      ? 'bg-[var(--state-selected)] text-[var(--text-primary)]'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
-                  )}
+                  aria-expanded={expanded}
+                  aria-controls={contentId}
+                  onClick={() => setExpandedTeams((previous) => ({ ...previous, [team.id]: !expanded }))}
+                  className="glow-focus flex w-full items-center gap-2 rounded-md px-2 py-2 text-left type-label text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
                 >
-                  <CubeFaceIcon agentId={agent.id} size={20} />
-                  <span className="min-w-0 flex-1 truncate">{agentLabel(agent, t)}</span>
-                  {selected && <Check size={14} className="flex-shrink-0 text-[var(--accent)]" />}
+                  {expanded ? (
+                    <ChevronDown size={14} className="shrink-0" />
+                  ) : (
+                    <ChevronRight size={14} className="shrink-0" />
+                  )}
+                  <Users size={16} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate" title={team.name}>
+                    {team.name}
+                  </span>
+                  <span className="type-meta text-[var(--text-muted)]">{members.length}</span>
                 </button>
+                <ul id={contentId} hidden={!expanded} className="pl-4">
+                  {members.map((agent) =>
+                    agentRow(
+                      agent,
+                      team.agents.find((member) => member.agentId === agent.id),
+                    ),
+                  )}
+                </ul>
               </li>
             );
           })}
+          {groups.independent.length > 0 && (
+            <li data-independent-assistants className="border-t border-[var(--border-subtle)] pt-1">
+              {/* 次级折叠组：标题本身就是开关（`aria-expanded` 是判据，测试钉在它上面）。 */}
+              <button
+                type="button"
+                aria-expanded={skillsOpen}
+                aria-controls={`${groupId}-skills`}
+                onClick={() => setSkillsOpen((previous) => !previous)}
+                className="glow-focus flex w-full items-center gap-2 rounded-md px-2 py-2 text-left type-label text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+              >
+                {skillsOpen ? (
+                  <ChevronDown size={14} className="shrink-0" />
+                ) : (
+                  <ChevronRight size={14} className="shrink-0" />
+                )}
+                <Sparkles size={16} className="shrink-0" />
+                <span className="min-w-0 flex-1 truncate" title={t('leftNav.independentAssistants')}>
+                  {t('leftNav.independentAssistants')}
+                </span>
+                <span className="type-meta text-[var(--text-muted)]">{groups.independent.length}</span>
+              </button>
+              <ul id={`${groupId}-skills`} hidden={!skillsOpen}>
+                {groups.independent.map((agent) => {
+                  return agentRow(agent);
+                })}
+              </ul>
+            </li>
+          )}
         </ul>
         <div className="my-1 border-t border-[var(--border-subtle)]" />
         <button
           type="button"
           data-action="add-assistant"
-          onClick={onAddAssistant}
-          className="glow-focus flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left type-body text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+          onClick={() => {
+            setOpen(false);
+            onAddAssistant();
+          }}
+          className="glow-focus flex w-full items-center gap-2 rounded-md px-2 py-2 text-left type-body text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
         >
-          <Plus size={15} className="flex-shrink-0" />
+          <Plus size={15} className="shrink-0" />
           <span className="truncate">{t('leftNav.addAssistant')}</span>
         </button>
       </PopoverContent>

@@ -295,6 +295,7 @@ describe('图片：内置 openai provider 的接线（默认关 + 严格所有�
     expect(defaults.models).toEqual({
       'clawrouter/qwen-turbo': { params: { extra_body: { enable_search: true } } },
       'clawrouter/qwen-plus': { params: { extra_body: { enable_search: true } } },
+      'clawrouter/qwen3.7-flash': { params: { extra_body: { enable_search: true } } },
     });
   });
 
@@ -735,12 +736,13 @@ describe('联网：按模型注入 enable_search', () => {
   const agentsDefaults = (patch: unknown): { models?: Record<string, unknown>; model?: unknown } =>
     (patch as { agents: { defaults: Record<string, unknown> } }).agents.defaults;
 
-  it('⭐ 支持的模型（qwen-turbo / qwen-plus）带上 params.extra_body.enable_search', () => {
+  it('⭐ 支持的模型（qwen-turbo / qwen-plus / qwen3.7-flash）带上 params.extra_body.enable_search', () => {
     const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
 
     const models = agentsDefaults(patch).models as Record<string, { params: Record<string, unknown> }>;
     expect(models['clawrouter/qwen-turbo'].params).toEqual({ extra_body: { enable_search: true } });
     expect(models['clawrouter/qwen-plus'].params).toEqual({ extra_body: { enable_search: true } });
+    expect(models['clawrouter/qwen3.7-flash'].params).toEqual({ extra_body: { enable_search: true } });
   });
 
   it('⭐ 只列支持的那几个 —— 多一个都会让上游 400', () => {
@@ -749,7 +751,20 @@ describe('联网：按模型注入 enable_search', () => {
     expect(Object.keys(agentsDefaults(patch).models ?? {}).sort()).toEqual([
       'clawrouter/qwen-plus',
       'clawrouter/qwen-turbo',
+      'clawrouter/qwen3.7-flash',
     ]);
+  });
+
+  it('⭐⭐ 快速档别名 qwen3.7-flash-fast **刻意不进白名单**（"快速档搜索硬关"就靠这一条）', () => {
+    // 机制：enable_search 只认模型级配置，快速档用一个不进白名单的别名 id
+    // （relay 目录里的 qwen3.7-flash-fast，upstream 指向 qwen3.7-flash）——
+    // 没有任何一处参数注入，搜索在上游就是关的。
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: true });
+
+    const models = agentsDefaults(patch).models ?? {};
+    expect(Object.keys(models)).not.toContain('clawrouter/qwen3.7-flash-fast');
+    // 兜底：整张表里不许以任何形状出现别名 id
+    expect(JSON.stringify(models)).not.toContain('qwen3.7-flash-fast');
   });
 
   it('⭐ 形状必须是 params.extra_body（裸 params.enable_search 会被静默丢掉）', () => {
@@ -799,6 +814,7 @@ describe('联网开关：关掉之后不再注入，缺省仍然开着', () => {
     expect(agentsDefaults(patch).models).toEqual({
       'clawrouter/qwen-turbo': { params: { extra_body: { enable_search: null } } },
       'clawrouter/qwen-plus': { params: { extra_body: { enable_search: null } } },
+      'clawrouter/qwen3.7-flash': { params: { extra_body: { enable_search: null } } },
     });
   });
 
@@ -814,13 +830,14 @@ describe('联网开关：关掉之后不再注入，缺省仍然开着', () => {
     expect(Object.keys(agentsDefaults(patch).models ?? {}).sort()).toEqual([
       'clawrouter/qwen-plus',
       'clawrouter/qwen-turbo',
+      'clawrouter/qwen3.7-flash',
     ]);
   });
 
   it('⭐ 对照：**不传** webSearch ⇒ 按开处理（老盘升级上来行为不变）', () => {
     const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp' });
 
-    expect(Object.keys(agentsDefaults(patch).models ?? {})).toHaveLength(2);
+    expect(Object.keys(agentsDefaults(patch).models ?? {})).toHaveLength(3);
   });
 
   it('⭐⭐ 只有**显式 false** 才算关（undefined / null / 空对象都算开）', () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatewayPortOccupiedError } from '../src/main/runtime/gateway-process.js';
+import type { DeployProgress } from '../src/main/runtime/deploy.js';
 import type { RuntimeBootstrapDeps } from '../src/main/runtime/index.js';
 
 /**
@@ -76,6 +77,29 @@ function makeDeps(over: Partial<RuntimeBootstrapDeps> = {}) {
 }
 
 describe('bootstrapLocalGatewayRuntime', () => {
+  it('records node resolution and gateway startup durations without credentials', async () => {
+    let clock = 1000;
+    const { deps } = makeDeps({ now: () => clock });
+    const resolveNode = deps.resolveNode;
+    deps.resolveNode = async (options) => {
+      const result = await resolveNode(options);
+      clock += 64;
+      return result;
+    };
+    const startGateway = deps.startGateway;
+    deps.startGateway = async (options) => {
+      const result = await startGateway(options);
+      clock += 110000;
+      return result;
+    };
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+    await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+    expect(deps.log).toHaveBeenCalledWith('runtime.node.resolve.done', { durationMs: 64, ok: true });
+    expect(deps.log).toHaveBeenCalledWith('runtime.gateway.start', {});
+    expect(deps.log).toHaveBeenCalledWith('runtime.gateway.ready', { durationMs: 110000, ownership: 'spawned' });
+    expect(JSON.stringify(vi.mocked(deps.log).mock.calls)).not.toContain('tok-1');
+  });
+
   it('does not deploy or start a gateway when portable state migration is blocked', async () => {
     const error = Object.assign(new Error('state is busy'), { code: 'runtime.portable-state-migration-blocked' });
     const { deps } = makeDeps({
@@ -286,6 +310,71 @@ describe('bootstrapLocalGatewayRuntime', () => {
     expect(calls).not.toContain('startGateway');
   });
 
+  it('⭐ 部署失败带 `runtime.deploy-failed`（界面的出口在**盘**上，不是笼统的 unknown）', async () => {
+    const { deps } = makeDeps({
+      deployFromMedia: vi.fn(async () => {
+        throw new Error('运行时盘上找不到归档：Z:\\runtime\\openclaw.7z');
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res.ok).toBe(false);
+    expect(res.code).toBe('runtime.deploy-failed');
+    // 原文（带路径）照旧只进日志，不进公开 code —— 那条纪律由 toPublicBootstrapStatus 守
+    expect(res.reason).toContain('Z:\\runtime\\openclaw.7z');
+  });
+
+  it('⚠️ 已经带码的失败不被改判成 deploy-failed（端口占用等类别各有各的出口）', async () => {
+    const coded = Object.assign(new Error('18789 被占用'), { code: 'runtime.gateway-port-occupied' });
+    const { deps } = makeDeps({
+      deployFromMedia: vi.fn(async () => {
+        throw coded;
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res.code).toBe('runtime.gateway-port-occupied');
+  });
+
+  it('⭐ 部署进度透传到调用方（这条信号以前在编排层被丢掉：首跑 1–20 分钟界面看不到东西）', async () => {
+    const seen: string[] = [];
+    const { deps } = makeDeps({
+      deployFromMedia: vi.fn(async (opts: { userDataDir: string; onProgress?: (p: DeployProgress) => void }) => {
+        opts.onProgress?.({ phase: 'verify', done: 0, total: 2 });
+        opts.onProgress?.({ phase: 'extract', done: 5, total: 10 });
+        return {
+          status: 'deployed' as const,
+          deploymentKey: 'k1',
+          deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
+          nodePath: 'C:\\fake\\userdata\\runtime\\deployed\\k1\\node\\node.exe',
+          cliPath: 'C:\\fake\\userdata\\runtime\\deployed\\k1\\node_modules\\openclaw\\openclaw.mjs',
+        };
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    await bootstrapLocalGatewayRuntime({
+      userDataDir: USER_DATA,
+      onDeployProgress: (p) => seen.push(`${p.phase}:${p.done}/${p.total}`),
+      deps,
+    });
+
+    expect(seen).toEqual(['verify:0/2', 'extract:5/10']);
+  });
+
+  it('没人听进度时**不带** onProgress 这个键（调用形状保持干净，别被一个恒为 undefined 的键污染）', async () => {
+    const { deps } = makeDeps();
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(deps.deployFromMedia).toHaveBeenCalledWith({ userDataDir: USER_DATA });
+  });
+
   it('⭐ 端口被别人的网关占着 ⇒ 结果里带明确 code（界面据此说"端口冲突"）', async () => {
     const { deps } = makeDeps({
       startGateway: vi.fn(async () => {
@@ -382,5 +471,85 @@ describe('bootstrapLocalGatewayRuntime', () => {
     const stopped = await shutdownLocalGatewayRuntime();
     expect(stopped).toBe(true);
     expect(child.kill).toHaveBeenCalled();
+  });
+
+  /**
+   * BUG-040 ③④ 的接线（编排层的两条）：
+   *  - 失败结果要带**部署标记** —— 上层靠它决定"首启的 180 秒超时要不要自动再试一次"
+   *    （`bootstrap-retry.ts` 的 `isFirstLaunchFailure`）；
+   *  - 失败时要查**崩溃循环熔断**，熔断中换码（不可重试）+ reason 带指引。
+   */
+  it('⭐ 失败结果带部署标记（deployStatus=deployed ⇒ 首启可自动重试一次）', async () => {
+    const { deps } = makeDeps({
+      startGateway: vi.fn(async () => {
+        throw Object.assign(new Error('网关进程在就绪之前就退出了'), { code: 'runtime.gateway-process-exited' });
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res).toMatchObject({ ok: false, code: 'runtime.gateway-process-exited', deployStatus: 'deployed' });
+  });
+
+  it('⭐ 熔断中 ⇒ 换码（不可重试）+ reason 带"等几分钟"指引 + 日志明示', async () => {
+    const log = vi.fn();
+    const inspectBreaker = vi.fn(() => ({
+      available: true,
+      tripped: true,
+      uncleanBoots: 3,
+      retryAfterMs: 300_000,
+    }));
+    const { deps } = makeDeps({
+      startGateway: vi.fn(async () => {
+        throw Object.assign(new Error('网关进程在就绪之前就退出了'), { code: 'runtime.gateway-process-exited' });
+      }),
+      inspectBreaker,
+      log,
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(inspectBreaker).toHaveBeenCalledWith('C:\\fake\\userdata\\openclaw-state');
+    expect(res.code).toBe('runtime.gateway-crash-loop-breaker');
+    expect(res.reason).toMatch(/crash_loop_breaker/u);
+    expect(res.reason).toMatch(/退出应用/u);
+    expect(log.mock.calls.map((entry) => String(entry[0]))).toContain('runtime.gateway-crash-loop-breaker');
+  });
+
+  it('⭐ 熔断中**不去撞墙**：起网关之前就停手（每次尝试都会延长那 5 分钟窗口）', async () => {
+    const log = vi.fn();
+    const inspectBreaker = vi.fn(() => ({
+      available: true,
+      tripped: true,
+      uncleanBoots: 3,
+      retryAfterMs: 240_000,
+    }));
+    const { deps } = makeDeps({ inspectBreaker, log });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res.code).toBe('runtime.gateway-crash-loop-breaker');
+    expect(res.reason).toMatch(/退出应用/u);
+    expect(deps.startGateway).not.toHaveBeenCalled();
+    expect(log.mock.calls.map((entry) => String(entry[0]))).toContain('runtime.gateway-crash-loop-breaker');
+  });
+
+  it('⭐ 对齐配置就失败（拿不到 stateDir）⇒ 不去碰熔断表（诊断不该在无路径时猜）', async () => {
+    const inspectBreaker = vi.fn();
+    const { deps } = makeDeps({
+      alignClientConfig: vi.fn(async () => {
+        throw Object.assign(new Error('state is busy'), { code: 'runtime.portable-state-migration-blocked' });
+      }),
+      inspectBreaker,
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const res = await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
+
+    expect(res.code).toBe('runtime.portable-state-migration-blocked');
+    expect(inspectBreaker).not.toHaveBeenCalled();
   });
 });

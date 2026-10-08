@@ -1,3 +1,5 @@
+import compassIdentity from '@/preset-agents/compass/IDENTITY.md?raw';
+import compassSoul from '@/preset-agents/compass/SOUL.md?raw';
 import contentIdentity from '@/preset-agents/content/IDENTITY.md?raw';
 import contentSoul from '@/preset-agents/content/SOUL.md?raw';
 import ecommerceIdentity from '@/preset-agents/ecommerce/IDENTITY.md?raw';
@@ -12,7 +14,7 @@ import videoIdentity from '@/preset-agents/video/IDENTITY.md?raw';
 import videoSoul from '@/preset-agents/video/SOUL.md?raw';
 import { ASSISTANT_ID_BY_WORKSPACE, resolveAssistantTaskPresets } from '@/lib/assistant-task-presets';
 import type { AssistantTaskPreset, AssistantTaskWorkspaceKey } from '@/lib/assistant-task-presets';
-import type { OnboardingProfile, OnboardingUseCaseId, StarterId } from '@/lib/user-onboarding';
+import type { StarterId } from '@/lib/user-onboarding';
 
 export const PRESET_AGENT_IDS = [
   ASSISTANT_ID_BY_WORKSPACE.content,
@@ -79,8 +81,10 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
 - Your deliverables are **text you write** and **files in the workspace**.
 - **Documents (.pptx / .docx / .xlsx / .pdf) are possible** — *if* the 文档生成 skill is available to you
   (you can see it in your skill list). Use it: emit a \`docgen\` block with the right \`kind\`
-  (pptx = presentation, docx = Word, xlsx = Excel, pdf = a fixed-layout document for printing or
-  sending) and the client turns it into a real file in this turn's 产物. If that skill is **not** available,
+  (docx = Word, xlsx = Excel, pdf = a fixed-layout document for printing or sending;
+  pptx = only a **plain draft deck** the user explicitly asked for that way — a presentation
+  someone will look at goes through the 幻灯版面 route instead, see the hard rules below)
+  and the client turns it into a real file in this turn's 产物. If that skill is **not** available,
   check another available document-generation tool or installed library before concluding that
   the requested format cannot be generated. Use only capabilities actually available to this session.
 - **Web pages (.html) are possible** — *if* the 网页交付 skill is available to you (look for
@@ -89,10 +93,21 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   产物. An available file-writing tool may also create a self-contained HTML file in the task's
   authorized workspace; verify the actual output file and give its real path. Do not hand the
   user markup to save by hand when a working file-writing tool is available.
-- **Presentations: compose the layout yourself** — this is the **default route**, not a fallback.
-  *If* the 幻灯版面 skill is available (look for \`deck-layout\`; **open it and follow it**),
-  you write the layout in JSX + CSS and emit a \`slidegen\` block; the client lays it out in a
-  real browser and writes an **editable** .pptx into 产物.
+- **Presentations: compose the layout yourself** — this is the **default route, not a fallback**,
+  and for any deck a person will actually look at it is the **only** route.
+  **Before you write a presentation, open the 幻灯版面 skill** (look for \`deck-layout\` in your
+  skill list; **open its SKILL.md and follow it**): you write the layout in JSX + CSS and emit a
+  \`slidegen\` block; the client lays it out in a real browser and writes an **editable** .pptx
+  into 产物.
+  🔴 **Hard rules for a presentation someone will look at — no exceptions:**
+  - Never compose it through the 文档生成 (\`document-deck\`) route: that route's pptx output is a
+    plain white-background bullet draft with no layout at all.
+  - Never hand-write a generator for a .pptx: no ad-hoc script, no PptxGenJS, no python-pptx, no
+    raw OOXML, and no CLI other than the 幻灯版面 skill's own \`scripts/generate.cjs\`. A file
+    produced by a private script stays outside 产物 and is **not** a delivery.
+  - Never answer with a download link or a bare file path in place of the deck. **A deck counts as
+    generated only when it appears in this task's 产物 panel**, with its generation report
+    confirming it — a path the product never registered is not delivery.
   ⭐ **Layout itself is not capped per slot** — unlike the template route there is no per-field
   character limit, and a page whose content does not fit is **split**, never rejected.
   Use it for anything the user will actually present.
@@ -112,13 +127,16 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
   \`artifactIndexed:false\` does not prove the file is already in \u4ea7\u7269, and
   \`visualReview:not-performed\` means final visual review is pending even with zero layout warnings.
 - ⚠️ **The 商务演示（模板版）template route caps every slot** (often around 40 characters) and
-  **rejects the whole deck** when any one of them overflows. Only use it when the content is
-  short and happens to match a template exactly — never as the default for real material.
+  **rejects the whole deck** when any one of them overflows. Only use it when the user explicitly
+  named a template and the content is short — never as the default for real material.
   🔴 **If it rejects a section as too long, that is a signal to switch routes, not to shorten the
-  user's content.** Do **not** trim what they asked for to fit a slot. Prefer the 幻灯版面 route;
-  another available document-generation tool or installed library may also produce the requested
-  real file in the authorized task workspace. Do not substitute source code or a renamed text file.
-  For tool-created documents, verify that the final file exists and is readable before delivery.
+  user's content.** Do **not** trim what they asked for to fit a slot. Switch to the 幻灯版面
+  route — for a presentation, do **not** fall back to the 文档生成 pptx channel, an installed
+  library, or a script you wrote yourself.
+  Do not substitute source code or a renamed text file.
+  For non-presentation documents (Word / Excel / PDF), another available document-generation tool or installed library
+  may also produce the requested real file in the authorized task workspace;
+  verify that the final file exists and is readable before delivery.
   Only when no working generation route is available, explain the specific missing capability.
 - For generated source blocks, say they were submitted for generation, not that the final file
   already exists or is guaranteed to appear. For tool-created files, verify the actual output file
@@ -179,8 +197,13 @@ function withCommonContract(roleSoul: string): string {
  *    有了标记，将来才能安全地做"**是我们写的旧版本 ⇒ 可以升级；
  *    没有标记或标记对不上 ⇒ 用户改过，一律不碰**"。
  *    ⚠️ 但**已有的旧盘没有标记** —— 那批怎么升级是单独的决定，见设计稿。
+ *
+ * 2026-10-07 从 `2026-10-02.1` 提到本版：交付合同里的演示条款**从条件句改成硬约束**
+ * （必须先读「幻灯版面」SKILL.md；禁止 docgen pptx 出正式演示；禁止自写脚本 / PptxGenJS /
+ * python-pptx；禁止"下载链接 / 文件路径"式交付）。同一版还引入了**主罗盘（`main`）**的
+ * 交付合同文件（见 `MAIN_AGENT_PROMPT_FILES`）——两边共用这一个版本号，升级一次齐。
  */
-export const PRESET_PROMPT_VERSION = '2026-10-02.1';
+export const PRESET_PROMPT_VERSION = '2026-10-07.1';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 
@@ -252,6 +275,40 @@ export const PRESET_AGENT_DEFINITIONS: readonly PresetAgentDefinition[] = [
   },
 ];
 
+/**
+ * 主罗盘 = 工作台的**默认助手**（网关里的 `main`，见 `assistant-task-presets.ts` 的
+ * `ASSISTANT_ID_BY_WORKSPACE.compass`）。
+ *
+ * ## 🔴 为什么它要单独一份（2026-10-07 真机调查）
+ *
+ * 六个预置助手各有一份 `IDENTITY.md` + `SOUL.md`，**`main` 什么都没有** ——
+ * 而这两个文件是运行时**每轮全文注入**的提示词通道（OpenClaw 把 agent workspace 下的
+ * AGENTS/SOUL/IDENTITY/USER/BOOTSTRAP/MEMORY 全文拼进系统提示词）。
+ * 于是"同一产品行为不一致"：凡是被主罗盘接下的任务（用户从工作台默认入口发起的那些），
+ * **交付合同根本到不了它** —— 演示走错路、交付只说"已生成"的坑，在这里没有任何护栏。
+ *
+ * ⚠️ **不能把它塞进 `PRESET_AGENT_DEFINITIONS`**：那个清单的语义是"要安装的六个助手"
+ *    （安装器会按 `rongying-agents/<id>` 建目录、`main` 是网关自带的工作区，不是我们建的）。
+ *    所以这里只放**要写给它的内容**，写入由 `main-agent-contract.ts` 单独一步负责。
+ *
+ * ⚠️ 只写 IDENTITY + SOUL 两份，不写 AGENTS.md：它们每轮全文注入，SOUL 里已经带上了
+ *    整份 `COMMON_OPERATING_CONTRACT`，再叠一份只是加 token，不加约束。
+ */
+export const MAIN_AGENT_ID = 'main';
+
+export interface MainAgentPromptFile {
+  /** 必须是运行时白名单里的那 6 个文件名之一（`WORKSPACE_BOOTSTRAP_FILENAMES`）。 */
+  name: 'IDENTITY.md' | 'SOUL.md';
+  content: string;
+}
+
+export const MAIN_AGENT_PROMPT_FILES: readonly MainAgentPromptFile[] = [
+  { name: 'IDENTITY.md', content: compassIdentity },
+  // ⭐ 与六个预置助手**同一份**交付合同（`withCommonContract`）：演示/文件交付的硬约束
+  //    必须两边一字不差，否则"换个入口就换一套规矩"的老问题会回来。
+  { name: 'SOUL.md', content: withCommonContract(compassSoul) },
+];
+
 function workspaceDefinition(
   id: string,
   titleKey: string,
@@ -287,26 +344,4 @@ export function resolveStarterAgentId(
 ): string {
   const targetId = STARTER_AGENT_BY_ID[starterId];
   return availableAgentIds.includes(targetId) ? targetId : fallbackAgentId;
-}
-
-export function resolveProfileAssistantId(
-  profile: OnboardingProfile | null,
-  availableAgentIds: readonly string[],
-  fallbackAgentId: string,
-): string {
-  const starterByUseCase: Partial<Record<OnboardingUseCaseId, StarterId>> = {
-    content: 'content',
-    video: 'photography',
-    office: 'office',
-    ecommerce: 'ecommerce',
-    research: 'research',
-    family: 'family',
-  };
-  for (const useCase of profile?.useCases ?? []) {
-    const starterId = starterByUseCase[useCase];
-    if (!starterId) continue;
-    const assistantId = STARTER_AGENT_BY_ID[starterId];
-    if (availableAgentIds.includes(assistantId)) return assistantId;
-  }
-  return fallbackAgentId;
 }

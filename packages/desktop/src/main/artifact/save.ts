@@ -1,11 +1,14 @@
-import { copyFileSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, extname, resolve, sep } from 'path';
 import { randomUUID } from 'crypto';
 import type { Artifact } from '@clawwork/shared';
-import { getDb } from '../db/index.js';
+import { getDb, getSqlite } from '../db/index.js';
 import { artifacts } from '../db/schema.js';
 import { ensureTaskDir } from '../workspace/init.js';
 import { uniqueFileNameIn } from '../workspace/safe-name.js';
+import { artifactFromRow } from './row.js';
+import { isUniqueArtifactError } from './unique-error.js';
+import { ArtifactIntegrityError, isVerifiedFileName, verifyArtifactBuffer } from './verify.js';
 
 const MIME_MAP: Record<string, string> = {
   '.mp4': 'video/mp4',
@@ -72,6 +75,166 @@ interface SaveArtifactParams {
   sourceKey?: string;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * 登记的唯一约束语义（2026-10-07 体检 P2-2 / P2-4）
+ *
+ * `artifacts` 表上有两条唯一索引（见 `db/index.ts` 的迁移）：
+ *   · `artifacts_source_dedup(message_id, source_key)` —— 同一条消息里**同一份内容**
+ *     重放/重试（三条生成器链路 + 自动收编链路就是这么进来的）；
+ *   · `artifacts_task_local_path(task_id, root, local_path)` —— 同一个落点已有行。
+ *
+ * 旧实现两条都只会"删掉刚写好的文件再抛错"，于是：
+ *   · docgen/slidegen/htmlgen 把**已经生成成功**的第二次处理报成"生成失败"；
+ *   · `uniqueFileNameIn` 只查磁盘不查库 ⇒ 磁盘文件被外部删掉后名字被复用 ⇒ 必撞
+ *     `task_local_path` ⇒ 刚写的好文件被 unlink ⇒ 这个名字被**永久毒化**（重试必同败）。
+ *
+ * 现在的口径：**唯一约束 = "它已经存在"**，登记前先结算（重放直接返回既有行），
+ * 真出现竞态冲突也返回赢家行、**不删刚写的新文件**；只有"找不到赢家"的其它 DB 故障
+ * 才回落到原来的"删文件 + 抛错"。
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+type ArtifactDb = ReturnType<typeof getDb>;
+type RawSqlite = NonNullable<ReturnType<typeof getSqlite>>;
+type ArtifactRow = Record<string, unknown>;
+
+/**
+ * 既有行的读取用**原始 SQLite**（不是 drizzle 的 `db.select()`）。
+ *
+ * ⚠️ 这不是口味问题：drizzle 的 `.select()` 返回的是 **camelCase** 属性
+ *    （`localPath` / `filePath` / `sourceKey`），而 `artifactFromRow`（与 reconcile 共用的
+ *    那一份行 → 领域对象映射）吃的是**表的原始列名**（`local_path` / `file_path`）。
+ *    混着用会把 `local_path` 读成 `undefined` —— 探针里当场就抓到了（返回的行 localPath
+ *    是字符串 `"undefined"`）。原始行也正好与 reconcile 的清行/查询口径逐字一致。
+ */
+function rawRow(sqlite: RawSqlite, sql: string, ...params: unknown[]): ArtifactRow | undefined {
+  return sqlite.prepare(sql).get(...params) as ArtifactRow | undefined;
+}
+
+/** 这一行的文件现在还在盘上吗？（`file_path` 为空的老行按本次落点判） */
+function rowFileExists(row: ArtifactRow, fallbackPath: string): boolean {
+  const filePath = typeof row.file_path === 'string' && row.file_path.length > 0 ? row.file_path : fallbackPath;
+  try {
+    return existsSync(filePath);
+  } catch {
+    return false;
+  }
+}
+
+/** 同一 (message_id, source_key) 的既有行：`artifacts_source_dedup` 的语义。 */
+function rowForReplay(sqlite: RawSqlite, messageId: string, sourceKey: string): ArtifactRow | undefined {
+  return rawRow(
+    sqlite,
+    'SELECT * FROM artifacts WHERE message_id = ? AND source_key = ? LIMIT 1',
+    messageId,
+    sourceKey,
+  );
+}
+
+/** 同一 (task_id, root, local_path) 的既有行：`artifacts_task_local_path` 的语义。 */
+function rowForLocalPath(sqlite: RawSqlite, taskId: string, localPath: string): ArtifactRow | undefined {
+  return rawRow(
+    sqlite,
+    'SELECT * FROM artifacts WHERE task_id = ? AND root = ? AND local_path = ? LIMIT 1',
+    taskId,
+    'workspace',
+    localPath,
+  );
+}
+
+/**
+ * 删掉一行**陈旧登记**。
+ *
+ * ⚠️ 按 `id + source_key` 双击复核（与 `reconcile.ts` 清行同一个口径）：并发那趟如果已经
+ *    把它换成新登记，这里必须一个字节都不动 —— 按 (task_id, root, local_path) 删会误伤新行。
+ */
+function deleteRowById(sqlite: RawSqlite, row: ArtifactRow): void {
+  sqlite
+    .prepare('DELETE FROM artifacts WHERE id = ? AND source_key = ?')
+    .run(String(row.id), String(row.source_key ?? ''));
+}
+
+/**
+ * 登记前的"既有行结算"。返回非空 = 这次**不需要写盘**（重放：内容已经存好了）。
+ *
+ * 规则（三条，都在写盘之前跑，所以判断的是"旧行自己的文件还在不在"）：
+ * ① 同 message + 同 sourceKey 有行、文件还在 ⇒ 重放 ⇒ 返回既有行；
+ * ② 同 message + 同 sourceKey 有行、文件没了 ⇒ 陈旧 ⇒ 删行，让这次的新文件顶上；
+ * ③ 落点已有行、它的文件没了 ⇒ 陈旧（名字被"有行无文件"毒化）⇒ 删行再登记。
+ */
+function settleExistingRows(
+  sqlite: RawSqlite,
+  input: { taskId: string; messageId: string; sourceKey?: string; localPath: string; destPath: string },
+): Artifact | null {
+  const { taskId, messageId, sourceKey, localPath, destPath } = input;
+
+  if (sourceKey) {
+    const replay = rowForReplay(sqlite, messageId, sourceKey);
+    if (replay) {
+      if (rowFileExists(replay, destPath)) return artifactFromRow(replay);
+      deleteRowById(sqlite, replay);
+    }
+  }
+
+  const occupied = rowForLocalPath(sqlite, taskId, localPath);
+  if (occupied && !rowFileExists(occupied, destPath)) deleteRowById(sqlite, occupied);
+  return null;
+}
+
+/**
+ * INSERT 撞唯一约束 ⇒ 找"赢家"行返回（**不删刚写的新文件**）。
+ * 找不到赢家（理论上不该发生）⇒ `null`，调用方回落到"删文件 + 抛错"的旧语义。
+ */
+function resolveInsertConflict(
+  sqlite: RawSqlite,
+  err: unknown,
+  input: { taskId: string; messageId: string; sourceKey?: string; localPath: string },
+): Artifact | null {
+  if (!isUniqueArtifactError(err)) return null;
+  if (input.sourceKey) {
+    const replay = rowForReplay(sqlite, input.messageId, input.sourceKey);
+    if (replay) return artifactFromRow(replay);
+  }
+  const occupied = rowForLocalPath(sqlite, input.taskId, input.localPath);
+  return occupied ? artifactFromRow(occupied) : null;
+}
+
+/** 写盘之后的登记：成功返回新行；冲突返回赢家行；其余故障删掉刚写的文件并抛。 */
+function persistArtifactRow(
+  db: ArtifactDb,
+  sqlite: RawSqlite,
+  artifact: Artifact,
+  input: { taskId: string; messageId: string; sourceKey?: string; localPath: string; destPath: string },
+): Artifact {
+  try {
+    db.insert(artifacts)
+      .values({
+        id: artifact.id,
+        taskId: artifact.taskId,
+        messageId: artifact.messageId,
+        type: artifact.type,
+        name: artifact.name,
+        filePath: artifact.filePath,
+        localPath: artifact.localPath,
+        mimeType: artifact.mimeType,
+        size: artifact.size,
+        sourceKey: artifact.sourceKey ?? '',
+        contentText: artifact.contentText ?? '',
+        createdAt: artifact.createdAt,
+      })
+      .run();
+    return artifact;
+  } catch (err) {
+    const winner = resolveInsertConflict(sqlite, err, input);
+    if (winner) return winner;
+    try {
+      unlinkSync(input.destPath);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
+}
+
 export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact> {
   const { workspacePath, taskId, messageId, sourcePath, fileName, mediaType, sourceKey } = params;
 
@@ -79,10 +242,31 @@ export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact
   const originalName = fileName ?? basename(sourcePath);
   const { finalName, destPath } = resolveArtifactDestination(taskDir, originalName);
 
+  // M1 登记前置门（2026-10-06）：坏 PPTX / DOCX **不复制、不登记**。与"DB 失败回滚"同一段时间线：
+  // 出错时任务目录里不留半成品（这里连复制都还没发生，天然无残留）。
+  if (isVerifiedFileName(finalName)) {
+    let buffer: Buffer;
+    try {
+      buffer = readFileSync(sourcePath);
+    } catch {
+      throw new ArtifactIntegrityError('unreadable');
+    }
+    const integrity = verifyArtifactBuffer(finalName, buffer);
+    if (!integrity.ok) throw new ArtifactIntegrityError(integrity.reason);
+  }
+
+  const localPath = `${taskId}/${finalName}`;
+  // ⚠️ 结算/取库在**写盘之前**：重放要在这里就返回（不写第二份），陈旧行也要在这里清掉
+  //    （清完 `uniqueFileNameIn` 复用的那个名字才不会再撞库）。
+  const sqlite = getSqlite();
+  if (!sqlite) throw new Error('database not ready');
+  const db = getDb();
+  const replay = settleExistingRows(sqlite, { taskId, messageId, sourceKey, localPath, destPath });
+  if (replay) return replay;
+
   copyFileSync(sourcePath, destPath);
 
   const stat = statSync(destPath);
-  const localPath = `${taskId}/${finalName}`;
   const mimeType = mediaType ?? detectMimeType(finalName);
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -103,33 +287,7 @@ export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact
     availability: 'available',
   };
 
-  const db = getDb();
-  try {
-    db.insert(artifacts)
-      .values({
-        id: artifact.id,
-        taskId: artifact.taskId,
-        messageId: artifact.messageId,
-        type: artifact.type,
-        name: artifact.name,
-        filePath: artifact.filePath,
-        localPath: artifact.localPath,
-        mimeType: artifact.mimeType,
-        size: artifact.size,
-        sourceKey: artifact.sourceKey ?? '',
-        createdAt: artifact.createdAt,
-      })
-      .run();
-  } catch (err) {
-    try {
-      unlinkSync(destPath);
-    } catch {
-      /* best-effort cleanup */
-    }
-    throw err;
-  }
-
-  return artifact;
+  return persistArtifactRow(db, sqlite, artifact, { taskId, messageId, sourceKey, localPath, destPath });
 }
 
 interface SaveArtifactFromBufferParams {
@@ -149,9 +307,21 @@ export async function saveArtifactFromBuffer(params: SaveArtifactFromBufferParam
   const taskDir = ensureTaskDir(workspacePath, taskId);
   const { finalName, destPath } = resolveArtifactDestination(taskDir, fileName);
 
-  writeFileSync(destPath, buffer);
+  // M1 登记前置门（2026-10-06）：坏 PPTX / DOCX **不落盘、不登记**——校验内存 buffer，写之前拦下。
+  if (isVerifiedFileName(finalName)) {
+    const integrity = verifyArtifactBuffer(finalName, buffer);
+    if (!integrity.ok) throw new ArtifactIntegrityError(integrity.reason);
+  }
 
   const localPath = `${taskId}/${finalName}`;
+  const sqlite = getSqlite();
+  if (!sqlite) throw new Error('database not ready');
+  const db = getDb();
+  const replay = settleExistingRows(sqlite, { taskId, messageId, sourceKey, localPath, destPath });
+  if (replay) return replay;
+
+  writeFileSync(destPath, buffer);
+
   const mimeType = detectMimeType(finalName);
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -172,32 +342,5 @@ export async function saveArtifactFromBuffer(params: SaveArtifactFromBufferParam
     availability: 'available',
   };
 
-  const db = getDb();
-  try {
-    db.insert(artifacts)
-      .values({
-        id: artifact.id,
-        taskId: artifact.taskId,
-        messageId: artifact.messageId,
-        type: artifact.type,
-        name: artifact.name,
-        filePath: artifact.filePath,
-        localPath: artifact.localPath,
-        mimeType: artifact.mimeType,
-        size: artifact.size,
-        sourceKey: artifact.sourceKey ?? '',
-        createdAt: artifact.createdAt,
-        contentText: contentText ?? '',
-      })
-      .run();
-  } catch (err) {
-    try {
-      unlinkSync(destPath);
-    } catch {
-      /* best-effort cleanup */
-    }
-    throw err;
-  }
-
-  return artifact;
+  return persistArtifactRow(db, sqlite, artifact, { taskId, messageId, sourceKey, localPath, destPath });
 }

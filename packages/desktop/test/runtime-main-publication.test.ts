@@ -9,7 +9,7 @@ import {
   resetRuntimeBootstrapStatus,
 } from '../src/main/runtime/bootstrap-status.js';
 const source = fs.readFileSync(fileURLToPath(new URL('../src/main/index.ts', import.meta.url)), 'utf8');
-const start = source.indexOf('const runtimeResult = await bootstrapWithRetry({');
+const start = source.indexOf('const runtimeResult = await runRuntimeBootstrap(');
 const terminal = 'if (runtimeResult.code !== PORTABLE_STATE_MIGRATION_BLOCKED) initAllGateways();';
 const end = source.indexOf(terminal, start) + terminal.length;
 if (start < 0 || end < terminal.length) throw new Error('Actual main boot section is unavailable');
@@ -21,8 +21,14 @@ async function runMainSection(result: { ok: boolean; code?: string; reason?: str
   const send = vi.fn(() => false);
   const gateways = vi.fn();
   const dialog = { showMessageBox: vi.fn(async () => ({})) };
+  // 部署进度那一段（快照/看门狗/推进度）在切片**外面**（`finishDeployProgress` 的定义处），
+  // 这里只钉"bootstrap 结束后它被叫了一次"—— 见 `runtime-deploy-progress.test.ts` 与
+  // `runtime-bootstrap-order.test.ts` 对快照与透传的钉法。
+  const finishDeployProgress = vi.fn();
   const completion: Promise<void> = vm.runInNewContext(code, {
-    bootstrapWithRetry: async () => result,
+    runRuntimeBootstrap: async () => result,
+    retryPortableWorkspacePath: undefined,
+    finishDeployProgress,
     publishRuntimeBootstrapStatus,
     getRuntimeBootstrapStatus,
     getMainWindow: () => null,
@@ -35,14 +41,15 @@ async function runMainSection(result: { ok: boolean; code?: string; reason?: str
     dialog,
   });
   await completion;
-  return { send, gateways, dialog };
+  return { send, gateways, dialog, finishDeployProgress };
 }
 it('publishes a successful actual main boot for push and late snapshot readers', async () => {
-  const { send, gateways, dialog } = await runMainSection({ ok: true });
+  const { send, gateways, dialog, finishDeployProgress } = await runMainSection({ ok: true });
   expect(getRuntimeBootstrapStatus()).toEqual({ ok: true });
   expect(send).toHaveBeenCalledExactlyOnceWith(null, 'runtime-status', { ok: true });
   expect(gateways).toHaveBeenCalledTimes(1);
   expect(dialog.showMessageBox).not.toHaveBeenCalled();
+  expect(finishDeployProgress, '跑完之后部署进度必须清掉（不留一条过时的进度）').toHaveBeenCalledTimes(1);
 });
 it.each([
   ['runtime.gateway-port-occupied', 'port-occupied'],

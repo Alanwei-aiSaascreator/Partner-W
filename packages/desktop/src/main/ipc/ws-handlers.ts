@@ -30,6 +30,7 @@ import { authorizeCreatedWorkflowAgent } from '../runtime/workflow-created-agent
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import {
   beginArtifactRunForGatewayDispatch,
+  isArtifactRunPendingCurrent,
   bindArtifactRun,
   cancelArtifactRun,
   cancelArtifactRunsForSession,
@@ -230,6 +231,7 @@ export function registerWsHandlers(): void {
         });
         return { ok: false, error: 'gateway not connected', errorCode: 'GATEWAY_NOT_CONNECTED' };
       }
+      const controlledNative = process.env.ROYIN_NATIVE_PPT_VALIDATION === '1';
       let artifactRunToken: string | null = null;
       if (taskId) {
         try {
@@ -252,6 +254,41 @@ export function registerWsHandlers(): void {
             taskId,
             error: { message: error instanceof Error ? error.message : String(error) },
           });
+          if (controlledNative) {
+            return {
+              ok: false,
+              error: '受控任务状态未能建立，未发起模型请求。请稍后重试。',
+              errorCode: 'NATIVE_TASK_STATE_UNAVAILABLE',
+            };
+          }
+        }
+      }
+      if (controlledNative) {
+        if (!taskId || !artifactRunToken) {
+          return {
+            ok: false,
+            error: '受控任务状态未能建立，未发起模型请求。请稍后重试。',
+            errorCode: 'NATIVE_TASK_STATE_UNAVAILABLE',
+          };
+        }
+        try {
+          const { requireNativeTestBudget } = await import('../docgen/native-dispatch-guard.js');
+          await requireNativeTestBudget();
+          if (!isArtifactRunPendingCurrent(taskId, payload.sessionKey, artifactRunToken)) {
+            cancelArtifactRun(taskId, payload.sessionKey, artifactRunToken);
+            return {
+              ok: false,
+              error: '本次任务已停止或被新的请求替代，未发起模型请求。',
+              errorCode: 'NATIVE_TASK_CANCELED',
+            };
+          }
+        } catch {
+          cancelArtifactRun(taskId, payload.sessionKey, artifactRunToken);
+          return {
+            ok: false,
+            error: '受控PPT测试尚未核实测试卡与已授权累计预算守卫，未发起模型请求。',
+            errorCode: 'NATIVE_TEST_GUARD_UNAVAILABLE',
+          };
         }
       }
       try {
@@ -378,13 +415,19 @@ export function registerWsHandlers(): void {
 
   ipcMain.handle('ws:gateway-status', () => {
     const clients = getAllGatewayClients();
-    const statusMap: Record<string, { connected: boolean; name: string; error?: string; serverVersion?: string }> = {};
+    const statusMap: Record<
+      string,
+      { connected: boolean; name: string; error?: string; serverVersion?: string; maxPayloadBytes?: number }
+    > = {};
     for (const [id, client] of clients) {
       statusMap[id] = {
         connected: client.isConnected,
         name: client.name,
         error: client.lastConnectionError ?? undefined,
         serverVersion: client.version,
+        // 单帧上限（hello-ok.policy.maxPayload 的协商值）：发送侧字节预算读它
+        //（质量战役区 2 · P1-1）；没连上时缺席 = UI 回落默认值。
+        maxPayloadBytes: client.maxPayload,
       };
     }
     return statusMap;

@@ -25,9 +25,10 @@
 
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { Automizer, modify } from 'pptx-automizer';
+import { Automizer, modify, type XmlElement } from 'pptx-automizer';
 import { findPptxTemplate, pageNumberShapeFor, PPTX_BLANK_ROOT_FILE, PPTX_TEMPLATE_FILE } from './catalog.js';
 import type { TemplateDeckSpec } from './parse.js';
+import { CONTROLLED_TEMPLATE_FILE } from './controlled.js';
 
 /** `load()` 给模板起的内部名字，只在本文件里用。 */
 const TEMPLATE_KEY = 'deck';
@@ -56,7 +57,8 @@ export interface FillTemplateDeckOptions {
  *    往 `outputDir` 写。安装目录通常没有写权限，而且模板是随包资源不是用户数据。
  */
 export async function fillTemplateDeck(opts: FillTemplateDeckOptions): Promise<string> {
-  const templatePath = path.join(opts.templatesRoot, PPTX_TEMPLATE_FILE);
+  const templateFile = opts.deck.controlledNative ? CONTROLLED_TEMPLATE_FILE : PPTX_TEMPLATE_FILE;
+  const templatePath = path.join(opts.templatesRoot, templateFile);
   if (!existsSync(templatePath)) {
     // 这条几乎只会在"打包时忘了 extraResources"时出现。
     // 说清楚是**模板文件缺失**，别让它表现成一句泛泛的渲染失败。
@@ -80,7 +82,7 @@ export async function fillTemplateDeck(opts: FillTemplateDeckOptions): Promise<s
   //       （WPS 把命名空间下推到各元素上），而追加 `p:sldId` 时会用到 `r:id`
   //       ⇒ 文档不是命名空间良构的 ⇒ **WPS 判 0 页**，而所有单测全绿。
   //       零页根是干净重打包出来的，这个问题在源头就不存在。
-  const pres = automizer.loadRoot(PPTX_BLANK_ROOT_FILE).load(PPTX_TEMPLATE_FILE, TEMPLATE_KEY);
+  const pres = automizer.loadRoot(PPTX_BLANK_ROOT_FILE).load(templateFile, TEMPLATE_KEY);
 
   for (let index = 0; index < opts.deck.slides.length; index += 1) {
     const slide = opts.deck.slides[index];
@@ -103,10 +105,136 @@ export async function fillTemplateDeck(opts: FillTemplateDeckOptions): Promise<s
       //    这里再按目录走一遍，等于"只要白名单里有，就一定被写到"。
       for (const [token, tokenSpec] of Object.entries(spec.tokens)) {
         const value = slide.data[token] ?? '';
+        if (opts.deck.controlledNative && slide.chart && !['SLIDE_TITLE', 'SLIDE_SUBTITLE'].includes(tokenSpec.shape))
+          continue;
+        if (opts.deck.controlledNative && !value.trim() && !tokenSpec.keepTemplateTextWhenEmpty) {
+          target.removeElement(tokenSpec.shape);
+          continue;
+        }
         if (tokenSpec.keepTemplateTextWhenEmpty && !value.trim()) continue;
         target.modifyElement(tokenSpec.shape, [modify.setText(value)]);
       }
       if (pageShape) target.modifyElement(pageShape, [modify.setText(pageNumber)]);
+      if (opts.deck.controlledNative && spec.id === 'insight') {
+        const takeaway = !!slide.data.takeaway;
+        if (!takeaway) {
+          for (const name of ['TAKEAWAY_LABEL', 'INSIGHT_RULE']) target.removeElement(name);
+        }
+        const evidence = [1, 2, 3].filter((row) => slide.data[`evidence_${row}`]);
+        for (let row = 1; row <= 3; row++) {
+          if (!evidence.includes(row)) {
+            target.removeElement(`EVIDENCE_${row}_NUMBER`);
+          } else {
+            const column = evidence.indexOf(row);
+            const width = (11.6 - (evidence.length - 1) * 0.4) / evidence.length;
+            const x = 0.67 + column * (width + 0.4);
+            const y = takeaway ? 4.65 : 2.95;
+            target.modifyElement(`EVIDENCE_${row}`, [
+              modify.setPosition({
+                x: x * 914400,
+                y: y * 914400,
+                w: width * 914400,
+                h: (takeaway ? 1.65 : 3.25) * 914400,
+              }),
+            ]);
+            target.modifyElement(`EVIDENCE_${row}_NUMBER`, [
+              modify.setPosition({ x: x * 914400, y: (y - 0.4) * 914400 }),
+            ]);
+          }
+        }
+        for (const name of ['EVIDENCE_DIVIDER_1', 'EVIDENCE_DIVIDER_2']) target.removeElement(name);
+      }
+      if (opts.deck.controlledNative && spec.id === 'cover' && !slide.data.date && !slide.data.author)
+        target.removeElement('COVER_META_SEPARATOR');
+      if (opts.deck.controlledNative && spec.id === 'cover')
+        target.modifyElement('COVER_INDEX', [modify.setText(pageNumber)]);
+      if (opts.deck.controlledNative && spec.id === 'closing')
+        target.modifyElement('CLOSING_INDEX', [modify.setText(pageNumber)]);
+      if (opts.deck.controlledNative && slide.chart) {
+        for (const token of Object.values(spec.tokens)) {
+          if (!['SLIDE_TITLE', 'SLIDE_SUBTITLE'].includes(token.shape)) target.removeElement(token.shape);
+        }
+        for (const name of ['METRIC_DIVIDER_1', 'METRIC_DIVIDER_2']) target.removeElement(name);
+        const chart = slide.chart;
+        target.generate((native, pptx) => {
+          native.addChart(
+            pptx.ChartType.bar,
+            chart.data.map((series) => ({ ...series, labels: [...series.labels], values: [...series.values] })),
+            {
+              x: 0.67,
+              y: 2.65,
+              w: 7.15,
+              h: 2.4,
+              showLegend: true,
+              legendPos: 'b',
+              legendFontSize: 18,
+              catAxisLabelFontSize: 18,
+              valAxisLabelFontSize: 18,
+              chartColors: ['087CB8', '4D6077'],
+              showValue: false,
+            },
+          );
+          native.addText(chart.unit, { x: 0.67, y: 2.32, w: 7.15, h: 0.3, fontSize: 18, margin: 0, color: '4D6077' });
+          const rows = [
+            ['Period', ...chart.data.map((series) => series.name)],
+            ...chart.data[0].labels.map((label, index) => [
+              label,
+              ...chart.data.map((series) => String(series.values[index])),
+            ]),
+          ];
+          native.addTable(
+            rows.map((row) => row.map((text) => ({ text }))),
+            {
+              x: 8.15,
+              y: 2.65,
+              w: 4.05,
+              h: 2.4,
+              fontSize: 18,
+              border: { type: 'solid', pt: 0.5, color: 'CBD6DF' },
+              margin: 0.08,
+              color: '17171C',
+              rowH: 0.43,
+              autoPage: false,
+            },
+          );
+          for (let metric = 1; metric <= 3; metric++) {
+            const text = ['label', 'value', 'note']
+              .map((field) => slide.data[`${field}_${metric}`])
+              .filter(Boolean)
+              .join('\n');
+            if (text)
+              native.addText(text, {
+                x: 0.67 + (metric - 1) * 3.87,
+                y: 5.15,
+                w: 3.65,
+                h: 1.1,
+                fontSize: 18,
+                color: '17171C',
+                margin: 0,
+              });
+          }
+          if (slide.data.source_or_note)
+            native.addText(
+              slide.data.source_or_note,
+              {
+                x: 0.67,
+                y: 6.3,
+                w: 11.6,
+                h: 0.55,
+                fontSize: 16,
+                color: '4D6077',
+                margin: 0,
+              },
+              [
+                (shape: XmlElement) => {
+                  const properties = shape.getElementsByTagName('p:cNvPr').item(0);
+                  if (!properties) throw new Error('native-note-role-unavailable');
+                  properties.setAttribute('name', 'ROYIN_SOURCE_NOTE');
+                },
+              ],
+            );
+        });
+      }
       if (spec.id === 'actions') {
         for (let row = 1; row <= 4; row += 1) {
           const empty = ['action', 'owner', 'due'].every((key) => !(slide.data[`${key}_${row}`] ?? '').trim());

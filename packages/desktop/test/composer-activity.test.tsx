@@ -168,15 +168,18 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     });
 
     expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
-    expect(q('composer-activity')?.textContent).toContain('memory_search 游戏 爆款 创作 内容');
+    // 图12（2026-10-06）：人话部分照显，开头的原始工具名不上屏。
+    expect(q('composer-activity')?.textContent).toContain('游戏 爆款 创作 内容');
+    expect(q('composer-activity')?.textContent).not.toContain('memory_search');
   });
 
-  it('keeps an unknown tool name visible when no activity title is available', async () => {
+  it('unknown tools fall back to the productized generic label (图12：原始工具名不上屏)', async () => {
     await setup({
       toolCalls: [{ id: 'call_1', name: 'unknown_tool', status: 'running', startedAt: new Date(T0).toISOString() }],
     });
 
-    expect(q('composer-activity')?.textContent).toContain('unknown_tool');
+    expect(q('composer-activity')?.textContent).toContain('toolActivity.actions.other');
+    expect(q('composer-activity')?.textContent).not.toContain('unknown_tool');
   });
 
   it('还没开跑工具时显示网关报的准备阶段', async () => {
@@ -208,6 +211,100 @@ describe('ComposerActivity —— 等待期别让用户以为它死了', () => {
     });
 
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 多智能体 / 会议任务：真正在跑的是 performer 会话（区1 体检 P2-6）。
+ *
+ * 活动条原来只认 `activeTask.sessionKey`（主会话）—— performer 在跑时整条不显示，
+ * 而正文里的 `TurnActivityRow` 照样在动：同一条链两种观感，用户以为输入框这边卡死了。
+ */
+describe('多智能体任务：主会话没跑、performer 在跑', () => {
+  const PERFORMER = 'agent:main:clawwork:dev:task:t1:performer:1';
+
+  async function renderComposer(state: {
+    processing: string[];
+    startedAgoMsFor?: Record<string, number>;
+    toolCallsFor?: Record<string, { id: string; name: string; status: string; title?: string; startedAt: string }[]>;
+  }) {
+    const { useMessageStore } = await import('../src/renderer/stores/messageStore');
+    const { default: ComposerActivity } = await import('../src/renderer/components/ComposerActivity');
+
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    const startedAt: Record<string, number> = {};
+    for (const [key, ago] of Object.entries(state.startedAgoMsFor ?? {})) startedAt[key] = T0 - ago;
+    const turns: Record<string, unknown> = {};
+    for (const [key, calls] of Object.entries(state.toolCallsFor ?? {})) turns[key] = { toolCalls: calls };
+    useMessageStore.setState({
+      processingBySession: new Set(state.processing),
+      turnStartedAtBySession: startedAt,
+      runPhaseBySession: {},
+      runRetryBySession: {},
+      progressTextBySession: {},
+      compactingBySession: {},
+      activeTurnBySession: turns as never,
+    });
+    act(() =>
+      root.render(
+        (<ComposerActivity sessionKey={SK} sessionKeys={[SK, PERFORMER]} onCancel={vi.fn()} />) as ReactElement,
+      ),
+    );
+  }
+
+  it('⭐ 只有 performer 在跑时，活动条显示它的真实活动（不是整条消失）', async () => {
+    await renderComposer({
+      processing: [PERFORMER],
+      startedAgoMsFor: { [PERFORMER]: 12_000 },
+      toolCallsFor: {
+        [PERFORMER]: [
+          {
+            id: 'c1',
+            name: 'exec',
+            status: 'running',
+            title: '正在执行 deck-layout',
+            startedAt: new Date(T0).toISOString(),
+          },
+        ],
+      },
+    });
+
+    expect(q('composer-activity')).not.toBeNull();
+    expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.runningTool(正在执行 deck-layout)');
+    // 计时也来自真正在跑的那个会话（本地等待计时，不是猜的）
+    expect(q('composer-activity-elapsed')?.textContent).toBe('12.0s');
+  });
+
+  it('主会话在跑时仍然只认主会话（不跳到 performer 身上）', async () => {
+    await renderComposer({
+      processing: [SK, PERFORMER],
+      startedAgoMsFor: { [SK]: 3_000, [PERFORMER]: 90_000 },
+      toolCallsFor: {
+        [SK]: [{ id: 'm1', name: 'ls', status: 'running', title: 'ls 工作区', startedAt: new Date(T0).toISOString() }],
+        [PERFORMER]: [
+          {
+            id: 'p1',
+            name: 'exec',
+            status: 'running',
+            title: '正在执行 deck-layout',
+            startedAt: new Date(T0).toISOString(),
+          },
+        ],
+      },
+    });
+
+    const text = q('composer-activity')?.textContent ?? '';
+    expect(text).toContain('chatInput.waiting.runningTool(ls 工作区)');
+    expect(text).not.toContain('deck-layout');
+    expect(q('composer-activity-elapsed')?.textContent).toBe('3.0s');
+  });
+
+  it('谁都没在跑 ⇒ 整条不显示（候选列表再长也不造假）', async () => {
+    await renderComposer({ processing: [] });
+
+    expect(q('composer-activity')).toBeNull();
   });
 });
 
@@ -312,7 +409,7 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
     upsert('running');
 
     expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
-    expect(q('composer-activity')?.textContent).toContain('memory_search 游戏 爆款');
+    expect(q('composer-activity')?.textContent).toContain('游戏 爆款');
   });
 
   it('⭐ 跑完 ⇒ **收掉**（不能永远转圈；但那一轮还没结束，活动条本身要留着）', async () => {
@@ -325,7 +422,7 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
     expect(q('composer-activity')?.getAttribute('data-status'), '跑完了还说"正在执行"就是撒谎').not.toBe(
       'running-tool',
     );
-    expect(q('composer-activity')?.textContent).not.toContain('memory_search 游戏 爆款');
+    expect(q('composer-activity')?.textContent).not.toContain('游戏 爆款');
   });
 
   it('⭐ 失败 ⇒ 也**收掉**（报错了还说在跑，与 `status:"blocked"` 那条是同一类谎）', async () => {
@@ -335,7 +432,7 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
     upsert('error');
 
     expect(q('composer-activity')?.getAttribute('data-status')).not.toBe('running-tool');
-    expect(q('composer-activity')?.textContent).not.toContain('memory_search 游戏 爆款');
+    expect(q('composer-activity')?.textContent).not.toContain('游戏 爆款');
   });
 
   it('⭐ 取消 ⇒ 整条**收掉**（那一轮已经作废了，不该还挂着一条"正在跑"）', async () => {
@@ -365,12 +462,12 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
         startedAt: new Date(T0).toISOString(),
       });
     });
-    expect(q('composer-activity')?.textContent).toContain('exec npm test');
+    expect(q('composer-activity')?.textContent).toContain('npm test');
 
     upsert('done'); // 收掉 memory_search，exec 还在跑
 
     expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
-    expect(q('composer-activity')?.textContent).toContain('exec npm test');
+    expect(q('composer-activity')?.textContent).toContain('npm test');
   });
 });
 
@@ -454,7 +551,12 @@ describe('模型自述进度', () => {
     });
 
     const text = q('composer-activity')!.textContent ?? '';
-    expect(text).toContain('chatInput.waiting.awaitingApproval(rm -rf /tmp/x)');
+    /*
+      ⚠️ 区1 体检 P3-8：POSIX 绝对路径现在与 Windows 盘符路径**同一套遮蔽**（`/tmp/x` → `x`）——
+      活动条只是"此刻在干什么"的环境提示，本地目录结构不上屏；
+      真正要用户做决定的那个面是 `ApprovalDialog`（它显示 `request.command` 原文）。
+    */
+    expect(text).toContain('chatInput.waiting.awaitingApproval(rm -rf x)');
     expect(text, '被"执行中"抢了头条就等于没说').not.toContain('chatInput.waiting.runningTool');
   });
 });

@@ -2,6 +2,7 @@ import WebSocket, { type ClientOptions } from 'ws';
 import { app } from 'electron';
 import { randomUUID } from 'crypto';
 import {
+  GATEWAY_WS_PORT,
   HEARTBEAT_INTERVAL_MS,
   RECONNECT_DELAY_MS,
   MAX_RECONNECT_ATTEMPTS,
@@ -30,8 +31,38 @@ import {
 } from './device-identity.js';
 import { getDebugLogger } from '../debug/index.js';
 import { ensureGatewayWindowsSystemTrust } from './tls-trust.js';
+import { convergeLateLocalRuntimeReady, getRuntimeBootstrapStatus } from '../runtime/bootstrap-status.js';
+import { probeStartupz } from '../runtime/gateway-process.js';
+
+/**
+ * 本机运行时网关的地址面：规范 loopback + 18789。
+ *
+ * ⚠️ 只认这几样，不做任何"看起来像本机"的宽判：晚就绪收敛只对**我们自己那个**
+ *    本地运行时成立，远端网关的连接成功绝不能去改"本机运行时起没起来"的快照。
+ */
+const LOCAL_RUNTIME_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+function isLocalRuntimeUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw.trim());
+    return url.protocol === 'ws:' && LOCAL_RUNTIME_HOSTS.has(url.hostname) && url.port === String(GATEWAY_WS_PORT);
+  } catch {
+    return false;
+  }
+}
 
 const WS_CLOSE_POLICY_VIOLATION = 1008;
+/**
+ * `message too big`（RFC 6455）：某一帧超过网关的单帧上限（`policy.maxPayload`）时
+ * 网关会以此码**主动断开连接**。
+ *
+ * ⚠️ 与 1008 的区别是**必须区分**的（2026-10-07 质量战役区 2 · P1-1）：
+ *    1008 = "服务端明确拒绝我们" ⇒ 刻意不重连；1009 = "这一帧太大" ⇒ 照常重连，
+ *    但失败原因必须能说清"是这次发的内容太大"，不能混进"网络断了/正在重连"。
+ *    这句消息会一路走到发送失败的系统消息（`translateGatewayError` 翻成人话）。
+ */
+const WS_CLOSE_MESSAGE_TOO_BIG = 1009;
+/** 1009 的**可识别**失败消息（进出两侧同一份：状态事件 + 在途请求拒绝）。 */
+const GATEWAY_MESSAGE_TOO_BIG_ERROR = 'message too large for gateway frame limit (close code 1009)';
 const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 /**
@@ -294,6 +325,15 @@ export class GatewayClient {
   private lastError: string | null = null;
   private lastErrorCode: string | null = null;
   private serverVersion: string | undefined;
+  /** 最近一次 close 的 WS 关闭码（1008/1009 等语义见 `handleClose`；cleanup 里用来给在途请求一个可识别的失败原因）。 */
+  private lastCloseCode: number | undefined;
+  /**
+   * 网关**协商下来**的单帧字节上限（`hello-ok.policy.maxPayload`，2026-10-07 在随包运行时
+   * dist 实读确认该字段每次握手必发）。渲染层的发送字节预算读它（经 gateway-status →
+   * ui-store），拿不到时回落默认值 —— 客户端原来把 25MB 硬编码三处、从不读这个值
+   * （质量战役区 2 · P1-1）。
+   */
+  private maxPayloadBytes: number | undefined;
   /**
    * 网关自报的方法表（`hello-ok.features.methods`）。
    *
@@ -391,11 +431,22 @@ export class GatewayClient {
 
     this.ws.on('close', (code, reason) => {
       const reasonStr = reason.toString();
+      this.lastCloseCode = code;
+      // ⭐ 1009（message too big）：帧超过网关单帧上限时网关主动断连。这条**不是**
+      //    "服务端拒绝我们"（区别于 1008：不改变重连语义），但失败原因必须可识别 ——
+      //    原来只认 1008，1009 落进"普通断线"，用户只看到"连接断开、正在重连"，
+      //    完全看不出是"这次发的内容太大"（质量战役区 2 · P1-1）。
+      //    ① 状态事件带上可识别 error（见常量注释）；② cleanup() 用它拒绝在途请求 ⇒
+      //    发送失败的系统消息能经 `translateGatewayError` 说成人话。
+      const messageTooBig = code === WS_CLOSE_MESSAGE_TOO_BIG;
+      if (messageTooBig && !this.lastError) {
+        this.lastError = GATEWAY_MESSAGE_TOO_BIG_ERROR;
+      }
       const error =
         this.lastError ?? (code === WS_CLOSE_POLICY_VIOLATION ? reasonStr || 'policy violation' : undefined);
       getDebugLogger().warn({
         domain: 'gateway',
-        event: 'gateway.ws.close',
+        event: messageTooBig ? 'gateway.ws.close.message-too-big' : 'gateway.ws.close',
         gatewayId: this.gatewayId,
         data: {
           code,
@@ -405,6 +456,7 @@ export class GatewayClient {
       });
       this.authenticated = false;
       this.serverVersion = undefined;
+      this.maxPayloadBytes = undefined;
       this.cleanup();
       // ⭐ 1008 = 服务端明确拒绝，我们**刻意不重连**（`d1abc55e`）。那就必须把
       //    "不再自动重连"如实报出去：以前这里一律报 `gaveUp:false`，界面于是**永远**
@@ -558,6 +610,31 @@ export class GatewayClient {
     return this.auth;
   }
 
+  /**
+   * 主连接 hello-ok 之后的**晚就绪收敛**（2026-10-04 真机缺口，见调用点注释）。
+   *
+   * 边界（缺一不动）：
+   *   - 当前快照必须是 ready-timeout（其它错误不是"再等等就好"，见 bootstrap-status）；
+   *   - 必须是我们自己的本地运行时地址（规范 loopback + 18789）且非审批连接；
+   *   - 必须还是**发这次握手的那个 socket**、这条连接没被销毁 —— 探测前后各查一次，
+   *     旧连接或晚回包不允许改新快照；
+   *   - 认证证据 = 这次 hello-ok 本身，不额外认证、不开第二条连接。
+   *
+   * 只做一次**短有界**的 /startupz 复核：不 spawn 第二个网关、不发模型调用。
+   * 复核失败 ⇒ 保留原错误快照（宁可继续显示"还没起来"，也不猜）。
+   */
+  private async convergeLateLocalRuntimeOnHello(socket: WebSocket | null): Promise<void> {
+    const snapshot = getRuntimeBootstrapStatus();
+    if (!snapshot || snapshot.ok || snapshot.reason !== 'ready-timeout') return;
+    if (this.approvalChannel || !isLocalRuntimeUrl(this.wsUrl)) return;
+    if (this.destroyed || socket === null || this.ws !== socket) return;
+    const probe = await probeStartupz({ port: GATEWAY_WS_PORT, timeoutMs: 2_000 });
+    if (!probe.reachable || probe.status !== 'started') return;
+    if (this.destroyed || this.ws !== socket) return;
+    const converged = convergeLateLocalRuntimeReady();
+    if (converged) sendToWindow(getMainWindow(), 'runtime-status', converged);
+  }
+
   private handleChallenge(nonce: string): void {
     const signatureToken =
       'token' in this.auth ? this.auth.token : 'bootstrapToken' in this.auth ? this.auth.bootstrapToken : null;
@@ -626,6 +703,9 @@ export class GatewayClient {
       device,
     };
 
+    // ⚠️ 记下**发这次握手的那个 socket**：晚就绪收敛只允许由它触发、也只在它仍是
+    //    当前连接时才生效（旧连接/晚回包不许改新快照）。
+    const connectSocket = this.ws;
     this.sendReq('connect', params as unknown as Record<string, unknown>, { requestId: 'connect-handshake' })
       .then((payload) => {
         const pType = payload['type'] as string | undefined;
@@ -650,6 +730,15 @@ export class GatewayClient {
           const server = payload['server'] as Record<string, unknown> | undefined;
           const rawVersion = server?.['version'];
           this.serverVersion = typeof rawVersion === 'string' ? rawVersion : undefined;
+          // ⭐ 单帧上限走**协商值**（`hello-ok.policy.maxPayload`，随包运行时实读确认必发）：
+          //    发送侧字节预算由它推导（经 gateway-status → ui-store → useChatSend），
+          //    拿不到时回落默认 25MiB。非法值（非正数/非有限数）一律当"没谈到"。
+          const policy = payload['policy'] as Record<string, unknown> | undefined;
+          const rawMaxPayload = policy?.['maxPayload'];
+          this.maxPayloadBytes =
+            typeof rawMaxPayload === 'number' && Number.isFinite(rawMaxPayload) && rawMaxPayload > 0
+              ? rawMaxPayload
+              : undefined;
           // ⚠️ 审批连接到此为止。三件事**都不能做**，每一件都有具体后果：
           //    ① 存设备令牌 —— 那是**主连接的身份**，两条一起写会互相覆盖（谁后写谁算）；
           //    ② 订阅会话 —— 每条会话事件会翻倍；
@@ -666,7 +755,13 @@ export class GatewayClient {
             gatewayId: this.gatewayId,
             connected: true,
             serverVersion: this.serverVersion,
+            maxPayloadBytes: this.maxPayloadBytes,
           });
+          // ⭐ 晚就绪收敛（2026-10-04 真机）：bootstrap 的 180 秒等待判了 ready-timeout，
+          //    但真实的认证成功在**两分钟后**才到 —— 那次失败只是那一次等待失败。
+          //    这里（主连接 hello-ok 成功、认证证据就是这次握手）把晚到的本机就绪
+          //    收敛进快照，否则旧失败快照会永久挡住真实入口。
+          void this.convergeLateLocalRuntimeOnHello(connectSocket);
         } else {
           getDebugLogger().error({
             domain: 'gateway',
@@ -1373,6 +1468,10 @@ export class GatewayClient {
     return this.serverVersion;
   }
 
+  get maxPayload(): number | undefined {
+    return this.maxPayloadBytes;
+  }
+
   private startHeartbeat(): void {
     this.stopHeartbeat();
     getDebugLogger().info({
@@ -1500,7 +1599,11 @@ export class GatewayClient {
         data: { method: pending.method },
         error: { message: 'connection closed' },
       });
-      const closeErr = new Error('connection closed') as Error & { code?: string };
+      // ⭐ 1009 的断连给在途请求一句**可识别**的原因（普通断线维持原样）——
+      //    发送失败的系统消息靠它经 `translateGatewayError` 翻成"这次发的内容太大"。
+      const closeErr = new Error(
+        this.lastCloseCode === WS_CLOSE_MESSAGE_TOO_BIG ? GATEWAY_MESSAGE_TOO_BIG_ERROR : 'connection closed',
+      ) as Error & { code?: string };
       closeErr.code = 'GATEWAY_CONNECTION_CLOSED';
       pending.reject(closeErr);
       this.pendingRequests.delete(id);

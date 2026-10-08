@@ -84,6 +84,7 @@ vi.mock('../src/renderer/components/ui/dropdown-menu', () => ({
   DropdownMenuSub: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -148,6 +149,9 @@ vi.mock('../src/renderer/components/semantic/WindowTitlebar', () => ({ default: 
 vi.mock('../src/renderer/layouts/FileBrowser', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/CronPanel', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/TeamsPanel', () => ({ default: () => null }));
+// 「团队协作」条会拉团队会议 store（`features/team-meeting/instance` → platform 端口）。
+// 这个文件测的是工作台流程，把条钉成 null（它有自己的 team-collab-bar.test.tsx）。
+vi.mock('../src/renderer/features/team-meeting/TeamCollabBar', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/Dashboard', () => ({ default: () => null }));
 vi.mock('../src/renderer/features/internal-beta/InternalBetaHub', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/MainArea/StartupReadinessPanel', () => ({ default: () => null }));
@@ -197,6 +201,8 @@ vi.mock('../src/renderer/components/ChatInput/useAttachments', () => ({
     pendingAttachments: [],
     setPendingAttachments: vi.fn(),
     removeAttachment: vi.fn(),
+    // BUG-028：离开一段对话时输入框会调它清暂存附件（桩必须跟着长）。
+    clearAttachments: vi.fn(),
     handlePaste: vi.fn(),
   }),
 }));
@@ -211,6 +217,7 @@ vi.mock('../src/renderer/components/ChatInput/useTaskMaterials', () => ({
     clearSelectedImportedFiles: vi.fn(),
     markImportedFileMissing: vi.fn(),
     toggleImportedFile: vi.fn(),
+    removeImportedFileReference: vi.fn(),
     revokeSource: vi.fn(),
     importFiles: vi.fn(),
     grantFolder: vi.fn(),
@@ -278,6 +285,8 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', () => ({
     toolsCatalog: null,
     modelLabel: 'DeepSeek V4 Flash',
     currentModelEntry: undefined,
+    currentMode: 'custom',
+    modelCatalog: [],
     modelsByProvider: {},
     taskGwId: null,
     quotaBlock: null,
@@ -714,7 +723,16 @@ describe('assistant task workbench draft flow', () => {
     act(() => pendingSnapshot?.onDraftResolved?.(pendingSnapshot.draftRequest as DraftPromptRequest, 'replaced'));
 
     expect(loadRecentAssistantTasks('user-1')).toEqual([]);
-    expect(composer.value).toBe('Task A draft');
+    /**
+     * ⚠️ 2026-10-06（BUG-028）改过判据：**换到 task-b 的那一刻输入框就被清空了**
+     *（会话级临时状态的归属，见 `ChatInput/conversation-scope.ts`）—— 所以这里不能再断言
+     * "草稿还是 Task A draft"。本条用例真正要守的是**那个过期请求一个字都没写进输入框**：
+     * 输入框里既不是它的 prompt，也不该有任何它带来的内容。
+     */
+    const presetPrompt = pendingSnapshot?.draftRequest?.prompt ?? '';
+    expect(presetPrompt.length, '过期请求自己得有内容，否则这条断言是空转').toBeGreaterThan(0);
+    expect(composer.value).not.toBe(presetPrompt);
+    expect(composer.value, 'task-a 的草稿不该跟到 task-b').toBe('');
     expect(mocks.handleSend).not.toHaveBeenCalled();
     view.unmount();
   });

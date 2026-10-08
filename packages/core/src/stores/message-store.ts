@@ -23,6 +23,19 @@ export interface ActiveTurn {
   timestamp: string;
 }
 
+/**
+ * 「整轮失败自动重发 1 次」的候选类别（包 D）。
+ *
+ * `transient` = 登记时带结构化判据说"太频繁/超时"；`unclassified` = 认不出来
+ * （lifecycle 失败帧只有一句英文原文）。**确定性失败不在这张表里** —— 它们根本不登记。
+ */
+export interface AutoRetryFailure {
+  taskId: string;
+  /** 时间线里那句失败消息（重发目标由它往前找，见 `findRetryTarget`）。 */
+  messageId: string;
+  kind: 'transient' | 'unclassified';
+}
+
 export interface MessageState {
   messagesByTask: Record<string, Message[]>;
   activeTurnBySession: Record<string, ActiveTurn>;
@@ -130,6 +143,23 @@ export interface MessageState {
    *      在那里清会把刚登记的按钮立刻抹掉，用户永远看不到。
    */
   retryableErrorBySession: Record<string, { taskId: string; messageId: string }>;
+  /**
+   * 「整轮失败自动重发 1 次」的**候选登记**（包 D，2026-10-07）。
+   *
+   * 与 `retryableErrorBySession` **故意分成两份**：那份决定"给不给用户一个按钮"
+   * （只认结构化判据说 `yes` 的）；这份决定"界面要不要自己重发一次"。lifecycle
+   * 失败帧里没有结构化类别（判据恒为 `unknown`），合成一份会让这类失败凭空长出
+   * 「重试」按钮 —— B10 明确拒绝过。两份的生命周期纪律相同（见上一条）。
+   *
+   * `kind` 是登记时能拿到的**唯一**类别信息：
+   *   - `transient`（rate_limit / timeout）—— 重发真可能改变结果；
+   *   - `unclassified` —— 认不出来。**不直接**等于要重发：渲染层还要再过一遍
+   *     「零最终交付」严格判据（见 `useAutoRetryFailedTurn`），过不了就不发。
+   * 确定性失败（refusal / context_length）**根本不登记**。
+   *
+   * ⚠️ 不落库：本轮界面状态，与 `retryableErrorBySession` 同性质。
+   */
+  autoRetryFailureBySession: Record<string, AutoRetryFailure>;
   highlightedMessageId: string | null;
 
   addMessage: (
@@ -217,6 +247,14 @@ export interface MessageState {
    *    给按钮等于劝用户白花一次钱；`'unknown'` 同理（不知道就别装作知道）。
    */
   markRetryableError: (sessionKey: string, target: { taskId: string; messageId: string }) => void;
+  /**
+   * 登记"这条整轮失败是自动重发一次的候选"，界面据此决定要不要自动重发。
+   *
+   * ⚠️ 与 `markRetryableError` 分开（原因见 `autoRetryFailureBySession` 的说明）：
+   *    确定性失败（refusal / context_length）**两边都不登记**；瞬时 / 未分类的登记
+   *    在这里，重发前还要过渲染层的「零最终交付」严格判据。
+   */
+  markAutoRetryFailure: (sessionKey: string, target: AutoRetryFailure) => void;
 }
 
 export interface MessageStoreDeps {
@@ -384,6 +422,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     turnStartedAtBySession: {},
     errorBySession: {},
     retryableErrorBySession: {},
+    autoRetryFailureBySession: {},
     highlightedMessageId: null,
 
     addMessage: (taskId, role, content, attachments?, options?) => {
@@ -613,6 +652,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const nextProcessing = new Set(s.processingBySession);
         const nextErrors = { ...s.errorBySession };
         const nextRetryable = { ...s.retryableErrorBySession };
+        const nextAutoRetry = { ...s.autoRetryFailureBySession };
         const nextTurnStartedAt = { ...s.turnStartedAtBySession };
         const nextRunRetry = { ...s.runRetryBySession };
 
@@ -629,6 +669,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
         for (const key of Object.keys(nextRetryable)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextRetryable[key];
         }
+        for (const key of Object.keys(nextAutoRetry)) {
+          if (parseTaskIdFromSessionKey(key) === taskId) delete nextAutoRetry[key];
+        }
         for (const key of Object.keys(nextTurnStartedAt)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextTurnStartedAt[key];
         }
@@ -642,6 +685,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
           processingBySession: nextProcessing,
           errorBySession: nextErrors,
           retryableErrorBySession: nextRetryable,
+          autoRetryFailureBySession: nextAutoRetry,
           turnStartedAtBySession: nextTurnStartedAt,
           runRetryBySession: nextRunRetry,
         };
@@ -663,12 +707,19 @@ export function createMessageStore(deps: MessageStoreDeps) {
         // ⚠️ 反过来 `processing === false` **绝不能**清 —— dispatcher 的错误分支正是
         //    "先 setProcessing(false)、再登记"，在这里清会把刚登记的按钮立刻抹掉。
         let nextRetryable = s.retryableErrorBySession;
+        // 「自动重试候选」同一条纪律、同一个理由（正是"有人已经重发过"的那道天然闸）：
+        // 新一轮起来 ⇒ 这个候选的使命结束；定时器到点时现读它，读到没了就放弃自动重发。
+        let nextAutoRetry = s.autoRetryFailureBySession;
         if (processing) {
           if (!wasProcessing) {
             startedAt[sessionKey] = Date.now();
             if (sessionKey in s.retryableErrorBySession) {
               nextRetryable = { ...s.retryableErrorBySession };
               delete nextRetryable[sessionKey];
+            }
+            if (sessionKey in s.autoRetryFailureBySession) {
+              nextAutoRetry = { ...s.autoRetryFailureBySession };
+              delete nextAutoRetry[sessionKey];
             }
           }
         } else {
@@ -679,6 +730,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
           processingBySession: next,
           turnStartedAtBySession: startedAt,
           retryableErrorBySession: nextRetryable,
+          autoRetryFailureBySession: nextAutoRetry,
         };
       }),
 
@@ -751,5 +803,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
     // 早就被后续对话甩在身后的"重试"。
     markRetryableError: (sessionKey, target) =>
       set((s) => ({ retryableErrorBySession: { ...s.retryableErrorBySession, [sessionKey]: target } })),
+
+    // 同一条"只留最近一条"：一个会话同时只可能有一个"刚失败、还没人重发"的轮次。
+    markAutoRetryFailure: (sessionKey, target) =>
+      set((s) => ({ autoRetryFailureBySession: { ...s.autoRetryFailureBySession, [sessionKey]: target } })),
   }));
 }

@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at TEXT NOT NULL,
   tags TEXT NOT NULL DEFAULT '[]',
   artifact_dir TEXT NOT NULL DEFAULT '',
-  gateway_id TEXT NOT NULL DEFAULT ''
+  gateway_id TEXT NOT NULL DEFAULT '',
+  deck_routed INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS task_context_sources (
@@ -69,6 +70,18 @@ CREATE TABLE IF NOT EXISTS team_meetings (
 
 CREATE UNIQUE INDEX IF NOT EXISTS task_context_sources_task_path
 ON task_context_sources(task_id, absolute_path);
+
+CREATE TABLE IF NOT EXISTS artifact_delivery_activities (
+  operation_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  session_key TEXT NOT NULL,
+  owner_user_id TEXT,
+  owner_org_id TEXT,
+  owner_license_id TEXT,
+  ended_at INTEGER NOT NULL,
+  record_json TEXT NOT NULL,
+  artifact_refs_json TEXT NOT NULL DEFAULT '[]'
+);
 
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
@@ -154,9 +167,16 @@ function openAndMigrate(dbPath: string): void {
   }
 
   migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN ensemble INTEGER NOT NULL DEFAULT 0');
+  // 任务模式（快速/智能/深度/高级指定模型）。**老行留 NULL** —— NULL 的语义是
+  // "没有偏好"（按 custom 处理，不劫持它当年显式选过的 model），
+  // 所以**不 backfill 默认档**；新任务由 `createTask` 写入默认档。
+  migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN mode TEXT');
   // 置顶（NULL = 未置顶）。老数据留 NULL —— 语义就是"没置顶"，不需要 backfill。
   migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN pinned_at TEXT');
   migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN team_id TEXT');
+  // deck 路由标记（演示文稿 → DeepSeek 的粘性开关）。老行 = 0 = "没标记过"
+  //（语义就是"走正常模式解析"），不需要 backfill。见 `@clawwork/shared` 的 `Task.deckRouted`。
+  migrateAddColumn(sqlite, 'ALTER TABLE tasks ADD COLUMN deck_routed INTEGER NOT NULL DEFAULT 0');
 
   sqlite.exec(`
     UPDATE messages SET session_key = (

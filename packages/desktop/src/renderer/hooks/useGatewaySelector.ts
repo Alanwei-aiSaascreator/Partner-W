@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GatewayInfo } from '@clawwork/core';
+import { resolveCatalogAgentId, type GatewayInfo } from '@clawwork/core';
 import type { AgentInfo } from '@clawwork/shared';
 import { useUiStore } from '@/stores/uiStore';
 import { fetchAgentsForGateway } from '@/hooks/useGatewayBootstrap';
+import { ASSISTANT_ID_BY_WORKSPACE } from '@/lib/assistant-task-presets';
 import { resolveRequestedAgent } from '@/lib/requested-agent';
 
 interface UseGatewaySelectorOptions {
@@ -55,7 +56,19 @@ export function useGatewaySelector(options: UseGatewaySelectorOptions = {}): Use
       '',
   );
 
-  const defaultAgentId = gwAgents?.defaultId ?? agentCatalog[0]?.id ?? '';
+  /**
+   * ⭐ 默认当前助手（2026-10-07 质检 P2-2）：判据收进 core 的 `resolveCatalogAgentId`
+   * （网关默认 id 必须**在目录里**、目录只有一位时那位就是默认；**明确拒绝"目录第一个"兜底**）。
+   * 都解不出来时**缺省固定主罗盘**（且它必须在目录里，否则不冒充一个不存在的助手）。
+   *
+   * ⚠️ 老写法 `gwAgents?.defaultId ?? agentCatalog[0]?.id ?? ''` 会在网关没给 defaultId 时
+   *    悄悄把**目录里的第一个**能力助手当成默认 —— 与「默认=主罗盘」的契约相悖。
+   */
+  const defaultAgentId =
+    resolveCatalogAgentId(gwAgents) ??
+    (agentCatalog.some((agent) => agent.id === ASSISTANT_ID_BY_WORKSPACE.compass)
+      ? ASSISTANT_ID_BY_WORKSPACE.compass
+      : '');
 
   /**
    * ⭐ 目录里没有请求的那个助手时，**拒绝**而不是换成默认助手（2026-09-24）。
@@ -98,10 +111,12 @@ export function useGatewaySelector(options: UseGatewaySelectorOptions = {}): Use
     () =>
       requestedState === 'missing'
         ? ''
-        : agentCatalog.some((agent) => agent.id === selectedAgentId)
-          ? selectedAgentId
-          : defaultAgentId,
-    [agentCatalog, defaultAgentId, requestedState, selectedAgentId],
+        : requestGatewayMatches && requestedState === 'ok' && options.requestedAgentId
+          ? options.requestedAgentId
+          : agentCatalog.some((agent) => agent.id === selectedAgentId)
+            ? selectedAgentId
+            : defaultAgentId,
+    [agentCatalog, defaultAgentId, options.requestedAgentId, requestGatewayMatches, requestedState, selectedAgentId],
   );
 
   useEffect(() => {

@@ -14,8 +14,16 @@ const mocks = vi.hoisted(() => ({
   setSelectedAgent: vi.fn(),
   setMainView: vi.fn(),
   selectedGwId: 'gw-1',
-  pendingNewTask: null as { gatewayId?: string; agentId?: string; model?: string; tags?: string[] } | null,
-  gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string }> },
+  pendingNewTask: null as {
+    gatewayId?: string;
+    agentId?: string;
+    model?: string;
+    mode?: string;
+    tags?: string[];
+    teamId?: string;
+    ensemble?: boolean;
+  } | null,
+  gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string; name?: string }> },
   modelCatalogByGateway: {
     'gw-1': [
       { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
@@ -121,6 +129,101 @@ function render(ui: ReactElement): {
 }
 
 describe('WelcomeScreen assistant workspace', () => {
+  it('lets a user leave the requested team manager and clears only the pending team scope', () => {
+    mocks.gatewayState.agentCatalog = [
+      { id: 'main' },
+      { id: 'designer', name: '演示设计师' },
+      { id: 'finance-lead', name: '融资主管' },
+    ];
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'finance-lead',
+      model: 'qwen3.5-plus',
+      teamId: 'finance-team',
+      ensemble: false,
+    };
+    const ui = () => (
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />
+    );
+    const view = render(ui());
+    mocks.setPending.mockImplementationOnce((next) => {
+      mocks.pendingNewTask = next;
+    });
+    const designer = Array.from(view.container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('演示设计师'),
+    );
+    act(() => designer?.click());
+    expect(mocks.pendingNewTask).toMatchObject({ agentId: 'designer', gatewayId: 'gw-1' });
+    expect(mocks.pendingNewTask?.teamId).toBeUndefined();
+    expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'designer');
+    expect(
+      Array.from(view.container.querySelectorAll('button')).find((button) => button.textContent?.includes('演示设计师'))
+        ?.className,
+    ).toContain('border-[var(--accent)]');
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'finance-lead',
+      model: 'qwen3.5-plus',
+      teamId: 'finance-team',
+      ensemble: false,
+    };
+    view.rerender(ui());
+    expect(
+      Array.from(view.container.querySelectorAll('button')).find((button) => button.textContent?.includes('融资主管'))
+        ?.className,
+    ).toContain('border-[var(--accent)]');
+    expect(mocks.pendingNewTask?.teamId).toBe('finance-team');
+    view.unmount();
+  });
+
+  it('shows a requested manager outside the first three catalog rows without losing pending team context', () => {
+    mocks.gatewayState.agentCatalog = [
+      { id: 'main' },
+      { id: 'analyst', name: '商业分析师' },
+      { id: 'designer', name: '演示设计师' },
+      { id: 'finance-lead', name: '融资主管' },
+    ];
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', model: 'deepseek-v4-flash' };
+    const ui = () => (
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />
+    );
+    const view = render(ui());
+    mocks.setPending.mockClear();
+    mocks.pendingNewTask = {
+      gatewayId: 'gw-1',
+      agentId: 'finance-lead',
+      model: 'qwen3.5-plus',
+      teamId: 'finance-team',
+      ensemble: false,
+    };
+    view.rerender(ui());
+    const manager = Array.from(view.container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('融资主管'),
+    );
+    expect(manager).toBeDefined();
+    expect(manager?.className).toContain('border-[var(--accent)]');
+    expect(mocks.pendingNewTask).toMatchObject({
+      agentId: 'finance-lead',
+      teamId: 'finance-team',
+      ensemble: false,
+      model: 'qwen3.5-plus',
+    });
+    expect(mocks.setPending).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
@@ -129,7 +232,7 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'main' }];
   });
 
-  it('opens the assistant recommended by the completed purpose and keeps its model on the pending task', () => {
+  it('⭐ 默认当前助手 = 主罗盘（引导画像的六类推荐不再决定当前助手）', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
     const { container, unmount } = render(
       <WelcomeScreen
@@ -141,14 +244,18 @@ describe('WelcomeScreen assistant workspace', () => {
       />,
     );
 
-    expect(container.textContent).toContain('presetAgents.roles.video');
-    expect(container.textContent).toContain('assistantWorkspaces.video.description');
-    expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'rongying-video');
+    // 工作台落在罗盘（不是画像推荐过的 video），模型照旧落到待发任务。
+    expect(container.textContent).toContain('assistantWorkspaces.compass.description');
+    expect(container.textContent).not.toContain('assistantWorkspaces.video.description');
+    expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'main');
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
-      agentId: 'rongying-video',
+      agentId: 'main',
       model: 'deepseek-v4-flash',
     });
+    // chip 区只留一级入口（当前罗盘）：预置的 rongying-video 不再是其中一格（它归「技能与能力」）。
+    const chipLabels = [...container.querySelectorAll('button')].map((button) => button.textContent?.trim());
+    expect(chipLabels).not.toContain('rongying-video');
     unmount();
   });
 
@@ -340,7 +447,8 @@ describe('WelcomeScreen assistant workspace', () => {
   });
 
   it('does not carry a preset tag when switching assistants', () => {
-    mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
+    // ⚠️ 切去的是一个**非预置**助手：六类预置已不进 chip 区（见「默认当前助手 = 主罗盘」那条）。
+    mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'custom-agent', name: '自定义助手' }];
     mocks.pendingNewTask = {
       gatewayId: 'gw-1',
       agentId: 'main',
@@ -358,22 +466,24 @@ describe('WelcomeScreen assistant workspace', () => {
     );
     mocks.setPending.mockClear();
 
-    const videoButton = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent?.trim() === 'rongying-video',
+    const otherButton = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === '自定义助手',
     );
-    act(() => videoButton?.click());
+    act(() => otherButton?.click());
 
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
-      agentId: 'rongying-video',
+      agentId: 'custom-agent',
       model: 'deepseek-v4-flash',
       tags: ['private'],
     });
     unmount();
   });
 
-  it('keeps a starter on the assistant already selected by the purpose', () => {
+  it('keeps a starter on the assistant already selected by the user', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
+    // 用户点名要的助手（待发任务）优先于默认罗盘 —— 工作台跟着它走。
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'rongying-video' };
     const onSelectPreset = vi.fn();
     const { container, unmount } = render(
       <WelcomeScreen
@@ -581,6 +691,84 @@ describe('WelcomeScreen assistant workspace', () => {
    * ⚠️ 2026-09-24（独立复核 M-2）：罗盘自己也不在目录里时，"换用罗盘助手"是个**死胡同按钮** ——
    * 一边说"不在本机"、一边给一个指向同样不存在的助手的出口。那时只留"去团队页"。
    */
+  /**
+   * ⭐ FEAT-01 集成（2026-10-08）：**chip 说的是"将要跑什么"，不是"上次跑过什么"**。
+   *
+   * `createTask` 把新任务的 `mode` 写成默认档（智能），发送路径按 `MODE_POLICY` 对着目录
+   * 现解析模型（智能档 = `qwen3.7-flash`）；而 welcome 屏以前显示的是 `pending.model`
+   * （写死的商业默认模型 `deepseek-v4-flash`）——用户看到的模型和真跑的模型**不是同一个**。
+   * 现在：模式档位下显示「模式名 · 解析出的模型」。
+   *
+   * ⚠️ 目录里**没有**模式模型时不硬编：发送路径会回退到 `pending.model`，
+   *    chip 就显示那个模型（见下面「真实 pending 模型」那条既有用例）。
+   */
+  it('⭐ FEAT-01：目录里有模式模型时，待发 chip 显示「智能 · 按模式解析的模型」', () => {
+    const previous = mocks.modelCatalogByGateway['gw-1'];
+    mocks.modelCatalogByGateway['gw-1'] = [
+      { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
+      { id: 'qwen3.7-flash', provider: 'clawrouter', name: 'Qwen3.7 Flash' },
+    ];
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent, '模式名要出现').toContain('chatInput.mode.smart');
+    expect(container.textContent, '要显示模式解析出的模型').toContain('Qwen3.7 Flash');
+    expect(container.textContent, '不许再显示写死的默认模型').not.toContain('DeepSeek V4 Flash');
+    // `pending.model` 仍是那条"留痕"（发送路径在模式档下会覆写它）—— 状态不被显示层改写。
+    expect(mocks.setPending).toHaveBeenCalledWith(expect.objectContaining({ model: 'deepseek-v4-flash' }));
+    unmount();
+    mocks.modelCatalogByGateway['gw-1'] = previous;
+  });
+
+  it('⭐ FEAT-01：快速档别名缺席 ⇒ 显示回退后的基础模型（与发送路径同一把尺）', () => {
+    const previous = mocks.modelCatalogByGateway['gw-1'];
+    mocks.modelCatalogByGateway['gw-1'] = [{ id: 'qwen3.7-flash', provider: 'clawrouter', name: 'Qwen3.7 Flash' }];
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', mode: 'fast' };
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent).toContain('chatInput.mode.fast');
+    expect(container.textContent).toContain('Qwen3.7 Flash');
+    unmount();
+    mocks.modelCatalogByGateway['gw-1'] = previous;
+  });
+
+  it('⭐ FEAT-01：高级（指定模型）照旧显示模型名，不受模式显示影响', () => {
+    const previous = mocks.modelCatalogByGateway['gw-1'];
+    mocks.modelCatalogByGateway['gw-1'] = [
+      { id: 'qwen3.7-flash', provider: 'clawrouter', name: 'Qwen3.7 Flash' },
+      { id: 'qwen3.5-plus', provider: 'clawrouter', name: 'Qwen 3.5 Plus' },
+    ];
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', model: 'qwen3.5-plus', mode: 'custom' };
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent).toContain('Qwen 3.5 Plus');
+    expect(container.textContent, '高级档不许显示模式名').not.toContain('chatInput.mode.');
+    unmount();
+    mocks.modelCatalogByGateway['gw-1'] = previous;
+  });
   it('⭐ 罗盘自己也不在目录里 ⇒ 不给"换用罗盘助手"这个出口，只留团队页', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'some-other-agent' }];
     mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'team-agent-x' };

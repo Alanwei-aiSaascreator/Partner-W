@@ -44,16 +44,27 @@ export const IDENTITY_BLOCK_END = '<!-- /身份中心 -->';
  */
 export const USER_MD_MAX_CHARS = 4000;
 
-/** 身份块的正文（含标记）。`tagLabels` 为空时也要说清"未选"，不留一个空冒号。 */
-export function buildIdentityBlock(input: { groupLabel: string; tagLabels: readonly string[] }): string {
+/**
+ * 身份块的正文（含标记）。`tagLabels` 为空时也要说清"未选"，不留一个空冒号。
+ *
+ * `groupLabel` = **用户自己的行业/岗位**（首跑档案里的值），不是当前助手的名字 ——
+ * 这一块会写进**每个**助手的 `USER.md`，写"客群：内容助手"等于告诉每个助手
+ * "你服务的是内容助手"（2026-10-07 体检抓到的原话）。缺档案时由调用方给
+ * 「未配置」这类如实值（`common.notConfigured`），这里不做臆造兜底。
+ *
+ * `introduction` = 首跑「一句话介绍」（可选，2026-10-07 补：只写不读的那个字段）。
+ */
+export function buildIdentityBlock(input: {
+  groupLabel: string;
+  tagLabels: readonly string[];
+  introduction?: string;
+}): string {
   const tags = input.tagLabels.length > 0 ? input.tagLabels.join('、') : '（未选）';
-  return [
-    IDENTITY_BLOCK_START,
-    '## 我的身份',
-    `- 客群：${input.groupLabel}`,
-    `- 标签：${tags}`,
-    IDENTITY_BLOCK_END,
-  ].join('\n');
+  const introduction = input.introduction?.trim();
+  const lines = [IDENTITY_BLOCK_START, '## 我的身份', `- 客群：${input.groupLabel}`];
+  if (introduction) lines.push(`- 介绍：${introduction}`);
+  lines.push(`- 标签：${tags}`, IDENTITY_BLOCK_END);
+  return lines.join('\n');
 }
 
 export type IdentityMergeResult = { ok: true; content: string } | { ok: false; reason: 'over-limit'; limit: number };
@@ -63,8 +74,37 @@ function stripIdentityBlock(existing: string): string {
   const start = existing.indexOf(IDENTITY_BLOCK_START);
   if (start < 0) return existing.trim();
   const endMark = existing.indexOf(IDENTITY_BLOCK_END, start);
-  const end = endMark < 0 ? existing.length : endMark + IDENTITY_BLOCK_END.length;
-  return `${existing.slice(0, start)}${existing.slice(end)}`.trim();
+  if (endMark >= 0) {
+    const end = endMark + IDENTITY_BLOCK_END.length;
+    return `${existing.slice(0, start)}${existing.slice(end)}`.trim();
+  }
+  /**
+   * ⚠️ 结束标记缺失（用户手删过一行、或文件被别的工具截断）：**不许**把标记后面的
+   * 一切都当身份块删掉 —— 那是"用户自己写的一个字节都不许丢"的反面（2026-10-07 体检）。
+   * 这里只吞掉身份块**自己那几行**（`## 我的身份` + `- 客群：/介绍：/标签：` 三个前缀），
+   * 再往下的人话（包括用户自己的列表项）原样保留。
+   */
+  const lines = existing.slice(start + IDENTITY_BLOCK_START.length).split('\n');
+  const isBlockLine = (line: string): boolean => {
+    const trimmed = line.trim();
+    return (
+      trimmed === '## 我的身份' ||
+      trimmed.startsWith('- 客群：') ||
+      trimmed.startsWith('- 介绍：') ||
+      trimmed.startsWith('- 标签：')
+    );
+  };
+  let consumed = 0;
+  for (const line of lines) {
+    if (consumed === 0 && line.trim() === '') {
+      // 标记行后面的那一个空行属于块的开头，吞掉；块中间的第二个空行连同后面内容都留下。
+      consumed += 1;
+      continue;
+    }
+    if (!isBlockLine(line)) break;
+    consumed += 1;
+  }
+  return `${existing.slice(0, start)}${lines.slice(consumed).join('\n')}`.trim();
 }
 
 /**
@@ -80,4 +120,89 @@ export function mergeIdentityIntoUserMd(existing: string, block: string): Identi
     return { ok: false, reason: 'over-limit', limit: USER_MD_MAX_CHARS };
   }
   return { ok: true, content };
+}
+
+/* ────────────────────────── 读回助手文件（2026-10-07 体检） ────────────────────────── */
+
+/**
+ * 从 `agents.files.get` 的**真机载荷**里取 `USER.md` 正文；取不出来返回 `null`。
+ *
+ * ## 🔴 为什么要有这个函数（血的教训）
+ *
+ * 真机返回的是 `{ agentId, workspace, file: { name, content, missing } }`（契约
+ * `docs/openclaw-gateway-whitepaper.md`；对照三处正确读法：`preset-agent-installer.ts:122`、
+ * `AgentsSection.tsx:1029`、`TeamDetailView.tsx:131`）。2026-10-07 体检时两个页面读的是
+ * `result.content` —— 字段错位 ⇒ **恒读成空串** ⇒ 个性化中心"保存并应用"把每个助手的
+ * `USER.md` 覆盖成只剩身份块，记忆页显示为空。
+ *
+ * ⚠️ 读失败（`ok:false`）与"形状不认识"都由调用方按 **读失败** 处理（跳过、如实报），
+ *    **绝不**当"空文件"——那正是覆盖用户记忆的那条路。`missing:true`（文件不存在）
+ *    与空文件都如实返回 `''`：这两种情况下本来就没有要保住的字节。
+ */
+export function userMdContentFromReadResult(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const file = (payload as { file?: unknown }).file;
+  if (!file || typeof file !== 'object') return null;
+  const entry = file as { content?: unknown; missing?: unknown };
+  if (entry.missing === true) return '';
+  const content = entry.content;
+  if (content === undefined || content === null) return ''; // 契约里 content 是可选的（空文件）
+  return typeof content === 'string' ? content : null;
+}
+
+/* ────────────────────────── 偏好标签的回读缓存（2026-10-07 体检） ────────────────────────── */
+
+/**
+ * 偏好标签的**本地缓存键前缀**（按 userId 分键）。
+ *
+ * ⚠️ 这不是第二套档案真源：标签的**持久内容真源**仍是各助手 `USER.md` 里的身份块
+ *    （助手每轮读的是它）。这里缓存的只是"上次保存时界面上选了哪几个"，
+ *    用来在**再次进页面时回读选择** —— 没有它，重进页面 = 静默改回默认四标签，
+ *    再点一次保存就把用户的意图覆盖回去了（体检问题 4）。
+ */
+export const IDENTITY_TAGS_STORAGE_PREFIX = 'rongying-cube:identity-tags:v1:';
+
+/** 存储视图（只要求 getItem/setItem，单测塞假货即可）。 */
+export interface IdentityTagsStorage {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+}
+
+/** 回读上次保存的标签选择；没有 / 坏了 / 存储不可用一律 `null`（调用方回默认四标签）。 */
+export function readStoredIdentityTags(
+  userId: string | null | undefined,
+  storage?: IdentityTagsStorage,
+): IdentityTagId[] | null {
+  if (!userId) return null;
+  try {
+    const source = storage ?? (typeof window === 'undefined' ? null : window.localStorage);
+    if (!source) return null;
+    const raw = source.getItem(`${IDENTITY_TAGS_STORAGE_PREFIX}${userId}`);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const tags = parsed.filter((value): value is IdentityTagId =>
+      (IDENTITY_PERSONA_TAGS as readonly unknown[]).includes(value),
+    );
+    // 有陌生项 ⇒ 整份不认识（宁回默认，不静默丢一个用户的勾选）。
+    if (tags.length !== parsed.length) return null;
+    return [...new Set(tags)];
+  } catch {
+    return null;
+  }
+}
+
+/** 记住这次保存的标签选择（写不进去就算了 —— 是体验增强，不是真源）。 */
+export function saveStoredIdentityTags(
+  userId: string | null | undefined,
+  tags: readonly IdentityTagId[],
+  storage?: IdentityTagsStorage,
+): void {
+  if (!userId || tags.length === 0) return;
+  try {
+    const target = storage ?? (typeof window === 'undefined' ? null : window.localStorage);
+    target?.setItem(`${IDENTITY_TAGS_STORAGE_PREFIX}${userId}`, JSON.stringify(tags));
+  } catch {
+    // 隐私模式 / 配额满：不回读就是了，绝不让保存流程因此失败。
+  }
 }

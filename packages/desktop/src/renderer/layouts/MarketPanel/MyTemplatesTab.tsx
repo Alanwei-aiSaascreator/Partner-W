@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { describeTemplateError, normalizeMyTemplates } from '@clawwork/core';
+import { describeTemplateErrorKey, normalizeMyTemplates } from '@clawwork/core';
 import {
   TEMPLATE_CATEGORIES,
   type CreatorTemplate,
@@ -16,11 +16,11 @@ import EmptyState from '@/components/semantic/EmptyState';
 /**
  * 创作者中心（"我的模板"）。
  *
- * 发布即上架（不审核，用户已拍板）：本组织成员立刻能在市场里看到并安装。
+ * 发布即上架（不审核，用户已拍板）：本组织成员立刻能在市场里看到并在罗盘助手中使用。
  * 管理员能下架别人的，但**不能替别人发布** —— 那条规则在服务端（迁移 40），
  * 这里只是不给虚假的入口。
  *
- * ⚠️ 已经被安装过的模板只能下架、不能删除 —— 别人本地那份助手的"来源"不该凭空消失。
+ * ⚠️ 已经有人用过的模板只能下架、不能删除 —— 别人本地那份助手的"来源"不该凭空消失。
  */
 interface TemplateForm {
   name: string;
@@ -88,7 +88,7 @@ export default function MyTemplatesTab() {
     const res = await window.clawwork.marketCreateTemplate({ ...form });
     setCreating(false);
     if (!res.ok) {
-      toast.error(describeTemplateError(res.errorCode));
+      toast.error(t(describeTemplateErrorKey(res.errorCode)));
       return;
     }
     setForm(EMPTY_FORM);
@@ -100,7 +100,7 @@ export default function MyTemplatesTab() {
     async (id: string): Promise<void> => {
       const res = await window.clawwork.marketUpdateTemplate({ id, ...form });
       if (!res.ok) {
-        toast.error(describeTemplateError(res.errorCode));
+        toast.error(t(describeTemplateErrorKey(res.errorCode)));
         return;
       }
       setEditingId(null);
@@ -114,7 +114,7 @@ export default function MyTemplatesTab() {
     async (id: string, status: TemplateStatus): Promise<void> => {
       const res = await window.clawwork.marketSetTemplateStatus(id, status);
       if (!res.ok) {
-        toast.error(describeTemplateError(res.errorCode));
+        toast.error(t(describeTemplateErrorKey(res.errorCode)));
         return;
       }
       toast.success(status === 'published' ? t('market.publishDone') : t('market.unpublishDone'));
@@ -128,7 +128,7 @@ export default function MyTemplatesTab() {
       if (!window.confirm(t('market.deleteConfirm'))) return;
       const res = await window.clawwork.marketDeleteTemplate(id);
       if (!res.ok) {
-        toast.error(describeTemplateError(res.errorCode));
+        toast.error(t(describeTemplateErrorKey(res.errorCode)));
         return;
       }
       toast.success(t('market.deleteDone'));
@@ -255,7 +255,7 @@ export default function MyTemplatesTab() {
                   <p className="type-support text-[var(--text-muted)]">{row.description}</p>
                   <div className="flex items-center gap-3 type-support text-[var(--text-muted)]">
                     <span>{t('market.views', { count: row.viewCount })}</span>
-                    <span>{t('market.installCount', { count: row.installCount })}</span>
+                    <span>{t('market.usageCount', { count: row.installCount })}</span>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button

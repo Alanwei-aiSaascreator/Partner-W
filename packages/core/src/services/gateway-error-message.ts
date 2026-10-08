@@ -94,6 +94,19 @@ function translateAgentNoResponse(raw: string): string | null {
 }
 
 /**
+ * 请求超时（10-01 用户实测反馈 #1；调查报告 `D:\backup\issue1-investigation-20261006.md`）。
+ *
+ * 原文：`TimeoutError: request timed out` —— 随包运行时的 fetch 超时自造，没有 HTTP 状态码。
+ * 此前无翻译器 → 英文原文直接上屏。匹配从严：只认运行时的确切措辞（`request timed out` /
+ * `TimeoutError`），不泛化到 "timeout" 一词——免得吞掉别家协议的原文
+ * （纪律「宁可少说，也不给一句错的中文」）。
+ */
+function translateRequestTimeout(raw: string): string | null {
+  if (!/request timed out|TimeoutError/i.test(raw)) return null;
+  return '这次请求超时了——等待时间太长被中断（通常是网络波动或服务临时繁忙）。可以直接重试一次；如果连续出现，请检查网络后再试。';
+}
+
+/**
  * 受控测试通道（relay）的**守门拒绝**：`⚠️ clawrouter/<model> request failed (HTTP 409).`
  *
  * 为什么值得单独一句（2026-10-03 场景一实测，runId e637f73d 的第 23 笔）：
@@ -111,13 +124,29 @@ function translateRelayGuardRejected(raw: string): string | null {
   return '这次调用被额度守门拦下了（HTTP 409，通常是本轮测试额度已到上限，或任务已被停止）。没有产生费用；已经生成的文件和回执仍然保留。请不要反复重发，调整后继续。';
 }
 
+/**
+ * 单帧超限被网关断连（close code 1009，`message too large`）。
+ *
+ * 原文由**我们自己**的主进程造（`main/ws/gateway-client.ts` 的
+ * `GATEWAY_MESSAGE_TOO_BIG_ERROR`）：进程收到 1009 后用它拒绝在途的发送请求。
+ * 没有这一层时用户看到的是"连接断开"式的通用失败，看不出"是这次发的内容太大"，
+ * 只会对着同一句话反复重试（质量战役区 2 · P1-1）。
+ * ⚠️ 匹配从严：只认运行时的确切措辞（`message too large` / `frame limit`）。
+ */
+function translateFrameTooLarge(raw: string): string | null {
+  if (!/message too large|frame limit/i.test(raw)) return null;
+  return '这次发送的内容太大，超过了网关单帧上限，连接被网关断开（消息没有发出去）。请减少一次带上的附件数量或大小（例如先移除最大的那个文件），然后重试。';
+}
+
 const TRANSLATORS = [
   translateThinkingLevelUnsupported,
   translateModelNotFound,
   translateQuestionFailure,
   translateAgentRunFailed,
   translateAgentNoResponse,
+  translateRequestTimeout,
   translateRelayGuardRejected,
+  translateFrameTooLarge,
 ];
 
 /** 命中已知错误返回中文；认不出来返回 null（调用方应回退到网关原文）。 */

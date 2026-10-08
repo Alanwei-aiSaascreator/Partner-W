@@ -1,6 +1,6 @@
 ---
 name: 幻灯版面（自己排）
-description: '用 JSX + CSS 直接写幻灯片版面，客户端拿真浏览器排版成**可编辑**的 .pptx。用户说"做个PPT""做份演示""要有设计感"时用 —— 这是**拿给人看的演示的默认路线**。⚠️ 把整份版面**写成工作区里的一个 `.slidegen` 文件**，不要贴进回复正文（正文有长度上限，贴进去会被截断、整份作废）；单份上限 1 MiB / 200 页。'
+description: '给人看的演示必须走这条路：用 JSX + CSS 写版面，客户端拿真浏览器排成**可编辑**的 .pptx。用户说"做个PPT""做份演示""要有设计感"时用；禁止用文档生成的 pptx 或自写脚本交付演示。⚠️ 版面写成工作区里的 `.slidegen` 文件，别贴进回复正文（会被截断、整份作废）；单份上限 1 MiB / 200 页。'
 metadata: { 'openclaw': { 'emoji': '🎨', 'skillKey': 'deck-layout', 'requires': { 'bins': ['node'] } } }
 ---
 
@@ -47,10 +47,10 @@ metadata: { 'openclaw': { 'emoji': '🎨', 'skillKey': 'deck-layout', 'requires'
 先确认当前会话实际提供`exec`或等效命令执行工具，且随包Node可用；只有技能文字不代表工具已授权。用现有执行工具，工作目录设为当前任务工作区，运行真实命令：
 
 ```text
-node "{baseDir}/scripts/preflight.cjs" "九月经营简报.slidegen"
+node "<this-skill-dir>/scripts/preflight.cjs" "九月经营简报.slidegen"
 ```
 
-`{baseDir}`由运行时解析为本技能目录；引号必须保留，兼容中文和空格路径。命令只读取工作区内这份UTF-8源文件，不生成PPTX、不收费、不安装依赖。不要调用不存在的`slidegen_check`工具。
+`<this-skill-dir>`指**本技能目录**（`scripts/` 与本 SKILL.md 同目录）；先用现有工具定位它的绝对路径（列技能目录或读本文件路径），不要照抄占位符。引号必须保留，兼容中文和空格路径。命令只读取工作区内这份UTF-8源文件，不生成PPTX、不收费、不安装依赖。不要调用不存在的`slidegen_check`工具。
 
 - 命令退出0、JSON的`status`为`source-valid`，才说明本版本的语法、组件求值和页数预算通过。`artifactCreated:false`与`visualReview:not-performed`明确表示尚未生成或视觉检查最终PPTX。
 - 退出1时读取`diagnostics`中的错误码、`diagnostic.offset`及`detail`，根据原始文件修正并运行同一命令重检。每次源码改动后`sourceSha256`会变化，旧检查不能证明新稿。
@@ -59,7 +59,7 @@ node "{baseDir}/scripts/preflight.cjs" "九月经营简报.slidegen"
 - 不要在 `source-valid` 后结束回复：预检成功仍没有PPTX。继续用同一现有执行工具、同一任务工作区运行实际生成命令；不要加不存在的`--source`参数，不要自行寻找Electron路径或修改运行时配置：
 
 ```text
-node "{baseDir}/scripts/generate.cjs" "九月经营简报.slidegen"
+node "<this-skill-dir>/scripts/generate.cjs" "九月经营简报.slidegen"
 ```
 
 生成使用随包Electron与已有PptxGenJS，不调用收费模型，不安装依赖。只读取已授权工作区的源稿和已有图片；命令不会替你编写内容。
@@ -69,7 +69,7 @@ node "{baseDir}/scripts/generate.cjs" "九月经营简报.slidegen"
 **必须**写调用运算符 `&`：
 
 ```text
-& "C:\...\node.exe" "{baseDir}/scripts/generate.cjs" "九月经营简报.slidegen"
+& "C:\...\node.exe" "<this-skill-dir>/scripts/generate.cjs" "九月经营简报.slidegen"
 ```
 
 漏掉 `&` 得到的是 `术语 "..." 不会被识别为 cmdlet` 这类**shell 级错误**——它**没有**生成器的
@@ -298,6 +298,23 @@ const Footer = ({ note, num, total }) => (
 
 ⚠️ 这两种都**不会**让文件消失 —— 但用户会看到一句提示。**主动按上面两条自查一遍**
 （内容别超出 720 高、`position:'absolute'` 的块之间别重叠），比事后被提示更省事。
+
+## ⭐ 修改已有版面文件的编辑纪律（2026-10-06 真机教训）
+
+用户要求改某一页时，用**文件编辑工具改的就是那份 `.slidegen` 文件本体**。按下面三条做，
+否则会出现 `Could not find edits[n]`（引用的旧文本与当前版本不一致）或
+`Found 2 occurrences of edits[n]`（锚点不唯一）这类失败：
+
+1. **编辑前先读回当前文件**：按**你读到的原文**构造编辑文本。不要凭记忆或上一轮印象写 oldText ——
+   文件可能已被你或用户改过，过期锚点必然找不到。
+2. **锚点要唯一、带足上下文**：只拿一两个词去找会命中多处；带上整行（或相邻一两行），
+   保证这段文本在整份文件里只出现一次。多条编辑互不重叠。
+3. **同一处连续 2 次编辑失败 ⇒ 停止局部修补，改为整版重写**：不要再试第三次。
+   读全文 → 写出**完整的新修正稿**（同名整体覆盖，或另存 `-v2.slidegen`），
+   然后照常走本文档的**预检 → 生成 → 核收据**流程。文件保留与版本纪律同上一节。
+
+> 为什么：真机上改稿阶段因过期/重复锚点连续消耗了二十多次工具调用，
+> 事后还留下"结果未确认"的中间态。**两次不成，整版重写**是最短的路。
 
 ## 说给用户的话
 

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RelayBootstrapPublicState, WorkspaceFsIdentity } from '@clawwork/shared';
+import type { RelayBootstrapPublicState, RuntimeBootstrapStatus, WorkspaceFsIdentity } from '@clawwork/shared';
 import i18n from '@/i18n';
-import { fetchAgentsForGateway, reinitializeGatewayBootstrap } from '@/hooks/useGatewayDispatcherSetup';
+import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import {
+  fetchAgentsForGateway,
+  refreshCatalogsForGateway,
+  reinitializeGatewayBootstrap,
+} from '@/hooks/useGatewayDispatcherSetup';
 import {
   presetAgentBootstrapCoordinator,
   type PresetAgentBootstrapDeps,
@@ -11,6 +16,7 @@ import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
 import { installPresetAgentPack } from '@/lib/preset-agent-installer';
 import { deriveStartupReadiness } from '@/lib/startup-readiness';
 import { ensureBundledSkillsWithRetry } from '@/lib/ensure-bundled-skills';
+import { ensureMainAgentContract, ensureMainAgentContractWithRetry } from '@/lib/main-agent-contract';
 import { runWorkspaceGatedBootstrap } from '@/lib/startup-workspace-gate';
 import { useUiStore } from '@/stores/uiStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -93,6 +99,7 @@ export function useStartupReadiness(enabled: boolean) {
   const runtimeBootstrapFailure = useUiStore((state) => state.runtimeBootstrapFailure);
   const [assistantSnapshot, setAssistantSnapshot] = useState<PresetAgentBootstrapSnapshot>(emptyAssistantSnapshot);
   const [relayState, setRelayState] = useState<RelayBootstrapPublicState | null>(null);
+  const relaySnapshot = useRef<RelayBootstrapPublicState | null>(null);
   /**
    * 工作区所在文件系统的探测结果（FAT32 上 `dev=0` ⇒ 助手读写身份文件必失败）。
    *
@@ -141,6 +148,8 @@ export function useStartupReadiness(enabled: boolean) {
     if (typeof api?.onCommercialRelayBootstrapState !== 'function') return;
     let active = true;
     const accept = (next: RelayBootstrapPublicState): void => {
+      if (relaySnapshot.current && relaySnapshot.current.updatedAt >= next.updatedAt) return;
+      relaySnapshot.current = next;
       setRelayState((current) => (current && current.updatedAt >= next.updatedAt ? current : next));
     };
     const unsubscribe = api.onCommercialRelayBootstrapState((next) => {
@@ -161,6 +170,55 @@ export function useStartupReadiness(enabled: boolean) {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!enabled || gatewayId !== 'local-runtime' || gatewayStatus !== 'connected' || relayState?.phase !== 'ready')
+      return;
+    let current = true;
+    const isCurrent = () =>
+      current &&
+      active.current &&
+      currentScope.current.enabled &&
+      currentScope.current.gatewayId === gatewayId &&
+      currentScope.current.workspaceEpoch === workspaceEpoch &&
+      useUiStore.getState().defaultGatewayId === gatewayId &&
+      useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected' &&
+      useTaskStore.getState().workspaceEpoch === workspaceEpoch &&
+      relaySnapshot.current?.phase === 'ready' &&
+      relaySnapshot.current.updatedAt === relayState.updatedAt;
+    // ⭐ 晚热目录的**有界**恢复观察（2026-10-04 真机）：中转 ready 后第一次目录刷新可能
+    //    整个退避窗（~74s）都撞上"目录还没热"，空结论落进 store 之后**不再有任何计时器**，
+    //    而真实目录这次到 102.5 秒才可用 —— 界面就永久停在「暂时没有可用模型」。
+    //    所以同一 ready 代次、同一 scope 内最多再补问两次（+60s / +120s 起步，整个代次
+    //    不超过 180s），直到**真实可用的中转目录进入 store**才停。
+    //
+    //    边界（数字只限制观察，**不产生 ready 结论** —— ready 仍由 deriveStartupReadiness
+    //    按 store 里真实可用的目录推导）：
+    //      - 只在当前 ready 代次 / 当前 scope / 仍 connected 时才真发；
+    //      - 成功（可用目录已入 store）、失效（scope 变）、断连、禁用、卸载 ⇒ 立刻停；
+    //      - 不 reset、不 reinitialize；重渲染不会清零预算（窗口挂在本 effect 生命周期上，
+    //        只有真正的代次/scope 变化才重开）。
+    const catalogUsable = () =>
+      relayModelsFrom(useUiStore.getState().modelCatalogByGateway[gatewayId] ?? []).length > 0;
+    const nextAtMs = [60_000, 120_000];
+    const timers: number[] = [];
+    const attempt = (index: number): void => {
+      if (!current || !isCurrent() || catalogUsable()) return;
+      void refreshCatalogsForGateway(gatewayId, { isCurrent }).catch((error) => {
+        if (isCurrent()) console.warn('[catalogs] Relay-ready catalog refresh failed', error);
+      });
+      const next = nextAtMs[index];
+      if (next !== undefined) {
+        const delay = next - (nextAtMs[index - 1] ?? 0);
+        timers.push(window.setTimeout(() => attempt(index + 1), delay));
+      }
+    };
+    attempt(0);
+    return () => {
+      current = false;
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [enabled, gatewayId, gatewayStatus, workspaceEpoch, relayState]);
 
   const runAssistantBootstrap = useCallback(async () => {
     if (!gatewayId) return;
@@ -184,6 +242,24 @@ export function useStartupReadiness(enabled: boolean) {
       delaysMs: [500, 1_500],
     });
     if (!ready) console.warn('[skills] 随包技能自装重试后仍失败');
+  }, [gatewayId]);
+
+  /**
+   * 主罗盘（`main`）的**交付合同**自装（2026-10-07）：六个预置助手各有一份
+   * IDENTITY.md + SOUL.md（每轮全文注入的提示词通道），而工作台**默认助手**主罗盘
+   * 什么都没有 —— 从默认入口发起的任务拿不到交付合同（演示走错路/谎报"已生成"的根因之一）。
+   *
+   * 与随包技能同一个时机、同一条闸门、同样**尽力而为**：写不上只是"这一版合同没到"，
+   * 不该让用户卡在准备页。幂等与"不碰用户手改"的判据见 `main-agent-contract.ts`。
+   */
+  const ensureCompassContract = useCallback(async () => {
+    if (!gatewayId) return;
+    const ready = await ensureMainAgentContractWithRetry(gatewayId, {
+      ensure: (id) => ensureMainAgentContract(id, window.clawwork),
+      sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+      delaysMs: [500, 1_500],
+    });
+    if (!ready) console.warn('[compass] 主罗盘交付合同写入重试后仍失败');
   }, [gatewayId]);
 
   /**
@@ -227,8 +303,17 @@ export function useStartupReadiness(enabled: boolean) {
       probe: () => probeWorkspaceFilesystem(isCurrent, attempt),
       bootstrapAssistants: runAssistantBootstrap,
       ensureSkills: ensureOurSkills,
+      ensureMainContract: ensureCompassContract,
     });
-  }, [enabled, workspaceEpoch, gatewayId, ensureOurSkills, probeWorkspaceFilesystem, runAssistantBootstrap]);
+  }, [
+    enabled,
+    workspaceEpoch,
+    gatewayId,
+    ensureOurSkills,
+    ensureCompassContract,
+    probeWorkspaceFilesystem,
+    runAssistantBootstrap,
+  ]);
 
   useEffect(() => {
     if (enabled && gatewayId && gatewayStatus === 'connected') void runGatedBootstrap();
@@ -271,6 +356,36 @@ export function useStartupReadiness(enabled: boolean) {
   }, [gatewayId, relayRetryFrom, relayState, runGatedBootstrap]);
 
   const retry = useCallback(async () => {
+    // ⭐ 本机运行时**起不来**（部署失败 / 端口被占 / 等就绪超时…）：出口是让主进程
+    //    **真的重跑一轮 bootstrap**（IPC `runtime:bootstrap-retry`，与启动同一条路）。
+    //    原来这里落到下面那条通用路径（重新初始化连接层）—— 在同一个"起不来"上再转
+    //    一圈，什么都不会变，用户唯一的出路是完全退出应用重开（体检问题 4）。
+    //    ⚠️ 快照**直接向主进程读**（不靠 store 里那条推送）：这条判据决定"按下去有没有用"，
+    //    读岔了的代价是用户点了一个什么都不做的按钮。
+    //    ⚠️ 全部走**可选调用**（`?.` / typeof 判函数）：宿主与测试替身都可能没有这几条
+    //    通道（pwa、更老的 preload）。缺了就当"没有结论"，落到下面的通用路径 ——
+    //    一次重试绝不该因为少一条通道把界面炸掉。
+    const api = window.clawwork as
+      | {
+          runtimeStatus?: () => Promise<RuntimeBootstrapStatus | null>;
+          runtimeBootstrapRetry?: () => Promise<RuntimeBootstrapStatus | null>;
+          reconnectGateway?: (gatewayId: string) => Promise<unknown>;
+        }
+      | undefined;
+    const runtimeSnapshot =
+      typeof api?.runtimeStatus === 'function' ? await api.runtimeStatus().catch(() => null) : null;
+    if (runtimeSnapshot && !runtimeSnapshot.ok && typeof api?.runtimeBootstrapRetry === 'function') {
+      const after = await api.runtimeBootstrapRetry().catch(() => null);
+      if (after?.ok && gatewayId && typeof api.reconnectGateway === 'function') {
+        // 网关这条 WS 可能早就放弃重连了（`gaveUp`）—— 起得来还要**叫它去连**。
+        await api.reconnectGateway(gatewayId).catch(() => undefined);
+      }
+      await reinitializeGatewayBootstrap();
+      if (gatewayId && useUiStore.getState().gatewayStatusMap[gatewayId] === 'connected') {
+        await runGatedBootstrap();
+      }
+      return;
+    }
     // ⭐ 已知的中转失败：出口是**让主进程重跑一轮**，不是"重新准备模型"。
     //     ⚠️ 确定性失败（去激活 / 换账号）连这一下都不发：再试一万次也是一样的结论，
     //     界面上也没有那个按钮（`StartupReadinessPanel` 按 `kind` 决定给哪个出口）。

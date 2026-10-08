@@ -1,11 +1,9 @@
-import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build } from 'vite';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { buildElectronProbe, runElectronProbe, type ElectronProbe } from './helpers/electron-probe.js';
 
 interface ArtifactRow {
   id: string;
@@ -26,69 +24,32 @@ interface ReconcileResult {
   budgetExhausted: boolean;
 }
 
-const require = createRequire(import.meta.url);
-const electronPath = require('electron') as string;
 const probePath = fileURLToPath(new URL('./helpers/artifact-reconcile-probe.ts', import.meta.url));
 const packagePath = fileURLToPath(new URL('../package.json', import.meta.url));
 const packageDir = dirname(packagePath);
-let runnerDir: string;
-let compiledProbePath: string;
+const privateProbeRoot = process.env.CLAW_ARTIFACT_PROBE_ROOT;
+let electronProbe: ElectronProbe;
 
 function runProbe(workspacePath: string, scenario: string): Record<string, unknown> {
-  const child = spawnSync(electronPath, [compiledProbePath, workspacePath, scenario], {
-    cwd: packageDir,
-    encoding: 'utf8',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    timeout: 30_000,
+  return runElectronProbe({
+    compiledProbePath: electronProbe.compiledProbePath,
+    packageDir,
+    workspacePath,
+    scenario,
+    privateProbeRoot,
   });
-  if (child.error) throw new Error(`Artifact probe failed to start: ${child.error.message}\nstderr:\n${child.stderr}`);
-  if (child.status !== 0) {
-    throw new Error(`Artifact probe exited with status ${child.status}\nstderr:\n${child.stderr}`);
-  }
-  const line = child.stdout.split(/\r?\n/).find((value) => value.startsWith('ARTIFACT_RECONCILE_RESULT='));
-  if (!line) throw new Error(`Artifact probe did not return a result:\n${child.stdout}\nstderr:\n${child.stderr}`);
-  return JSON.parse(line.slice('ARTIFACT_RECONCILE_RESULT='.length)) as Record<string, unknown>;
 }
 
 describe('artifact reconciliation', () => {
   let workspacePath: string;
 
   beforeAll(async () => {
-    runnerDir = mkdtempSync(join(packageDir, '.artifact-reconcile-probe-'));
-    compiledProbePath = join(runnerDir, 'probe.mjs');
-    await build({
-      configFile: false,
-      logLevel: 'silent',
-      root: packageDir,
-      plugins:
-        process.env.CLAW_TEST_GIT_INDEX === '1'
-          ? [
-              {
-                name: 'reconcile-probe-scoped-index',
-                enforce: 'pre',
-                load(id) {
-                  const repository = resolve(packageDir, '../..');
-                  const path = relative(repository, id.split('?')[0]).replaceAll('\\', '/');
-                  if (/^packages\/.*(?:\.[cm]?[jt]sx?|\.json)$/.test(path))
-                    return execFileSync('git', ['show', `:${path}`], { cwd: repository, encoding: 'utf8' });
-                },
-              },
-            ]
-          : [],
-      ssr: { noExternal: true, external: ['better-sqlite3'] },
-      build: {
-        emptyOutDir: true,
-        minify: false,
-        outDir: runnerDir,
-        ssr: probePath,
-        rollupOptions: { output: { entryFileNames: 'probe.mjs' } },
-      },
-    });
+    electronProbe = await buildElectronProbe({ probePath, packageDir, privateProbeRoot });
   }, 30_000);
 
-  afterAll(() => rmSync(runnerDir, { recursive: true, force: true }));
+  afterAll(() => electronProbe.cleanup());
   beforeEach(() => {
-    workspacePath = mkdtempSync(join(tmpdir(), 'clawwork-artifact-reconcile-'));
+    workspacePath = mkdtempSync(join(privateProbeRoot ?? tmpdir(), 'clawwork-artifact-reconcile-'));
   });
   afterEach(() => rmSync(workspacePath, { recursive: true, force: true }));
 
@@ -127,6 +88,115 @@ describe('artifact reconciliation', () => {
     expect(result.count).toEqual({ count: 2 });
   });
 
+  /**
+   * ⭐ M1 端到端（2026-10-06，图14/16）：**坏文件物理上进不了 `artifacts` 表**。
+   *
+   * 单测（artifact-verify.test.ts）钉的是判据本体；这一条钉的是**接线**：
+   * 真 SQLite + 真文件系统 + 真扫描路径下，截断的 `.pptx` 不登记、进 skipped、
+   * 库里查无此行 —— 用户点开坏文件的路径从此不存在。
+   */
+  it('⭐ M1：截断的 pptx 不登记且进 skipped，合法 pptx 照常登记（坏文件进不了表）', () => {
+    const probe = runProbe(workspacePath, 'corrupt-pptx') as {
+      result: ReconcileResult;
+      rows: Array<{ name: string; local_path: string; mime_type: string }>;
+    };
+    expect(probe.result.saved.map((artifact) => artifact.name)).toEqual(['complete.pptx']);
+    expect(probe.result.skipped).toContain('truncated.pptx');
+    expect(probe.rows).toEqual([
+      expect.objectContaining({
+        name: 'complete.pptx',
+        local_path: 'task-1/complete.pptx',
+        mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      }),
+    ]);
+  });
+
+  /**
+   * ⭐ M1 续（2026-10-06）：**原地改坏 ⇒ 清行**。
+   *
+   * 单看"不登记新版本"不够：旧行还在列表里 ⇒ 用户点开还是坏字节。
+   * 这条钉死：改坏后旧行从 DB 消失（成果列表里不留"能点开但打不开"的条目）。
+   */
+  it('⭐ M1：已登记文件被原地改坏 → 旧行被清除，候选进 skipped', () => {
+    const probe = runProbe(workspacePath, 'corrupt-after-register') as {
+      first: ReconcileResult;
+      before: Array<{ id: string; name: string }>;
+      second: ReconcileResult;
+      after: Array<{ id: string; name: string }>;
+    };
+    expect(probe.first.saved.map((artifact) => artifact.name)).toEqual(['deck.pptx']);
+    expect(probe.before).toHaveLength(1);
+    expect(probe.second.skipped).toContain('deck.pptx');
+    expect(probe.after).toEqual([]);
+  });
+
+  /**
+   * ⭐ P1-1（2026-10-07 体检）：门内**读失败 ≠ 结构损坏**。
+   *
+   * 上一档（M1）钉的是"读得出来、结构确认坏 ⇒ 清行"；这一档钉它的**对偶**：
+   * 读不到时（EBUSY/EACCES 同构）一个字节都不许动 —— 否则一份本来好好的登记
+   * 会因为"这一瞬读不到"被永久删掉，而下一轮基线按签名跳过，等于**不可自愈**。
+   */
+  it('⭐ 门内读失败（EBUSY/EACCES 同构）⇒ 只 skip，绝不删登记行', () => {
+    const probe = runProbe(workspacePath, 'unreadable-keeps-row') as {
+      first: ReconcileResult;
+      before: Array<{ id: string; name: string }>;
+      second: ReconcileResult;
+      after: Array<{ id: string; name: string }>;
+    };
+    expect(probe.first.saved.map((artifact) => artifact.name)).toEqual(['deck.pptx']);
+    expect(probe.before).toHaveLength(1);
+    expect(probe.second.skipped).toContain('deck.pptx');
+    expect(probe.second.saved).toEqual([]);
+    expect(probe.after, '读失败把登记行删了 —— 这正是 P1-1 要根掉的行为').toEqual(probe.before);
+  });
+
+  /**
+   * ⭐ P3-10（2026-10-07 体检）：陈旧行的清行按 **id + source_key** 复核。
+   *
+   * 判据：清行只针对"本趟读到的那一行"；并发那趟若已把该路径换成新登记，
+   * 一个字节都不许动。旧实现按 (task_id, root, local_path) 删 ⇒ 会误伤新行。
+   */
+  it('⭐ 并发那趟已重新登记 ⇒ 清行按行身份复核，不动新行', () => {
+    const probe = runProbe(workspacePath, 'corrupt-race-keeps-new-row') as {
+      result: ReconcileResult;
+      rows: Array<{ id: string; name: string }>;
+    };
+    expect(probe.result.skipped).toContain('deck.pptx');
+    expect(probe.rows.map((row) => row.id)).toEqual(['concurrent-row']);
+  });
+
+  /**
+   * ⭐ docx 登记门 + 脚本类文件不进产物（2026-10-06，用户反馈 #9）。
+   *
+   * ① `.docx` 并入登记前置门：纯文本改名的假 docx 不登记（Word/WPS 打开必报损坏的那批）。
+   * ② `.js/.cjs/.mjs/.py` = 模型自己跑过的作业脚本不进产物列表（"桌面出现 js 文件"那一批）。
+   *
+   * ⚠️ 口径（行为差异写在这里）：**两个根同一条规则** —— 应用根任务目录与助手工作区
+   *    一律排除脚本；显式保存路径（`saveArtifact*`，含用户点名要的代码块产物）不走本扫描，
+   *    所以两个根在这一点上没有用户可感知的差异。
+   * ⚠️ 对照项钉住边界：`.md`/`.html` 与合法 docx 照旧登记 —— 排除的是**脚本类**，
+   *    不是"所有文本/代码"。
+   */
+  it('⭐ docx 登记门 + 脚本类排除（两个根同口径，文本类对照照旧登记）', () => {
+    const probe = runProbe(workspacePath, 'docx-and-scripts') as {
+      appResult: ReconcileResult;
+      agentResult: ReconcileResult;
+      rows: Array<{ name: string; root: string; local_path: string }>;
+    };
+    // 应用根：合法 docx 与文本类照旧登记；假 docx 与四类脚本全部挡在表外
+    expect(probe.appResult.saved.map((artifact) => artifact.name)).toEqual(['notes.md', 'page.html', 'real.docx']);
+    for (const name of ['fake.docx', 'debug.js', 'generate.cjs', 'tool.mjs', 'probe.py'])
+      expect(probe.appResult.skipped).toContain(name);
+    // 助手根：同一口径（脚本与假 docx 进 skipped，合法 docx 登记）
+    expect(probe.agentResult.saved.map((artifact) => artifact.name)).toEqual(['report.docx']);
+    expect(probe.agentResult.skipped).toEqual(
+      expect.arrayContaining(['agent-fake.docx', 'agent-debug.js', 'agent-probe.py']),
+    );
+    // 库里只有四份合法交付物 —— 假 docx / 脚本一行都没有
+    expect(probe.rows.map((row) => row.name)).toEqual(['notes.md', 'page.html', 'real.docx', 'report.docx']);
+  });
+
   it('registers generated MP4/WebM files with video MIME without duplicate rows', () => {
     const result = runProbe(workspacePath, 'videos') as unknown as { first: ReconcileResult; second: ReconcileResult };
     expect(result.first.saved).toEqual([
@@ -140,6 +210,27 @@ describe('artifact reconciliation', () => {
   it('does not register a file that existed unchanged in the run baseline', () => {
     const { result } = runProbe(workspacePath, 'baseline') as unknown as { result: ReconcileResult };
     expect(result.saved).toEqual([]);
+  });
+
+  it.each([
+    ['workspace', 'normal'],
+    ['agent', 'normal'],
+    ['workspace', 'controlled'],
+    ['agent', 'controlled'],
+  ])('rejects reserved intermediate files in the %s root with %s routing', (rootKind, mode) => {
+    const probe = runProbe(workspacePath, `reserved-intermediate-${rootKind}-${mode}`) as {
+      first: ReconcileResult;
+      second: ReconcileResult;
+      rows: Array<{ id: string; name: string; root: string; local_path: string }>;
+    };
+
+    expect(probe.first.saved.map((artifact) => artifact.name)).toEqual(['report.json']);
+    expect(probe.second.saved).toEqual([]);
+    expect(probe.second.existing.map((artifact) => artifact.name)).toEqual(['report.json']);
+    expect(probe.rows).toEqual([
+      expect.objectContaining({ id: 'prior-intermediate', name: 'prior.native-ppt.json', root: rootKind }),
+      expect.objectContaining({ name: 'report.json', root: rootKind }),
+    ]);
   });
 
   it('captures an empty baseline for a new task before its output directory exists', () => {
@@ -239,6 +330,76 @@ describe('artifact reconciliation', () => {
     if (!probe.supported) return;
     expect(probe.result?.saved.map((artifact) => artifact.name)).toEqual(['own.pdf']);
     expect(probe.result?.skipped).toContain('linked');
+  });
+
+  /**
+   * ⭐ **第三个受信根**：应用工作区**根层**（2026-10-07）。
+   *
+   * 现场：模型绕过 docgen/slidegen，用 exec / CLI 把成品写到
+   * `荣盈魔方工作区\荣盈互动公司介绍-v2-ade3018a.pptx` —— 前两个根
+   * （`<工作区>/<taskId>` / 助手工作区）是**兄弟目录**，根层谁都不扫
+   * ⇒ "生成成功了但产物面板里没有"，而且连失败提示都没有（claim-guard 找得到文件）。
+   *
+   * 这条用例同时钉住那一批纪律：起跑基线、depth 0 不递归、正向扩展名白名单、
+   * 只读（不建任务目录）、以及"应用根那趟不许把根层行判成 missing"。
+   */
+  it('⭐ 第三个根（应用工作区根层）：交付物进产物，且不递归 / 不误收 / 只读', () => {
+    const probe = runProbe(workspacePath, 'workspace-root') as {
+      createdTaskDir: boolean;
+      linkSupported: boolean;
+      missingTaskBaseline: Record<string, string>;
+      first: ReconcileResult;
+      second: ReconcileResult;
+      appResult: ReconcileResult;
+      rows: Array<{ name: string; root: string; local_path: string; source_key: string }>;
+    };
+
+    // ① 只读：第三个根本**绝不**建任务目录（模型把成品写到根层时任务目录甚至可能不存在）
+    expect(probe.createdTaskDir, '第三个根在应用工作区里建了任务目录 —— 它必须只读').toBe(false);
+    // 新任务的第一份基线就是"根层那一层"的快照（不含任何任务目录）
+    expect(probe.missingTaskBaseline).toEqual({ '用户已有文档.docx': expect.any(String) });
+
+    // ② 这一轮写到根层的**文档类**交付物被登记；`local_path` 是**裸文件名**
+    expect([...probe.first.saved].map((artifact) => artifact.name).sort()).toEqual([
+      '交付说明.md',
+      '荣盈互动公司介绍-v2-ade3018a.pptx',
+    ]);
+    expect(probe.rows.filter((row) => row.root === 'workspace-root')).toEqual([
+      expect.objectContaining({
+        name: '交付说明.md',
+        local_path: '交付说明.md',
+        source_key: expect.stringMatching(/^workspace-root-file:/),
+      }),
+      expect.objectContaining({
+        name: '荣盈互动公司介绍-v2-ade3018a.pptx',
+        local_path: '荣盈互动公司介绍-v2-ade3018a.pptx',
+        source_key: expect.stringMatching(/^workspace-root-file:/),
+      }),
+    ]);
+
+    // ③ 起跑**之前**就在根层的用户文件不进产物（基线挡），且不占预算
+    expect(probe.first.saved.map((artifact) => artifact.name)).not.toContain('用户已有文档.docx');
+    expect(probe.rows.map((row) => row.name)).not.toContain('用户已有文档.docx');
+
+    // ④ depth 0 不递归 + 正向白名单：任务目录 / 助手目录 / 杂物 / 脚本 / 点开头 / junction 一个都不收
+    for (const name of ['data.json', 'debug.js', '.hidden.pdf', 'task-1', 'rongying-agents']) {
+      expect(probe.first.skipped, `${name} 不该进产物`).toContain(name);
+      expect(probe.rows.map((row) => row.name)).not.toContain(name);
+    }
+    expect(probe.rows.map((row) => row.name)).not.toContain('task-dir.pptx');
+    expect(probe.rows.map((row) => row.name)).not.toContain('deck.pptx');
+    if (probe.linkSupported) expect(probe.rows.map((row) => row.name)).not.toContain('outside.pdf');
+
+    // ⑤ 幂等：同一份基线第二趟只认"已有"，不再登记
+    expect(probe.second.saved).toEqual([]);
+    expect(probe.second.existing.map((artifact) => artifact.name).sort()).toEqual([
+      '交付说明.md',
+      '荣盈互动公司介绍-v2-ade3018a.pptx',
+    ]);
+
+    // ⑥ 应用根那趟**不许**把根层的行判成 missing（两批各行其是；混着算界面上一片红）
+    expect(probe.appResult.missing.map((artifact) => artifact.name)).not.toContain('交付说明.md');
+    expect(probe.appResult.missing.map((artifact) => artifact.name)).not.toContain('荣盈互动公司介绍-v2-ade3018a.pptx');
   });
 
   it('upgrades a legacy database by keeping the newest valid duplicate artifact metadata', () => {

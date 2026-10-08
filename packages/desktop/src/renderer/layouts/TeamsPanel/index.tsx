@@ -18,6 +18,7 @@ import TeamHubDetailView from './TeamHubDetailView';
 import CreateTeamWizard from './CreateTeamWizard';
 import TeamBuilderDialog from '@/components/TeamBuilderDialog';
 import TeamsHubTab from './TeamsHubTab';
+import TeamRoundtable from './TeamRoundtable';
 
 export default function TeamsPanel() {
   const { t } = useTranslation();
@@ -26,6 +27,7 @@ export default function TeamsPanel() {
   const deleteTeamAction = useTeamStore((s) => s.deleteTeam);
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const setMainView = useUiStore((s) => s.setMainView);
+  const setSelectedAgent = useUiStore((s) => s.setSelectedAgent);
   const defaultGatewayId = useUiStore((s) => s.defaultGatewayId);
   // ⭐ "这个团队的助手装在这台机器上吗"要拿**那个团队所属网关**的目录来判
   //    （团队自己带 `gatewayId`，与当前默认网关未必是同一个）。
@@ -79,17 +81,19 @@ export default function TeamsPanel() {
         //    用户白跳一趟还要自己退回来。当面说清楚。
         // ⚠️ 用 `teams.agentNotInstalled` 而**不是** `agentMissing`：后者已经存在，
         //    属于聊天输入那条路，说的是"换一个助手再发送"—— 而这里要说的是
-        //    "**装上它**"。两条路的下一步不一样，文案不许互相借用。
+        //    "**这个团队的成员不在这台电脑上**"。两条路的下一步不一样，文案不许互相借用。
+        //    （2026-10-06 BUG-025：措辞里不再出现"装"——正式产品结构不是 Agent Store。）
         toast.error(t(decision.kind === 'agent-missing' ? 'teams.agentNotInstalled' : 'teams.noAgents'));
         return;
       }
       // 可靠模式：团队任务先固定由主管（或第一位成员）单独完成完整工作流。
       // `teamId` 刻意保留，未来增加“创作者 → 复审者”的顺序执行时仍能找到原团队，
       // 但不再把成员数映射成 ensemble/conductor/sessions_spawn。
+      setSelectedAgent(team.gatewayId, decision.agentId);
       startNewTask({ gatewayId: team.gatewayId, agentId: decision.agentId, ensemble: false, teamId });
       setMainView('chat');
     },
-    [teamsMap, agentCatalogByGateway, startNewTask, setMainView, t],
+    [teamsMap, agentCatalogByGateway, startNewTask, setMainView, setSelectedAgent, t],
   );
 
   const handleEdit = useCallback(
@@ -153,13 +157,16 @@ export default function TeamsPanel() {
             }
             right={
               activeTab === 'myTeams' && teams.length > 0 ? (
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setBuilderOpen(true)}>
+                // ⭐ 2026-10-06（V1 收口 · 任务 08）：创建入口**保留但视觉弱化** —— 这一页的
+                //    主角是「我的 AI 团队」圆桌（主罗盘 + 五岗位），不是"拉人建队"。
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setBuilderOpen(true)}>
                     <Sparkles size={14} />
                     {t('teams.teamBuilderTitle')}
                   </Button>
                   <Button
                     size="sm"
+                    variant="ghost"
                     onClick={() => {
                       setEditTeam(null);
                       setWizardOpen(true);
@@ -175,45 +182,59 @@ export default function TeamsPanel() {
 
           <ScrollArea className="flex-1 px-5 py-4">
             {activeTab === 'myTeams' ? (
-              teams.length === 0 ? (
-                <EmptyState
-                  icon={<Users size={24} className="text-[var(--text-muted)]" />}
-                  title={t('teams.emptyTitle')}
-                  description={t('teams.emptyDesc')}
-                  action={
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setBuilderOpen(true)}>
-                        <Sparkles size={14} />
-                        {t('teams.teamBuilderTitle')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setEditTeam(null);
-                          setWizardOpen(true);
-                        }}
-                      >
-                        <Plus size={14} />
-                        {t('teams.createTeam')}
-                      </Button>
-                    </div>
-                  }
-                />
-              ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(var(--content-card-min),1fr))] gap-4">
-                  {teams.map((team) => (
-                    <TeamCard
-                      key={team.id}
-                      team={team}
-                      needsInstall={teamsNeedingInstall.has(team.id)}
-                      onSelect={() => setSelectedTeamId(team.id)}
-                      onStartChat={() => handleStartChat(team.id)}
-                      onEdit={() => handleEdit(team.id)}
-                      onDelete={() => handleDelete(team.id)}
-                    />
-                  ))}
-                </div>
-              )
+              <div className="space-y-4">
+                {/* ⭐ 默认页的主角：主罗盘 + 五岗位的轻量圆桌（状态只来自真实会议信号）。
+                    ⚠️ 2026-10-07（质检 P3-6）：**一个团队都没有时不开圆桌** —— 新用户会先看到
+                    五个岗位齐刷刷"未启用"、再看到下面"创建团队"，那是两遍空话。
+                    收成一句说明，等真有团队了再把圆桌摆出来。 */}
+                {teams.length === 0 ? (
+                  <p data-testid="roundtable-empty-hint" className="type-meta text-[var(--text-muted)]">
+                    {t('teams.roundtable.emptyHint')}
+                  </p>
+                ) : (
+                  <TeamRoundtable />
+                )}
+                {teams.length === 0 ? (
+                  <EmptyState
+                    icon={<Users size={24} className="text-[var(--text-muted)]" />}
+                    title={t('teams.emptyTitle')}
+                    description={t('teams.emptyDesc')}
+                    action={
+                      <div className="flex items-center gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setBuilderOpen(true)}>
+                          <Sparkles size={14} />
+                          {t('teams.teamBuilderTitle')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setEditTeam(null);
+                            setWizardOpen(true);
+                          }}
+                        >
+                          <Plus size={14} />
+                          {t('teams.createTeam')}
+                        </Button>
+                      </div>
+                    }
+                  />
+                ) : (
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(var(--content-card-min),1fr))] gap-4">
+                    {teams.map((team) => (
+                      <TeamCard
+                        key={team.id}
+                        team={team}
+                        needsInstall={teamsNeedingInstall.has(team.id)}
+                        onSelect={() => setSelectedTeamId(team.id)}
+                        onStartChat={() => handleStartChat(team.id)}
+                        onEdit={() => handleEdit(team.id)}
+                        onDelete={() => handleDelete(team.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : (
               <TeamsHubTab onSelectEntry={setSelectedHubEntry} />
             )}

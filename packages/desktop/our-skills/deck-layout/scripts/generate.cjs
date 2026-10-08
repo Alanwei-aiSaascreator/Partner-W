@@ -52,14 +52,24 @@ function failure(status, code, fileCreated = false) {
   };
 }
 
-function renderChild(runtime, file, workspace, env, timeout, sourceSha256) {
+function renderChild(runtime, file, workspace, env, timeout, sourceSha256, previous) {
   return new Promise((resolve) => {
-    const child = spawn(runtime.executable, [...runtime.args, '--royin-render-slidegen', file], {
-      cwd: workspace,
-      env,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const native = env.ROYIN_NATIVE_PPT_VALIDATION === '1' && file.endsWith('.native-ppt.json');
+    const child = spawn(
+      runtime.executable,
+      [
+        ...runtime.args,
+        native ? '--royin-render-native-ppt' : '--royin-render-slidegen',
+        file,
+        ...(previous ? ['--previous', previous] : []),
+      ],
+      {
+        cwd: workspace,
+        env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     let pending = '',
       reportText = '',
       bytes = 0,
@@ -143,7 +153,11 @@ function renderChild(runtime, file, workspace, env, timeout, sourceSha256) {
 let profile, identity, temporaryRoot;
 async function run() {
   const args = process.argv.slice(2);
-  if (args.length !== 1 || args[0].startsWith('--')) return failure('source-invalid', 'source-argument-invalid');
+  const native = process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && args[0]?.endsWith('.native-ppt.json');
+  if ((args.length !== 1 && !(native && args.length === 3 && args[1] === '--previous')) || args[0].startsWith('--'))
+    return failure('source-invalid', 'source-argument-invalid');
+  if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && !native)
+    return failure('source-invalid', 'native-route-required');
   let runtime;
   try {
     runtime = JSON.parse(fs.readFileSync(path.join(__dirname, 'generate-runtime.json'), 'utf8'));
@@ -204,7 +218,7 @@ async function run() {
     Number.isFinite(requestedTimeout) && requestedTimeout >= 1000 && requestedTimeout <= 150_000
       ? requestedTimeout
       : 150_000;
-  const result = await renderChild(runtime, args[0], workspace, env, timeout, sourceSha256);
+  const result = await renderChild(runtime, args[0], workspace, env, timeout, sourceSha256, args[2]);
   if (result.error)
     return failure(
       'output-unconfirmed',
@@ -228,6 +242,18 @@ async function run() {
     if (
       result.status !== 0 ||
       report.fileCreated !== true ||
+      // ⭐ B 包（2026-10-07）：报告里那句"东西写在哪"必须**校验**，不能照单全收 ——
+      //    它会被主进程用来读收据、并把成品登记进任务目录，而报告这一路会经过模型
+      //    （工具结果原文）⇒ **模型可以编**。子进程的 cwd 就是本脚本自己的 `workspace`
+      //    （spawn 时定的），所以"写在别处"一定是假话。
+      //    ⚠️ 缺这个字段照旧接受：老子进程（还没升级的运行时会话）与 native 路由都不发它。
+      (report.outputDir !== undefined &&
+        (typeof report.outputDir !== 'string' ||
+          !path.isAbsolute(report.outputDir) ||
+          !fs.existsSync(report.outputDir) ||
+          // `path.relative(...) === ''` 而不是字符串比较：Windows 上盘符/大小写形态不同
+          // 也会被判成"别处"，而那会把一份**真报告**误杀成 output-unconfirmed。
+          path.relative(workspace, fs.realpathSync(report.outputDir)) !== '')) ||
       typeof report.fileName !== 'string' ||
       report.fileName !== path.basename(report.fileName) ||
       !report.fileName.endsWith('.pptx') ||

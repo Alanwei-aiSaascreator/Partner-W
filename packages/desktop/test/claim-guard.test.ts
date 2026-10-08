@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import JSZip from 'jszip';
 import {
   checkClaimedFiles,
+  claimedFilesRejectedByIntegrity,
   expectedArtifactKindsFromRequest,
   extractClaimedFileNames,
   missingExpectedArtifactKinds,
@@ -94,11 +96,52 @@ describe('extractClaimedFileNames：从回复里抠产物文件名', () => {
     }
   });
 
+  /**
+   * ⭐ 2026-10-04 真机误报：模型解释"工作区被清理了，修订版文件 `f08787c6.pptx`
+   * 及来源 JSON **已不在**。我需从零重新生成"——同一行里有「重新生成」这个声称标记
+   * （按"行"判据），于是**说明缺失**的提及被当成声称，守卫反过来冤枉模型，
+   * 真机弹「说好的文件不在」。判据收窄到**同一句**里的缺失措辞。
+   */
+  it('⭐ 说明文件"已不在"的句子不算声称（真机误报原句）', () => {
+    const line =
+      '工作区在轮次之间被清理了，修订版文件 `f08787c6.pptx` 及来源 JSON 已不在。我需从零重新生成——先恢复原文和模板数据';
+    expect(extractClaimedFileNames(line)).toHaveLength(0);
+  });
+
+  it('负对照：同一行里缺席说明之外的**真声称**仍要抓到', () => {
+    const names = extractClaimedFileNames('旧的 f08787c6.pptx 已不在。已生成 report.pptx 请查收').map((n) => n.name);
+    expect(names, '缺席说明里的名字不算声称').not.toContain('f08787c6.pptx');
+    expect(names, '真声称不许被缺席判据压掉').toContain('report.pptx');
+  });
+
   it('负对照：**真的声称**仍然要抓到（别把守卫修没了）', () => {
     expect(extractClaimedFileNames('文件已经存成 report.pptx 了').map((n) => n.name)).toContain('report.pptx');
     expect(extractClaimedFileNames('已为你生成 `Nova产品发布会.slidegen`，共 25 页').map((n) => n.name)).toContain(
       'Nova产品发布会.slidegen',
     );
+  });
+
+  /**
+   * ⭐ BUG-047（2026-10-08 真机实证）：回复句"…然后**重新渲染生成.pptx**文件"里，
+   * CJK 正则把动词短语「重新渲染生成.pptx」整个抠成文件名 → 判 missing → delivery-failed。
+   * 动词/连接词直接粘在扩展名前面、剥掉后不剩名字的 ⇒ 是动作描述，不是文件名。
+   */
+  it('⭐ BUG-047：动词短语粘着扩展名 ⇒ 不算声称（真机误报原句）', () => {
+    expect(extractClaimedFileNames('这一页槽位不齐，然后重新渲染生成.pptx文件即可。')).toHaveLength(0);
+    expect(extractClaimedFileNames('我把缺失的底部结论补上，再重新渲染生成.pptx文件。')).toHaveLength(0);
+  });
+
+  it('负对照：动词在前、真名在后的**真声称**仍要抓到', () => {
+    const names = extractClaimedFileNames('已生成 季度汇报.pptx 请查收').map((n) => n.name);
+    expect(names).toContain('季度汇报.pptx');
+    const names2 = extractClaimedFileNames('文件已经存成 report.pptx 了').map((n) => n.name);
+    expect(names2).toContain('report.pptx');
+  });
+
+  it('负对照：名字恰好以动词结尾但仍是真文件名 ⇒ 不误杀', () => {
+    // 剥掉「生成」后还剩「学习总结」——是真名字。
+    const names = extractClaimedFileNames('已写好 学习总结生成.pptx').map((n) => n.name);
+    expect(names).toContain('学习总结生成.pptx');
   });
 
   /**
@@ -219,6 +262,69 @@ describe('checkClaimedFiles：逐个查存在性', () => {
     expect(result.missing).toHaveLength(0);
     expect(result.present).toHaveLength(0);
   });
+
+  /**
+   * ⭐⭐ BUG-038（2026-10-08 亲验）：**守卫只该打"声称全新产出但盘上没有"**。
+   *
+   * 模型在后续轮次里**引用本任务已经登记过的产物名**（"上一轮生成的 report.pptx 里补充了…"），
+   * 或改稿时提到旧名 —— 那份文件不需要（也不应该）在本轮重新变新，旧判据却拿 `sinceMs`
+   * 一把否定 ⇒ 每轮都弹「说好的文件不在」假失败。
+   * 判据修正：名字**在本任务已登记的 artifact 集合里** ⇒ 不算 missing（登记本身就是"东西存在"的
+   * 证据，且比 mtime 更硬）。
+   * ⚠️ 守卫强度对**没登记过的新名字**照旧：freshness 判据一个字没松。
+   */
+  describe('⭐ 已登记名豁免（BUG-038）', () => {
+    it('引用**已登记**的名字 ⇒ 不判死（旧文件不是误报的理由）', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'claim-registered-'));
+      writeFileSync(join(tmp, 'report.pptx'), '上一轮登记过的');
+      const old = new Date(Date.now() - 60 * 60 * 1000);
+      utimesSync(join(tmp, 'report.pptx'), old, old);
+
+      const result = checkClaimedFiles('已生成 report.pptx，这一轮在里面补充了两页', [tmp], {
+        sinceMs: Date.now(),
+        isRegisteredName: (name) => name === 'report.pptx',
+      });
+      expect(result.missing, '已登记名不该进 missing').toHaveLength(0);
+    });
+
+    it('已登记名**盘上文件没了** ⇒ 也不进 missing（登记即证据；"文件没了"另有 availability 通道）', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'claim-registered-gone-'));
+      const result = checkClaimedFiles('已生成 report.pptx', [tmp], {
+        sinceMs: Date.now(),
+        isRegisteredName: (name) => name === 'report.pptx',
+      });
+      expect(result.missing).toHaveLength(0);
+    });
+
+    it('⭐ 全新名字 + 盘上没有 ⇒ 照旧判死（守卫强度不许松）', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'claim-fresh-name-'));
+      const result = checkClaimedFiles('已生成 全新报告.pptx', [tmp], {
+        sinceMs: Date.now(),
+        isRegisteredName: (name) => name === 'report.pptx',
+      });
+      expect(result.missing.map((f) => f.name)).toContain('全新报告.pptx');
+    });
+
+    it('⭐ 同名但**没登记过**的老文件 ⇒ 照旧判死（freshness 一字未松）', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'claim-unregistered-stale-'));
+      const file = join(tmp, 'report.pptx');
+      writeFileSync(file, '别的任务留下的');
+      const old = new Date(Date.now() - 60 * 60 * 1000);
+      utimesSync(file, old, old);
+
+      const result = checkClaimedFiles('已生成 report.pptx', [tmp], {
+        sinceMs: Date.now(),
+        isRegisteredName: () => false,
+      });
+      expect(result.missing.map((f) => f.name)).toContain('report.pptx');
+    });
+
+    it('不传 isRegisteredName ⇒ 老判据一字不变（单测/旧调用不受影响）', () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'claim-no-option-'));
+      const result = checkClaimedFiles('已生成 report.pptx', [tmp], { sinceMs: Date.now() });
+      expect(result.missing.map((f) => f.name)).toContain('report.pptx');
+    });
+  });
 });
 
 describe('用户本轮明确要求的文件格式', () => {
@@ -314,5 +420,67 @@ describe('⭐ 带空格的文件名（2026-10-03 场景一真机误报的直接�
   it('旧纪律不松：顿号列举不许被拼成一条', () => {
     const names = extractClaimedFileNames('已生成 a.pptx、b.docx、c.xlsx').map((f) => f.name);
     expect(names).toEqual(['a.pptx', 'b.docx', 'c.xlsx']);
+  });
+});
+
+/**
+ * ⭐⭐ BUG-042-c（2026-10-08 亲验的 C1 静默丢弃）：**写出来的东西不是有效文档**。
+ *
+ * 真机形状：模型自己把一份 JSON / 纯文本**改名成 `.docx`** 写进工作区，然后回复
+ * "已生成 报告.docx"。它骗过了 claim-guard（文件**在**盘上）与登记门（收编时被
+ * `verifyArtifactBuffer` 拒收 ⇒ 只进 `skipped`）—— 结果：回复说做好了、产物列表空的、
+ * **界面上一条提示都没有**（"静默丢弃"）。
+ *
+ * 这里给上层一双眼睛：**声称了、文件在、但字节不是那份格式** ⇒ 如实报出来
+ * （文案复用既有 claim 通道；本条只管"认出来"这一件事）。
+ */
+describe('claimedFilesRejectedByIntegrity：声称的文件在盘上但不是有效文档', () => {
+  const docxClaim = '已生成 季度报告.docx，请查收';
+  const claimed = (content: string) => extractClaimedFileNames(content).filter((f) => f.name.endsWith('.docx'));
+
+  async function validDocx(): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types/>');
+    zip.file('word/document.xml', '<?xml version="1.0"?><w:document/>');
+    return (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer;
+  }
+
+  it('⭐ JSON 文本伪装成 .docx ⇒ 认出来（并给出原因）', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-fake-docx-'));
+    writeFileSync(join(tmp, '季度报告.docx'), '{"kind":"docx","sections":[]}');
+
+    const rejected = claimedFilesRejectedByIntegrity(claimed(docxClaim), [tmp], { sinceMs: Date.now() - 60_000 });
+    expect(rejected.map((f) => f.name)).toEqual(['季度报告.docx']);
+    expect(rejected[0]?.reason).toBe('not-a-zip');
+  });
+
+  it('负对照：真 .docx ⇒ 不报（别把正常的也打成坏件）', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-real-docx-'));
+    writeFileSync(join(tmp, '季度报告.docx'), await validDocx());
+
+    expect(claimedFilesRejectedByIntegrity(claimed(docxClaim), [tmp], { sinceMs: Date.now() - 60_000 })).toEqual([]);
+  });
+
+  it('负对照：不受检的格式（.md 等）⇒ 一个字节都不读、不下结论', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-other-ext-'));
+    writeFileSync(join(tmp, '说明.md'), '随便什么内容');
+    const mdClaim = extractClaimedFileNames('已生成 说明.md').filter((f) => f.name === '说明.md');
+
+    expect(claimedFilesRejectedByIntegrity(mdClaim, [tmp], { sinceMs: Date.now() - 60_000 })).toEqual([]);
+  });
+
+  it('负对照：**旧**的坏文件不算这一轮的（freshness 与声称核对同一条纪律）', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-stale-docx-'));
+    const file = join(tmp, '季度报告.docx');
+    writeFileSync(file, '{"not":"a docx"}');
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(file, old, old);
+
+    expect(claimedFilesRejectedByIntegrity(claimed(docxClaim), [tmp], { sinceMs: Date.now() })).toEqual([]);
+  });
+
+  it('文件根本不在 ⇒ 不归这一档（那是 missing 的事，别两头都报）', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-absent-docx-'));
+    expect(claimedFilesRejectedByIntegrity(claimed(docxClaim), [tmp], { sinceMs: Date.now() - 60_000 })).toEqual([]);
   });
 });

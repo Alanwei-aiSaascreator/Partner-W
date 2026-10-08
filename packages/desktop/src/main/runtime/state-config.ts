@@ -28,9 +28,11 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
+import { plannerDeniedToolIds } from '@clawwork/core';
 import { writeJsonAtomic } from '../util/json-file.js';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import type { AppConfig, GatewayServerConfig } from '../workspace/config.js';
+import { INBOX_READONLY_PLUGIN_ID, ensureInboxReadonlyPolicy } from '../guard/inbox-readonly.js';
 import { ensureLocalGatewayToken } from './token-store.js';
 import { preparePortableState } from './portable-state-migration.js';
 
@@ -225,6 +227,62 @@ function mergePortableAgentDefaults(
  */
 export const MEMORY_TOOLS_DENIED = ['memory_search', 'memory_get'] as const;
 
+/**
+ * **平台特异工具**（2026-10-07 交付日 P0-3）：本产品=Windows 桌面，这些工具在本平台
+ * 不可执行（`canvas` = macOS 配对节点工具，`tool-*.mjs` 注册名实读 `name: "canvas"`；
+ * 语料 434k 行内 0 次调用，但暴露给 Planner 只会换来失败调用）——与 memory 两工具一样
+ * 并进 deny（同一个 `mergeToolsDefaults`，幂等并集）。
+ * ⚠️ 待查证候选（确切注册名未经工具清单实读，勿凭"族名"猜测写入）：computer / nodes /
+ *    mobile_ui / portal / dashboard。
+ */
+export const PLATFORM_IRRELEVANT_TOOLS_DENIED = ['canvas'] as const;
+
+/**
+ * **网络搜索工具**（2026-10-07 交付日用户指令）：无稳定国内搜索源前，从 Planner 的默认
+ * 可用能力中降级——不让用户持续看到"搜索失败"（根因见 BUG-033：DuckDuckGo 在大陆用户
+ * 网络被反爬，实锤 0/2；dev 机代理下可用）。将来接入稳定国内源（或换回可用 provider）时，
+ * **删掉这一行常量**即整体恢复（merge 并集、必备判据、workflow-tools 的跟随方全自动）。
+ */
+export const WEB_TOOLS_DENIED = ['web_search', 'web_fetch'] as const;
+
+/**
+ * **无沙箱的看图工具**（BUG-049，2026-10-08 真机定案）——同样并入 deny。
+ *
+ * 现场（pre18 真机 run6b，任务 `8e5b7580`）：模型用 `exec` 递归扫工作目录 → 命中
+ * **另一个任务**（vision 场景 `f1ff8ac5`）inbox 里的验收探针 PNG → 调 `view_image`
+ * 把该图读进模型私有上下文（toolResult 里带 base64 图片载荷）→ 随后 14 个连续回合
+ * 复述图里的「验收测试码 7441」，并把它说成"你发的这张PPT截图"。
+ *
+ * 为什么摘它对产品**没有损失**（三条实证）：
+ *   ① 产品唯一的看图通路是 App 侧附件投递（BUG-027「识别图片」：图片作为消息附件
+ *      投给模型），不依赖模型自己去磁盘捞图；
+ *   ② 全库随包技能（`packages/desktop/our-skills`）**0 处**引用 `view_image`；
+ *   ③ 它**没有任务级路径沙箱**：`tools.fs.workspaceOnly` 只把边界定在 workspace 根，
+ *      而 workspace 是**设备级共享**（所有任务目录同根）⇒ 任一任务都能把别家任务的
+ *      图片读进上下文。产品侧修不到内核工具的沙箱（结构性修复=任务级 workspace 定界，
+ *      另立工单），所以先在能力面摘掉它。
+ *
+ * 与 `canvas` / web 工具同一条机制：并入 `mergeToolsDefaults` 的 deny 并集 +
+ * `hasMemoryToolsDenied` 自愈判据（存量用户也拿得到）+ `workflow-tools.ts` 自动跟随。
+ */
+export const SANDBOXLESS_VISION_TOOLS_DENIED = ['view_image'] as const;
+
+/**
+ * **能力注册表判定为 `unavailable` 的工具**（BUG-043，2026-10-08）——同样并入 deny。
+ *
+ * 本轮落地的是图片/视频生成（`image_generate` / `video_generate`）：media-loop 本轮
+ * 不接入，留在模型可见面只会换来"调一次、失败一次"的 Tool Failure（用户原话要的正是
+ * "不要看到失败"）。真源在 `@clawwork/core` 的能力注册表（`plannerDeniedToolIds()`，
+ * 与验证账本逐字对齐）——**别在这里再抄一份名单**。
+ *
+ * ⚠️ **懒取、顶层不直接求值**：本模块的 import 顺序敏感（2026-10-07 实测：顶层求值
+ *    会在 license 系测试的 collect 期炸 `… is not iterable`），常量在"首次调用"时拿，
+ *    那时全部模块已初始化。
+ */
+function capabilityToolsDenied(): readonly string[] {
+  return plannerDeniedToolIds();
+}
+
 /** 从（任意的）配置里挖出全局 `tools.deny`；不是字符串数组则 null。 */
 export function readToolsDeny(raw: unknown): string[] | null {
   if (!isRecord(raw)) return null;
@@ -238,7 +296,21 @@ export function readToolsDeny(raw: unknown): string[] | null {
 /** 那两个名字是不是都已经被 deny 掉了（决定"要不要写盘"的判据）。 */
 export function hasMemoryToolsDenied(raw: unknown): boolean {
   const deny = readToolsDeny(raw);
-  return deny !== null && MEMORY_TOOLS_DENIED.every((name) => deny.includes(name));
+  return (
+    deny !== null &&
+    MEMORY_TOOLS_DENIED.every((name) => deny.includes(name)) &&
+    // 2026-10-07 P0-3：平台特异工具（canvas）同走这条判据——只查 memory 两名的话，
+    // 存量用户会因提前返回**永远拿不到**新增的 deny（与 memory/工具闸门当初同一个坑）。
+    PLATFORM_IRRELEVANT_TOOLS_DENIED.every((name) => deny.includes(name)) &&
+    // 2026-10-07 交付日：web 工具降级（BUG-033）同走这条判据（同上坑理）。
+    WEB_TOOLS_DENIED.every((name) => deny.includes(name)) &&
+    // 2026-10-08 BUG-049：无沙箱看图工具 view_image 同走这条判据 —— 漏了它，存量用户
+    // （配置里已有 canvas/web 等旧名单）会被提前返回**永远锁在没有新 deny 的状态**。
+    SANDBOXLESS_VISION_TOOLS_DENIED.every((name) => deny.includes(name)) &&
+    // 2026-10-08：能力注册表的 unavailable 工具（image/video 生成，BUG-043）同走这条判据 ——
+    // 漏了它，存量用户（配置里已有旧的四个名字）会被提前返回**永远锁在没有新 deny 的状态**。
+    capabilityToolsDenied().every((name) => deny.includes(name))
+  );
 }
 
 /**
@@ -356,11 +428,116 @@ export function mergeToolsDefaults(existing: Record<string, unknown> | null): Re
 
   return {
     ...tools,
-    deny: [...new Set([...deny, ...MEMORY_TOOLS_DENIED])],
+    deny: [
+      ...new Set([
+        ...deny,
+        ...MEMORY_TOOLS_DENIED,
+        ...PLATFORM_IRRELEVANT_TOOLS_DENIED,
+        ...WEB_TOOLS_DENIED,
+        ...SANDBOXLESS_VISION_TOOLS_DENIED,
+        ...capabilityToolsDenied(),
+      ]),
+    ],
     fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
     // ⚠️ 只写 `mode`：**不要**加 `askFallback`（见上面常量处的实测）。
     exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },
     elevated: { ...elevatedSection, enabled: TOOL_GUARD_ELEVATED_ENABLED },
+  };
+}
+
+/**
+ * 导入收件箱只读守卫的**配置侧**（插件文件本体在 `guard/inbox-readonly.ts`）。
+ *
+ * 为什么和工具闸门一样写在"每次启动对齐"的这条路径上：网关只认 `openclaw.json` 里的
+ * `plugins.load.paths` + `plugins.entries.<id>.enabled`（其余字段一律不生效）；而
+ * `ensureStateConfig` 的**提前返回是存量用户每次启动的必经之路** —— 只在新装时写，
+ * 对已经用上这个版本的用户就是"保护从未存在"（与 memory 默认值/工具 deny 当初栽的
+ * 是同一个坑）。所以：`hasInboxReadonlyGuard` 参与提前返回判据，缺了就合并回写。
+ *
+ * ⚠️ 少写一条就**静默失效**（2026-10-07 真机实验：只给 `load.paths` 指向裸文件、
+ *    或只给目录不给 `entries.<id>.enabled`，网关都不加载该插件，且不打任何日志）。
+ */
+export function readPluginsLoadPaths(raw: unknown): string[] | null {
+  if (!isRecord(raw)) return null;
+  const plugins = raw.plugins;
+  if (!isRecord(plugins)) return null;
+  const load = plugins.load;
+  if (!isRecord(load)) return null;
+  const paths = load.paths;
+  if (!Array.isArray(paths)) return null;
+  return paths.filter((value): value is string => typeof value === 'string');
+}
+
+/**
+ * 「是守卫插件目录」判定：只看**目录名尾段**，与盘符无关。
+ *
+ * 用途：清理换盘符后的残留死条目。2026-10-07 真机事故——盘在 G: 下写的配置换插后
+ * 以 E: 挂载，旧 G: 条目在新机器上不存在，网关把"任一 load path 不存在"判为
+ * Invalid config ⇒ 拒绝启动 ⇒ 整盘卡在"本机服务"（U 盘漫游场景必踩）。
+ */
+function isInboxReadonlyPolicyPath(candidate: string): boolean {
+  const normalized = candidate.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized === INBOX_READONLY_PLUGIN_ID || normalized.endsWith(`/${INBOX_READONLY_PLUGIN_ID}`);
+}
+
+function isSamePolicyPath(a: string, b: string): boolean {
+  const normalize = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalize(a) === normalize(b);
+}
+
+/** 守卫条目是不是已经完整（load 路径 + 显式启用；有 allow 名单时必须含它）。 */
+export function hasInboxReadonlyGuard(raw: unknown, policyDir: string): boolean {
+  if (!isRecord(raw)) return false;
+  const plugins = raw.plugins;
+  if (!isRecord(plugins)) return false;
+  const paths = readPluginsLoadPaths(raw);
+  if (!paths || !paths.some((path) => isSamePolicyPath(path, policyDir))) return false;
+  // 同插件的**异路径**（旧盘符残留）也判「未就绪」：它在网关侧同样致命，而提前返回
+  // 会让它永远留在配置里（每次启动都拒启）——必须强制走合并回写把它清掉。
+  if (paths.some((path) => isInboxReadonlyPolicyPath(path) && !isSamePolicyPath(path, policyDir))) return false;
+  const entries = plugins.entries;
+  if (!isRecord(entries)) return false;
+  const entry = entries[INBOX_READONLY_PLUGIN_ID];
+  if (!isRecord(entry) || entry.enabled !== true) return false;
+  if (Array.isArray(plugins.allow)) {
+    return (plugins.allow as unknown[]).includes(INBOX_READONLY_PLUGIN_ID);
+  }
+  return true;
+}
+
+/**
+ * plugins 段合并（纯函数）：**并进** load 路径与显式启用，不动别的插件条目。
+ *
+ * ⚠️ `plugins.allow` 一旦存在就是白名单：不把守卫 id 加进去，插件会被
+ *    "not-in-allowlist" 静默挡住 —— 那等于给用户装了一个假装在跑的保护。
+ *    （没有 allow 字段时不创建它：不要凭空给用户加白名单语义。）
+ *
+ * ⚠️ 同插件的**异路径**（换盘符残留）必须一并剔除：每多留一条死路径，网关的
+ *    "任一 load path 不存在 ⇒ Invalid config" 就多拒启一次（见 isInboxReadonlyPolicyPath）。
+ */
+export function mergeInboxReadonlyGuard(
+  existing: Record<string, unknown> | null,
+  policyDir: string,
+): Record<string, unknown> {
+  const plugins = existing && isRecord(existing.plugins) ? existing.plugins : {};
+  const load = isRecord(plugins.load) ? plugins.load : {};
+  const paths = readPluginsLoadPaths(existing) ?? [];
+  const pruned = paths.filter((path) => !isInboxReadonlyPolicyPath(path) || isSamePolicyPath(path, policyDir));
+  const nextPaths = pruned.some((path) => isSamePolicyPath(path, policyDir)) ? pruned : [...pruned, policyDir];
+  const entries = isRecord(plugins.entries) ? plugins.entries : {};
+  const guardEntry = isRecord(entries[INBOX_READONLY_PLUGIN_ID]) ? entries[INBOX_READONLY_PLUGIN_ID] : {};
+  const allow = Array.isArray(plugins.allow)
+    ? plugins.allow.filter((value): value is string => typeof value === 'string')
+    : null;
+  return {
+    ...plugins,
+    load: { ...load, paths: nextPaths },
+    entries: { ...entries, [INBOX_READONLY_PLUGIN_ID]: { ...guardEntry, enabled: true } },
+    ...(allow && !allow.includes(INBOX_READONLY_PLUGIN_ID)
+      ? { allow: [...allow, INBOX_READONLY_PLUGIN_ID] }
+      : allow
+        ? { allow }
+        : {}),
   };
 }
 
@@ -438,6 +615,19 @@ export function ensureStateConfig(
   const existing = splitState ? readStateConfigFile(configPath) : legacyPortableConfig;
   const existingToken = readStateToken(existing);
 
+  // ①b 收件箱只读守卫：插件**文件先落盘**，再决定要不要把配置指过去。
+  //     写失败（盘满/只读）⇒ 这条守卫本次不装（宁可不装，也不把配置指向不存在的目录），
+  //     并且**出声**；下次启动会重试（写文件在提前返回之前，不走那条捷径）。
+  let inboxGuardDir: string | null = null;
+  try {
+    inboxGuardDir = ensureInboxReadonlyPolicy(stateDir);
+  } catch (error) {
+    console.warn(
+      '[runtime] runtime.inbox-guard-unavailable：导入收件箱只读守卫未能写入状态目录，本次不装载（不影响启动）',
+      error,
+    );
+  }
+
   // ② 已经一致 ⇒ 一个字节都不写（不每次启动都重写别人的文件）
   //
   // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
@@ -454,6 +644,7 @@ export function ensureStateConfig(
     hasMemoryToolsDenied(existing) &&
     hasToolGuard(existing) &&
     !hasStaleExecKeys(existing) &&
+    (!inboxGuardDir || hasInboxReadonlyGuard(existing, inboxGuardDir)) &&
     (!splitState || hasPortableAgentDefaults(existing, portableWorkspacePath))
   ) {
     return { token: store.token, created: false, configPath, stateDir };
@@ -465,6 +656,7 @@ export function ensureStateConfig(
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
     memory: mergeMemoryDefaults(existing),
     tools: mergeToolsDefaults(existing),
+    ...(inboxGuardDir ? { plugins: mergeInboxReadonlyGuard(existing, inboxGuardDir) } : {}),
     ...(splitState ? { agents: mergePortableAgentDefaults(existing, portableWorkspacePath) } : {}),
   };
 

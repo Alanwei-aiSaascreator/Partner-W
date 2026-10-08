@@ -117,7 +117,7 @@ function create(input: CreateTeamMeetingInput): CreateTeamMeetingInput {
       for (const key of ['title', 'createdAt', 'updatedAt', 'artifactDir'] as const)
         requireValid(typeof task[key] === 'string', 'Invalid task metadata');
       requireValid(Array.isArray(task.tags) && task.tags.every((tag) => typeof tag === 'string'), 'Invalid task tags');
-      for (const key of ['model', 'modelProvider', 'thinkingLevel', 'pinnedAt'] as const)
+      for (const key of ['mode', 'model', 'modelProvider', 'thinkingLevel', 'pinnedAt'] as const)
         requireValid(task[key] === undefined || typeof task[key] === 'string', 'Invalid task option');
       for (const key of ['inputTokens', 'outputTokens', 'contextTokens'] as const)
         requireValid(task[key] === undefined || Number.isFinite(task[key]), 'Invalid task usage');

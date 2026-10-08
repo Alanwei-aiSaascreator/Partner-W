@@ -102,6 +102,39 @@ describe('task context source IPC handlers', () => {
     expect(extensions).not.toEqual(expect.arrayContaining(['gif', 'svg']));
   });
 
+  /**
+   * C 组（BUG-027）：「识别图片」是**同一条导入管线**加了图片过滤的入口 ——
+   * 对话框只列图片，落盘/拒绝/选中语义全部沿用，不新造第二条路。
+   */
+  it('★ purpose=images 时对话框只列图片扩展名，仍走同一条导入管线', async () => {
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['C:\\source\\shot.png'] });
+    importTaskFilesMock.mockResolvedValue({ imported: [{ fileName: 'shot.png' }], rejected: [] });
+
+    await expect(handleMap.get('context:import-files')?.({}, { taskId: 'task-1', purpose: 'images' })).resolves.toEqual(
+      {
+        ok: true,
+        result: { imported: [{ fileName: 'shot.png' }], rejected: [] },
+      },
+    );
+
+    const options = showOpenDialogMock.mock.calls[0][1] as { filters: Array<{ extensions: string[] }> };
+    const extensions = options.filters.flatMap((filter) => filter.extensions);
+    expect(extensions).toEqual(expect.arrayContaining(['png', 'jpg', 'jpeg', 'webp']));
+    expect(extensions).not.toEqual(expect.arrayContaining(['docx', 'xlsx', 'pdf']));
+    expect(importTaskFilesMock).toHaveBeenCalledWith({
+      workspacePath: 'C:\\workspace',
+      taskId: 'task-1',
+      sourcePaths: ['C:\\source\\shot.png'],
+    });
+  });
+
+  it('未知 purpose 当成普通文件入口（不放大也不缩窄可选范围）', async () => {
+    showOpenDialogMock.mockResolvedValue({ canceled: true, filePaths: [] });
+    await handleMap.get('context:import-files')?.({}, { taskId: 'task-1', purpose: 'nonsense' });
+    const options = showOpenDialogMock.mock.calls[0][1] as { filters: Array<{ extensions: string[] }> };
+    expect(options.filters.flatMap((filter) => filter.extensions)).toEqual(expect.arrayContaining(['docx']));
+  });
+
   it('imports every selected native file into the configured task workspace', async () => {
     const imported = { imported: [{ fileName: 'a.txt' }], rejected: [] };
     showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: ['C:\\source\\a.txt', 'C:\\source\\b.pdf'] });

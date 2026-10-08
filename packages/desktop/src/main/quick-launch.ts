@@ -35,7 +35,7 @@ function createQuickLaunchWindow(): BrowserWindow {
     skipTaskbar: true,
     alwaysOnTop: true,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -47,7 +47,7 @@ function createQuickLaunchWindow(): BrowserWindow {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/quick-launch.html`);
   } else {
-    win.loadFile(join(__dirname, '../renderer/quick-launch.html'));
+    win.loadFile(join(import.meta.dirname, '../renderer/quick-launch.html'));
   }
 
   win.on('blur', () => {

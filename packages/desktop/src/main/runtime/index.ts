@@ -37,11 +37,17 @@ import {
   planRuntimeSearch,
   type RuntimeSearchInputs,
 } from './locate.js';
-import { CLAWROUTER_ENTRY, ensureRuntimeDeployed, readCurrentDeployment } from './deploy.js';
-import type { CurrentDeployment, DeployResult, DeploymentStamp } from './deploy.js';
+import { CLAWROUTER_ENTRY, DEPLOY_FAILED_CODE, ensureRuntimeDeployed, readCurrentDeployment } from './deploy.js';
+import type { CurrentDeployment, DeployProgress, DeployResult, DeploymentStamp } from './deploy.js';
 import { parseManifest, parseNodeManifest, selectNodeVariant, selectRuntimeVariant } from './manifest.js';
 import type { NodeVariant, RuntimeVariant } from './manifest.js';
 import { ensureClientGatewayEntry } from './state-config.js';
+import {
+  GATEWAY_CRASH_LOOP_BREAKER,
+  crashLoopBreakerGuidance,
+  inspectCrashLoopBreaker,
+  type CrashLoopBreakerState,
+} from './gateway-breaker.js';
 import { runStateLinksSelfCheck } from './state-links-selfcheck.js';
 import type { LinkSelfCheckResult } from './state-links-selfcheck.js';
 import fs from 'node:fs';
@@ -86,7 +92,13 @@ export interface RuntimeBootstrapDeps {
     legacyStateUserDataDir?: string;
   }) => Promise<{ token: string; stateDir: string }>;
   readCached: (userDataDir: string) => CurrentDeployment;
-  deployFromMedia: (opts: { userDataDir: string }) => Promise<DeployResult>;
+  /**
+   * 从盘上部署一份运行时。
+   *
+   * `onProgress` 是**可选**的：没有谁在听（测试、无界面的调用方）时**连字段都不传**，
+   * 免得调用形状被一个恒为 undefined 的键污染。
+   */
+  deployFromMedia: (opts: { userDataDir: string; onProgress?: (p: DeployProgress) => void }) => Promise<DeployResult>;
   /**
    * 坏链自检（**同步、永不抛**的默认实现见 `state-links-selfcheck.ts`）。
    *
@@ -109,6 +121,11 @@ export interface RuntimeBootstrapDeps {
     token: string;
   }) => Promise<EnsureGatewayRunningResult>;
   setStateDirEnv: (stateDir: string) => void;
+  /**
+   * BUG-040 ④：失败时看一眼网关的崩溃循环熔断（`gateway.crash_loop_breaker`）。
+   * **只读**、永不抛；缺省实现在 `gateway-breaker.ts`。可选（老测试的假依赖集不用改）。
+   */
+  inspectBreaker?: (stateDir: string) => CrashLoopBreakerState;
   log: (event: string, data?: Record<string, unknown>) => void;
   now: () => number;
 }
@@ -137,7 +154,11 @@ export function collectRuntimeSearchInputs(): RuntimeSearchInputs {
 
 /** `locateAndPlan` 的结果：要么有得部署，要么带一句**能排障**的原因。 */
 export type LocatePlan =
-  | { ok: true; runtimeRoot: string; deploy: (o: { userDataDir: string }) => Promise<DeployResult> }
+  | {
+      ok: true;
+      runtimeRoot: string;
+      deploy: (o: { userDataDir: string; onProgress?: (p: DeployProgress) => void }) => Promise<DeployResult>;
+    }
   | { ok: false; reason: string };
 
 /**
@@ -204,6 +225,8 @@ export async function locateAndPlan(
         runtime: parsed.runtime,
         node: parsed.node,
         manifestPath: parsed.manifestPath,
+        // 没人听就不传这个键（调用形状保持干净）
+        ...(o.onProgress ? { onProgress: o.onProgress } : {}),
       }),
   };
 }
@@ -221,12 +244,13 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
     },
     readCached: (userDataDir) => readCurrentDeployment(userDataDir),
     selfCheckLinks: ({ stateDir, deployedRoot }) => runStateLinksSelfCheck({ stateDir, deployedRoot }),
-    deployFromMedia: async ({ userDataDir }) => {
+    deployFromMedia: async ({ userDataDir, onProgress }) => {
       const plan = await locateAndPlan(userDataDir);
       // ⚠️ 原因文本原样抛出：它自带"找过哪些地方"（见 describeRuntimeSearch），
       // 而 bootstrap 会把它写进 `runtime.bootstrap.failed` 的 reason。
       if (!plan.ok) throw new Error(plan.reason);
-      return plan.deploy({ userDataDir });
+      // 同样条件透传：没人听就不带这个键。
+      return plan.deploy({ userDataDir, ...(onProgress ? { onProgress } : {}) });
     },
     resolveNode: async ({ deployedRoot }) => {
       const deployedNode = path.join(deployedRoot, 'node', 'node.exe');
@@ -274,6 +298,11 @@ export async function bootstrapLocalGatewayRuntime(opts: {
   stateCacheUserDataDir?: string;
   portableWorkspacePath?: string;
   legacyStateUserDataDir?: string;
+  /**
+   * 部署阶段的真实进度（可选）。**透传**给 `deployFromMedia`，这一层不解释它 ——
+   * 快照、节流、停滞提示都在接线处（`main/index.ts` + `deploy-progress.ts`）。
+   */
+  onDeployProgress?: (p: DeployProgress) => void;
   deps?: Partial<RuntimeBootstrapDeps>;
 }): Promise<RuntimeBootstrapResult> {
   const deps: RuntimeBootstrapDeps = { ...makeDefaultDeps(), ...opts.deps };
@@ -281,6 +310,27 @@ export async function bootstrapLocalGatewayRuntime(opts: {
   const runtimeCacheUserDataDir = opts.runtimeCacheUserDataDir ?? userDataDir;
   const stateCacheUserDataDir = opts.stateCacheUserDataDir ?? userDataDir;
   const startedAt = deps.now();
+
+  /**
+   * 部署那一步的**带码**包装：这一步失败时，公开原因必须是 `deploy-failed`
+   * （界面的出口在盘上），而不是笼统的 `unknown`。
+   *
+   * ⚠️ 包在**编排层**而不是 `ensureRuntimeDeployed` 内部：这整段（定位 + 部署）
+   *    才是"从盘上准备运行环境"这件事，两处调用点（便携 / 安装形态）都从这里过。
+   * ⚠️ 已经带码的错误（迁移阻塞、端口占用…）**原样放行** —— 那些类别的出口不是"换块盘"。
+   */
+  const deployWithCode = async (cacheUserDataDir: string): Promise<DeployResult> => {
+    try {
+      return await deps.deployFromMedia({
+        userDataDir: cacheUserDataDir,
+        ...(opts.onDeployProgress ? { onProgress: opts.onDeployProgress } : {}),
+      });
+    } catch (err) {
+      const cause = err instanceof Error ? err : new Error(String(err));
+      if ((cause as Error & { code?: string }).code) throw cause;
+      throw Object.assign(cause, { code: DEPLOY_FAILED_CODE });
+    }
+  };
 
   const fail = (
     code: string | undefined,
@@ -291,6 +341,13 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     return { ok: false, code, reason, elapsedMs: deps.now() - startedAt, ...extra };
   };
 
+  /** 失败诊断要用的 stateDir（对齐配置之后才有；拿不到就不诊断）。 */
+  let diagnosisStateDir: string | undefined;
+  /** 这一轮运行时是**部署**出来的还是缓存命中的（失败时要带回结果里，见 BUG-040 R2）。 */
+  let deployStatus: 'deployed' | 'skipped' | undefined;
+  const inspectBreaker: (dir: string) => CrashLoopBreakerState =
+    deps.inspectBreaker ?? ((dir) => inspectCrashLoopBreaker(dir));
+
   try {
     const { token, stateDir } = await deps.alignClientConfig({
       userDataDir,
@@ -298,16 +355,16 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       portableWorkspacePath: opts.portableWorkspacePath,
       ...(opts.legacyStateUserDataDir ? { legacyStateUserDataDir: opts.legacyStateUserDataDir } : {}),
     });
+    diagnosisStateDir = stateDir;
     deps.setStateDirEnv(stateDir);
 
     // ② 安装形态先认本机缓存（保留“部署源暂时不在也能启动”的既有退路）。
     //    便携形态用了独立缓存作用域，必须先拿本包 manifest 算目标 key；否则同机旧版
     //    留下的一份“结构完整”缓存会盖过当前包随附的运行时。
     let deployed: { deploymentKey: string; deployedRoot: string; cliPath: string; nodePath: string };
-    let deployStatus: 'deployed' | 'skipped' | undefined;
 
     if (runtimeCacheUserDataDir !== userDataDir) {
-      const res = await deps.deployFromMedia({ userDataDir: runtimeCacheUserDataDir });
+      const res = await deployWithCode(runtimeCacheUserDataDir);
       deployed = {
         deploymentKey: res.deploymentKey,
         deployedRoot: res.deployedRoot,
@@ -329,7 +386,7 @@ export async function bootstrapLocalGatewayRuntime(opts: {
         deps.log('runtime.deploy.skipped', { deploymentKey: cached.deploymentKey });
       } else {
         // ③ 没有可用缓存 ⇒ 从部署源部署一份
-        const res = await deps.deployFromMedia({ userDataDir: runtimeCacheUserDataDir });
+        const res = await deployWithCode(runtimeCacheUserDataDir);
         deployed = {
           deploymentKey: res.deploymentKey,
           deployedRoot: res.deployedRoot,
@@ -373,14 +430,39 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     }
 
     // ⑤ 解析一个能跑 openclaw 的 Node（**必须先探版本**）
+    const nodeStartedAt = deps.now();
     const nodeRes = await deps.resolveNode({
       userDataDir: runtimeCacheUserDataDir,
       deploymentKey: deployed.deploymentKey,
       deployedRoot: deployed.deployedRoot,
     });
+    deps.log('runtime.node.resolve.done', { durationMs: Math.max(0, deps.now() - nodeStartedAt), ok: nodeRes.ok });
     if (!nodeRes.ok) return fail('runtime.no-usable-node', nodeRes.message, { deploymentKey: deployed.deploymentKey });
 
+    /**
+     * BUG-040 ④：熔断期间**不去撞墙**。
+     *
+     * 内核（同一套判据）会拒绝启动，但每次尝试都会**新增一条"不干净启动"记录**、
+     * 把那 5 分钟窗口往后推 —— 用户越点「重新准备」越出不来。所以起网关之前先停手，
+     * 直接给出"等几分钟 / 退出应用再试"的指引。
+     *
+     * ⚠️ 只读、永不抛、读不到按"没熔断"：这是**失败路径的诊断**，不许把正常启动拦下。
+     */
+    const preBreaker = inspectBreaker(stateDir);
+    if (preBreaker.tripped) {
+      deps.log('runtime.gateway-crash-loop-breaker', {
+        phase: 'pre-start',
+        uncleanBoots: preBreaker.uncleanBoots,
+        retryAfterMs: preBreaker.retryAfterMs,
+      });
+      return fail(GATEWAY_CRASH_LOOP_BREAKER, crashLoopBreakerGuidance(preBreaker), {
+        ...(deployStatus ? { deployStatus } : {}),
+      });
+    }
+
     // ⑥ 三态判定后 spawn / 复用（判成 foreign 会抛 port-occupied，由下面接住）
+    const gatewayStartedAt = deps.now();
+    deps.log('runtime.gateway.start', {});
     const gateway = await deps.startGateway({
       nodeExe: nodeRes.node.exe,
       cliPath: deployed.cliPath,
@@ -388,6 +470,10 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       stateDir,
       identityPath: path.join(userDataDir, 'device-identity.json'),
       token,
+    });
+    deps.log('runtime.gateway.ready', {
+      durationMs: Math.max(0, deps.now() - gatewayStartedAt),
+      ownership: gateway.ownership,
     });
 
     // 记下来给退出收尾用（只有 spawned 会被真的停掉）。
@@ -429,7 +515,30 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     };
   } catch (err) {
     const e = err as Error & { code?: string };
-    return fail(e.code, e.message, {});
+
+    /**
+     * BUG-040 ③④：失败时先看一眼网关是不是**被自己的崩溃循环熔断挡下了**
+     * （`gateway.crash_loop_breaker`，状态在 state sqlite 的 `gateway_boot_lifecycle`）。
+     *
+     * 为什么要在这一层：用户看到的"起不来"和真因（内核自我保护）之间没有任何桥梁 ——
+     * 而这里**刚好知道 stateDir**，且只有失败路径会走到（不会拖慢正常启动）。
+     *
+     * ⚠️ 只读、永不抛、读不到就按"没熔断"（`available:false`）。
+     * ⚠️ 熔断时**换码**（不在可重试白名单里）：反复重试只会延长那 5 分钟窗口。
+     */
+    const breaker = diagnosisStateDir
+      ? inspectBreaker(diagnosisStateDir)
+      : ({ available: false, tripped: false, uncleanBoots: 0 } satisfies CrashLoopBreakerState);
+    if (breaker.tripped) {
+      deps.log('runtime.gateway-crash-loop-breaker', {
+        uncleanBoots: breaker.uncleanBoots,
+        retryAfterMs: breaker.retryAfterMs,
+      });
+      return fail(GATEWAY_CRASH_LOOP_BREAKER, `${e.message}；${crashLoopBreakerGuidance(breaker)}`, {
+        ...(deployStatus ? { deployStatus } : {}),
+      });
+    }
+    return fail(e.code, e.message, { ...(deployStatus ? { deployStatus } : {}) });
   }
 }
 

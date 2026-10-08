@@ -85,6 +85,17 @@ it('creates a verifiable receipt for the exact file it generated in this turn', 
     warnings: result.warnings,
   });
   expect(pptxFiles()).toHaveLength(1);
+  /**
+   * ⭐ B 包（2026-10-07）：报告里必须带上"东西**写在哪**"。
+   *
+   * 为什么：CLI 的落点 = 模型跑命令时的 cwd（`process.cwd()`），主进程对此**零控制、不知情** ——
+   * 模型把成品渲到工作区根层（或任何别的目录）时，产物面板里那份文件靠"猜"是找不到的。
+   * 收据（`.royin-ppt-receipt-*.json`）就写在同一目录里、且**绑定了该目录的身份**
+   * （dev/ino 校验），所以这一句"写在哪"是把收据找回来、再把产物登记进任务目录的唯一线索。
+   * ⚠️ 值必须是**渲染根的真实路径**（与收据里 `workspaceIdentity` 同一口径）——
+   *    写相对路径或没归一的路径，另一头拿它去读收据会直接读不到。
+   */
+  expect(result.outputDir).toBe(fs.realpathSync(workspace));
 });
 
 it.each([

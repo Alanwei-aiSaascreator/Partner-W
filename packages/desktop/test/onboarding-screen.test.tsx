@@ -43,12 +43,14 @@ describe('Onboarding', () => {
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     window.localStorage.clear();
+    // 首跑草稿走 sessionStorage（2026-10-07 体检问题 7）：不清会漏进下一个用例。
+    window.sessionStorage.clear();
   });
 
-  it('uses a four-step role, purpose, assistant, and personalization flow', () => {
+  it('retains the legacy four-step editor for existing profiles', () => {
     const onComplete = vi.fn();
     const { container, unmount } = render(
-      <Onboarding userId="user-1" defaultNickname="小荣" onComplete={onComplete} />,
+      <Onboarding userId="user-1" defaultNickname="小荣" mode="edit" onComplete={onComplete} />,
     );
 
     expect(container.textContent).toContain('onboarding.steps.role');
@@ -72,7 +74,7 @@ describe('Onboarding', () => {
     act(() => buttonFor(container, 'onboarding.next').click());
 
     expect(container.textContent).toContain('onboarding.personalizeTitle');
-    act(() => buttonFor(container, 'onboarding.finish').click());
+    act(() => buttonFor(container, 'onboarding.save').click());
 
     expect(onComplete).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -91,7 +93,7 @@ describe('Onboarding', () => {
 
   it('prefills the login purpose on step two but still lets the user change it', () => {
     window.localStorage.setItem('rongying-login-purpose', 'office');
-    const { container, unmount } = render(<Onboarding userId="user-purpose" onComplete={vi.fn()} />);
+    const { container, unmount } = render(<Onboarding userId="user-purpose" mode="edit" onComplete={vi.fn()} />);
 
     act(() => buttonFor(container, 'onboarding.roles.owner.title').click());
     act(() => buttonFor(container, 'onboarding.next').click());
@@ -110,7 +112,7 @@ describe('Onboarding', () => {
 
   it('uses free role and goal text in assistant recommendations', () => {
     const onComplete = vi.fn();
-    const { container, unmount } = render(<Onboarding userId="user-2" onComplete={onComplete} />);
+    const { container, unmount } = render(<Onboarding userId="user-2" mode="edit" onComplete={onComplete} />);
 
     act(() => buttonFor(container, 'onboarding.roles.custom.title').click());
     setInput(container.querySelector('[data-custom-role]') as HTMLInputElement, '门店短视频负责人');
@@ -122,7 +124,7 @@ describe('Onboarding', () => {
     act(() => buttonFor(container, 'onboarding.next').click());
     expect(container.querySelector('[data-assistant="photography"]')).not.toBeNull();
     act(() => buttonFor(container, 'onboarding.next').click());
-    act(() => buttonFor(container, 'onboarding.finish').click());
+    act(() => buttonFor(container, 'onboarding.save').click());
 
     expect(onComplete).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -25,7 +25,7 @@ vi.mock('../src/main/db/index.js', () => {
       from: () => ({ where: () => ({ get: () => (fields && 'role' in fields ? undefined : mocks.row) }) }),
     }),
   };
-  return { getDb: () => db, isDbReady: () => true };
+  return { getDb: () => db, getSqlite: () => null, isDbReady: () => true };
 });
 vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: () => 'C:\\workspace' }));
 vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: mocks.gateway }));
@@ -102,10 +102,19 @@ it('continues after model completion and finishes using the actual pipeline outc
   await flush();
   expect(frames().map((item) => [item.phase, item.status])).toEqual([
     ['downloading-media', 'active'],
+    // 两条产物链各宣告一次"正在核对产物"（应用根 + **应用工作区根层**，2026-10-07 第三个根）
+    // ⚠️ 重复的同一个阶段**不会**在 `observedPhases` 里多出一条（见 `emit` 的判据），只是多一帧
+    //    —— 下面那条断言把这一点钉死，免得以后有人把它当成"阶段历史重复"来修。
+    ['reconciling-artifacts', 'active'],
     ['reconciling-artifacts', 'active'],
     ['reconciling-artifacts', 'succeeded'],
   ]);
   expect(new Set(frames().map((item) => item.operationId)).size).toBe(1);
+  expect(
+    frames()
+      .at(-1)
+      ?.observedPhases?.map((step) => step.phase),
+  ).toEqual(['downloading-media', 'reconciling-artifacts']);
 });
 
 it.each(['failed', 'canceled'] as const)('preserves actual %s terminal state', async (status) => {

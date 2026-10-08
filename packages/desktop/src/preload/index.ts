@@ -22,6 +22,7 @@ import type {
   RelayBootstrapPublicState,
   RelayLivenessPublicState,
   RuntimeBootstrapStatus,
+  RuntimeDeployProgress,
   SaveTeamMeetingInput,
   SkillInstallParams,
   SkillSearchParams,
@@ -134,7 +135,9 @@ function buildApi(): ClawWorkAPI {
     },
     onGatewayStatus: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, status: unknown): void => {
-        callback(status as { connected: boolean; error?: string; gatewayId: string });
+        // 形状对应 preload/clawwork.d.ts 的 `GatewayStatusEvent`（含 serverVersion /
+        // maxPayloadBytes 这些旁路字段，渲染层按需读）。
+        callback(status as { connected: boolean; error?: string; gatewayId: string; maxPayloadBytes?: number });
       };
       ipcRenderer.on('gateway-status', listener);
       return () => {
@@ -154,6 +157,21 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('runtime-status', listener);
       };
     },
+    // 部署进度：与 runtime-status 同一个形状（快照 + 事件）。`null` = **现在没有
+    // 部署在进行**（不是"部署完成"，也不是"没问题"）。
+    runtimeDeployProgress: () => ipcRenderer.invoke('runtime:deploy-progress'),
+    onRuntimeDeployProgress: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: unknown): void => {
+        callback(progress as RuntimeDeployProgress | null);
+      };
+      ipcRenderer.on('runtime-deploy-progress', listener);
+      return () => {
+        ipcRenderer.removeListener('runtime-deploy-progress', listener);
+      };
+    },
+    // 「重新准备」：让主进程**真的重跑一轮** bootstrap（与启动同一条路）。
+    // 返回跑完之后的主进程快照 —— 渲染层拿它决定要不要重连网关。
+    runtimeBootstrapRetry: () => ipcRenderer.invoke('runtime:bootstrap-retry'),
     onDebugEvent: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, event: unknown): void => {
         callback(
@@ -365,6 +383,8 @@ function buildApi(): ClawWorkAPI {
       title: string;
       status: string;
       ensemble?: boolean;
+      /** 任务模式（快速/智能/深度/高级指定模型）；见 `@clawwork/shared` 的 task-modes。 */
+      mode?: string;
       model?: string;
       modelProvider?: string;
       thinkingLevel?: string;
@@ -383,6 +403,7 @@ function buildApi(): ClawWorkAPI {
       title?: string;
       status?: string;
       ensemble?: boolean;
+      mode?: string;
       model?: string;
       modelProvider?: string;
       thinkingLevel?: string;
@@ -393,6 +414,8 @@ function buildApi(): ClawWorkAPI {
       sessionKey?: string;
       /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
       pinnedAt?: string | null;
+      /** deck 路由标记（演示文稿 → DeepSeek 的粘性开关）；见 `@clawwork/shared` 的 `Task.deckRouted`。 */
+      deckRouted?: boolean;
       updatedAt: string;
     }) => ipcRenderer.invoke('data:update-task', params),
 
@@ -504,11 +527,14 @@ function buildApi(): ClawWorkAPI {
 
     getDeviceId: () => ipcRenderer.invoke('workspace:get-device-id') as Promise<string>,
 
-    importTaskFiles: (taskId: string, filePaths?: string[]) =>
-      ipcRenderer.invoke(
-        'context:import-files',
-        filePaths && filePaths.length > 0 ? { taskId, filePaths } : { taskId },
-      ),
+    importTaskFiles: (taskId: string, filePaths?: string[], purpose?: 'files' | 'images') =>
+      ipcRenderer.invoke('context:import-files', {
+        taskId,
+        // ⚠️ `filePaths` **只在真的给了路径时才带上**：主进程按"有没有这个键"分
+        //    「拖入」还是「弹对话框」——带一个空数组会把拖入判成一次空导入。
+        ...(filePaths && filePaths.length > 0 ? { filePaths } : {}),
+        ...(purpose ? { purpose } : {}),
+      }),
 
     /**
      * 拖入文件取**绝对路径**的唯一通道（T05）。

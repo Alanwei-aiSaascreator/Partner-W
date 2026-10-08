@@ -65,3 +65,27 @@ export function getRuntimeBootstrapStatus(): RuntimeBootstrapStatus | null {
 export function resetRuntimeBootstrapStatus(): void {
   current = null;
 }
+
+/**
+ * 晚到的**本地就绪事实**：只允许把「等就绪等满超时」这一条快照收敛成成功。
+ *
+ * ⭐ 为什么需要这个入口（2026-10-04 真机）：bootstrap 的 180 秒等待超时后，快照被
+ *    当成"当前服务仍失败"永久留在界面上；而**两分钟后**真实的主连接 WS 完成了
+ *    hello-ok 认证 —— 那次失败只是**那一次等待**失败，服务其实起来了。
+ *    没有这个收敛入口，真实入口就一直被旧失败快照挡着（界面只会说"正在准备模型"）。
+ *
+ * ⚠️ 边界是刻意收窄的：
+ *   - 只认 `ready-timeout`。`port-occupied` / `state-migration-blocked` /
+ *     `process-exited` / `unknown` **一律不收敛** —— 那些不是"再等等就好"，
+ *     让任意连接成功去清掉它们，就是把"端口被别的程序占着"说成"起来了"。
+ *   - 调用方必须先拿到**本机的、当前 profile 认证成功的**证据（见
+ *     `gateway-client.ts` 主连接 hello-ok 节点：认证证据就是那次握手本身）。
+ *   - 快照不是 ready-timeout（含已经是成功）⇒ 什么都不做。
+ *
+ * @returns 收敛后的快照；没有收敛则 `null`（调用方据此决定推不推 UI）。
+ */
+export function convergeLateLocalRuntimeReady(): RuntimeBootstrapStatus | null {
+  if (!current || current.ok !== false || current.reason !== 'ready-timeout') return null;
+  current = { ok: true };
+  return current;
+}

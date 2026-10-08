@@ -1,18 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, CheckCircle2, Circle, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
 import logo from '@/assets/logo.png';
-import GuideMascot from '@/components/GuideMascot';
+import OpeningMedia from '@/components/OpeningMedia';
 import WorkspaceRecreatedNotice from '@/components/WorkspaceRecreatedNotice';
 import { Button } from '@/components/ui/button';
+import { useEntryDeployProgress } from '@/hooks/useEntryDeployProgress';
 import {
   deriveEntryPreparation,
   type EntryPreparationFacts,
   type EntryPreparationStage,
 } from '@/lib/entry-preparation';
 import { gatewayFailureText, startupFailureText } from '@/lib/startup-readiness';
+import { formatElapsed } from '@/lib/waiting-copy';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
+
+/**
+ * 部署阶段那句话（`RuntimeDeployProgress.phase` → 文案键）。
+ *
+ * ⚠️ 用**显式映射表**而不是拼字符串（`` `entryPreparation.deploy${x}` ``）：
+ *    拼接出来的键在 i18n 的两个门禁里都看不见（"用了没写"/"写了没用"两个方向都瞎）。
+ */
+const DEPLOY_PHASE_KEYS = {
+  verify: 'entryPreparation.deployVerify',
+  extract: 'entryPreparation.deployExtract',
+  node: 'entryPreparation.deployNode',
+  finalize: 'entryPreparation.deployFinalize',
+  stalled: 'entryPreparation.deployStalled',
+} as const;
 export interface EntryPreparationProps {
   facts: EntryPreparationFacts;
   onContinue: () => Promise<void>;
@@ -33,6 +49,43 @@ export default function EntryPreparation({
   const state = deriveEntryPreparation(facts);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  /**
+   * 本机运行时**部署**的真实进度（主进程报来）。
+   *
+   * ⭐ 为什么值得上屏（2026-10-07 体检）：首跑那 1–20 分钟里主进程其实一直知道
+   *    自己在干什么（校验两份文件 → 解压四万条 → 装 Node → 原子换入），但那条信号
+   *    到不了界面 —— 用户看到的是"17% 不动"的一格。这里把它接出来。
+   */
+  const progress = useEntryDeployProgress(facts.currentScopeKey);
+  /**
+   * 盘上运行才说的那句"这不是安装"。问不出来一律当**不是**（宁可少说一句，
+   * 也不许对装机版说假话）—— 同 `StartupReadinessPanel` 的判据。
+   */
+  const [portable, setPortable] = useState(false);
+  useEffect(() => {
+    // ⚠️ **可选调用**（`?.`）：这个方法比有些宿主新，缺了不许把整块屏带崩。
+    void Promise.resolve(window.clawwork?.isPortableWorkspace?.())
+      .then((value) => setPortable(value === true))
+      .catch(() => setPortable(false));
+  }, []);
+  /** 部署那条线的 1 秒心跳（只喂"已等多久"那一格；没有进度就不跳）。 */
+  const [progressNow, setProgressNow] = useState<number | null>(null);
+  // 开场片：用户点击"继续"后暂停+淡出（随 key={preparationScope} 重挂自动复位）。
+  const [stopRequested, setStopRequested] = useState(false);
+  // 就绪瞬间的一次性高亮（约 1.2s 回落）；只做视觉，不参与任何放行判定。
+  const [highlightReady, setHighlightReady] = useState(false);
+  const wasReady = useRef(false);
+  useEffect(() => {
+    if (state.canContinue && !wasReady.current) {
+      wasReady.current = true;
+      if (reduceMotion) return;
+      setHighlightReady(true);
+      const timer = window.setTimeout(() => setHighlightReady(false), 1200);
+      return () => window.clearTimeout(timer);
+    }
+    if (!state.canContinue) wasReady.current = false;
+    return undefined;
+  }, [state.canContinue, reduceMotion]);
   const locked = useRef(false);
   const actionAttempt = useRef(0);
   const active = useRef(true);
@@ -86,112 +139,190 @@ export default function EntryPreparation({
         ? (startupFailureText(facts.startup, t) ?? t('entryPreparation.checkFailed'))
         : null;
   const currentIndex = stages.indexOf(state.stage);
+  // 真实进度 = 已通过的检查项数（只按事实走，绝不"预估假进度"——与老板参照系一致）。
+  const completedCount = state.canContinue ? stages.length : Math.max(0, currentIndex);
+  /**
+   * 部署那条线什么时候可见：**还卡在 runtime 这一格、且没有失败结论**。
+   *
+   * ⚠️ 出结论（成功/失败）之后它必须消失：留着一条不再变化的百分比 = 又造了一个
+   *    "看不出是否还在动"的东西（那正是这一整轮要消灭的形状）。
+   */
+  const deployActive = state.stage === 'runtime' && !failure && !state.canContinue;
+  useEffect(() => {
+    if (!deployActive || !progress) return;
+    setProgressNow(Date.now());
+    const timer = window.setInterval(() => setProgressNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+    // 依赖用 `startedAt`（而不是整个快照）：每条部署事件都会换一个对象，
+    // 挂整个对象等于每 250ms 重建一次定时器。
+  }, [deployActive, progress?.startedAt]);
+  // 只有解压那一段量得出来（done/total 是条目数）；校验/装 Node/换入都是定性阶段。
+  const deployPercent =
+    progress && progress.phase === 'extract' && progress.total > 0
+      ? Math.floor((progress.done / progress.total) * 100)
+      : null;
+  const deployElapsedMs = progress && progressNow !== null ? Math.max(0, progressNow - progress.startedAt) : null;
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] px-6 py-8 overflow-auto">
-      <header className="mx-auto flex w-full max-w-5xl items-center gap-3">
-        <img src={logo} alt="" className="h-9 w-9" />
-        <span className="type-title">{t('common.appName')}</span>
-      </header>
-      <main className="mx-auto grid w-full max-w-5xl items-center gap-6 py-6 md:grid-cols-2 md:gap-10 md:py-10">
-        <section className="flex flex-col items-center text-center">
-          <motion.div
-            data-entry-animation
-            aria-hidden="true"
-            className="w-40 md:w-full md:max-w-sm"
-            animate={reduceMotion || state.canContinue || state.hasError ? { y: 0 } : { y: [0, -8, 0] }}
-            transition={{
-              duration: motionDuration.ambient * 6,
-              ease: motionEase.gentle,
-              repeat: reduceMotion || state.canContinue || state.hasError ? 0 : Infinity,
-            }}
-          >
-            <GuideMascot
-              pose={state.canContinue ? 'success' : 'idle'}
-              trackPointer={false}
-              label={t('common.appName')}
-            />
-          </motion.div>
-          <p className="mt-4 flex items-center gap-2 type-support text-[var(--text-secondary)]">
-            <ShieldCheck size={16} className="text-[var(--accent)]" />
-            {t('entryPreparation.animationNote')}
-          </p>
-        </section>
-        <section className="min-w-0 space-y-6" aria-busy={!state.canContinue && !state.hasError}>
-          <div className="space-y-3">
-            <h1 className="type-page-title">
-              {t(
-                state.canContinue
-                  ? 'entryPreparation.ready'
-                  : state.hasError
-                    ? 'entryPreparation.needsAttention'
-                    : 'entryPreparation.title',
-              )}
-            </h1>
-            <p className="type-body text-[var(--text-secondary)]">
-              {t(state.canContinue ? 'entryPreparation.readyDetail' : 'entryPreparation.detail')}
-            </p>
+    <div className="relative min-h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
+      {/* 全屏媒体层（王者荣耀登录页式：视频铺满，内容压底） */}
+      <motion.div
+        data-entry-animation
+        aria-hidden="true"
+        className="absolute inset-0"
+        animate={reduceMotion || state.canContinue || state.hasError ? { y: 0 } : { y: [0, -8, 0] }}
+        transition={{
+          duration: motionDuration.ambient * 6,
+          ease: motionEase.gentle,
+          repeat: reduceMotion || state.canContinue || state.hasError ? 0 : Infinity,
+        }}
+      >
+        <OpeningMedia
+          stopRequested={stopRequested}
+          failed={state.hasError}
+          reduceMotion={reduceMotion === true}
+          pose={state.canContinue ? 'success' : 'idle'}
+          label={t('common.appName')}
+        />
+      </motion.div>
+      <div className="relative z-10 flex min-h-screen flex-col overflow-y-auto">
+        <header className="p-5">
+          <div className="glass-scrim inline-flex items-center gap-3 rounded-full px-4 py-2">
+            <img src={logo} alt="" className="h-7 w-7" />
+            <span className="type-title">{t('common.appName')}</span>
           </div>
-          <ol className="divide-y divide-[var(--border-subtle)]" aria-label={t('entryPreparation.checks')}>
-            {stages.map((stage, index) => {
-              const done = state.canContinue || index < currentIndex;
-              const running = !state.hasError && stage === state.stage;
-              return (
-                <li key={stage} data-entry-stage={stage} className="flex items-center justify-between gap-4 py-3">
-                  <span className="flex min-w-0 items-center gap-3 type-body">
-                    {done ? (
-                      <CheckCircle2 size={18} className="shrink-0 text-[var(--accent)]" />
-                    ) : running ? (
-                      <Loader2
-                        size={18}
-                        className={reduceMotion ? 'shrink-0' : 'shrink-0 animate-spin motion-reduce:animate-none'}
-                      />
-                    ) : (
-                      <Circle size={18} className="shrink-0 text-[var(--text-muted)]" />
-                    )}
-                    {t(`entryPreparation.${stage}`)}
-                  </span>
-                  {stage === 'assistants' && facts.startup.assistants.phase !== 'waiting' && (
-                    <span className="type-support tabular-nums text-[var(--text-secondary)]">
-                      {facts.startup.assistants.completed}/{facts.startup.assistants.total}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-          <div
-            role={failure ? 'alert' : 'status'}
-            aria-live="polite"
-            className={failure ? 'type-body text-[var(--danger)]' : 'type-support text-[var(--text-secondary)]'}
-          >
-            {failure ?? (state.canContinue ? t('entryPreparation.checked') : t(`entryPreparation.${state.stage}`))}
-            {runtimeBlocked && <p className="mt-2">{t('entryPreparation.runtimeRestartRequired')}</p>}
-          </div>
-          <WorkspaceRecreatedNotice />
-          <div className="space-y-3">
-            <Button
-              data-entry-continue
-              className="brand-action w-full"
-              disabled={!state.canContinue || busy}
-              onClick={() => {
-                if (deriveEntryPreparation(facts).canContinue) void run(onContinue);
-              }}
+        </header>
+        <main className="mt-auto w-full px-5 pb-4" aria-busy={!state.canContinue && !state.hasError}>
+          <div className="mx-auto flex w-full max-w-xl flex-col items-stretch gap-2.5">
+            {/* 失败时才展开；就绪/进行中折叠为 sr-only（无障碍播报保留、视觉极简——王者加载页形态） */}
+            <section className={`glass-scrim space-y-2 rounded-xl p-4 ${failure ? '' : 'sr-only'}`}>
+              <h1 className="type-title">
+                {t(
+                  state.canContinue
+                    ? 'entryPreparation.ready'
+                    : state.hasError
+                      ? 'entryPreparation.needsAttention'
+                      : 'entryPreparation.title',
+                )}
+              </h1>
+              <p className="type-body text-[var(--text-secondary)]">
+                {t(state.canContinue ? 'entryPreparation.readyDetail' : 'entryPreparation.detail')}
+              </p>
+              <div
+                role={failure ? 'alert' : 'status'}
+                aria-live="polite"
+                className={failure ? 'type-body text-[var(--danger)]' : 'type-support text-[var(--text-secondary)]'}
+              >
+                {failure ?? (state.canContinue ? t('entryPreparation.checked') : null)}
+                {runtimeBlocked && <p className="mt-2">{t('entryPreparation.runtimeRetryHint')}</p>}
+              </div>
+            </section>
+            <motion.div
+              data-entry-continue-pop
+              initial={false}
+              animate={
+                reduceMotion
+                  ? { opacity: state.canContinue ? 1 : 0.85 }
+                  : state.canContinue
+                    ? { opacity: 1, scale: 1 }
+                    : { opacity: 0.85, scale: 0.96 }
+              }
+              transition={{ duration: motionDuration.moderate, ease: motionEase.enter }}
+              className={`mx-auto w-full max-w-sm ${state.canContinue ? '' : 'sr-only'} ${highlightReady ? 'glow-selected rounded-lg' : ''}`}
             >
-              {busy ? (
-                <Loader2 size={16} className="animate-spin motion-reduce:animate-none" />
-              ) : (
-                <>
-                  {t('entryPreparation.continue')}
-                  <ArrowRight size={16} />
-                </>
+              <Button
+                data-entry-continue
+                className="brand-action h-12 w-full"
+                disabled={!state.canContinue || busy}
+                onClick={() => {
+                  if (deriveEntryPreparation(facts).canContinue) {
+                    setStopRequested(true);
+                    void run(onContinue);
+                  }
+                }}
+              >
+                {busy ? (
+                  <Loader2 size={16} className="animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <>
+                    {t('entryPreparation.continue')}
+                    <ArrowRight size={16} />
+                  </>
+                )}
+              </Button>
+            </motion.div>
+            <WorkspaceRecreatedNotice />
+            {/* 底部小进度条（常驻、贴近底边）：滚动状态 + 真实进度 + 百分比 */}
+            <section
+              className="glass-scrim-strong mx-auto w-full max-w-2xl space-y-2 rounded-2xl px-5 py-3.5"
+              title={t('entryPreparation.animationNote')}
+            >
+              <div className="flex items-center justify-between gap-3 type-meta text-[var(--text-secondary)]">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {state.canContinue ? (
+                    <CheckCircle2 size={13} className="shrink-0 text-[var(--accent)]" />
+                  ) : (
+                    <Loader2
+                      size={13}
+                      className={reduceMotion ? 'shrink-0' : 'shrink-0 animate-spin motion-reduce:animate-none'}
+                    />
+                  )}
+                  <span className="truncate">
+                    {state.canContinue ? t('entryPreparation.checked') : t(`entryPreparation.${state.stage}`)}
+                  </span>
+                </span>
+                <span className="type-mono-data shrink-0 tabular-nums text-[var(--text-muted)]">
+                  {Math.round((completedCount / stages.length) * 100)}%
+                </span>
+              </div>
+              {/* 第二行：**部署**在干什么（真实阶段 + 真实百分比 + 已等多久）。
+                  ⭐ 这一行就是"1–20 分钟黑箱"的出口：主进程一直知道自己在哪一步，
+                  以前那条信号到不了这里（2026-10-07 体检问题 1/2）。 */}
+              {deployActive && progress && (
+                <div
+                  data-entry-deploy-progress
+                  className="flex items-center justify-between gap-3 type-meta text-[var(--text-muted)]"
+                  aria-live="polite"
+                >
+                  <span className="truncate">{t(DEPLOY_PHASE_KEYS[progress.phase])}</span>
+                  <span className="type-mono-data shrink-0 tabular-nums">
+                    {deployPercent !== null && `${deployPercent}%`}
+                    {deployPercent !== null && deployElapsedMs !== null && ' · '}
+                    {deployElapsedMs !== null &&
+                      t('startupReadiness.elapsed', { time: formatElapsed(deployElapsedMs) })}
+                  </span>
+                </div>
               )}
-            </Button>
-            <div className="flex flex-wrap justify-center gap-2">
-              {!runtimeBlocked && (
-                <Button data-entry-retry variant="ghost" disabled={busy} onClick={() => void run(onRetry)}>
-                  {t('startupReadiness.retry')}
-                </Button>
+              <div
+                role="progressbar"
+                aria-label={t('entryPreparation.checks')}
+                aria-valuemin={0}
+                aria-valuemax={stages.length}
+                aria-valuenow={completedCount}
+                className="h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
+              >
+                <div
+                  className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-300 motion-reduce:transition-none"
+                  style={{ width: `${(completedCount / stages.length) * 100}%` }}
+                />
+              </div>
+              {/* 等待期间的两句人话（key 早就在 9 个语言里，只是原来挂在**到不了的屏**上）：
+                  ① 别把窗口关掉（关掉就看不到准备了）；② 盘上运行时说明这不是"装到电脑"。 */}
+              {deployActive && (
+                <p className="type-meta text-[var(--text-secondary)]">{t('startupReadiness.keepOpen')}</p>
               )}
+              {deployActive && portable && (
+                <p data-entry-not-an-install className="type-meta text-[var(--text-secondary)]">
+                  {t('startupReadiness.notAnInstall')}
+                </p>
+              )}
+            </section>
+            <div className="flex flex-wrap justify-center gap-1">
+              {/* ⭐ 运行端起不来时这个按钮**必须留着**（2026-10-07 体检问题 4）：
+                  它现在由 IPC `runtime:bootstrap-retry` 真的重跑一轮 bootstrap ——
+                  不再是"重新初始化连接层"那种按了没用的按钮，也不再要求用户完全退出重开。 */}
+              <Button data-entry-retry variant="ghost" disabled={busy} onClick={() => void run(onRetry)}>
+                {t('startupReadiness.retry')}
+              </Button>
               <Button data-entry-workspace variant="ghost" disabled={busy} onClick={onChooseWorkspace}>
                 {t('entryPreparation.chooseWorkspace')}
               </Button>
@@ -200,8 +331,8 @@ export default function EntryPreparation({
               </Button>
             </div>
           </div>
-        </section>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

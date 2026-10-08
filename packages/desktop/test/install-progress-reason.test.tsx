@@ -52,6 +52,87 @@ function render() {
 }
 
 describe('InstallProgress —— 失败原因上屏', () => {
+  describe.each(['ai', 'manual'])('%s member display names', (entry) => {
+    it.each(['pending', 'creating', 'error', 'done'] as const)(
+      'shows Chinese names during %s, not internal ids',
+      (phase) => {
+        const members = [
+          { id: 'agent-i9y2ms', name: '融资主管' },
+          { id: 'agent-11t2wn1', name: '商业分析师' },
+          { id: 'agent-1tcql1y', name: '演示设计师' },
+        ];
+        const phaseEvents: InstallEvent[] =
+          phase === 'pending'
+            ? []
+            : members.map((member) => ({
+                type: phase === 'done' ? 'agent_created' : 'agent_creating',
+                agentSlug: member.id,
+                agentId: member.id,
+              }));
+        if (phase === 'error')
+          phaseEvents.push({ type: 'warning', agentSlug: members[1].id, message: 'original diagnostic' });
+        const status = phase === 'pending' || phase === 'creating' ? 'installing' : phase;
+        act(() => {
+          root.render(
+            entry === 'ai' ? (
+              <InstallProgress status={status} events={phaseEvents} progressPercent={50} agents={members} />
+            ) : (
+              <InstallStep
+                status={status}
+                events={phaseEvents}
+                teamInfo={{ name: '中文团队', emoji: '', description: '' }}
+                agents={members.map((member) => ({
+                  ...member,
+                  uid: member.id,
+                  role: 'worker',
+                  description: '',
+                  model: '',
+                  agentMd: '',
+                  soulMd: '',
+                  skills: [],
+                }))}
+              />
+            ),
+          );
+        });
+        for (const member of members) {
+          expect(container.textContent).toContain(member.name);
+          expect(container.textContent).not.toContain(member.id);
+        }
+        if (phase === 'error') expect(container.textContent).toContain('original diagnostic');
+      },
+    );
+
+    it('preserves an explicitly English user name', () => {
+      act(() =>
+        root.render(
+          entry === 'ai' ? (
+            <InstallProgress status="installing" events={[]} progressPercent={0} agents={[{ name: 'Design Lead' }]} />
+          ) : (
+            <InstallStep
+              status="installing"
+              events={[]}
+              teamInfo={{ name: 'Team', emoji: '', description: '' }}
+              agents={[
+                {
+                  uid: 'design',
+                  name: 'Design Lead',
+                  role: 'worker',
+                  description: '',
+                  model: '',
+                  agentMd: '',
+                  soulMd: '',
+                  skills: [],
+                },
+              ]}
+            />
+          ),
+        ),
+      );
+      expect(container.textContent).toContain('Design Lead');
+    });
+  });
+
   it.each(['ai', 'manual'])('shows partial counts and preserves warnings in the %s result panel', (entry) => {
     const partialEvents: InstallEvent[] = [
       { type: 'agent_created', agentSlug: 'codearchitect', agentId: 'codearchitect' },

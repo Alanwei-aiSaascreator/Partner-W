@@ -114,7 +114,7 @@ export default function InstallStep({ teamInfo, agents, status, events, isEdit }
           <div key={agent.slug} className="rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2">
             <div className="flex items-center gap-2">
               <AgentStatusIcon status={agent.status} />
-              <span className="type-body font-medium text-[var(--text-primary)] flex-1">{agent.slug}</span>
+              <span className="type-body font-medium text-[var(--text-primary)] flex-1">{agent.displayName}</span>
               {agent.files.length > 0 && (
                 <span className="type-meta text-[var(--text-muted)]">{agent.files.map((f) => f.name).join(', ')}</span>
               )}

@@ -1,5 +1,6 @@
-import { readdirSync, statSync, type Dirent } from 'node:fs';
+import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
+import { isVerifiedFileName, verifyArtifactBuffer, type ArtifactIntegrityFailure } from './verify.js';
 
 /** 用户本轮明确要求交付的文件格式。 */
 export type ExpectedArtifactKind = 'pptx' | 'pdf' | 'docx' | 'xlsx' | 'html';
@@ -225,12 +226,122 @@ export function extractClaimedFileNames(content: string): ClaimedFile[] {
     // ⭐ 先过"这一句是不是在声称"，再看去重 —— 顺序反了会把
     //    先出现的那次"列举"占掉名额，后面真正的声称反而被去重掉。
     if (!lineClaimsFile(content, offset)) continue;
+    // ⭐ 再排除"在说它没有了"的句子（2026-10-04 真机误报，见函数注释）。
+    if (lineExplainsAbsence(content, offset, name)) continue;
+    // ⭐ BUG-047：动词短语粘着扩展名（"然后重新渲染生成.pptx"）⇒ 动作描述不是文件名。
+    if (isBareVerbPhrase(content, offset, name)) continue;
     if (seen.has(name)) continue;
     seen.add(name);
     const variants = buildClaimVariants(content, offset, name);
     found.push(variants.length > 0 ? { name, offset, variants } : { name, offset });
   }
   return found;
+}
+
+/**
+ * ⭐ BUG-047（2026-10-08 真机实证）：回复句"…然后**重新渲染生成.pptx**文件"里，
+ * CJK 正则把动词短语整段抠成"文件名" ⇒ 判 missing ⇒ 整轮 delivery-failed。
+ *
+ * 判据：剥掉名字末尾的交付动词后**不剩名字**（空 / 只剩连接词、副词），且该处
+ * **不是**引号或反引号包裹的显式文件名 ⇒ 是动作描述，不是声称。
+ * 真文件名恰好以动词结尾（"学习总结生成.pptx"）剥完还剩「学习总结」⇒ 不误杀。
+ *
+ * ⚠️ 只作用于「动词与扩展名之间没有分隔符」的形状：真声称的动词与文件名之间
+ *    隔着空格/标点（"已生成 季度汇报.pptx"），正则抽出来的 token 只含文件名。
+ */
+const TRAILING_ACTION_VERBS = [
+  // 长词在前：一次剥掉复合动词（"重新渲染生成"），而不是剥一半剩下"重新"误判。
+  '重新渲染生成',
+  '重新排版生成',
+  '重新生成',
+  '重新渲染',
+  '重新排版',
+  '转换生成',
+  '渲染生成',
+  '排版生成',
+  '生成',
+  '渲染',
+  '写出',
+  '写入',
+  '保存',
+  '导出',
+  '转换为',
+  '转成',
+  '修改',
+  '调整',
+  '更新',
+  '重写',
+  '创建',
+  '制作',
+  '排版',
+  '完成',
+] as const;
+const CONNECTIVE_ONLY_RE = /^(?:然后|接着|随后|再|并|并且|同时|或|或者|和)*$/;
+
+/** 这一处名字是不是"动词短语 + 扩展名"（不是真文件名）。 */
+function isBareVerbPhrase(content: string, offset: number, name: string): boolean {
+  const base = name.replace(/\.(?:pptx|docx|xlsx|pdf|html|slidegen)$/i, '');
+  if (!base) return false;
+  let rest = base;
+  let stripped = false;
+  for (;;) {
+    let changed = false;
+    for (const verb of TRAILING_ACTION_VERBS) {
+      if (rest.endsWith(verb)) {
+        rest = rest.slice(0, -verb.length);
+        stripped = true;
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) break;
+  }
+  if (!stripped || (rest && !CONNECTIVE_ONLY_RE.test(rest))) return false;
+  // 显式包裹（反引号 / 引号 / 直角引号）的名字是用户在引用文件名，不算动词短语。
+  const before = content[offset - 1];
+  const after = content[offset + name.length];
+  const wrapped =
+    (before === '`' && after === '`') ||
+    (before === '"' && after === '"') ||
+    (before === "'" && after === "'") ||
+    (before === '「' && after === '」');
+  return !wrapped;
+}
+
+/**
+ * 说了"这个文件**已经没了**"的措辞。
+ *
+ * ⚠️ 这是判"缺席说明"，不是判"否定式声称"。典型真机原句：
+ *    「修订版文件 `f08787c6.pptx` 及来源 JSON **已不在**。我需从零**重新生成**」
+ *    ——同一行里有「生成」这个声称标记（行级判据），这处**解释缺失**的提及于是被
+ *    当成声称，守卫反过来冤枉模型（界面弹"说好的文件不在"）。
+ *    判据刻意收窄：只认**同一句**里的明确缺失措辞，且只作用于**紧邻名字**的那一句；
+ *    真声称（"已生成 report.pptx"）与缺席说明里的**其他**文件都不受影响。
+ */
+const ABSENCE_RE =
+  /(?:已不在|已不存在|不再存在|不存在|找不到|无法找到|没有找到|已(?:被)?(?:删除|删掉|清理|清空|移除|丢失)|丢失了|no longer|not found|does not exist|deleted|missing)/i;
+
+/** 这一处提到名字的**同一句**里，是否在说它没有了。 */
+function lineExplainsAbsence(content: string, offset: number, name: string): boolean {
+  const lineStart = content.lastIndexOf('\n', offset - 1) + 1;
+  const lineEndIdx = content.indexOf('\n', offset);
+  const line = content.slice(lineStart, lineEndIdx === -1 ? content.length : lineEndIdx);
+  const rel = offset - lineStart;
+  // 名字之后 → 到句末为止；名字之前 → 到句首为止。
+  const after = line.slice(rel + name.length);
+  const sentenceEnd = after.search(/[。！？!?；;\n]/);
+  const afterSegment = sentenceEnd >= 0 ? after.slice(0, sentenceEnd + 1) : after;
+  if (ABSENCE_RE.test(afterSegment)) return true;
+  const before = line.slice(0, rel);
+  const sentenceStart = Math.max(
+    before.lastIndexOf('。'),
+    before.lastIndexOf('！'),
+    before.lastIndexOf('？'),
+    before.lastIndexOf('；'),
+    before.lastIndexOf('!'),
+    before.lastIndexOf('?'),
+  );
+  return ABSENCE_RE.test(before.slice(sentenceStart + 1));
 }
 
 /**
@@ -294,6 +405,11 @@ export interface ClaimCheckResult {
   missing: ClaimedFile[];
   /** 声称了且存在的文件名。 */
   present: ClaimedFile[];
+  /**
+   * 声称了、盘上**不够新**（按 `sinceMs`），但名字**在本任务已登记的 artifact 集合里**
+   * 的文件名 —— 不是 missing（见 `ClaimCheckOptions.isRegisteredName`）。
+   */
+  registered?: ClaimedFile[];
 }
 
 /** 查存在性的选项。 */
@@ -306,6 +422,18 @@ export interface ClaimCheckOptions {
    * 依然静默，也就是最初那个 bug 原封不动。选项在单测里可省，生产路径不可省。
    */
   sinceMs?: number;
+  /**
+   * ⭐ BUG-038（2026-10-08）：这个名字**在本任务已经登记成产物**了吗（生产调用按 task 查库）。
+   *
+   * 判据的理由：`sinceMs` 防的是「声称**全新产出**、盘上却没有」；而模型在后续轮次里
+   * **引用已登记过的产物名**（"上一轮生成的 report.pptx 里补充了…"）时，那份文件本来就不该
+   * 在本轮变新 —— 拿 mtime 一把否定会让界面每轮弹「说好的文件不在」假失败。
+   * **登记本身就是"东西存在"的证据**（比 mtime 更硬），所以已登记名不算 missing。
+   *
+   * ⚠️ 这是**豁免**不是放松：没登记过的新名字、同名但未登记的老文件，freshness 判据一字未动。
+   * ⚠️ 不传 = 老行为（单测与旧调用不受影响）。
+   */
+  isRegisteredName?: (name: string) => boolean;
 }
 
 /**
@@ -330,18 +458,22 @@ export function checkClaimedFiles(
 
   const missing: ClaimedFile[] = [];
   const present: ClaimedFile[] = [];
+  const registered: ClaimedFile[] = [];
 
   for (const file of claimed) {
     // 主名 + 核对用拼写（带空格全名 / 丢前导词后缀）——任一命中即 present。
     const spellings = [file.name, ...(file.variants ?? [])];
     if (spellings.some((spelling) => existsInRoots(spelling, roots, options.sinceMs))) {
       present.push(file);
+    } else if (options.isRegisteredName && spellings.some((spelling) => options.isRegisteredName!(spelling))) {
+      // ⭐ 已登记名不是 missing（BUG-038，见 `ClaimCheckOptions.isRegisteredName`）。
+      registered.push(file);
     } else {
       missing.push(file);
     }
   }
 
-  return { missing, present };
+  return registered.length > 0 ? { missing, present, registered } : { missing, present };
 }
 
 /** 工作区根目录列表里有没有叫这个名字的、够新的文件。 */
@@ -357,29 +489,46 @@ function existsInRoots(fileName: string, roots: readonly string[], sinceMs: numb
   return false;
 }
 
+/** 同名文件的**绝对路径**（任一拼写命中即返回；没有就回 `null`）。 */
+function findFileInRoots(fileName: string, roots: readonly string[], sinceMs: number | undefined): string | null {
+  for (const root of roots) {
+    if (!root) continue;
+    try {
+      const found = findFileRecursive(root, fileName, sinceMs, 0);
+      if (found) return found;
+    } catch {
+      // 读不到就当没有 —— 不抛，这是守卫不是主路径。
+    }
+  }
+  return null;
+}
+
 /**
  * 递归查找，限制深度 3 层（工作区 → taskId → 子目录）。
  *
  * 命中同名文件后**不立刻返回**：还得看它够不够新。
  * 同名但旧 ⇒ 继续往别处找（同一轮可能落在另一个根目录里）。
+ *
+ * 返回**路径**（不是布尔）：BUG-042-c 要多走一步「读它的字节，看它是不是真文档」。
  */
-function findFileRecursive(dir: string, fileName: string, sinceMs: number | undefined, depth: number): boolean {
-  if (depth > 3) return false;
+function findFileRecursive(dir: string, fileName: string, sinceMs: number | undefined, depth: number): string | null {
+  if (depth > 3) return null;
   const entries = readdirSyncSafe(dir);
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isFile()) {
       if (entry.name !== fileName) continue;
-      if (isFreshEnough(entry.mtimeMs, sinceMs)) return true;
+      if (isFreshEnough(entry.mtimeMs, sinceMs)) return full;
       continue;
     }
     if (entry.isDirectory()) {
       // 跳过明显的非工作区目录
       if (entry.name === 'node_modules' || entry.name === '.git') continue;
-      if (findFileRecursive(full, fileName, sinceMs, depth + 1)) return true;
+      const found = findFileRecursive(full, fileName, sinceMs, depth + 1);
+      if (found) return found;
     }
   }
-  return false;
+  return null;
 }
 
 /**
@@ -406,6 +555,61 @@ interface SafeEntry {
   isFile: () => boolean;
   isDirectory: () => boolean;
   mtimeMs: number | undefined;
+}
+
+/** 声称了、**盘上有、但字节不是那份格式**的文件（BUG-042-c 用）。 */
+export interface RejectedClaimedFile {
+  /** 声称时的名字（原样，用于界面文案）。 */
+  name: string;
+  /** 完整性判据说它坏在哪（进日志；文案在界面层）。 */
+  reason: ArtifactIntegrityFailure;
+}
+
+/** 为"拆穿假文档"读多大的文件。超大文件不值得为一句提示整份读进来。 */
+const CLAIM_INTEGRITY_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * ⭐⭐ BUG-042-c（2026-10-08 亲验的 C1 静默丢弃）：**写出来的东西不是有效文档**。
+ *
+ * 真机形状：模型自己把一份 JSON / 纯文本**改名成 `.docx`** 写进工作区，然后回复
+ * "已生成 报告.docx"。它骗过了这条守卫的存在性判据（文件**在**盘上）、也骗过了
+ * 收编扫描的存在性判据，只在登记门的字节校验那一步被拒（进 `skipped`）——
+ * 结果：回复说做好了、产物列表空的、**界面上一条提示都没有**。
+ *
+ * 这里补上那双眼睛：声称的受检格式（pptx/docx/xlsx/pdf）文件**在且够新**时，
+ * 读它的字节过一次与登记门**同一份**判据；不过 ⇒ 它是假的，如实交上去。
+ *
+ * ⚠️ 只做认定，不做处置（提示怎么说不在这里，由既有 claim 通道负责）。
+ * ⚠️ 读不到 / 读到一半出错的**不下结论**（那是"不知道"，不是"假的"）；
+ *    非受检格式一个字节都不读。
+ */
+export function claimedFilesRejectedByIntegrity(
+  claimed: readonly ClaimedFile[],
+  roots: readonly string[],
+  options: { sinceMs?: number; maxBytes?: number } = {},
+): RejectedClaimedFile[] {
+  const maxBytes = options.maxBytes ?? CLAIM_INTEGRITY_MAX_BYTES;
+  const rejected: RejectedClaimedFile[] = [];
+  for (const file of claimed) {
+    const spellings = [file.name, ...(file.variants ?? [])];
+    for (const spelling of spellings) {
+      if (!isVerifiedFileName(spelling)) continue;
+      const found = findFileInRoots(spelling, roots, options.sinceMs);
+      if (!found) continue;
+      let buffer: Buffer;
+      try {
+        const size = statSync(found).size;
+        if (size <= 0 || size > maxBytes) break; // 读不动/太大 ⇒ 不下结论
+        buffer = readFileSync(found);
+      } catch {
+        break; // 读失败 ≠ 结构坏（与 reconcile 的 P1-1 同一条纪律）
+      }
+      const integrity = verifyArtifactBuffer(spelling, buffer);
+      if (!integrity.ok) rejected.push({ name: file.name, reason: integrity.reason });
+      break; // 这个名字已定性，不再试别的拼写
+    }
+  }
+  return rejected;
 }
 
 /**

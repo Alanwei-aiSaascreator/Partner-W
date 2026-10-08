@@ -59,6 +59,7 @@ vi.mock('../src/renderer/components/ui/dropdown-menu', () => ({
   DropdownMenuSub: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuSeparator: () => <hr />,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -107,6 +108,8 @@ vi.mock('../src/renderer/components/ChatInput/useAttachments', () => ({
     pendingAttachments: [],
     setPendingAttachments: vi.fn(),
     removeAttachment: vi.fn(),
+    // BUG-028：离开一段对话时输入框会调它清暂存附件（桩必须跟着长）。
+    clearAttachments: vi.fn(),
     handlePaste: vi.fn(),
   }),
 }));
@@ -121,6 +124,7 @@ vi.mock('../src/renderer/components/ChatInput/useTaskMaterials', () => ({
     clearSelectedImportedFiles: vi.fn(),
     markImportedFileMissing: vi.fn(),
     toggleImportedFile: vi.fn(),
+    removeImportedFileReference: vi.fn(),
     revokeSource: vi.fn(),
     importFiles: vi.fn(),
     grantFolder: vi.fn(),
@@ -188,6 +192,8 @@ vi.mock('../src/renderer/components/ChatInput/useChatSend', () => ({
     toolsCatalog: null,
     modelLabel: '',
     currentModelEntry: undefined,
+    currentMode: 'custom',
+    modelCatalog: [],
     modelsByProvider: {},
     taskGwId: null,
     quotaBlock: null,

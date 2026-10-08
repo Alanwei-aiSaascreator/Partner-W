@@ -23,7 +23,7 @@ vi.mock('../src/main/db/index.js', () => {
       from: () => ({ where: () => ({ get: () => (fields && 'role' in fields ? undefined : mocks.row) }) }),
     }),
   };
-  return { getDb: () => db, isDbReady: () => true };
+  return { getDb: () => db, getSqlite: () => null, isDbReady: () => true };
 });
 vi.mock('../src/main/workspace/config.js', () => ({ getWorkspacePath: () => 'C:\\workspace' }));
 vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: mocks.gateway }));
@@ -54,6 +54,17 @@ const flush = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 };
+/**
+ * **应用根**那条 reconcile 链的调用。
+ *
+ * ⚠️ 2026-10-07 起一轮收尾会跑**两条**链：应用根（缺省 `rootKind`）与
+ *    **应用工作区根层**（第三个根，`rootKind:'workspace-root'`）。这些用例钉的是
+ *    应用根那条链在不在/跑了几次，所以**按链**问 —— 数总次数会变成"第三条链在不在"。
+ */
+const appRootReconcileCalls = () =>
+  mocks.reconcile.mock.calls.filter(
+    ([input]) => ((input as { rootKind?: string }).rootKind ?? 'workspace') === 'workspace',
+  );
 async function setup(withRun = true) {
   const scope = await import('../src/main/workspace/scope.js');
   scope.setWorkspaceDatabaseOwner({});
@@ -172,11 +183,11 @@ it('old pending jobs cannot suppress a new run with identical task/message/run i
   run.bindArtifactRun(msg.taskId, msg.sessionKey, next, msg.runId);
   run.create();
   await flush();
-  expect(mocks.reconcile).toHaveBeenCalledOnce();
+  expect(appRootReconcileCalls()).toHaveLength(1);
   mocks.send.mockClear();
   finish({ mediaFailures: [] });
   await flush();
-  expect(mocks.reconcile).toHaveBeenCalledOnce();
+  expect(appRootReconcileCalls()).toHaveLength(1);
   expect(mocks.send).not.toHaveBeenCalled();
 });
 
@@ -190,7 +201,7 @@ it('completed-message deduplication belongs to the DB generation', async () => {
   run.bindArtifactRun(msg.taskId, msg.sessionKey, next, msg.runId);
   run.create();
   await flush();
-  expect(mocks.reconcile).toHaveBeenCalledOnce();
+  expect(appRootReconcileCalls()).toHaveLength(1);
 });
 
 it('queued runs from a closed DB cannot claim messages in the new generation', async () => {

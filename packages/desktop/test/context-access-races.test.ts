@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { __testing as fileIndexTesting, scanFolder } from '../src/main/context/file-index.js';
-import { __testing as fileReaderTesting } from '../src/main/context/file-reader.js';
+import { __testing as fileReaderTesting, readContextFileForSend } from '../src/main/context/file-reader.js';
 
 describe('context access race defenses', () => {
   it('rejects a granted root replaced after validation but before opening the file', () => {
@@ -151,9 +151,14 @@ describe('context access race defenses', () => {
     }
   });
 
-  it('rejects a send read when a granted file grows beyond 25MB after selection', () => {
+  /**
+   * ⚠️ 2026-10-07（质量战役区 2 · P2-1）：**二进制** tier 的单文件 25MB 闸门不变 ——
+   * 它在发送时整份 base64 出去，读之前就必须拒。（text tier 已放开：
+   * 只内联 100KB，见下一条用例。）
+   */
+  it('rejects a send read when a granted **binary** file grows beyond 25MB after selection', () => {
     const root = mkdtempSync(join(tmpdir(), 'clawwork-send-size-race-'));
-    const filePath = join(root, 'note.txt');
+    const filePath = join(root, 'note.pdf');
     writeFileSync(filePath, 'x');
     const canonicalRoot = realpathSync.native(root);
     const testing = fileReaderTesting as typeof fileReaderTesting & {
@@ -170,6 +175,30 @@ describe('context access race defenses', () => {
           afterOpen: () => truncateSync(filePath, 25 * 1024 * 1024 + 1),
         }),
       ).toThrow(/too large/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * ⭐ 2026-10-07（质量战役区 2 · P2-1）：text tier 的 25MB 前置闸**已放开** ——
+   * 30MB 的 .log 以前在"加进来"这一步就被拒（用户不知道为什么），实际只带 100KB 上模型。
+   * 真机 fs（非 mock）：字节数按**实际内联字节**回报。
+   */
+  it('⭐ text tier：30MB 的文本可读，byteLength 按实际内联字节（~100KB）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'clawwork-send-text-large-'));
+    const filePath = join(root, 'huge.log');
+    writeFileSync(filePath, 'x');
+    // 稀疏文件：快速造 30MB（不真写 30MB 数据）
+    truncateSync(filePath, 30 * 1024 * 1024);
+    const canonicalRoot = realpathSync.native(root);
+
+    try {
+      const result = readContextFileForSend(filePath, [canonicalRoot]);
+      expect(result.tier).toBe('text');
+      expect(result.size).toBe(30 * 1024 * 1024);
+      expect(result.byteLength).toBeLessThan(200 * 1024);
+      expect(result.byteLength).toBe(Buffer.byteLength(result.content, 'utf8'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

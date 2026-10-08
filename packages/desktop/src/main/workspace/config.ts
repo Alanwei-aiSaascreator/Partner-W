@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { CONFIG_FILE_NAME, DEFAULT_WORKSPACE_DIR } from '@clawwork/shared';
 import type { GatewayAuth, LanguageCode, TeamHubRegistryConfig } from '@clawwork/shared';
 import { writeJsonAtomic } from '../util/json-file.js';
-import { PORTABLE_WORKSPACE_DIR_NAME } from './portable.js';
+import { getPortableRoots, setPortableVolumeRoot } from '../runtime/portable-root.js';
 
 export interface GatewayServerConfig {
   id: string;
@@ -131,20 +131,20 @@ function configFilePath(): string {
 }
 
 /**
- * 盘上运行的卷根（启动时由 `prepareWorkspaceAtStartup()` 灌一次）。
+ * 盘上运行 — ⚠️ **正名**：这里存/取的是**盘根**（`E:\`），不是工作区。
  *
- * ⚠️ 在这里缓存、不在 `getDefaultWorkspacePath()` 里现算：判定要枚举可移动盘
- *    （PowerShell，秒级），而 `getDefaultWorkspacePath()` 会在每次 IPC、
- *    每次 `updateConfig()` 兜底里被调到。
+ * 真正的"盘上根路径族"（dataRoot/stateRoot/workspaceRoot/tempRoot…）只有一个来源：
+ * `runtime/portable-root.ts` 的 `getPortableRoots()`（判定仍由 `workspace/portable.ts`
+ * 的 `detectPortableRun` 做，进程内缓存一次）。这两个函数是**兼容壳**：
+ * 老调用点仍叫 `…WorkspaceRoot`，行为与以前逐字一致（返回盘根），只是不再各存一份。
  */
-let portableWorkspaceRoot: string | null = null;
-
 export function setPortableWorkspaceRoot(root: string | null): void {
-  portableWorkspaceRoot = root;
+  setPortableVolumeRoot(root);
 }
 
+/** ⚠️ 名字有误导：返回的是**盘根**（`E:\`）。工作区是 `getPortableRoots()?.workspaceRoot`。 */
 export function getPortableWorkspaceRoot(): string | null {
-  return portableWorkspaceRoot;
+  return getPortableRoots()?.volumeRoot ?? null;
 }
 
 /**
@@ -152,7 +152,8 @@ export function getPortableWorkspaceRoot(): string | null {
  * 否则维持 homedir 下的老默认值。
  */
 export function getDefaultWorkspacePath(): string {
-  if (portableWorkspaceRoot) return join(portableWorkspaceRoot, PORTABLE_WORKSPACE_DIR_NAME);
+  const roots = getPortableRoots();
+  if (roots) return roots.workspaceRoot;
   return getHomedirWorkspacePath();
 }
 

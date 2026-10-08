@@ -26,6 +26,7 @@ const originalArgv = process.argv;
 const originalTemp = process.env.TEMP;
 const originalTmp = process.env.TMP;
 const originalProfile = process.env.ROYIN_SLIDEGEN_PROFILE;
+const originalWorkspace = process.env.ROYIN_SLIDEGEN_WORKSPACE;
 let root = '';
 let ready: () => void;
 let output: string[] = [];
@@ -37,6 +38,7 @@ beforeEach(() => {
   process.env.TMP = root;
   process.argv = ['electron', 'app', '--royin-render-slidegen', 'report.slidegen'];
   delete process.env.ROYIN_SLIDEGEN_PROFILE;
+  delete process.env.ROYIN_SLIDEGEN_WORKSPACE;
   output = [];
   mocks.app.whenReady.mockReturnValue(new Promise<void>((resolve) => (ready = resolve)));
   mocks.render.mockResolvedValue({ status: 'file-generated', fileCreated: true, pages: 2 });
@@ -58,6 +60,8 @@ afterEach(() => {
   else process.env.TMP = originalTmp;
   if (originalProfile === undefined) delete process.env.ROYIN_SLIDEGEN_PROFILE;
   else process.env.ROYIN_SLIDEGEN_PROFILE = originalProfile;
+  if (originalWorkspace === undefined) delete process.env.ROYIN_SLIDEGEN_WORKSPACE;
+  else process.env.ROYIN_SLIDEGEN_WORKSPACE = originalWorkspace;
   vi.restoreAllMocks();
   if (!path.resolve(root).startsWith(path.resolve(originalTemp ?? originalTmp ?? os.tmpdir()) + path.sep))
     throw new Error('test path escaped');
@@ -198,6 +202,33 @@ it('reports unexpected command failures without exposing exception contents', as
   });
   expect(output.join('')).not.toContain('secret-token');
   expect(mocks.app.exit).toHaveBeenCalledWith(1);
+});
+
+/**
+ * BUG-041 ③：工作区要**显式**传入（`ROYIN_SLIDEGEN_WORKSPACE`），不再只靠 `cwd` 猜。
+ *
+ * `workspace` 在这里是"哪些文件允许被渲染进程读"的边界（onBeforeRequest 的
+ * `contained(workspace, file)`）—— 猜错的代价是"读不到源文件"或"边界放到了别处"。
+ */
+it('⭐ 显式工作区优先：ROYIN_SLIDEGEN_WORKSPACE 覆盖 cwd 推断', async () => {
+  const taskWorkspace = path.join(root, 'task-workspace');
+  fs.mkdirSync(taskWorkspace, { recursive: true });
+  process.env.ROYIN_SLIDEGEN_WORKSPACE = taskWorkspace;
+
+  expect(await loadCommand()).toMatchObject({ status: 'file-generated' });
+  expect(mocks.render).toHaveBeenCalledWith('report.slidegen', fs.realpathSync(taskWorkspace), {
+    onPage: expect.any(Function),
+  });
+});
+
+it('⭐ 显式工作区不可用 ⇒ 回落 cwd（行为与历史一致，且在 stderr 留痕）', async () => {
+  process.env.ROYIN_SLIDEGEN_WORKSPACE = path.join(root, '不存在的目录');
+  const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  expect(await loadCommand()).toMatchObject({ status: 'file-generated' });
+  expect(mocks.render).toHaveBeenCalledWith('report.slidegen', process.cwd(), { onPage: expect.any(Function) });
+  expect(stderr).toHaveBeenCalled();
+  stderr.mockRestore();
 });
 
 it('writes real progress before its final report and ignores callbacks after terminal output', async () => {

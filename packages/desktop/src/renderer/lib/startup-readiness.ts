@@ -117,6 +117,11 @@ export function gatewayFailureText(readiness: StartupReadiness, t: (key: string)
   if (reason === 'auth-rejected') return t('startupReadiness.gatewayAuthRejected');
   if (reason === 'process-exited') return t('startupReadiness.gatewayProcessExited');
   if (reason === 'ready-timeout') return t('startupReadiness.gatewayReadyTimeout');
+  // ⭐ 2026-10-07：从盘上准备运行环境失败单独一档 —— 它的出口在**盘上**
+  // （插好盘 / 换回随附那块 / 解除写保护 / 换一份完整的），与上面四类"去关别的程序 /
+  // 去查激活"完全不同。原来这一类落 `unknown`，界面上只剩一句笼统的"准备遇到了问题"，
+  // 而**最有用的那句话只在日志里**。
+  if (reason === 'deploy-failed') return t('startupReadiness.gatewayDeployFailed');
   return null;
 }
 

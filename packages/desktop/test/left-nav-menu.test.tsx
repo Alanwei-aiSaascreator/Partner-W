@@ -5,12 +5,15 @@ import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 
+vi.mock('@/lib/toast', () => ({ toast: vi.fn() }));
+
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
 import NavMenu from '../src/renderer/layouts/LeftNav/NavMenu';
+import { toast } from '@/lib/toast';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -149,8 +152,10 @@ describe('LeftNav NavMenu', () => {
 
     clickNav(container, 'identity');
     expect(onSelectView).toHaveBeenLastCalledWith('identity');
+    // 2026-10-06（用户拍板）：需求悬赏置灰暂不可用——点击不再导航（改弹「敬请期待」，
+    // 见下方专门用例），这里钉住"它不会把用户带进半成品页面"。
     clickNav(container, 'bounty');
-    expect(onSelectView).toHaveBeenLastCalledWith('bounty');
+    expect(onSelectView).toHaveBeenLastCalledWith('identity');
     clickNav(container, 'creator');
     expect(onSelectView).toHaveBeenLastCalledWith('creator');
     clickNav(container, 'square');
@@ -159,6 +164,24 @@ describe('LeftNav NavMenu', () => {
       clickNav(container, 'agents');
       expect(onSelectView).toHaveBeenLastCalledWith('market');
     }
+    unmount();
+  });
+
+  it('⭐ 需求悬赏置灰可点：点击弹「敬请期待」、不导航（用户拍板 2026-10-06）', () => {
+    vi.mocked(toast).mockClear();
+    const { container, onSelectView, unmount } = setup();
+    const bounty = container.querySelector('[data-nav="bounty"]') as HTMLButtonElement;
+
+    // 灰态视觉但不吞点击：不用真 disabled（会吞 onClick），用 muted 样式 + 仍可点。
+    expect(bounty.disabled).toBe(false);
+    expect(bounty.className).toContain('opacity-60');
+
+    clickNav(container, 'bounty');
+    expect(toast).toHaveBeenCalledWith(
+      'leftNav.bountyComingSoon',
+      expect.objectContaining({ id: 'bounty-coming-soon' }),
+    );
+    expect(onSelectView).not.toHaveBeenCalled();
     unmount();
   });
 

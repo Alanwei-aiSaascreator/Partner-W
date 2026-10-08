@@ -509,6 +509,21 @@
     box-shadow: var(--shadow-inset-card), var(--shadow-card-layered);
   }
 
+  /* 视频/媒体背景上的低透明度玻璃（全屏开场页用）：比 glass-card 透得多，让画面透出来。
+     刻意不用 backdrop-blur（契约禁 raw backdrop-blur；大面积视频上 blur 开销也高）。 */
+  .glass-scrim {
+    background: color-mix(in srgb, var(--bg-primary) 64%, transparent);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft);
+  }
+
+  /* 信息密度更高的卡片（首启进度卡）：衬托再压实一档，保证亮画面上文字对比稳定。 */
+  .glass-scrim-strong {
+    background: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft);
+  }
+
   .glass-command {
     background: var(--surface-dialog-bg);
     border: 1px solid var(--glass-border);

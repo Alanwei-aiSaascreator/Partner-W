@@ -87,6 +87,23 @@ describe('OpenClaw media file access', () => {
     expect(mockOpen).not.toHaveBeenCalled();
   });
 
+  /**
+   * BUG-041 ⑤：宿主回落**保留**，但要**显式留痕**。
+   *
+   * 便携形态下 `OPENCLAW_STATE_DIR` 没设 = 数据没跟着盘走，表现是"聊天里的图片
+   * 静默读不到"；静默回落让同一个症状有两个完全不同的成因（审计里最难查的一类）。
+   */
+  it('⭐ OPENCLAW_STATE_DIR 未设 ⇒ 回落宿主 ~/.openclaw，但必须留下显式告警', async () => {
+    delete process.env.OPENCLAW_STATE_DIR;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(readOpenClawMediaFile(join(MEDIA_ROOT, 'tool-image-generation', 'out.png'))).resolves.toBeNull();
+
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('OPENCLAW_STATE_DIR');
+    warn.mockRestore();
+  });
+
   it('rejects videos above the existing 25 MB read limit', async () => {
     const close = vi.fn().mockResolvedValue(undefined);
     const readFile = vi.fn();

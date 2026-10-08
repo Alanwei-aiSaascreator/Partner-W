@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BOOTSTRAP_MAX_ATTEMPTS,
   BOOTSTRAP_PROCESS_EXITED,
@@ -8,7 +8,9 @@ import {
   isTransientBootstrapFailure,
 } from '../src/main/runtime/bootstrap-retry';
 
-type Failure = { ok: false; code?: string | undefined; reason: string } | { ok: true };
+type Failure =
+  | { ok: false; code?: string | undefined; reason: string; deployStatus?: 'deployed' | 'skipped' | undefined }
+  | { ok: true };
 
 /**
  * 假时钟，但**按真实墙钟语义**走：`attempt` 自己耗掉的时间也算进预算。
@@ -202,5 +204,111 @@ describe('运行时 bootstrap 的重试策略（真实墙钟语义）', () => {
 describe('预算常量', () => {
   it('总预算就是 30 秒（写死在这里，改它必须同时改用例）', () => {
     expect(BOOTSTRAP_TOTAL_BUDGET_MS).toBe(30_000);
+  });
+});
+
+/**
+ * BUG-040 · R2：**首启**的 180 秒超时允许自动重试一次。
+ *
+ * 为什么破例（这是唯一的例外，边界必须钉死）：
+ *  - 首启（这一轮真的从盘上部署了运行时，`deployStatus === 'deployed'`）时，慢的是
+ *    解压 35k 个文件 + 首次冷读，实测冷启动能顶到 180 秒窗口边界 —— 而这一份
+ *    "再来一次"的代价是**用户少点一次「重新准备」**；
+ *  - 非首启（缓存命中 / 无标记）一个字不变：180 秒超时仍是终态（绝不九分钟）。
+ *
+ * ⚠️ 只重试**一次**：第二次仍超时 ⇒ 收手（否则就是拿用户的三分钟赌）。
+ */
+describe('BUG-040 R2：首启的 ready-timeout 允许一次自动重试', () => {
+  it('⭐ 首启（deployStatus=deployed）⇒ 自动再试一次，日志明示该事件', async () => {
+    const clock = makeClock();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let attempts = 0;
+    const retries: Array<{ attempt: number; delayMs: number }> = [];
+    const result = await bootstrapWithRetry<Failure>({
+      attempt: async () => {
+        attempts += 1;
+        clock.advance(180_000);
+        return {
+          ok: false,
+          code: BOOTSTRAP_READY_TIMEOUT,
+          reason: '等待网关就绪超时（180s）',
+          deployStatus: 'deployed',
+        };
+      },
+      sleep: clock.sleep,
+      now: clock.now,
+      onRetry: (info) => retries.push({ attempt: info.attempt, delayMs: info.delayMs }),
+    });
+
+    expect(attempts).toBe(2);
+    expect(clock.sleeps).toEqual([3_000]);
+    expect(retries).toEqual([{ attempt: 2, delayMs: 3_000 }]);
+    expect(result.ok).toBe(false);
+    expect(
+      warn.mock.calls.some((call) =>
+        call.some((value) => typeof value === 'string' && value.includes('runtime.gateway-ready-timeout-retry')),
+      ),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('⭐ 首启也只重试一次：第二次仍超时 ⇒ 收手', async () => {
+    const clock = makeClock();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let attempts = 0;
+    await bootstrapWithRetry<Failure>({
+      attempt: async () => {
+        attempts += 1;
+        clock.advance(180_000);
+        return {
+          ok: false,
+          code: BOOTSTRAP_READY_TIMEOUT,
+          reason: '等待网关就绪超时（180s）',
+          deployStatus: 'deployed',
+        };
+      },
+      sleep: clock.sleep,
+      now: clock.now,
+    });
+    expect(attempts).toBe(2);
+    expect(clock.sleeps).toEqual([3_000]);
+    vi.restoreAllMocks();
+  });
+
+  it('⭐ 非首启（缓存命中 skipped）⇒ 一次即终态（行为不变）', async () => {
+    const clock = makeClock();
+    let attempts = 0;
+    await bootstrapWithRetry<Failure>({
+      attempt: async () => {
+        attempts += 1;
+        clock.advance(180_000);
+        return {
+          ok: false,
+          code: BOOTSTRAP_READY_TIMEOUT,
+          reason: '等待网关就绪超时（180s）',
+          deployStatus: 'skipped',
+        };
+      },
+      sleep: clock.sleep,
+      now: clock.now,
+    });
+    expect(attempts).toBe(1);
+    expect(clock.sleeps).toEqual([]);
+  });
+
+  it('⭐ 首启标记不改变其它码的既有语义（早退仍是 3 次 / 15 秒那套）', async () => {
+    const clock = makeClock();
+    let attempts = 0;
+    await bootstrapWithRetry<Failure>({
+      attempt: async () => {
+        attempts += 1;
+        clock.advance(500);
+        return { ok: false, code: BOOTSTRAP_PROCESS_EXITED, reason: '早退', deployStatus: 'deployed' };
+      },
+      sleep: clock.sleep,
+      now: clock.now,
+    });
+    expect(attempts).toBe(BOOTSTRAP_MAX_ATTEMPTS);
+    expect(clock.sleeps).toEqual([3_000, 12_000]);
   });
 });

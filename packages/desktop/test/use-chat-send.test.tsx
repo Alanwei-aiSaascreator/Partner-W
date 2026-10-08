@@ -36,6 +36,11 @@ const mocks = vi.hoisted(() => {
     })),
     toastWarning: vi.fn(),
     toastError: vi.fn(),
+    // 图片路由「切了才提示」走 toast.info（轻量、无按钮）—— 同一套 sonner mock 里补一只。
+    toastInfo: vi.fn(),
+    // t 做成 spy（行为不变：照旧返回 key）：图片路由的提示**带模型名**，
+    // 而插值值是传给 t 的第二个参数 —— 只有 spy 看得见它。
+    t: vi.fn((key: string) => key),
     meetingState: {
       records: [] as Array<{
         id: string;
@@ -75,9 +80,14 @@ const mocks = vi.hoisted(() => {
       //（`lib/gateway-display-phase.ts`）。缺这两个字段时真身走 `?.` ⇒ 一律"从没连上过"。
       gatewayReconnectInfo: {} as Record<string, { attempt: number; max: number; gaveUp: boolean }>,
       gatewayEverConnected: {} as Record<string, true>,
+      // 网关协商的单帧上限（`hello-ok.policy.maxPayload`）：发送字节预算按它折算（2026-10-07 · P1-1）
+      gatewayMaxPayloadByGateway: {} as Record<string, number>,
     },
     roomState: {
       rooms: {},
+      // 合议（ensemble）路由的初始化：只用于"conductor 花名册带不带助手描述"那条回归钉。
+      // 参数照真实签名写出来（`vi.fn(async () => true)` 的 calls 类型是空元组，断言取 [3] 过不了 tsc）。
+      initConductor: vi.fn(async (_taskId: string, _gatewayId: string, _sessionKey: string, _catalog: string) => true),
     },
     teamState: {
       teams: {} as Record<string, import('@clawwork/shared').Team>,
@@ -87,7 +97,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: mocks.t }),
   // i18n 实例在模块加载时就会 `use(initReactI18next)`（见 src/renderer/i18n），
   // 而 useChatSend → 对比 store 会把它拉进这个测试；少了这个导出，整个测试文件加载即失败。
   initReactI18next: { type: '3rdParty', init: vi.fn() },
@@ -97,6 +107,7 @@ vi.mock('sonner', () => ({
   toast: {
     error: mocks.toastError,
     warning: mocks.toastWarning,
+    info: mocks.toastInfo,
   },
 }));
 
@@ -121,8 +132,11 @@ vi.mock('../src/renderer/platform', () => ({
     <T,>(selector?: (state: typeof mocks.uiState) => T) => (selector ? selector(mocks.uiState) : mocks.uiState),
     { getState: () => mocks.uiState },
   ),
-  useRoomStore: <T,>(selector?: (state: typeof mocks.roomState) => T) =>
-    selector ? selector(mocks.roomState) : mocks.roomState,
+  // `getState` 是合议路由（conductor 初始化）用的：`useRoomStore.getState().initConductor(...)`
+  useRoomStore: Object.assign(
+    <T,>(selector?: (state: typeof mocks.roomState) => T) => (selector ? selector(mocks.roomState) : mocks.roomState),
+    { getState: () => mocks.roomState },
+  ),
   useTeamStore: Object.assign(
     <T,>(selector?: (state: typeof mocks.teamState) => T) => (selector ? selector(mocks.teamState) : mocks.teamState),
     { getState: () => mocks.teamState },
@@ -134,6 +148,7 @@ vi.mock('../src/renderer/features/team-meeting/instance', () => ({
   teamMeetingController: { store: { getState: () => mocks.meetingState } },
 }));
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
+import type { PendingAttachment } from '../src/renderer/components/ChatInput/types';
 import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 import { compareStore } from '../src/renderer/features/compare/compare-store-instance';
@@ -227,22 +242,28 @@ function MaterialHarness({
   clearFolder,
   markMissing = vi.fn(),
   importedMaterials = [importedMaterial],
+  folderMaterials = [folderMaterial],
+  taskMentions = [] as Task[],
+  draft = 'summarize',
 }: {
   clearImported: () => void;
   clearFolder: Dispatch<SetStateAction<TaskContextFile[]>>;
   markMissing?: (localPath: string) => void;
   importedMaterials?: ImportedMaterialFile[];
+  folderMaterials?: TaskContextFile[];
+  taskMentions?: Task[];
+  draft?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const chat = useChatSend({
     textareaRef,
     pendingAttachments: [],
     setPendingAttachments: vi.fn(),
-    selectedTasks: [],
+    selectedTasks: taskMentions,
     setSelectedTasks: vi.fn(),
     selectedArtifacts: [],
     setSelectedArtifacts: vi.fn(),
-    selectedLocalFiles: [folderMaterial],
+    selectedLocalFiles: folderMaterials,
     setSelectedLocalFiles: clearFolder,
     selectedImportedFiles: importedMaterials,
     clearSelectedImportedFiles: clearImported,
@@ -253,7 +274,7 @@ function MaterialHarness({
   });
   return (
     <>
-      <textarea ref={textareaRef} defaultValue="summarize" />
+      <textarea ref={textareaRef} defaultValue={draft} />
       <button type="button" onClick={() => void chat.handleSend()}>
         send
       </button>
@@ -287,6 +308,25 @@ describe('useChatSend abort flow', () => {
           ok: true,
           result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
         })),
+        // 区 3 回归钉用：首轮产物索引**不许**再被自动读取（被切断了），桩在这里是"诱饵"——
+        // 一旦有人把索引注入加回来，`listArtifacts` 会被调用、断言立刻红。
+        listArtifacts: vi.fn(async () => ({
+          ok: true,
+          result: [{ id: 'a-1', name: '上一段对话的汇报.pptx', taskId: 'task-other' }],
+        })),
+        loadMessages: vi.fn(async () => ({
+          ok: true,
+          rows: [{ role: 'user', content: '被 @ 的任务里的一句话' }],
+        })),
+        // `agents.files.get` 的**真机载荷形状**（`{ agentId, workspace, file: { name, content, missing } }`）。
+        getAgentFile: vi.fn(async () => ({
+          ok: true,
+          result: {
+            agentId: 'a1',
+            workspace: 'ws',
+            file: { name: 'IDENTITY.md', content: '---\ndescription: 精通数据分析\n---\n正文', missing: false },
+          },
+        })),
       },
     });
     mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
@@ -294,7 +334,9 @@ describe('useChatSend abort flow', () => {
     mocks.uiState.agentCatalogByGateway = {};
     mocks.uiState.toolsCatalogByGateway = {};
     mocks.uiState.effectiveToolsByGateway = {};
+    mocks.uiState.gatewayMaxPayloadByGateway = {};
     mocks.roomState.rooms = {};
+    mocks.roomState.initConductor.mockClear();
     mocks.teamState.teams = {};
     useCommercialStore.setState({
       status: 'ready',
@@ -885,6 +927,34 @@ describe('useChatSend abort flow', () => {
     unmount();
   });
 
+  /**
+   * ⭐ BUG-028 的最后一道闸门（第三层的防线）：**别的对话的引用**即使因为某个 state 没清干
+   * 净而漏进来，也绝不许进这次请求 —— 拦下、说清、一个字都不发（也不去读那份文件）。
+   *
+   * 这条不是"理论上的保险"：`selectedImportedFiles` 是渲染层交进来的引用集合，而引用集合
+   * 一旦跨对话串味，用户看到的就是"新对话拿着上一段对话的文件在跑"（2026-10-06 深夜 D 组）。
+   */
+  it('⭐ 上一段对话的引用混进本次发送 ⇒ 拦住并说明，不读文件、不发请求', async () => {
+    const foreignMaterial: ImportedMaterialFile = {
+      ...importedMaterial,
+      taskId: 'task-2',
+      localPath: 'tasks/task-2/inbox/brief.pdf',
+    };
+    const { container, unmount } = render(
+      <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={[foreignMaterial]} />,
+    );
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.materialUnavailable', expect.any(Object));
+    expect(window.clawwork.readInboxFileForSend, '不去读别的对话的文件').not.toHaveBeenCalled();
+    expect(mocks.send, '一个字都不发').not.toHaveBeenCalled();
+    unmount();
+  });
+
   it('marks an unavailable inbox material and preserves the draft without dispatching', async () => {
     vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValueOnce({ ok: false, error: 'missing' });
     const clearImported = vi.fn();
@@ -908,7 +978,73 @@ describe('useChatSend abort flow', () => {
     unmount();
   });
 
-  it('rejects more than ten combined materials before reading or dispatching', async () => {
+  /**
+   * ⭐ F 组（BUG-030）read/analyze by default：带着文件发消息、没说要改 ⇒
+   * 附件纪律必须写进**只给模型看的 `contextPrefix`**（不是正文：正文会进气泡、会落库）。
+   */
+  it('⭐ 带文件、没说要改 ⇒ 只读纪律进 contextPrefix，正文一个字不动', async () => {
+    const { container, unmount } = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const options = mocks.send.mock.calls[0]![1] as { content: string; contextPrefix: string };
+    // 正文只含"用户的话 + 文件夹材料的既有内联块"，**不含**附件纪律
+    expect(options.content).toContain('summarize');
+    expect(options.content).not.toContain('[附件默认只读]');
+    expect(options.contextPrefix).toContain('[附件默认只读]');
+    expect(options.contextPrefix).toContain('brief.pdf');
+    expect(options.contextPrefix).toContain('notes.txt');
+    expect(options.contextPrefix).toMatch(/不要修改/);
+    unmount();
+  });
+
+  it('⭐ 用户明确说"修改" ⇒ 换成"写新版本、不覆盖原件"的纪律', async () => {
+    const { container, unmount } = render(
+      <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} draft="请修改这份表格" />,
+    );
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const options = mocks.send.mock.calls[0]![1] as { content: string; contextPrefix: string };
+    expect(options.contextPrefix).toContain('[附件改动规则]');
+    expect(options.contextPrefix).toMatch(/不要覆盖/);
+    expect(options.contextPrefix).not.toContain('[附件默认只读]');
+    unmount();
+  });
+
+  it('没有附件 ⇒ 不加任何附件纪律（不给纯聊天加开销）', async () => {
+    const { container, unmount } = render(
+      <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={[]} folderMaterials={[]} />,
+    );
+
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const options = mocks.send.mock.calls[0]![1] as { contextPrefix?: string };
+    expect(options.contextPrefix ?? '').not.toContain('[附件默认只读]');
+    expect(options.contextPrefix ?? '').not.toContain('[附件改动规则]');
+    unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-07（质量战役区 2 · 方案 A）计数分桶：
+   *   - 计数只算**二进制附件**（暂存附件 + 已选导入材料）；
+   *   - `selectedLocalFiles`（@ 授权文件夹，tier='text' 内联）**不计数**，只受 500KB 文本总约束。
+   * 旧口径把二者同权计数（10 导入 + 1 文本 > 10 ⇒ 拒发），可载荷才几 KB（P1-2）。
+   * 旧用例 10 导入 + 默认 1 个文本材料（=11"合并计数"）在新口径下**必须放行**。
+   */
+  it('⭐ 10 个导入 + 1 个文本材料不再凑数被拒（text 不计数，旧 10 合并口径的反向钉）', async () => {
     const importedMaterials = Array.from({ length: 10 }, (_, index) => ({
       ...importedMaterial,
       fileName: `file-${index}.pdf`,
@@ -920,40 +1056,127 @@ describe('useChatSend abort flow', () => {
     await act(async () => {
       (container.querySelector('button') as HTMLButtonElement).click();
       await Promise.resolve();
+      await Promise.resolve();
     });
-    expect(window.clawwork.readInboxFileForSend).not.toHaveBeenCalled();
-    expect(mocks.send).not.toHaveBeenCalled();
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(10);
+    expect(window.clawwork.readTaskContextFileForSend).toHaveBeenCalledTimes(1);
+    expect(mocks.send, '文本材料不占个数桶，10 个二进制附件 ≤ 30 ⇒ 照常发出').toHaveBeenCalledTimes(1);
     unmount();
   });
 
-  it('rejects cumulative material bytes using main-process byte lengths instead of stale list metadata', async () => {
-    const importedMaterials = [{ ...importedMaterial, size: 1 }];
-    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValue({
-      ok: true,
-      result: { content: 'cGRm', encoding: 'base64', byteLength: 20 * 1024 * 1024 },
-    } as never);
-    vi.mocked(window.clawwork.readTaskContextFileForSend).mockResolvedValue({
-      ok: true,
-      result: {
-        content: 'notes',
-        mimeType: 'text/plain',
-        size: 20 * 1024 * 1024,
-        byteLength: 20 * 1024 * 1024,
-        truncated: true,
-        tier: 'text',
-      },
-    });
+  it('⭐ 二进制附件超过 30 个 ⇒ 发送前拦住（个数桶），不读任何文件', async () => {
+    const importedMaterials = Array.from({ length: 31 }, (_, index) => ({
+      ...importedMaterial,
+      fileName: `file-${index}.pdf`,
+      localPath: `tasks/task-1/inbox/file-${index}.pdf`,
+    }));
     const { container, unmount } = render(
-      <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={importedMaterials} />,
+      <MaterialHarness
+        clearImported={vi.fn()}
+        clearFolder={vi.fn()}
+        importedMaterials={importedMaterials}
+        folderMaterials={[]}
+      />,
     );
     await act(async () => {
       (container.querySelector('button') as HTMLButtonElement).click();
       await Promise.resolve();
     });
-    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(1);
-    expect(window.clawwork.readTaskContextFileForSend).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.materialLimitCount', expect.any(Object));
+    expect(window.clawwork.readInboxFileForSend).not.toHaveBeenCalled();
     expect(mocks.send).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-07 · P1-1：字节闸门按 **base64 折算预算**（单帧 × 3/4 − 余量，
+   * 默认 25MiB→18MiB）拦；且以**主进程实测 byteLength** 为准 —— 列表元数据里的
+   * `size: 1` 是陈旧值，一个都不能信。
+   */
+  it('⭐ 累计字节超预算（base64 折算）⇒ 读到第二个文件时拦下，不信列表元数据', async () => {
+    const importedMaterials = [
+      { ...importedMaterial, fileName: 'a.pdf', localPath: 'tasks/task-1/inbox/a.pdf', size: 1 },
+      { ...importedMaterial, fileName: 'b.pdf', localPath: 'tasks/task-1/inbox/b.pdf', size: 1 },
+    ];
+    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValue({
+      ok: true,
+      result: { content: 'cGRm', encoding: 'base64', byteLength: 10 * 1024 * 1024 },
+    } as never);
+    const { container, unmount } = render(
+      <MaterialHarness
+        clearImported={vi.fn()}
+        clearFolder={vi.fn()}
+        importedMaterials={importedMaterials}
+        folderMaterials={[]}
+      />,
+    );
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(window.clawwork.readInboxFileForSend).toHaveBeenCalledTimes(2);
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.materialLimitBytes', expect.any(Object));
+    expect(mocks.send, '10MB+10MB > 18MiB 折算预算 ⇒ 拦下').not.toHaveBeenCalled();
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('summarize');
+    unmount();
+  });
+
+  it('⭐ text tier 按**实际内联字节**记账（30MB 的 .log 只占 ~100KB，不再整份虚耗预算）', async () => {
+    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValue({
+      ok: true,
+      result: { content: 'cGRm', encoding: 'base64', byteLength: 10 * 1024 * 1024 },
+    } as never);
+    // 主进程 readContextFileForSend 的新契约（P2-1）：text tier 的 byteLength 是内联字节
+    vi.mocked(window.clawwork.readTaskContextFileForSend).mockResolvedValue({
+      ok: true,
+      result: {
+        content: 'notes',
+        mimeType: 'text/plain',
+        size: 30 * 1024 * 1024,
+        byteLength: 102 * 1024,
+        truncated: true,
+        tier: 'text',
+      },
+    });
+    const { container, unmount } = render(
+      <MaterialHarness
+        clearImported={vi.fn()}
+        clearFolder={vi.fn()}
+        importedMaterials={[{ ...importedMaterial, size: 1 }]}
+      />,
+    );
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mocks.send, '10MB(导入) + 100KB(文本内联) < 18MiB ⇒ 照常发出').toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('⭐ 字节预算跟随网关协商的单帧上限（gatewayMaxPayloadByGateway = 4MiB ⇒ 预算 2.25MiB）', async () => {
+    mocks.uiState.gatewayMaxPayloadByGateway = { 'gw-1': 4 * 1024 * 1024 };
+    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValue({
+      ok: true,
+      result: { content: 'cGRm', encoding: 'base64', byteLength: 3 * 1024 * 1024 },
+    } as never);
+    const { container, unmount } = render(
+      <MaterialHarness
+        clearImported={vi.fn()}
+        clearFolder={vi.fn()}
+        importedMaterials={[{ ...importedMaterial, size: 1 }]}
+        folderMaterials={[]}
+      />,
+    );
+    await act(async () => {
+      (container.querySelector('button') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // 3MB 在默认 18MiB 预算下本该放行；协商值 4MiB ⇒ 预算 ≈2.25MiB ⇒ 拦
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.materialLimitBytes', expect.any(Object));
+    expect(mocks.send).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -1132,6 +1355,127 @@ describe('useChatSend abort flow', () => {
     expect(mocks.toastError).toHaveBeenCalledTimes(1);
     expect(mocks.toastError.mock.calls[0]?.[0]).toBe('errors.agentNotResponding');
     unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-07（质量战役区 3 · 用户授权代决）：**首轮产物索引已切断**。
+   *
+   * 原实现：新会话首轮（`pendingNewTask` 置位）自动 `listArtifacts()` 全库读取，
+   * 把其它会话的文件名+标题拼成 `<artifacts-index>` 注入 `contextPrefix`。
+   * 这里是"诱饵桩"回归钉（桩里返回非空产物 + pendingNewTask 置位）：
+   *   ① `listArtifacts` **一次都不许被调**；② `contextPrefix` 不含 `<artifacts-index>`。
+   * 模型要看见产物，只走用户显式 `@`（那条路另有测试）。
+   */
+  describe('首轮产物索引切断（区 3）', () => {
+    beforeEach(() => {
+      mocks.taskState.pendingNewTask = null;
+      (window.clawwork.listArtifacts as ReturnType<typeof vi.fn>).mockClear();
+    });
+
+    it('⭐ pendingNewTask 置位 + 全库有产物 ⇒ 不读 listArtifacts、contextPrefix 无索引', async () => {
+      mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main' } as never;
+      const { container, unmount } = render(<MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} />);
+
+      await act(async () => {
+        (container.querySelector('button') as HTMLButtonElement).click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(window.clawwork.listArtifacts, '首轮产物索引不许再自动读取').not.toHaveBeenCalled();
+      const options = mocks.send.mock.calls.at(-1)?.[1] as { contextPrefix: string };
+      expect(options.contextPrefix, 'contextPrefix 里不许出现产物索引').not.toContain('<artifacts-index>');
+      expect(options.contextPrefix, '前提：这一轮真的带上了隐藏上下文（否则断言是假绿）').toContain('[附件默认只读]');
+      unmount();
+      mocks.taskState.pendingNewTask = null;
+    });
+  });
+
+  /**
+   * ⭐ 2026-10-07（质量战役区 3 · 问题 4）：**只有 @ 提及、没有文字**也要能发。
+   * `stripAtQuery` 会把 @ 查询串从输入框抹掉（不触发 `onInput`），于是"只剩提及选中"
+   * 的输入框被判空、发送键形同虚设；这里钉的就是发送层判据已补「存在任一 @ 选择」。
+   */
+  describe('只有 @ 提及没有文字的发送（区 3）', () => {
+    it('⭐ 输入框为空 + 有 @ 任务提及 ⇒ 照常发出（不再早退）', async () => {
+      const mentioned: Task = { ...mocks.baseTask, id: 'task-2', title: 'Task 2' };
+      const { container, unmount } = render(
+        <MaterialHarness
+          clearImported={vi.fn()}
+          clearFolder={vi.fn()}
+          importedMaterials={[]}
+          folderMaterials={[]}
+          taskMentions={[mentioned]}
+          draft=""
+        />,
+      );
+
+      await act(async () => {
+        (container.querySelector('button') as HTMLButtonElement).click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mocks.send, '只有 @ 也要发得出去').toHaveBeenCalledTimes(1);
+      const options = mocks.send.mock.calls.at(-1)?.[1] as { content: string };
+      expect(options.content).toContain('<task-context name="Task 2" id="task-2">');
+      unmount();
+    });
+
+    it('⚠️ 对照：什么都没有（无文字无任何选择）⇒ 仍然早退，不发', async () => {
+      const { container, unmount } = render(
+        <MaterialHarness
+          clearImported={vi.fn()}
+          clearFolder={vi.fn()}
+          importedMaterials={[]}
+          folderMaterials={[]}
+          draft=""
+        />,
+      );
+
+      await act(async () => {
+        (container.querySelector('button') as HTMLButtonElement).click();
+        await Promise.resolve();
+      });
+
+      expect(mocks.send).not.toHaveBeenCalled();
+      unmount();
+    });
+  });
+
+  /**
+   * ⭐ 2026-10-07（质量战役区 3 · 问题 8）：conductor 花名册的**助手描述**曾恒空 ——
+   * `agents.files.get` 的真机载荷是 `{ agentId, workspace, file: { name, content, missing } }`，
+   * 旧代码读 `result.content` 恒 undefined。这里钉"描述真的进了花名册字符串"。
+   */
+  describe('conductor 花名册带助手描述（区 3）', () => {
+    it('⭐ 从 file.content 取描述（字段错位回归钉）', async () => {
+      mocks.taskState.tasks = [{ ...mocks.baseTask, ensemble: true, teamId: undefined }];
+      mocks.uiState.agentCatalogByGateway = {
+        'gw-1': {
+          agents: [
+            { id: 'main', name: '主罗盘' },
+            { id: 'a1', name: '分析' },
+          ],
+          defaultId: 'main',
+        },
+      };
+      const { container, unmount } = render(
+        <MaterialHarness clearImported={vi.fn()} clearFolder={vi.fn()} importedMaterials={[]} folderMaterials={[]} />,
+      );
+
+      await act(async () => {
+        (container.querySelector('button') as HTMLButtonElement).click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(window.clawwork.getAgentFile).toHaveBeenCalled();
+      expect(mocks.roomState.initConductor, '合议路由要走 conductor 初始化').toHaveBeenCalledTimes(1);
+      const catalogStr = mocks.roomState.initConductor.mock.calls[0]![3] as string;
+      expect(catalogStr, '助手描述不许再恒空（读 result.content = 字段错位）').toContain('description: "精通数据分析"');
+      unmount();
+    });
   });
 });
 
@@ -1399,5 +1743,774 @@ describe('网关分档接进输入框之前：真身 useChatSend 读出来的那
     expect(read()).toEqual({ phase: 'unreachable', offline: 'offline' });
 
     view.unmount();
+  });
+});
+
+/**
+ * Auto Capability Routing v1（用户交付日 P0-4）：**带图发送 × 当前模型不自述看图 ⇒ 先切到
+ * 目录里能看图的模型再发**；切不动/没候选 ⇒ **不拦截**（照发，模型按附件纪律如实说看不到）。
+ *
+ * 这里钉的是**接线**（用真身 hook）：切在发之前、切了才提示、提示带模型名。
+ * 候选选择本身的判据在 `vision-routing.test.ts` 单独钉（纯函数）。
+ */
+describe('Auto Capability Routing：带图发送先切到能看图的模型', () => {
+  const VISION_MODEL_ID = 'qwen3.7-flash';
+  const CURRENT_MODEL_ID = 'deepseek-v4-flash';
+
+  const catalogWithVision: ModelCatalogEntry[] = [
+    { id: CURRENT_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
+    { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter', input: ['text'] },
+    { id: VISION_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+  ];
+  const catalogWithoutVision: ModelCatalogEntry[] = [
+    { id: CURRENT_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
+    { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter', input: ['text'] },
+  ];
+
+  const imageMaterial: ImportedMaterialFile = {
+    taskId: 'task-1',
+    fileName: 'screenshot.png',
+    localPath: 'tasks/task-1/inbox/screenshot.png',
+    mimeType: 'image/png',
+    size: 64,
+    availability: 'available',
+  };
+
+  /** 网关边界上的调用：真正的"切模型"要看这里（composer 是桩，它自己的钉在 core 里）。 */
+  const gateway = {
+    patchSession: vi.fn(async (_gatewayId: string, _sessionKey: string, _patch: Record<string, unknown>) => ({
+      ok: true,
+    })),
+    saveInboxAttachment: vi.fn(async (_params: { taskId: string; fileName: string; base64: string }) => ({
+      ok: true,
+      result: { localPath: 'tasks/task-1/inbox/pasted.png' },
+    })),
+  };
+
+  function VisionRoutingHarness({
+    imported = [] as ImportedMaterialFile[],
+    pending = [] as PendingAttachment[],
+    draft = '看看这张图',
+  }: {
+    imported?: ImportedMaterialFile[];
+    pending?: PendingAttachment[];
+    draft?: string;
+  }) {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const chat = useChatSend({
+      textareaRef,
+      pendingAttachments: pending,
+      setPendingAttachments: vi.fn(),
+      selectedTasks: [],
+      setSelectedTasks: vi.fn(),
+      selectedArtifacts: [],
+      setSelectedArtifacts: vi.fn(),
+      selectedLocalFiles: [],
+      setSelectedLocalFiles: vi.fn(),
+      selectedImportedFiles: imported,
+      clearSelectedImportedFiles: vi.fn(),
+      markImportedFileMissing: vi.fn(),
+      selectedAgents: [],
+      setSelectedAgents: vi.fn(),
+      stopVoiceInput: vi.fn(),
+    });
+    return (
+      <>
+        <textarea ref={textareaRef} defaultValue={draft} />
+        <button type="button" onClick={() => void chat.handleSend()}>
+          send
+        </button>
+      </>
+    );
+  }
+
+  /** 点发送，并把发送链上的异步（材料读取/FileReader/模型切换）跑干净。 */
+  async function clickSend(container: HTMLElement): Promise<void> {
+    await act(async () => {
+      container.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // 暂存附件那条路要过 FileReader（jsdom 按宏任务派发 load 事件）——真实定时器下让出几轮。
+    for (let i = 0; i < 20 && mocks.send.mock.calls.length === 0; i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  const sendOptions = (): Record<string, unknown> | undefined => mocks.send.mock.calls[0]?.[1];
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+    mocks.send.mockClear();
+    mocks.toastWarning.mockClear();
+    mocks.toastError.mockClear();
+    mocks.toastInfo.mockClear();
+    mocks.t.mockClear();
+    mocks.taskState.updateTaskMetadata.mockClear();
+    mocks.meetingState.records = [];
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.taskState.tasks = [{ ...mocks.baseTask }];
+    for (const fn of Object.values(gateway)) fn.mockClear();
+    Object.assign(window, {
+      clawwork: {
+        readInboxFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'cG5n', encoding: 'base64', byteLength: 3 },
+        })),
+        readTaskContextFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
+        })),
+        ...gateway,
+      },
+    });
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
+    mocks.uiState.modelCatalogByGateway = {};
+    mocks.uiState.modelCatalogFailureByGateway = {};
+    mocks.uiState.agentCatalogByGateway = {};
+    mocks.uiState.toolsCatalogByGateway = {};
+    mocks.uiState.effectiveToolsByGateway = {};
+    mocks.uiState.gatewayMaxPayloadByGateway = {};
+    mocks.roomState.rooms = {};
+    mocks.teamState.teams = {};
+    // ⚠️ compareStore 是**模块级单例**：上一个 describe（对比模式）把 mode 置成 true 后不复原，
+    //    不复位的话这里的"发送"会走对比分支（带材料直接被材料闸门拦下、send 永不发生）。
+    compareStore().setState({ active: null, mode: false, error: null });
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+        org: null,
+        license: {
+          activated: true,
+          licenseId: 'license-1',
+          orgId: 'org-1',
+          licenseKey: 'RY-1',
+          sku: 'USB',
+          status: 'active',
+          expiresAt: null,
+          tokenQuotaMicros: 1000,
+          tokenUsedMicros: 10,
+        },
+        device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+        fetchedAt: '2026-09-15T00:00:00.000Z',
+      },
+    });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it('⭐ 带图 × 当前模型不看图 × 有候选 ⇒ 切到候选（先切后发）并给一条轻量提示', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).toHaveBeenCalledWith('gw-1', mocks.baseTask.sessionKey, { model: VISION_MODEL_ID });
+    expect(mocks.send).toHaveBeenCalledOnce();
+    // 发送时钉的必须是**候选模型** —— 图片就是发给它的（composer 的 presetModel 等价于 patchSession）
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    // 「先切后发」是结构保证：patchSession 的调用顺序早于 composer.send
+    expect(gateway.patchSession.mock.invocationCallOrder[0]!).toBeLessThan(mocks.send.mock.invocationCallOrder[0]!);
+    // 选择器要跟着显示新模型（任务级元数据与真实会话对齐）
+    expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-1', {
+      model: VISION_MODEL_ID,
+      modelProvider: 'clawrouter',
+    });
+    expect(mocks.toastInfo).toHaveBeenCalledWith('chatInput.visionFallbackSwitched');
+    expect(mocks.t).toHaveBeenCalledWith('chatInput.visionFallbackSwitched', { model: 'Qwen 3.7 Flash' });
+
+    unmount();
+  });
+
+  it('拖入/粘贴的暂存图片同样触发（主入口）', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const pending: PendingAttachment[] = [
+      { file: new File(['png'], 'pasted.png', { type: 'image/png' }), previewUrl: 'blob:pasted' },
+    ];
+    const { container, unmount } = render(<VisionRoutingHarness pending={pending} />);
+
+    await clickSend(container);
+
+    expect(gateway.saveInboxAttachment).toHaveBeenCalledOnce();
+    expect(gateway.patchSession).toHaveBeenCalledWith('gw-1', mocks.baseTask.sessionKey, { model: VISION_MODEL_ID });
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    expect(mocks.t).toHaveBeenCalledWith('chatInput.visionFallbackSwitched', { model: 'Qwen 3.7 Flash' });
+
+    unmount();
+  });
+
+  it('当前模型没报名看图（unknown）也要路由 —— 没声明 ≠ 不支持', async () => {
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [
+        { id: CURRENT_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
+        { id: VISION_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+      ],
+    };
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    expect(mocks.toastInfo).toHaveBeenCalledOnce();
+
+    unmount();
+  });
+
+  it('当前模型已自述支持看图 ⇒ 原样发送（不碰模型选择、不提示）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, model: VISION_MODEL_ID }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it('不带图（纯文本）⇒ 不路由（哪怕目录里有能看图的候选）', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const { container, unmount } = render(<VisionRoutingHarness draft="帮我写个周报" />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(CURRENT_MODEL_ID);
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it('目录里没有能看图的模型 ⇒ 不切，但**不许静默**：给一条诚实文案，照发（不拦截）', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutVision };
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(CURRENT_MODEL_ID);
+    // v1.1：没候选 = 这轮图片识别不了，用户有权先知道（而不是发完对着模型的困惑自查）
+    expect(mocks.toastInfo).toHaveBeenCalledWith('chatInput.visionUnavailable');
+
+    unmount();
+  });
+
+  it('切换失败 ⇒ 不发「已使用」提示（切了才给），照发原模型', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    gateway.patchSession.mockResolvedValueOnce({ ok: false });
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).toHaveBeenCalledOnce();
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+    expect(mocks.taskState.updateTaskMetadata).not.toHaveBeenCalled();
+    // 不拦截：消息照发，模型会按附件纪律如实说看不到
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(CURRENT_MODEL_ID);
+
+    unmount();
+  });
+
+  /**
+   * ⭐ v1.1 加固（会话/任务维度的隔离）：**新任务不继承上一会话的 vision 切换态**。
+   *
+   * "切换态"落在两处，两处都是**任务作用域**的：
+   *   · `patchSession(task.gatewayId, task.sessionKey, …)` —— 每个任务自己的 sessionKey；
+   *   · `updateTaskMetadata(task.id, { model })` —— 每个任务自己的 meta。
+   * 新任务（待发态）没选过模型 ⇒ 起点是**默认模型**，不是上一段会话被切过去的那个。
+   * 这条钉的就是这个：上一段会话切过（task-1.model 已是 vision 模型）之后，
+   * 新任务这一轮要**重新判**（默认模型 → 不自述看图 → 路由），且只动**新任务自己的**会话与元数据。
+   * 若哪天有人把"上次切过去的模型"记成全局/待发态默认值，这条立刻红。
+   */
+  it('⭐ 新任务不继承上一会话的 vision 切换态：重新判、只动新任务自己的会话', async () => {
+    // 上一段会话的留痕：task-1 的 meta 已被切到 vision 模型。
+    mocks.taskState.tasks = [{ ...mocks.baseTask, model: VISION_MODEL_ID }];
+    mocks.taskState.activeTaskId = null;
+    const newTask: Task = {
+      ...mocks.baseTask,
+      id: 'task-2',
+      sessionKey: 'agent:main:clawwork:task:task-2',
+      model: undefined,
+    };
+    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', mode: 'custom' } as never;
+    mocks.taskState.commitPendingTask.mockReturnValue(newTask);
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const pending: PendingAttachment[] = [
+      { file: new File(['png'], 'pasted.png', { type: 'image/png' }), previewUrl: 'blob:pasted' },
+    ];
+    const { container, unmount } = render(<VisionRoutingHarness pending={pending} />);
+
+    await clickSend(container);
+
+    // 起点是默认模型（deepseek）⇒ 这一轮重新判成"要路由"，切的是 task-2 自己的会话
+    expect(gateway.patchSession).toHaveBeenCalledWith('gw-1', newTask.sessionKey, { model: VISION_MODEL_ID });
+    expect(gateway.patchSession).not.toHaveBeenCalledWith('gw-1', mocks.baseTask.sessionKey, expect.anything());
+    // 元数据只写新任务；上一段会话留痕原样不动
+    expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-2', {
+      model: VISION_MODEL_ID,
+      modelProvider: 'clawrouter',
+    });
+    expect(mocks.taskState.updateTaskMetadata).not.toHaveBeenCalledWith('task-1', expect.anything());
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+
+    unmount();
+  });
+});
+
+/**
+ * 任务模式（快速 / 智能 / 深度 / 高级指定模型）——**发送链**的接线。
+ *
+ * 判据只有一条：这一轮真正交给 composer 的 `presetModel` / `presetThinking` 是什么。
+ * 三档按 `MODE_POLICY` 走；高级（custom）与旧任务（mode 为空）**原样保留既有行为**
+ * —— 不劫持用户当年显式选过的模型，是这一批的硬要求。
+ *
+ * 别名回退（`qwen3.7-flash-fast` 是另一路并行上线的 relay 条目）也钉在这里：
+ * 目录里没有它时必须优雅回退到 `qwen3.7-flash`，而不是发一个目录里不存在的模型；
+ * 两个都没有 ⇒ 保持现状、**不拦截**（发出去由上游说话，比拦住用户更诚实）。
+ */
+describe('任务模式：发送链的 presetModel / presetThinking', () => {
+  const BASE_MODEL_ID = 'qwen3.7-flash';
+  const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
+  const LEGACY_MODEL_ID = 'deepseek-v4-flash';
+
+  const catalogBase: ModelCatalogEntry[] = [
+    { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
+    { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+  ];
+  const catalogWithAlias: ModelCatalogEntry[] = [
+    ...catalogBase,
+    { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
+  ];
+  /** 目录里既没有别名、也没有基础模型（模拟目录未就绪 / 模型下架）。 */
+  const catalogWithoutModeModels: ModelCatalogEntry[] = [catalogBase[0]!];
+
+  function ModeHarness({
+    draft = '帮我写一段周报',
+    imported = [] as ImportedMaterialFile[],
+  }: {
+    draft?: string;
+    imported?: ImportedMaterialFile[];
+  }) {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const chat = useChatSend({
+      textareaRef,
+      pendingAttachments: [],
+      setPendingAttachments: vi.fn(),
+      selectedTasks: [],
+      setSelectedTasks: vi.fn(),
+      selectedArtifacts: [],
+      setSelectedArtifacts: vi.fn(),
+      selectedLocalFiles: [],
+      setSelectedLocalFiles: vi.fn(),
+      selectedImportedFiles: imported,
+      clearSelectedImportedFiles: vi.fn(),
+      markImportedFileMissing: vi.fn(),
+      selectedAgents: [],
+      setSelectedAgents: vi.fn(),
+      stopVoiceInput: vi.fn(),
+    });
+    return (
+      <>
+        <textarea ref={textareaRef} defaultValue={draft} />
+        <button type="button" onClick={() => void chat.handleSend()}>
+          send
+        </button>
+      </>
+    );
+  }
+
+  const sendOptions = (): Record<string, unknown> | undefined => mocks.send.mock.calls.at(-1)?.[1];
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+    mocks.send.mockClear();
+    mocks.toastError.mockClear();
+    mocks.toastInfo.mockClear();
+    mocks.toastWarning.mockClear();
+    mocks.taskState.updateTaskMetadata.mockClear();
+    mocks.meetingState.records = [];
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.taskState.tasks = [{ ...mocks.baseTask }];
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogBase };
+    mocks.uiState.modelCatalogFailureByGateway = {};
+    Object.assign(window, {
+      clawwork: {
+        readInboxFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
+        })),
+        readTaskContextFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
+        })),
+        patchSession: vi.fn(async () => ({ ok: true })),
+      },
+    });
+    compareStore().setState({ active: null, mode: false, error: null });
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+        org: null,
+        license: {
+          activated: true,
+          licenseId: 'license-1',
+          orgId: 'org-1',
+          licenseKey: 'RY-1',
+          sku: 'USB',
+          status: 'active',
+          expiresAt: null,
+          tokenQuotaMicros: 1000,
+          tokenUsedMicros: 10,
+        },
+        device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+        fetchedAt: '2026-09-15T00:00:00.000Z',
+      },
+    });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  async function clickSend(container: HTMLElement): Promise<void> {
+    await act(async () => {
+      container.querySelector('button')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('快速 ⇒ 别名 + minimal（别名在目录里时）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'fast' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithAlias };
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe(ALIAS_MODEL_ID);
+    expect(sendOptions()?.presetThinking).toBe('minimal');
+    unmount();
+  });
+
+  it('⭐ 快速 ⇒ 别名缺席时优雅回退到 qwen3.7-flash（不是发一个目录里没有的模型）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'fast' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogBase };
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(sendOptions()?.presetThinking).toBe('minimal');
+    unmount();
+  });
+
+  it('智能（默认）⇒ qwen3.7-flash + medium', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(sendOptions()?.presetThinking).toBe('medium');
+    unmount();
+  });
+
+  it('深度 ⇒ qwen3.7-flash + high', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'deep' }];
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(sendOptions()?.presetThinking).toBe('high');
+    unmount();
+  });
+
+  it('智能模式下 task.model 已下架（不在目录）⇒ 不拦发送（模式模型由目录现解析）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: 'retired-model' }];
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(mocks.send, '模式任务不因"任务记着的旧模型不在了"被拦').toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ 两档模型都不在目录 ⇒ 保持现状、不拦截（照发原模型）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'deep' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutModeModels };
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(mocks.send, '不拦：目录说话之前不替用户做决定').toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(LEGACY_MODEL_ID);
+    unmount();
+  });
+
+  it('高级（custom）⇒ 用户选的模型与档位原样带出', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'custom', model: 'glm-4.7', thinkingLevel: 'xhigh' }];
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [...catalogBase, { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter' }],
+    };
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe('glm-4.7');
+    expect(sendOptions()?.presetThinking).toBe('xhigh');
+    unmount();
+  });
+
+  it('⭐ 旧任务（mode 为空 + 有 model）⇒ custom 语义：不劫持既有模型', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, model: LEGACY_MODEL_ID, thinkingLevel: 'low' }];
+    // 目录里 qwen 在，但旧任务仍然跑它自己记的模型
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe(LEGACY_MODEL_ID);
+    expect(sendOptions()?.presetThinking).toBe('low');
+    unmount();
+  });
+
+  it('⭐ 斜杠 `/model <id>`（用户显式指定模型）⇒ 模式落 custom（否则下一轮会被模式覆盖回去）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [...catalogBase, { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter' }],
+    };
+    const { container, unmount } = render(<ModeHarness draft="/model glm-4.7" />);
+
+    await clickSend(container);
+
+    expect(mocks.applySlashCommand, '命令走本地通路（不发消息）').toHaveBeenCalledWith('task-1', 'model', 'glm-4.7');
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-1', { mode: 'custom' });
+    unmount();
+  });
+
+  it('⭐ 模式任务不做视觉路由（带图也只按模式模型发；路由是给 custom / 旧会话兜底的）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [
+        { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
+        // 模式基础模型**没**自述看图；另有别的模型自述看图 —— 路由不能把模式换掉
+        { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text'] },
+        { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter', input: ['text', 'image'] },
+      ],
+    };
+    vi.mocked(window.clawwork.readInboxFileForSend).mockResolvedValue({
+      ok: true,
+      result: { content: 'cG5n', encoding: 'base64', byteLength: 3 },
+    } as never);
+    const imageMaterial: ImportedMaterialFile = {
+      taskId: 'task-1',
+      fileName: 'screenshot.png',
+      localPath: 'tasks/task-1/inbox/screenshot.png',
+      mimeType: 'image/png',
+      size: 64,
+      availability: 'available',
+    };
+    const { container, unmount } = render(<ModeHarness imported={[imageMaterial]} draft="看看这张图" />);
+
+    await clickSend(container);
+
+    expect(window.clawwork.patchSession, '模式任务不切模型').not.toHaveBeenCalled();
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+    expect(sendOptions()?.presetModel, '图片照发模式模型（递交给上游，按真实能力说话）').toBe(BASE_MODEL_ID);
+    unmount();
+  });
+});
+
+/**
+ * Deck 意图路由（2026-10-08 拍板）：演示类任务统一钉 **DeepSeek** —— 模式任务的**内部路由**。
+ *
+ * 真机实证：PPT 生成/改稿链在 qwen 上 20 分钟不收敛，DeepSeek 2.6 分钟出 9 页合格成品；
+ * 瓶颈是输出稳定性，与速度档无关 ⇒ 三档都路由。模式芯片仍显示用户选的那一档。
+ *
+ * 判据本身在 `lib/deck-intent.ts`（纯函数，单独钉 35 例）；这里只钉**接线**：
+ *   · 三档命中 ⇒ 换成目录里的 deepseek（qwen 不再）；
+ *   · 第一条命中 ⇒ 任务记 `deckRouted`（粘性：改稿那类不含名词的后续消息继续走）；
+ *   · `custom`（用户显式选的模型）永不被覆盖；
+ *   · 目录里没有 deepseek ⇒ 原样放行（不拦截、不报错）；
+ *   · 只认**用户手打的字**，附件名/文件正文不算。
+ */
+describe('Deck 意图路由：演示类任务钉 DeepSeek（模式任务的内部路由）', () => {
+  const BASE_MODEL_ID = 'qwen3.7-flash';
+  const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
+  const OTHER_MODEL_ID = 'qwen3.5-27b';
+  /** 目录里的真实写法带命名空间 —— 钉"原样交给 composer"，不自己拼前缀。 */
+  const DECK_MODEL_ID = 'clawrouter/deepseek-v4-flash';
+  const DECK_DRAFT = '帮我做一份 PPT，讲第三季度的数据';
+
+  const catalogWithDeck: ModelCatalogEntry[] = [
+    { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter' },
+    { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
+    { id: OTHER_MODEL_ID, name: 'Qwen 3.5 27B', provider: 'clawrouter' },
+    { id: DECK_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
+  ];
+  /** 目录里没有 deepseek（还没拉到 / 下架）。 */
+  const catalogWithoutDeck: ModelCatalogEntry[] = [
+    { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter' },
+    { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
+  ];
+
+  const sendOptions = (): Record<string, unknown> | undefined => mocks.send.mock.calls.at(-1)?.[1];
+  const deckRoutedWrites = (): unknown[] =>
+    mocks.taskState.updateTaskMetadata.mock.calls.filter(
+      (call) => (call[1] as { deckRouted?: boolean }).deckRouted === true,
+    );
+
+  async function clickSend(container: HTMLElement, buttonIndex: number): Promise<void> {
+    await act(async () => {
+      container.querySelectorAll('button')[buttonIndex]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+    mocks.send.mockClear();
+    mocks.toastError.mockClear();
+    mocks.toastInfo.mockClear();
+    mocks.toastWarning.mockClear();
+    mocks.taskState.updateTaskMetadata.mockClear();
+    mocks.meetingState.records = [];
+    mocks.taskState.activeTaskId = 'task-1';
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithDeck };
+    mocks.uiState.modelCatalogFailureByGateway = {};
+    Object.assign(window, {
+      clawwork: {
+        readInboxFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
+        })),
+        readTaskContextFileForSend: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
+        })),
+        patchSession: vi.fn(async () => ({ ok: true })),
+      },
+    });
+    compareStore().setState({ active: null, mode: false, error: null });
+    useCommercialStore.setState({
+      status: 'ready',
+      overview: {
+        account: { userId: 'u-1', phone: null, email: null, nickname: null, avatar: null },
+        org: null,
+        license: {
+          activated: true,
+          licenseId: 'license-1',
+          orgId: 'org-1',
+          licenseKey: 'RY-1',
+          sku: 'USB',
+          status: 'active',
+          expiresAt: null,
+          tokenQuotaMicros: 1000,
+          tokenUsedMicros: 10,
+        },
+        device: { fingerprint: 'fp', shortFingerprint: 'fp' },
+        fetchedAt: '2026-09-15T00:00:00.000Z',
+      },
+    });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it.each(['fast', 'smart', 'deep'] as const)(
+    '%s 档 + 演示意图 ⇒ 钉目录里的 deepseek（不是 qwen），并标记任务',
+    async (mode) => {
+      mocks.taskState.tasks = [{ ...mocks.baseTask, mode }];
+      const { container, unmount } = render(<Harness initialValue={DECK_DRAFT} />);
+
+      await clickSend(container, 1);
+
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(sendOptions()?.presetModel).toBe(DECK_MODEL_ID);
+      expect(deckRoutedWrites()).toEqual([['task-1', { deckRouted: true }]]);
+      unmount();
+    },
+  );
+
+  it('普通聊天（不含演示意图）⇒ 模式模型照旧，一个字段都不写', async () => {
+    const { container, unmount } = render(<Harness initialValue="帮我写一段周报" />);
+
+    await clickSend(container, 1);
+
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(deckRoutedWrites()).toEqual([]);
+    unmount();
+  });
+
+  it('⭐ 粘性：任务已标记 ⇒ 第二条"把标题改一下"（不含演示名词）仍走 deepseek，且不重复标记', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', deckRouted: true }];
+    const { container, unmount } = render(<Harness initialValue="把标题改成第三季度的数据" />);
+
+    await clickSend(container, 1);
+
+    expect(sendOptions()?.presetModel).toBe(DECK_MODEL_ID);
+    expect(deckRoutedWrites()).toEqual([]);
+    unmount();
+  });
+
+  it('⭐ custom（用户显式选的模型）⇒ 演示意图也不覆盖、不标记', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'custom', model: OTHER_MODEL_ID, thinkingLevel: 'low' }];
+    const { container, unmount } = render(<Harness initialValue="帮我做个 deck 讲季度数据" />);
+
+    await clickSend(container, 1);
+
+    expect(sendOptions()?.presetModel).toBe(OTHER_MODEL_ID);
+    expect(deckRoutedWrites()).toEqual([]);
+    unmount();
+  });
+
+  it('⭐ 目录里没有 deepseek ⇒ 原样放行（照发模式模型、不拦截），但任务照记"这是 deck 任务"', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutDeck };
+    const { container, unmount } = render(<Harness initialValue={DECK_DRAFT} />);
+
+    await clickSend(container, 1);
+
+    expect(mocks.send, '不拦：目录说话之前不替用户做决定').toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel, '路由不了就照旧跑模式模型').toBe(BASE_MODEL_ID);
+    expect(deckRoutedWrites()).toEqual([['task-1', { deckRouted: true }]]);
+    unmount();
+  });
+
+  it('⭐ 判据只吃用户手打的字：附件叫「培训课件.pdf」不算演示意图', async () => {
+    const pdfMaterial: ImportedMaterialFile = {
+      taskId: 'task-1',
+      fileName: '培训课件.pdf',
+      localPath: 'tasks/task-1/inbox/培训课件.pdf',
+      mimeType: 'application/pdf',
+      size: 64,
+      availability: 'available',
+    };
+    const { container, unmount } = render(
+      <MaterialHarness
+        clearImported={vi.fn()}
+        clearFolder={vi.fn()}
+        importedMaterials={[pdfMaterial]}
+        draft="总结一下这个文件"
+      />,
+    );
+
+    await clickSend(container, 0);
+
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(deckRoutedWrites()).toEqual([]);
+    unmount();
   });
 });

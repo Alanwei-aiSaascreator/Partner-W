@@ -111,6 +111,103 @@ describe('ArtifactCard', () => {
     },
   );
 
+  /**
+   * ⭐ 2026-10-07 体检 P2-3：`unknown`（连接中）**不是** `missing`（缺失）。
+   *
+   * 冷启动/网关没连上时判不了，说成"文件缺失"并提示"重新生成"是在教用户修一个
+   * 可能根本没坏的文件。文案单列（「暂不可用（连接中）」）、不打警告标、不给恢复提示。
+   */
+  it('⭐ unknown（暂不可用/连接中）：文案单列、不给"重新生成"提示，按钮仍禁用', () => {
+    const { container, unmount } = render(<ArtifactCard artifact={{ ...artifact, availability: 'unknown' }} />);
+
+    expect(container.textContent).toContain('artifactCard.unknown');
+    expect(container.textContent).not.toContain('artifactCard.missing');
+    expect(container.textContent).not.toContain('artifactCard.recoveryHint');
+    expect(
+      ['artifactCard.saveAs', 'artifactCard.open', 'artifactCard.showInFolder'].every(
+        (label) => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)?.disabled,
+      ),
+    ).toBe(true);
+    unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-07 体检 P3-8：打开失败要**带着下一步**留下。
+   *
+   * 改之前是 2.4 秒一闪而过的通用文案（"操作未完成"）——等于什么都没说：
+   * 用户既不知道出了什么事，也不知道还能做什么。
+   */
+  it('⭐ 打开失败：留下明确文案与"在文件夹中显示"的提示', async () => {
+    vi.mocked(window.clawwork.openArtifactFile).mockResolvedValue({ ok: false, error: 'artifact invalid' });
+    const { container, unmount } = render(<ArtifactCard artifact={artifact} />);
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.open"]')?.click());
+
+    expect(container.textContent).toContain('artifactCard.openFailed');
+    expect(container.textContent).toContain('artifactCard.openFailedHint');
+    unmount();
+  });
+
+  it('打开成功不留失败文案（负对照）', async () => {
+    const { container, unmount } = render(<ArtifactCard artifact={artifact} />);
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.open"]')?.click());
+
+    expect(container.textContent).not.toContain('artifactCard.openFailed');
+    expect(container.textContent).not.toContain('artifactCard.openFailedHint');
+    unmount();
+  });
+
+  /**
+   * ⭐⭐ BUG-042-b（2026-10-08 亲验）：**"打不开"有两种，不能都说成"损坏"**。
+   *
+   * 机器里没装 Word/WPS ⇒ 系统没有可打开它的程序；文件本身是好的。
+   * 旧界面对任何打开失败都弹「文件可能已损坏或未写完」—— 用户会白白重做一遍。
+   * 判据：`artifact invalid`（复核确证坏件）才用"损坏"；`artifact no-opener`（没有关联程序）
+   * 用「装个程序再试」；其余认不出的一律走中性文案，不替用户下结论。
+   */
+  describe('⭐ 打开失败原因分类（BUG-042-b）', () => {
+    const open = (container: HTMLElement) =>
+      act(async () => container.querySelector<HTMLButtonElement>('[aria-label="artifactCard.open"]')?.click());
+    /** 状态行那一格的字（`role="status"`）—— 别拿整卡 textContent 判，提示行名字里也含 openFailed。 */
+    const status = (container: HTMLElement) => container.querySelector('[role="status"]')?.textContent ?? '';
+
+    it('没有关联程序 ⇒ 说"系统里没有可打开的程序"，不说"损坏"', async () => {
+      vi.mocked(window.clawwork.openArtifactFile).mockResolvedValue({ ok: false, error: 'artifact no-opener' });
+      const { container, unmount } = render(<ArtifactCard artifact={artifact} />);
+
+      await open(container);
+
+      expect(status(container)).toContain('artifactCard.noAppToOpen');
+      // 下一步照旧：去文件夹里手动打开
+      expect(container.textContent).toContain('artifactCard.openFailedHint');
+      unmount();
+    });
+
+    it('坏件（artifact invalid）⇒ 仍是"损坏"文案（不许被分类成 no-opener）', async () => {
+      vi.mocked(window.clawwork.openArtifactFile).mockResolvedValue({ ok: false, error: 'artifact invalid' });
+      const { container, unmount } = render(<ArtifactCard artifact={artifact} />);
+
+      await open(container);
+
+      expect(status(container)).toContain('artifactCard.openFailed');
+      expect(status(container)).not.toContain('artifactCard.noAppToOpen');
+      unmount();
+    });
+
+    it('认不出的系统错误 ⇒ 中性文案（不替用户说"损坏"）', async () => {
+      vi.mocked(window.clawwork.openArtifactFile).mockResolvedValue({ ok: false, error: 'Access is denied.' });
+      const { container, unmount } = render(<ArtifactCard artifact={artifact} />);
+
+      await open(container);
+
+      expect(status(container)).toContain('artifactCard.error');
+      expect(status(container)).not.toContain('artifactCard.openFailed');
+      expect(status(container)).not.toContain('artifactCard.noAppToOpen');
+      unmount();
+    });
+  });
+
   it('renders real assistant artifacts inside the originating chat message', () => {
     const { container, unmount } = render(
       <ChatMessage

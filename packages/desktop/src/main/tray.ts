@@ -35,7 +35,9 @@ const SPINNER_FRAMES = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'];
 
 function getIconPath(): string {
   if (is.dev) {
-    return join(__dirname, '../../build/icon.png');
+    // 2026-10-07 质量战役构建回归：打包产物主 chunk 丢了 CJS shim（预14 有、预15 无），
+    // 裸 __dirname 在 ESM 产物里 ReferenceError 崩掉窗口创建。改用 import.meta.dirname（ESM 原生）。
+    return join(import.meta.dirname, '../../build/icon.png');
   }
   return join(process.resourcesPath, 'icon.png');
 }

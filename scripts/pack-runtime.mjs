@@ -22,6 +22,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  patchRelayVideoRuntime,
+  RELAY_VIDEO_RUNTIME_ENTRY,
+  RELAY_VIDEO_RUNTIME_PATCH_ID,
+} from './lib/relay-video-runtime.mjs';
+import {
   bundleOfficialSearchPlugin,
   officialSearchPluginSpec,
   OFFICIAL_SEARCH_RUNTIME_ENTRY,
@@ -31,6 +36,11 @@ import {
   WEB_SEARCH_AVAILABILITY_ENTRY,
   WEB_SEARCH_AVAILABILITY_PATCH_ID,
 } from './lib/web-search-availability-runtime.mjs';
+import {
+  patchProviderCapabilityRuntime,
+  PROVIDER_CAPABILITY_ENTRY,
+  PROVIDER_CAPABILITY_PATCH_ID,
+} from './lib/provider-capability-runtime.mjs';
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
@@ -305,10 +315,18 @@ async function main() {
   ]);
   const pkgDir = path.join(stage, 'node_modules', 'openclaw');
   if (!fs.existsSync(pkgDir)) throw new Error(`装完了但 ${pkgDir} 不存在`);
+  const videoRuntime = path.join(stage, RELAY_VIDEO_RUNTIME_ENTRY);
+  fs.writeFileSync(videoRuntime, patchRelayVideoRuntime(fs.readFileSync(videoRuntime, 'utf8')));
   const searchPlugin = bundleOfficialSearchPlugin(stage);
   const lobsterPlugin = bundleOfficialLobsterPlugin(stage);
   const searchRuntime = path.join(stage, WEB_SEARCH_AVAILABILITY_ENTRY);
   fs.writeFileSync(searchRuntime, patchWebSearchAvailabilityRuntime(fs.readFileSync(searchRuntime, 'utf8')));
+  // rongying-provider-capability-v1：看图能力改读目录声明（否则 relay 加了 vision 模型也白搭）
+  const providerCapabilityRuntime = path.join(stage, PROVIDER_CAPABILITY_ENTRY);
+  fs.writeFileSync(
+    providerCapabilityRuntime,
+    patchProviderCapabilityRuntime(fs.readFileSync(providerCapabilityRuntime, 'utf8')),
+  );
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
   const debugSkillsPatch = bundleWindowsDebugSkills(stage);
@@ -362,8 +380,10 @@ async function main() {
     sha256,
     extractor: 'win32-x64/extractor/7za.exe',
     patches: [
+      RELAY_VIDEO_RUNTIME_PATCH_ID,
       searchPlugin.patchId,
       WEB_SEARCH_AVAILABILITY_PATCH_ID,
+      PROVIDER_CAPABILITY_PATCH_ID,
       nativePatch,
       videoFramesPatch,
       debugSkillsPatch,

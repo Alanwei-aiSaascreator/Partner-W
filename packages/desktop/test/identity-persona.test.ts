@@ -9,6 +9,10 @@ import {
   buildIdentityBlock,
   mergeIdentityIntoUserMd,
   nextTagSelection,
+  readStoredIdentityTags,
+  saveStoredIdentityTags,
+  userMdContentFromReadResult,
+  type IdentityTagsStorage,
 } from '../src/renderer/lib/identity-persona';
 
 /**
@@ -54,6 +58,21 @@ describe('buildIdentityBlock', () => {
 
     expect(block).toContain('高效办公');
     expect(block).not.toMatch(/标签：\s*$/m);
+  });
+
+  it('带上首跑的「一句话介绍」（2026-10-07 体检问题 11：以前只写不读）', () => {
+    const block = buildIdentityBlock({
+      groupLabel: '制造业 · 运营',
+      tagLabels: ['目标导向'],
+      introduction: '  做小家电的  ',
+    });
+
+    expect(block).toContain('- 介绍：做小家电的');
+  });
+
+  it('没有介绍（或只有空白）时不留一行空的「介绍：」', () => {
+    expect(buildIdentityBlock({ groupLabel: '制造业', tagLabels: [], introduction: '   ' })).not.toContain('- 介绍：');
+    expect(buildIdentityBlock({ groupLabel: '制造业', tagLabels: [] })).not.toContain('- 介绍：');
   });
 });
 
@@ -122,5 +141,132 @@ describe('mergeIdentityIntoUserMd', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.content.length).toBeLessThanOrEqual(USER_MD_MAX_CHARS);
+  });
+
+  it('⭐ 结束标记被手删 ⇒ 只吞掉身份块自己那几行，后面用户写的内容一个字不丢（问题 12c）', () => {
+    const userOwned = [
+      '# 我的笔记',
+      '<!-- 身份中心：自动写入，请勿手改 -->',
+      '## 我的身份',
+      '- 客群：制造业',
+      '- 标签：目标导向',
+      '',
+      '## 我自己补的段落',
+      '这是用户手写的内容，绝不能被吞掉。',
+    ].join('\n');
+
+    const r = mergeIdentityIntoUserMd(userOwned, block);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.content).toContain('# 我的笔记');
+    expect(r.content).toContain('这是用户手写的内容，绝不能被吞掉。');
+    expect(r.content).not.toContain('- 客群：制造业');
+    expect(r.content.split(IDENTITY_BLOCK_START)).toHaveLength(2); // 只有新写的那一份
+  });
+
+  it('结束标记被删且它后面直接接着用户的行（含用户自己的列表项）⇒ 也只吞身份块自己的行', () => {
+    const userOwned = [
+      '<!-- 身份中心：自动写入，请勿手改 -->',
+      '## 我的身份',
+      '- 标签：目标导向',
+      '用户自己接的一句话',
+      '- 我自己的列表项',
+    ].join('\n');
+
+    const r = mergeIdentityIntoUserMd(userOwned, block);
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // 用户那两行活下来了，而且在**前面**（旧块被摘掉、新块追加在后面）
+    expect(r.content.trim().startsWith('用户自己接的一句话')).toBe(true);
+    expect(r.content).toContain('- 我自己的列表项');
+    expect(r.content.split(IDENTITY_BLOCK_START)).toHaveLength(2); // 只有新写的那一份
+    expect(r.content.split('## 我的身份')).toHaveLength(2); // 旧块整段被摘掉（标题只剩一个）
+  });
+});
+
+/* ── 读回助手文件：真机载荷形状（2026-10-07 体检问题 1） ── */
+
+describe('userMdContentFromReadResult', () => {
+  it('⭐ 真机载荷 { file: { name, content, missing } } ⇒ 取到正文', () => {
+    expect(
+      userMdContentFromReadResult({
+        agentId: 'main',
+        workspace: 'w',
+        file: { name: 'USER.md', content: '用户自己写的', missing: false },
+      }),
+    ).toBe('用户自己写的');
+  });
+
+  it('文件不存在（missing:true）⇒ 空串（本来就没有要保住的字节）', () => {
+    expect(userMdContentFromReadResult({ file: { name: 'USER.md', content: '', missing: true } })).toBe('');
+    expect(userMdContentFromReadResult({ file: { name: 'USER.md', missing: true } })).toBe('');
+  });
+
+  it('契约里 content 可选 ⇒ 文件在但没 content 就是空文件', () => {
+    expect(userMdContentFromReadResult({ file: { name: 'USER.md', missing: false } })).toBe('');
+  });
+
+  it('⭐ 错位形状（就是那个"恒读成空串"的 payload）⇒ null = 读失败，绝不当空文件', () => {
+    // 老代码读的就是这个：`result.content` —— 它不存在。若有人改回去，恒返回 ''，覆盖用户的记忆。
+    expect(userMdContentFromReadResult({ content: '用户自己写的' })).toBeNull();
+    expect(userMdContentFromReadResult({ file: { content: 42 } })).toBeNull();
+    expect(userMdContentFromReadResult(null)).toBeNull();
+    expect(userMdContentFromReadResult('not an object')).toBeNull();
+    expect(userMdContentFromReadResult({ file: null })).toBeNull();
+  });
+});
+
+/* ── 偏好标签的回读缓存（2026-10-07 体检问题 4） ── */
+
+describe('偏好标签回读缓存', () => {
+  function memoryStorage(): IdentityTagsStorage & { values: Map<string, string> } {
+    const values = new Map<string, string>();
+    return {
+      values,
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => void values.set(key, value),
+    };
+  }
+
+  it('⭐ 存进去再读回来是同一组（按账号分键，换账号读不到）', () => {
+    const storage = memoryStorage();
+    saveStoredIdentityTags('user-1', ['goalOriented', 'timeManagement'], storage);
+
+    expect(readStoredIdentityTags('user-1', storage)).toEqual(['goalOriented', 'timeManagement']);
+    expect(readStoredIdentityTags('user-2', storage)).toBeNull();
+    expect(readStoredIdentityTags(null, storage)).toBeNull();
+    expect(readStoredIdentityTags(undefined, storage)).toBeNull();
+  });
+
+  it('没存过 / 坏 JSON / 空数组 / 陌生项 ⇒ null（调用方回默认四标签）', () => {
+    const storage = memoryStorage();
+    expect(readStoredIdentityTags('user-1', storage)).toBeNull();
+
+    storage.setItem('rongying-cube:identity-tags:v1:user-1', 'not json');
+    expect(readStoredIdentityTags('user-1', storage)).toBeNull();
+
+    storage.setItem('rongying-cube:identity-tags:v1:user-1', '[]');
+    expect(readStoredIdentityTags('user-1', storage)).toBeNull();
+
+    storage.setItem('rongying-cube:identity-tags:v1:user-1', '["goalOriented","陌生标签"]');
+    expect(readStoredIdentityTags('user-1', storage)).toBeNull();
+  });
+
+  it('存储本身炸了也不许把保存流程带崩（读 null / 写吞掉）', () => {
+    const broken: IdentityTagsStorage = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    expect(readStoredIdentityTags('user-1', broken)).toBeNull();
+    expect(() => saveStoredIdentityTags('user-1', ['efficiency'], broken)).not.toThrow();
+    // 空选择 / 没账号：不写（保存流程本身有"至少选一个"的守卫）
+    expect(() => saveStoredIdentityTags(null, ['efficiency'], broken)).not.toThrow();
+    expect(() => saveStoredIdentityTags('user-1', [], broken)).not.toThrow();
   });
 });

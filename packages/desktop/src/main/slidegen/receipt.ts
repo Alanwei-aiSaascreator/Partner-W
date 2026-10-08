@@ -6,8 +6,17 @@ import { readSlideSourceFile, readWorkspaceBytes } from './source-file.js';
 import { extractSlidegenBlocks } from './blocks.js';
 import { evaluateSlide } from './evaluate.js';
 import { imageNames } from './resources.js';
+import { parseTemplateDeck } from '../docgen/pptx-template/parse.js';
+import { checkNativePpt } from '../docgen/pptx-template/check.js';
+import { verifyTemplateDeck, type SlotTable, type TemplateDeckContent } from '../docgen/template-deck/index.js';
 
 interface ReceiptInput {
+  sourceFormat?: 'native-template-v5';
+  templateContract?: 'templateDeck-v2';
+  revision?: number;
+  previousOutputSha256?: string;
+  previousFileName?: string;
+  previousReceiptFile?: string;
   sourceFile: string;
   sourceSha256: string;
   fileName: string;
@@ -54,6 +63,14 @@ function parse(value: unknown): SlideGenerationReceipt {
     !integer(value.pages, SLIDEGEN_MAX_PAGES) ||
     value.visualReview !== 'not-performed' ||
     value.artifactIndexed !== false ||
+    (value.sourceFormat !== undefined && value.sourceFormat !== 'native-template-v5') ||
+    (value.templateContract !== undefined &&
+      (value.templateContract !== 'templateDeck-v2' || value.sourceFormat !== 'native-template-v5')) ||
+    (value.sourceFormat === 'native-template-v5' &&
+      (!Number.isSafeInteger(value.revision) ||
+        Number(value.revision) < 0 ||
+        Number(value.revision) > 1000000 ||
+        (Number(value.revision) > 0 && !sha(value.previousOutputSha256)))) ||
     !object(value.workspaceIdentity) ||
     typeof value.workspaceIdentity.dev !== 'string' ||
     typeof value.workspaceIdentity.ino !== 'string' ||
@@ -96,21 +113,75 @@ function identity(root: string) {
   const stats = fs.statSync(root, { bigint: true });
   return { dev: String(stats.dev), ino: String(stats.ino) };
 }
-function verify(root: string, receipt: SlideGenerationReceipt) {
+function verify(root: string, receipt: SlideGenerationReceipt, verifyParents = true) {
   const current = identity(root);
   if (current.dev !== receipt.workspaceIdentity.dev || current.ino !== receipt.workspaceIdentity.ino)
     throw new Error('receipt-workspace-changed');
-  const source = readSlideSourceFile(root, receipt.sourceFile);
+  const source =
+    receipt.sourceFormat === 'native-template-v5'
+      ? new TextDecoder('utf-8', { fatal: true }).decode(readWorkspaceBytes(root, receipt.sourceFile, 1024 * 1024))
+      : readSlideSourceFile(root, receipt.sourceFile);
   const output = readWorkspaceBytes(root, receipt.fileName, receipt.bytes);
   if (hash(source) !== receipt.sourceSha256 || output.length !== receipt.bytes || hash(output) !== receipt.outputSha256)
     throw new Error('receipt-version-mismatch');
-  const decks = extractSlidegenBlocks(source).decks;
-  if (decks.length !== 1) throw new Error('receipt-version-mismatch');
-  const pages = evaluateSlide(decks[0].source);
-  const prefix = fs.existsSync(path.join(root, 'assets')) ? 'assets' : '';
-  const expected = imageNames(pages).map((name) => path.posix.join(prefix, name));
+  let expected: string[];
+  let pageCount: number;
+  if (receipt.sourceFormat === 'native-template-v5') {
+    if (verifyParents && (receipt.revision ?? 0) > 0) {
+      if (!relative(receipt.previousFileName) || !relative(receipt.previousReceiptFile))
+        throw new Error('receipt-parent-invalid');
+      const parent = parse(
+        JSON.parse(readWorkspaceBytes(root, receipt.previousReceiptFile, 1024 * 1024).toString('utf8')),
+      );
+      if (
+        parent.sourceFormat !== 'native-template-v5' ||
+        parent.templateContract !== receipt.templateContract ||
+        parent.revision !== receipt.revision! - 1 ||
+        parent.fileName !== receipt.previousFileName ||
+        parent.outputSha256 !== receipt.previousOutputSha256
+      )
+        throw new Error('receipt-parent-invalid');
+      verify(root, parent, false);
+    }
+    if (receipt.templateContract === 'templateDeck-v2') {
+      const raw = JSON.parse(source) as { template?: string; content?: TemplateDeckContent };
+      const tableResource = receipt.resources.find((resource) => path.basename(resource.file) === 'detail.json');
+      if (
+        raw.template !== 'templateDeck' ||
+        !raw.content ||
+        receipt.resources.length !== 2 ||
+        !tableResource ||
+        !receipt.resources.some((resource) => path.basename(resource.file) === 'tpl-native.pptx')
+      )
+        throw new Error('receipt-version-mismatch');
+      const detail = readWorkspaceBytes(root, tableResource.file, tableResource.bytes);
+      if (hash(detail) !== tableResource.sha256) throw new Error('receipt-version-mismatch');
+      const table = JSON.parse(detail.toString('utf8')) as SlotTable;
+      pageCount = verifyTemplateDeck(output, table, raw.content).pages;
+      expected = receipt.resources.map((resource) => resource.file);
+    } else {
+      const parsed = parseTemplateDeck(JSON.parse(source), { controlledNative: true });
+      if (!parsed.ok || !parsed.deck.controlledNative) throw new Error('receipt-version-mismatch');
+      pageCount = parsed.deck.slides.length;
+      if (
+        receipt.resources.length !== 2 ||
+        !receipt.resources.some((resource) => path.basename(resource.file) === 'business-deck-v5.pptx') ||
+        !receipt.resources.some((resource) => path.basename(resource.file) === 'blank-root.pptx')
+      )
+        throw new Error('receipt-version-mismatch');
+      checkNativePpt(output, parsed.deck);
+      expected = receipt.resources.map((resource) => resource.file);
+    }
+  } else {
+    const decks = extractSlidegenBlocks(source).decks;
+    if (decks.length !== 1) throw new Error('receipt-version-mismatch');
+    const pages = evaluateSlide(decks[0].source);
+    pageCount = pages.length;
+    const prefix = fs.existsSync(path.join(root, 'assets')) ? 'assets' : '';
+    expected = imageNames(pages).map((name) => path.posix.join(prefix, name));
+  }
   if (
-    pages.length !== receipt.pages ||
+    pageCount !== receipt.pages ||
     expected.length !== receipt.resources.length ||
     new Set(receipt.resources.map((entry) => entry.file)).size !== expected.length ||
     expected.some((file) => !receipt.resources.some((entry) => entry.file === file))

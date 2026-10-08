@@ -33,6 +33,7 @@ export function createElectronPorts(): PlatformPorts {
       onGatewayEvent: api.onGatewayEvent,
       onGatewayStatus: api.onGatewayStatus,
       onRuntimeStatus: api.onRuntimeStatus,
+      onRuntimeDeployProgress: api.onRuntimeDeployProgress,
     },
     settings: {
       getSettings: api.getSettings,

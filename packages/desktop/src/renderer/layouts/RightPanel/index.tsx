@@ -12,6 +12,7 @@ import ArtifactCard from '@/components/ArtifactCard';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { buildArtifactHistory } from '@/lib/artifact-history';
+import { groupArtifactVersions } from '@/lib/artifact-versions';
 import { toast } from '@/lib/toast';
 import { useTeamMeetingStore } from '@/features/team-meeting/instance';
 
@@ -47,8 +48,12 @@ export default function RightPanel() {
   const [allArtifacts, setAllArtifacts] = useState<Artifact[]>([]);
   const [historyWorkspaceEpoch, setHistoryWorkspaceEpoch] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 历史与问题文件（同任务的旧版本 + unsafe/missing）：默认折叠（图16 修复）。 */
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const refreshSequence = useRef(0);
+  /** 已排进当前帧的刷新（P3-9：一轮收尾会连发 N 条 artifact:saved）。 */
+  const scheduledFrame = useRef<number | null>(null);
 
   const refreshArtifacts = useCallback(async () => {
     const sequence = ++refreshSequence.current;
@@ -83,21 +88,39 @@ export default function RightPanel() {
     }
   }, [activeTaskId, meeting, scopeIds, scopeKey, workspaceEpoch]);
 
+  /**
+   * 把一次刷新**合并进当前帧**（2026-10-07 体检 P3-9）。
+   *
+   * 一轮任务收尾会连着发 N 条 `artifact:saved`（自动抽取是逐个产物发的），
+   * 每条都整轮刷新 = **2 次 `artifact:list`**（全表扫描 + 逐行 realpath/stat）——
+   * 连存 20 个产物就是 40 次全表扫描，白烧在"同一瞬间到达的同一批数据"上。
+   * 按帧合并：同一帧里到的信号只刷一次；跨帧的（用户真在连续操作）照旧各自刷。
+   */
+  const scheduleRefresh = useCallback(() => {
+    if (scheduledFrame.current !== null) return;
+    scheduledFrame.current = window.requestAnimationFrame(() => {
+      scheduledFrame.current = null;
+      void refreshArtifacts();
+    });
+  }, [refreshArtifacts]);
+
   useEffect(() => {
     void refreshArtifacts();
 
     const handleArtifactSaved = (artifact: Artifact) => {
       // ⚠️ 别的会话存了产物也要刷新历史区 —— 这正是"跨对话"要看见的东西
       //    （以前这里 `return` 掉，于是历史区要等下一次 mount 才更新）。
-      void refreshArtifacts();
       void artifact;
+      scheduleRefresh();
     };
     const cleanup = window.clawwork.onArtifactSaved(handleArtifactSaved);
     return () => {
+      if (scheduledFrame.current !== null) window.cancelAnimationFrame(scheduledFrame.current);
+      scheduledFrame.current = null;
       refreshSequence.current += 1;
       cleanup();
     };
-  }, [activeTaskId, refreshArtifacts]);
+  }, [activeTaskId, refreshArtifacts, scheduleRefresh]);
 
   /**
    * 历史产物（跨会话）：
@@ -113,6 +136,8 @@ export default function RightPanel() {
       ),
     [allArtifacts, activeTaskId, scopeIds, historyWorkspaceEpoch, workspaceEpoch],
   );
+  /** 图16（2026-10-06）：同任务默认只展示**每族最新可用版本**；旧版/问题文件折叠。 */
+  const versions = useMemo(() => groupArtifactVersions(currentTaskArtifacts), [currentTaskArtifacts]);
   const taskTitles = useMemo(() => new Map(tasks.map((task) => [task.id, task.title])), [tasks]);
 
   /** 跳回来源会话 —— 与「文件」主视图里那条"跳转到源消息"同一套动作。 */
@@ -151,14 +176,14 @@ export default function RightPanel() {
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2.5 px-3 py-3">
-          {currentTaskArtifacts.length === 0 ? (
+          {versions.current.length === 0 && versions.archived.length === 0 ? (
             <div className="flex items-center gap-2 px-2 py-1.5 text-[var(--text-muted)]">
               <FileText size={14} className="shrink-0 text-[var(--text-muted)]" />
               <span className="type-support">{t('common.noFiles')}</span>
             </div>
           ) : (
             <div className="space-y-2">
-              {currentTaskArtifacts.map((a) => {
+              {versions.current.map((a) => {
                 const selected = a.taskId === activeTaskId && a.id === selectedArtifactId;
                 return (
                   <div
@@ -187,6 +212,36 @@ export default function RightPanel() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* ── 历史与问题文件（同任务，图16）：默认折叠，不许铺满主列表 ── */}
+          {versions.archived.length > 0 && (
+            <div className="mt-1 border-t border-[var(--border)] pt-2" data-testid="artifact-archived">
+              <button
+                type="button"
+                data-action="toggle-artifact-archived"
+                aria-expanded={archiveOpen}
+                onClick={() => setArchiveOpen((open) => !open)}
+                className="glow-focus flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              >
+                {archiveOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className="type-support">
+                  {t('rightPanel.archivedArtifacts')} ({versions.archived.length})
+                </span>
+              </button>
+              {archiveOpen && (
+                <div className="mt-1.5 space-y-2">
+                  {versions.archived.map((a) => (
+                    <ArtifactCard
+                      key={a.id}
+                      artifact={a}
+                      compact
+                      onSelectMessage={(messageId) => jumpToTask(a.taskId, messageId)}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

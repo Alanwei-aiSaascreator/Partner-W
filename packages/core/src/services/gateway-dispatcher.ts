@@ -296,6 +296,7 @@ export interface GatewayDispatcherDeps {
     | 'ensureCompactionEpisode'
     | 'setSessionError'
     | 'markRetryableError'
+    | 'markAutoRetryFailure'
     | 'replaceStreamText'
   >;
 
@@ -340,6 +341,14 @@ export interface GatewayDispatcherDeps {
 
   setGatewayStatusByGateway: (gatewayId: string, status: 'connected' | 'connecting' | 'disconnected') => void;
   setGatewayVersion: (gatewayId: string, version: string | undefined) => void;
+  /**
+   * 网关协商下的单帧字节上限（`hello-ok.policy.maxPayload`），落进
+   * `gatewayMaxPayloadByGateway`；`undefined` = 没谈到（清条目）。
+   *
+   * ⚠️ 可选：缺了它只影响"发送字节预算按协商值收紧"这一件事（回落默认 25MiB 折算），
+   *    不影响连接/收发；宿主（desktop）已接，pwa 等形态不需要。
+   */
+  setGatewayMaxPayloadByGateway?: ((gatewayId: string, bytes: number | undefined) => void) | undefined;
   setGatewayReconnectInfo: (gatewayId: string, info: GatewayReconnectInfo | null) => void;
   /**
    * 本机运行时起不来的**公开原因**（`null` = 清掉这个结论）。
@@ -720,7 +729,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const connectedGateways = new Set<string>();
   /** 每个网关最多一个待执行的目录重试定时器（重连/成功后旧的作废）。 */
   const catalogRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const catalogRequests = new Map<string, { agentId?: string }>();
+  type CatalogRequest = { agentId?: string; isCurrent?: () => boolean };
+  const catalogRequests = new Map<string, CatalogRequest>();
   const effectiveToolsRequestTokens = new Map<string, symbol>();
   let synced = false;
 
@@ -1169,6 +1179,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         //    紧跟在 `addMessage` 之后（而不是提前算），是因为按钮要挂在**这一条**消息上。
         if (appError.retryable === 'yes') {
           store.markRetryableError(sessionKey, { taskId, messageId: shown.id });
+        }
+        // ⭐ 包 D：「整轮失败自动重发 1 次」的候选登记（与上面那只按钮**分开**）。
+        //    确定性失败（`'no'`）连候选都不是；`'yes'` 记瞬时、其余（认不出）记未分类。
+        //    真正发不发由渲染层决定 —— 还要过「零最终交付」严格判据（见
+        //    `useAutoRetryFailedTurn`），这里只负责把"有这么一次失败"如实传出去。
+        if (appError.retryable !== 'no') {
+          store.markAutoRetryFailure(sessionKey, {
+            taskId,
+            messageId: shown.id,
+            kind: appError.retryable === 'yes' ? 'transient' : 'unclassified',
+          });
         }
         const { title, description } = formatErrorForToast(appError, deps.translate);
         deps.onToast?.('error', title, { description });
@@ -1936,9 +1957,21 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           if (ephemeral) {
             store.setSessionError(sessionKey, formatErrorForUser(appError, deps.translate));
           } else if (shouldDisplayError(correlation)) {
-            store.addMessage(taskId, 'system', formatErrorForUser(appError, deps.translate), undefined, {
+            const shown = store.addMessage(taskId, 'system', formatErrorForUser(appError, deps.translate), undefined, {
               sessionKey,
             });
+            // ⭐ 包 D：「整轮失败自动重发 1 次」的候选登记（真机事故走的正是这条）。
+            //    这一支**没有结构化类别**（lifecycle 帧只有一句英文原文，`buildAppError`
+            //    拿不到 code/kind ⇒ `retryable` 恒为 `'unknown'`），所以登记成"未分类"。
+            //    `'no'` 的排除是给未来准备的：哪天这个帧带上了类别，确定性失败照样不登记。
+            //    发不发由渲染层决定（还要过「零最终交付」严格判据）。
+            if (appError.retryable !== 'no') {
+              store.markAutoRetryFailure(sessionKey, {
+                taskId,
+                messageId: shown.id,
+                kind: appError.retryable === 'yes' ? 'transient' : 'unclassified',
+              });
+            }
             const { title, description } = formatErrorForToast(appError, deps.translate);
             deps.onToast?.('error', title, { description });
             recordDisplayedError(correlation);
@@ -2047,8 +2080,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
-  function scheduleCatalogRetry(gatewayId: string, attempt: number, request: { agentId?: string }): void {
-    if (catalogRequests.get(gatewayId) !== request) return;
+  function ownsCatalogRequest(gatewayId: string, request: CatalogRequest): boolean {
+    return catalogRequests.get(gatewayId) === request && request.isCurrent?.() !== false;
+  }
+
+  function scheduleCatalogRetry(gatewayId: string, attempt: number, request: CatalogRequest): void {
+    if (!ownsCatalogRequest(gatewayId, request)) return;
     cancelCatalogRetry(gatewayId);
     const timer = setTimeout(() => {
       catalogRetryTimers.delete(gatewayId);
@@ -2068,8 +2105,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    *    退避用尽后落一个**显式失败态**（`setModelCatalogFailureForGateway`）——
    *    它既不是"没有模型"（那是替网关下结论），也不是"还在加载"（那会让人一直等）。
    */
-  function handleCatalogFailure(gatewayId: string, attempt: number, request: { agentId?: string }): void {
-    if (catalogRequests.get(gatewayId) !== request) return;
+  function handleCatalogFailure(gatewayId: string, attempt: number, request: CatalogRequest): void {
+    if (!ownsCatalogRequest(gatewayId, request)) return;
     if (attempt >= CATALOG_RETRY_DELAYS_MS.length) {
       deps.setModelCatalogFailureForGateway(gatewayId, true);
       return;
@@ -2090,13 +2127,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    *    ⚠️ 但**起链时**那次归位（`fetchCatalogs`，界面回到"正在准备"）要留着 ——
    *    它才是重连后不让用户看到上一轮失败结论的那一次。
    */
-  function applyModelsCatalog(
-    gatewayId: string,
-    models: unknown[],
-    attempt: number,
-    request: { agentId?: string },
-  ): void {
-    if (catalogRequests.get(gatewayId) !== request) return;
+  function applyModelsCatalog(gatewayId: string, models: unknown[], attempt: number, request: CatalogRequest): void {
+    if (!ownsCatalogRequest(gatewayId, request)) return;
     if (models.length > 0) {
       cancelCatalogRetry(gatewayId);
       deps.setModelCatalogForGateway(gatewayId, models);
@@ -2110,15 +2142,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     scheduleCatalogRetry(gatewayId, attempt, request);
   }
 
-  async function refetchModelsCatalog(
-    gatewayId: string,
-    attempt: number,
-    request: { agentId?: string },
-  ): Promise<void> {
-    if (!request.agentId || catalogRequests.get(gatewayId) !== request) return;
+  async function refetchModelsCatalog(gatewayId: string, attempt: number, request: CatalogRequest): Promise<void> {
+    if (!request.agentId || !ownsCatalogRequest(gatewayId, request)) return;
     try {
       const res = await deps.gateway.listModels(gatewayId, request.agentId);
-      if (catalogRequests.get(gatewayId) !== request) return;
+      if (!ownsCatalogRequest(gatewayId, request)) return;
       if (res.ok && res.result) {
         const data = res.result as unknown as ModelListResponse;
         if (data.models) {
@@ -2134,9 +2162,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
-  async function fetchCatalogs(gatewayId: string): Promise<void> {
+  async function fetchCatalogs(gatewayId: string, isCurrent?: () => boolean): Promise<void> {
+    if (isCurrent?.() === false) return;
     cancelCatalogRetry(gatewayId);
-    const request: { agentId?: string } = {};
+    const request: CatalogRequest = { isCurrent };
     catalogRequests.set(gatewayId, request);
     // 起一条新链：先把「取不到」归位（界面回到"正在准备"），失败与为空都会自己再走退避。
     deps.setModelCatalogFailureForGateway(gatewayId, false);
@@ -2144,7 +2173,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     // 不能因为同一批里别的目录抛错就被整体的 try/catch 吞掉。
     try {
       const agentsRes = await deps.gateway.listAgents(gatewayId);
-      if (catalogRequests.get(gatewayId) !== request) return;
+      if (!ownsCatalogRequest(gatewayId, request)) return;
       if (agentsRes.ok && agentsRes.result) {
         const data = agentsRes.result as unknown as AgentListResponse;
         if (data.agents) deps.setAgentCatalogForGateway(gatewayId, data.agents, data.defaultId);
@@ -2181,7 +2210,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         }),
         deps.gateway.getSkillsStatus(gatewayId, agentId),
       ]);
-      if (catalogRequests.get(gatewayId) !== request) return;
+      if (!ownsCatalogRequest(gatewayId, request)) return;
       if (toolsRes.ok && toolsRes.result) {
         const data = toolsRes.result as unknown as ToolsCatalog;
         if (data.groups) deps.setToolsCatalogForGateway(gatewayId, data);
@@ -2199,11 +2228,15 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         }
       }
     } catch (err) {
-      if (catalogRequests.get(gatewayId) === request && !request.agentId) {
+      if (ownsCatalogRequest(gatewayId, request) && !request.agentId) {
         deps.setModelCatalogFailureForGateway(gatewayId, true);
       }
       console.warn('[catalogs] Failed to fetch catalogs for gateway', gatewayId, err);
     }
+  }
+
+  function refreshCatalogsForGateway(gatewayId: string, options: { isCurrent?: () => boolean } = {}): Promise<void> {
+    return fetchCatalogs(gatewayId, () => connectedGateways.has(gatewayId) && options.isCurrent?.() !== false);
   }
 
   async function fetchEffectiveTools(gatewayId: string, sessionKey: string): Promise<void> {
@@ -2219,9 +2252,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     try {
       const response = await deps.gateway.getEffectiveTools(gatewayId, sessionKey);
       if (!response.ok) {
+        // 2026-10-06（10-01 用户实测 #1 同族，报告 issue1-investigation-20261006.md）：
+        // 打开任务时预取工具目录先于会话创建（会话在首条 sessions.patch 才懒建），
+        // "unknown session key" 属预期内瞬态、秒级自愈（首条消息后 L1395 自愈路径重拉）。
+        // 状态保持 fail-closed 的 error（不假装 ready、不回退 tools.catalog），
+        // 仅把上屏文案产品化——ToolsCatalog 悬停 title 直接拼该值，不再裸露英文。
+        const isSessionNotReady = /unknown session key/i.test(response.error ?? '');
         settle({
           status: 'error',
-          error: response.error || 'tools.effective failed',
+          error: isSessionNotReady
+            ? '会话尚未就绪，发送第一条消息后会自动恢复'
+            : response.error || 'tools.effective failed',
         });
         return;
       }
@@ -2342,6 +2383,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
             : ('connecting' as const);
         deps.setGatewayStatusByGateway(gwId, status);
         if (info.serverVersion) deps.setGatewayVersion(gwId, info.serverVersion);
+        if (info.maxPayloadBytes !== undefined) deps.setGatewayMaxPayloadByGateway?.(gwId, info.maxPayloadBytes);
         if (info.connected) connectedGateways.add(gwId);
       }
       if (connectedGateways.size > 0 && !synced) {
@@ -2369,6 +2411,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const next = s.connected ? ('connected' as const) : s.error ? ('disconnected' as const) : ('connecting' as const);
     deps.setGatewayStatusByGateway(s.gatewayId, next);
     deps.setGatewayVersion(s.gatewayId, s.serverVersion);
+    // ⚠️ 与 version 同一口径（缺席即清）：单帧上限是**连接参数**，断线/旧网关即"没谈到"，
+    //    发送预算随之回落默认值 —— 留着上一代的数字会让闸门按一个不再成立的值收紧。
+    deps.setGatewayMaxPayloadByGateway?.(s.gatewayId, s.maxPayloadBytes);
 
     if (s.reconnectAttempt !== undefined && s.maxAttempts !== undefined) {
       deps.setGatewayReconnectInfo(s.gatewayId, {
@@ -2470,6 +2515,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     startGatewayStatus,
     markAbortedByUser,
     fetchAgentsForGateway,
+    refreshCatalogsForGateway,
     fetchEffectiveTools,
     reset,
   };

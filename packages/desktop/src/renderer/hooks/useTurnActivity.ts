@@ -1,10 +1,45 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RETRY_RUN_PHASE, RUN_PHASE_IDS } from '@clawwork/core';
 import { useMessageStore } from '@/stores/messageStore';
-import { classifyToolActivity, latestAwaitingApproval, latestRunningCall } from '@/lib/tool-activity';
+import {
+  classifyToolActivity,
+  latestAwaitingApproval,
+  latestRunningCall,
+  sanitizeToolTitle,
+  type DisplayToolCall,
+} from '@/lib/tool-activity';
 import { waitingLineSuffix } from '@/lib/waiting-copy';
-import type { ToolCall } from '@clawwork/shared';
+
+/**
+ * 活动条该盯**哪一个会话**（区1 体检 P2-6）。
+ *
+ * ## 为什么需要它
+ *
+ * 多智能体/会议任务里，主会话（conductor）经常只是"派活"，真正在跑的是 performer 会话。
+ * 活动条原来只认 `activeTask.sessionKey` —— performer 在跑时整条不显示，
+ * 而正文里的 `TurnActivityRow` 照样在动：同一条链两种观感，用户以为输入框那边卡死了。
+ *
+ * 判据用**同一个** `processingBySession`（网关接单 = 这一轮真的在跑），不引入第二套口径：
+ *   - 主会话在跑 ⇒ 就是它（一切照旧）；
+ *   - 主会话没跑、某个候选会话在跑 ⇒ 用那个（performer）；
+ *   - 谁都没跑 ⇒ 还是主会话（调用方据此收掉整条）。
+ *
+ * ⚠️ 候选顺序 = 「主会话在前、performers 在后」（`getTaskSessionKeys` 的顺序），
+ *    取**第一个**在跑的 —— 与 `pickWaitingSessionKey` 同一条规矩，别在这里发明第二套。
+ */
+function resolveActivitySessionKey(
+  primary: string | null,
+  fallbackKeys: readonly string[],
+  processingBySession: ReadonlySet<string>,
+): string | null {
+  if (!primary) return null;
+  if (processingBySession.has(primary)) return primary;
+  for (const key of fallbackKeys) {
+    if (key && key !== primary && processingBySession.has(key)) return key;
+  }
+  return primary;
+}
 
 /**
  * 一轮在跑的"活动"推导 —— **唯一出口**（ComposerActivity 与 TurnActivityRow 共用）。
@@ -20,6 +55,8 @@ import type { ToolCall } from '@clawwork/shared';
  *   - 主行优先级：**等人批准的工具** > 正在跑的工具 > 上下文压缩 > 模型自述进度 >
  *     重试第 n/m 次 > 准备阶段 > 已结束工具计数 > 泛化"处理中"。
  *   - 轮换待机文案只描述等待，**不承诺完成时间**（见 waiting-copy.ts 头注释）。
+ *   - 第二个参数（候选会话）只给"整条任务级"的调用方用（`ComposerActivity`）：主会话没跑时
+ *     盯正在跑的 performer；会话内的 `TurnActivityRow` **不传**，永远只盯自己那一格。
  *
  * ⚠️ i18n key 必须以**字面量或 `t(`前缀${变量}`)` 模板串**的形式出现在源码里 ——
  *    `scripts/lib/i18n-usage.mjs` 的扫描器只认这两种形状（函数拼 key 会被判 unused）。
@@ -37,19 +74,29 @@ export interface TurnActivity {
   running: boolean;
 }
 
-export function useTurnActivity(sessionKey: string | null): TurnActivity {
+export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?: readonly string[]): TurnActivity {
   const { t } = useTranslation();
+  // ⚠️ 候选列表每次渲染都是新数组（调用方直接摆的），只按内容去重 —— 身份不稳定不影响正确性，
+  //    下面所有 selectors 返回的都是原始值（字符串/数字/布尔），不会触发额外渲染。
+  const fallbackKeys = useMemo(
+    () => (fallbackSessionKeys ?? []).filter((key) => key && key !== sessionKey),
+    [fallbackSessionKeys, sessionKey],
+  );
+  // 真正被盯的会话：主会话没在跑时退到正在跑的 performer（区1 体检 P2-6）。
+  const resolvedKey = useMessageStore((s) =>
+    resolveActivitySessionKey(sessionKey, fallbackKeys, s.processingBySession),
+  );
 
-  const active = useMessageStore((s) => (sessionKey ? s.processingBySession.has(sessionKey) : false));
-  const startedAt = useMessageStore((s) => (sessionKey ? s.turnStartedAtBySession[sessionKey] : undefined));
-  const runPhase = useMessageStore((s) => (sessionKey ? s.runPhaseBySession[sessionKey] : null));
+  const active = useMessageStore((s) => (resolvedKey ? s.processingBySession.has(resolvedKey) : false));
+  const startedAt = useMessageStore((s) => (resolvedKey ? s.turnStartedAtBySession[resolvedKey] : undefined));
+  const runPhase = useMessageStore((s) => (resolvedKey ? s.runPhaseBySession[resolvedKey] : null));
   // 重试到第几次了（只有 `run_status` 的 `phase:"retrying"` 才有）—— 见下面的文案分支。
-  const retry = useMessageStore((s) => (sessionKey ? s.runRetryBySession[sessionKey] : undefined));
+  const retry = useMessageStore((s) => (resolvedKey ? s.runRetryBySession[resolvedKey] : undefined));
   // 模型**自述**的进度（网关 item 流的 preamble）—— 正文不流式时唯一在动的东西。
-  const modelProgress = useMessageStore((s) => (sessionKey ? s.progressTextBySession[sessionKey] : null));
-  const toolCalls = useMessageStore((s) => (sessionKey ? s.activeTurnBySession[sessionKey]?.toolCalls : undefined));
+  const modelProgress = useMessageStore((s) => (resolvedKey ? s.progressTextBySession[resolvedKey] : null));
+  const toolCalls = useMessageStore((s) => (resolvedKey ? s.activeTurnBySession[resolvedKey]?.toolCalls : undefined));
   // 正在压缩上下文（B8 Phase 2）—— 压缩会让界面**停住一会儿**，必须有东西说明"为什么不动"。
-  const compacting = useMessageStore((s) => (sessionKey ? s.compactingBySession[sessionKey] === true : false));
+  const compacting = useMessageStore((s) => (resolvedKey ? s.compactingBySession[resolvedKey] === true : false));
 
   // 每秒重渲染一次，只为让秒数和轮播文案往前走。不在跑的时候连定时器都不挂。
   const [now, setNow] = useState(() => Date.now());
@@ -74,11 +121,12 @@ export function useTurnActivity(sessionKey: string | null): TurnActivity {
   // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > 正在跑的工具 >
   // 网关报的准备阶段 > 已结束工具调用计数 / 等待响应。
   let headline: string;
-  const activityLabel = (call: ToolCall): string => {
-    const title = call.title?.trim();
+  const activityLabel = (call: DisplayToolCall): string => {
+    // 图12（2026-10-06）：活动行同样走产品化——title 剥工具名/遮路径；拿不到就退回动作词
+    //（`other` 类原来直出原始工具名，现在同样退回词表里的「使用工具」）。
+    const title = sanitizeToolTitle(call.title, call.name);
     if (title) return title;
-    const kind = classifyToolActivity(call.name);
-    return kind === 'other' ? call.name : t(`toolActivity.actions.${kind}`);
+    return t(`toolActivity.actions.${classifyToolActivity(call.name)}`);
   };
   if (awaitingCall) {
     // ⚠️ **不复用 `runningTool`**："执行中：X" 说的是"在动"，而这条要说的是"没动，在等人"

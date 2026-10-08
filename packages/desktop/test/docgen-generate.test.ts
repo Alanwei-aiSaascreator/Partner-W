@@ -461,6 +461,18 @@ describe('documentFileNameFor', () => {
       expect(name.length, kind).toBeLessThanOrEqual(65);
     }
   });
+
+  /**
+   * ⭐ BUG-042-a（2026-10-08 亲验必炸）：标题里的**连续点**会原样进文件名，而落盘层
+   *    （`workspace/safe-name.ts`）把含 `..` 的名字当路径逃逸**无条件 throw** ⇒
+   *    整份文档报 `render-failed`、一个文件都不出。判据：产出名里没有 `..`。
+   *    ⚠️ 单个点必须保留 —— `v1.2 报告` 是正常标题。
+   */
+  it('⭐ 标题里的连续点不进化成 `..`（单个点照旧保留）', () => {
+    expect(documentFileNameFor('关于...的说明', 'docx')).toBe('关于·的说明.docx');
+    expect(documentFileNameFor('第1..3章', 'xlsx')).toBe('第1·3章.xlsx');
+    expect(documentFileNameFor('v1.2 报告', 'docx')).toBe('v1.2 报告.docx');
+  });
 });
 
 describe('docgen 块不会被当成代码产物（否则用户会看到一份 JSON 噪音）', () => {
@@ -561,5 +573,81 @@ describe('内嵌换行：一行都不许静默压扁，也就不许有产物', (
     });
     expect(result.failed).toEqual([]);
     expect(result.saved).toHaveLength(1);
+  });
+});
+
+/**
+ * ⭐ **演示意图硬门（H0，2026-10-07）**：这一轮用户要的是"给人看的演示" ⇒ docgen 的
+ * `kind:"pptx"` **一律不出片**，改回一条结构化诊断把模型导流到「幻灯版面（自己排）」。
+ *
+ * 为什么要有它（根因链）：模型选路靠技能 description 这一句软约束，绕道成本极低 ——
+ * 真机上它就走了"文档生成"的 pptx（白底 + 项目符号的素版），成品直接进产物、
+ * 用户只看到一份"简约垃圾版"。**提示词层面拦不住，只能在数据层拦**：
+ * 拦掉之后那段 docgen 块什么也生不出来，模型下一轮收到的那条诊断会明确告诉它
+ * "演示必须走幻灯版面、整份版面写进 `.slidegen` 文件"。
+ *
+ * ⚠️ 边界（这一组用例专门钉住的）：
+ * - **只有 pptx 被拦**：同一段回复里的 docx / xlsx 照常出片；
+ * - **只有演示意图被拦**：用户明确要素版草稿（普通请求）照旧走 docgen；
+ * - **受控模式优先**：受控验收里 docgen pptx 本来就是**静默**跳过（native 链自己出片）
+ *   ⇒ 两个旗标同时成立时不许冒出一条失败（那会在交付链上凭空多一句"没生成"）。
+ */
+describe('演示意图硬门（pptx 改道幻灯版面）', () => {
+  it('⭐ 演示意图 ⇒ kind:pptx 不出片，回一条导流诊断（教模型下一步走哪条路）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+      reroutePptxToSlidegen: true,
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'presentation-slidegen-required', format: 'pptx' }]);
+    // **从来没进过产物通道** —— 不是"生成了再删"（拦的就是那份素版）
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 同一段回复里 docx/xlsx 照常出片 —— 被拦的只有演示', async () => {
+    const content = [docgenBlock(PPTX), '', docgenBlock(DOCX), '', docgenBlock(XLSX)].join('\n');
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content,
+      reroutePptxToSlidegen: true,
+    });
+
+    expect(result.saved.map((a) => a.name)).toEqual(['内测报告.docx', '九月台账.xlsx']);
+    expect(result.failed).toEqual([{ code: 'presentation-slidegen-required', format: 'pptx' }]);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
+    expect(savedParams(0).fileName).toBe('内测报告.docx');
+  });
+
+  it('⭐ 受控模式优先：skipPptx 与演示意图同时成立 ⇒ 静默跳过（不冒失败）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+      skipPptx: true,
+      reroutePptxToSlidegen: true,
+    });
+
+    expect(result).toEqual({ saved: [], failed: [] });
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('负对照：非演示意图（用户明确要素版草稿）⇒ 照旧走 docgen 出片', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
   });
 });

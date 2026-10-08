@@ -4,7 +4,9 @@ import { MessagesSquare, Square, ArrowUpRight } from 'lucide-react';
 import { isTeamMeetingActive } from '@clawwork/shared';
 import type { TeamMeetingRecord } from '@clawwork/shared';
 import { Button } from '@/components/ui/button';
+import { useTaskStore } from '@/platform';
 import type { MeetingMember } from './plan';
+import { vendorsDistinct } from './vendor';
 
 interface Props {
   members: MeetingMember[];
@@ -25,11 +27,23 @@ export default function TeamMeetingPanel(props: Props) {
   const [models, setModels] = useState<Record<string, string>>({});
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tasks = useTaskStore((state) => state.tasks);
   const active = props.records.some((record) => isTeamMeetingActive(record));
-  const selectedMembers = selected.flatMap((id) => {
-    const member = props.members.find((candidate) => candidate.agentId === id);
-    return member ? [{ ...member, model: models[id] ?? member.model }] : [];
-  });
+  // 审核（第 2 位）没手选模型时自动换到另一家厂商 —— 审核必须换厂商，别让用户踩坑。
+  const selectedMembers = (() => {
+    const chosen: MeetingMember[] = [];
+    for (const id of selected) {
+      const member = props.members.find((candidate) => candidate.agentId === id);
+      if (!member) continue;
+      let model = models[id] ?? member.model;
+      if (chosen.length === 1 && !models[id] && !vendorsDistinct(chosen[0].model, model)) {
+        const alternative = props.models.find((candidate) => vendorsDistinct(chosen[0].model, candidate));
+        if (alternative) model = alternative;
+      }
+      chosen.push({ ...member, model });
+    }
+    return chosen;
+  })();
   const selectionChanged = selectedMembers.length !== selected.length;
   const unavailable = !props.connected || props.members.length < 2;
   const canStart =
@@ -56,7 +70,7 @@ export default function TeamMeetingPanel(props: Props) {
   };
   return (
     <section className="space-y-4" aria-label={t('meeting.title')}>
-      <p className="type-support text-[var(--text-secondary)]">{t('meeting.description')}</p>
+      {/* 描述由对话框头 TeamMeetingEntry 的 DialogDescription 渲染（aria-describedby），此处不得重复 */}
       <p className="type-meta text-[var(--text-muted)]">{t('meeting.costWarning')}</p>
       {unavailable && (
         <p role="status" className="type-support text-[var(--text-muted)]">
@@ -170,6 +184,19 @@ export default function TeamMeetingPanel(props: Props) {
                       <ArrowUpRight size={12} />
                     </span>
                     <span className="type-support block truncate">{turn.agentName}</span>
+                    {(() => {
+                      const task = tasks.find((row) => row.id === turn.taskId);
+                      if (!task?.model) return null;
+                      return (
+                        <span className="type-meta text-[var(--text-muted)] block truncate">
+                          {t('meeting.turnUsage', {
+                            model: task.model,
+                            input: task.inputTokens ?? 0,
+                            output: task.outputTokens ?? 0,
+                          })}
+                        </span>
+                      );
+                    })()}
                     <span className="type-meta text-[var(--text-muted)]">{t(`meeting.turn.${turn.status}`)}</span>
                   </button>
                   {turn.failure && <p className="type-meta break-words mt-1">{turn.failure}</p>}

@@ -69,6 +69,20 @@ extraResources:
   #    靠 `test/pptx-template-packaging-gate.test.ts` 断言两者相等钉住。
   - from: resources/pptx-templates
     to: pptx-templates
+  # 冷启动开场片（1 分钟，含内嵌音轨）。落点 `<resources>/media`，客户端侧见
+  # `src/main/media/opening-asset.ts`（`clawwork-asset://media/opening.mp4`）。
+  #
+  # ⚠️ 媒体**绝不能**打进 app.asar（同 pptx-templates 的理由：大文件走 extraResources，
+  #    且真机现场"删掉 opening.mp4 即回兜底"的 kill-switch 依赖它是普通文件）。
+  #
+  # ⚠️ `to:` 必须与 `@clawwork/shared` 的 `OPENING_MEDIA_DIR_NAME` 一字不差，
+  #    靠 `test/opening-media-packaging-gate.test.ts` 钉住。
+  #
+  # ⚠️ `resources/media/` 目录里**必须永远有一个占位文件**（.gitkeep）：
+  #    `scripts/require-bundled-runtime.cjs` 对字面量源的缺失是**硬失败** ——
+  #    删掉占位文件会让构建直接红，且报错文案会误导成"随包运行时缺源"。
+  - from: resources/media
+    to: media
 # ⚠️ electron-builder 只接受**一个** beforePack ⇒ 这里是组合钩子，
 #    两道门禁（随包运行时 / 内嵌更新公钥）各自的判定在各自那个文件里。
 beforePack: ./scripts/before-pack.cjs

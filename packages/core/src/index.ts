@@ -57,7 +57,7 @@ export {
   activeTurnToMessage,
   EMPTY_MESSAGES,
 } from './stores/message-store.js';
-export type { MessageState, MessageStoreDeps, ActiveTurn } from './stores/message-store.js';
+export type { MessageState, MessageStoreDeps, ActiveTurn, AutoRetryFailure } from './stores/message-store.js';
 
 export { createTaskStore, UnknownAgentError } from './stores/task-store.js';
 export type { TaskState, TaskStoreDeps, PendingNewTask } from './stores/task-store.js';
@@ -117,7 +117,7 @@ export {
   templateToInstallDefinition,
 } from './services/agent-template-service.js';
 export type { AgentInstallDefinition } from './services/agent-template-service.js';
-export { describeTemplateError } from './services/agent-template-error-message.js';
+export { describeTemplateError, describeTemplateErrorKey } from './services/agent-template-error-message.js';
 export {
   normalizeGrowthSummary,
   normalizeGrowthHistory,
@@ -171,7 +171,7 @@ export type {
   ComputerAccessTier,
 } from './services/computer-access.js';
 
-export { createSystemSessionService } from './services/system-session-service.js';
+export { createSystemSessionService, SYSTEM_SESSION_BUSY } from './services/system-session-service.js';
 export type { SystemSessionServiceDeps, SystemSessionService } from './services/system-session-service.js';
 
 export {
@@ -238,3 +238,40 @@ export {
   rankKbCandidates,
 } from './services/kb/retrieval.js';
 export type { KbSearchCandidate, KbSearchHit, KbRankOptions, KbRankResult } from './services/kb/retrieval.js';
+
+// ── 生产能力注册表（BUG-043）：能力三态 + 验证账本 + Planner 边界 ──────────────
+export {
+  CAPABILITY_VERIFICATION_LEDGER,
+  PLANNER_UNAVAILABLE_TOOL_IDS,
+  RELAY_SEARCH_ENABLED_MODEL_IDS,
+  availableChatModelIds,
+  buildCapabilityRegistry,
+  findCapabilityEntry,
+  plannerDeniedToolIds,
+} from './capability/capability-registry.js';
+export type {
+  CapabilityAvailability,
+  CapabilityEntry,
+  CapabilityEvidence,
+  CapabilityKind,
+  CapabilityLedgerRecord,
+  CapabilityModelSource,
+  CapabilityRegistryInput,
+} from './capability/capability-registry.js';
+
+export {
+  CAPABILITY_BOUNDARY_PROMPT_VERSION,
+  UNSUPPORTED_CAPABILITY_COPY_KEY,
+  UNSUPPORTED_MODEL_COPY_KEY,
+  buildCapabilityBoundaryPrompt,
+  capabilityBoundaryEndMarker,
+  capabilityBoundaryStartMarker,
+  mergeCapabilityBoundaryBlock,
+  recognizeUnsupportedCapabilityRequest,
+} from './capability/capability-boundary.js';
+export type {
+  CapabilityBoundaryMergeResult,
+  RecognizeUnsupportedOptions,
+  UnsupportedRequestHit,
+  UnsupportedRequestReason,
+} from './capability/capability-boundary.js';

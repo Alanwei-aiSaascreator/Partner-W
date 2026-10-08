@@ -9,6 +9,7 @@ import { toast as sonnerToast } from 'sonner';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 import { resetSettingsStore } from '../src/renderer/stores/settingsStore';
 import AgentsSection from '../src/renderer/layouts/Settings/sections/AgentsSection';
+import type { SkillStatusEntry } from '@clawwork/shared';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -128,6 +129,46 @@ function seedConnectedGateway(): void {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function switchGateway(): Promise<void> {
+  await act(async () =>
+    useUiStore.setState({
+      gatewayStatusMap: { 'gw-2': 'connected' },
+      gatewayInfoMap: { 'gw-2': { id: 'gw-2', name: 'Gateway 2' } },
+      defaultGatewayId: 'gw-2',
+      agentCatalogByGateway: { 'gw-2': { agents: [{ id: 'main', name: 'Main' }], defaultId: 'main' } },
+    }),
+  );
+  await settle();
+}
+
+function skill(name: string): SkillStatusEntry {
+  return {
+    name,
+    description: name,
+    skillKey: name,
+    eligible: true,
+    source: 'test',
+    bundled: false,
+    filePath: '/skills/test/SKILL.md',
+    baseDir: '/skills/test',
+    always: false,
+    disabled: false,
+    blockedByAllowlist: false,
+    requirements: { bins: [], anyBins: [], env: [], config: [], os: [] },
+    missing: { bins: [], anyBins: [], env: [], config: [], os: [] },
+    configChecks: [],
+    install: [],
+  };
+}
+
 describe('AgentsSection file loading/saving spinners', () => {
   const originalMatchMedia = window.matchMedia;
 
@@ -181,6 +222,46 @@ describe('AgentsSection file loading/saving spinners', () => {
     unmount();
   });
 
+  it('does not attribute another owner skill cache to the default agent', async () => {
+    window.clawwork.getSkillsStatus = vi.fn().mockResolvedValue({ ok: false, error: 'unavailable' });
+    const { container, unmount } = render(<AgentsSection />);
+    await settle();
+    await act(async () =>
+      useUiStore.setState({
+        skillsStatusByGateway: {
+          'gw-1': {
+            agentId: 'other',
+            workspaceDir: '/other',
+            managedSkillsDir: '/other/skills',
+            skills: [
+              {
+                name: 'Other owner skill',
+                description: 'other',
+                skillKey: 'other',
+                eligible: true,
+                source: 'test',
+                bundled: false,
+                filePath: '/other/skills/other/SKILL.md',
+                baseDir: '/other/skills/other',
+                always: false,
+                disabled: false,
+                blockedByAllowlist: false,
+                requirements: { bins: [], anyBins: [], env: [], config: [], os: [] },
+                missing: { bins: [], anyBins: [], env: [], config: [], os: [] },
+                configChecks: [],
+                install: [],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+    await clickSettle(findFileButton(container, i18next.t('settings.agentSkills')));
+    expect(container.textContent).not.toContain('Other owner skill');
+    unmount();
+  });
+
   it('clears savingFile and toasts when setAgentFile rejects', async () => {
     window.clawwork.getAgentFile = vi.fn().mockResolvedValue({ ok: true, result: { file: { content: 'hello' } } });
     window.clawwork.setAgentFile = vi.fn().mockRejectedValue(new Error('boom'));
@@ -197,5 +278,91 @@ describe('AgentsSection file loading/saving spinners', () => {
     expect((findByAriaKey(container, 'settings.agentFileSave') as HTMLButtonElement).disabled).toBe(false);
 
     unmount();
+  });
+
+  it('does not show late skills from the previous gateway for the same agent', async () => {
+    const old = deferred<Awaited<ReturnType<Window['clawwork']['getSkillsStatus']>>>();
+    window.clawwork.getSkillsStatus = vi.fn((gatewayId) =>
+      gatewayId === 'gw-1' ? old.promise : Promise.resolve({ ok: true, result: { agentId: 'main', skills: [] } }),
+    );
+    const { container, unmount } = render(<AgentsSection />);
+    try {
+      await settle();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await switchGateway();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await clickSettle(findFileButton(container, i18next.t('settings.agentSkills')));
+      await act(async () =>
+        old.resolve({ ok: true, result: { agentId: 'main', skills: [skill('Old gateway skill')] } }),
+      );
+      await settle();
+      expect(container.textContent).not.toContain('Old gateway skill');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('does not clear current skill loading when an old gateway response finishes', async () => {
+    const old = deferred<Awaited<ReturnType<Window['clawwork']['getSkillsStatus']>>>();
+    const current = deferred<Awaited<ReturnType<Window['clawwork']['getSkillsStatus']>>>();
+    window.clawwork.getSkillsStatus = vi.fn((gatewayId) => (gatewayId === 'gw-1' ? old.promise : current.promise));
+    const { container, unmount } = render(<AgentsSection />);
+    try {
+      await settle();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await switchGateway();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await clickSettle(findFileButton(container, i18next.t('settings.agentSkills')));
+      await act(async () => old.resolve({ ok: true, result: { skills: [] } }));
+      await settle();
+      expect(container.textContent).toContain(i18next.t('settings.agentLoadingSkills'));
+      await act(async () => current.resolve({ ok: true, result: { skills: [] } }));
+      await settle();
+      expect(container.textContent).not.toContain(i18next.t('settings.agentLoadingSkills'));
+    } finally {
+      unmount();
+    }
+  });
+
+  it('ignores late files and workspace from the previous gateway without clearing current loading', async () => {
+    const old = deferred<Awaited<ReturnType<Window['clawwork']['listAgentFiles']>>>();
+    const current = deferred<Awaited<ReturnType<Window['clawwork']['listAgentFiles']>>>();
+    window.clawwork.listAgentFiles = vi.fn((gatewayId) => (gatewayId === 'gw-1' ? old.promise : current.promise));
+    const { container, unmount } = render(<AgentsSection />);
+    try {
+      await settle();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await switchGateway();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await act(async () =>
+        old.resolve({ ok: true, result: { workspace: '/old-gateway', files: [{ name: 'OLD.md' }] } }),
+      );
+      await settle();
+      expect(container.textContent).toContain(i18next.t('settings.agentLoadingFiles'));
+      expect(container.textContent).not.toContain('/old-gateway');
+      await act(async () =>
+        current.resolve({ ok: true, result: { workspace: '/current-gateway', files: [{ name: 'CURRENT.md' }] } }),
+      );
+      await settle();
+      expect(container.textContent).toContain('/current-gateway');
+      expect(container.textContent).toContain('CURRENT.md');
+      expect(container.textContent).not.toContain('OLD.md');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('clears skill loading and reports a rejected skill request', async () => {
+    window.clawwork.getSkillsStatus = vi.fn().mockRejectedValue(new Error('skill lookup failed'));
+    const { container, unmount } = render(<AgentsSection />);
+    try {
+      await settle();
+      await clickSettle(findByAriaKey(container, 'settings.agentDetails'));
+      await clickSettle(findFileButton(container, i18next.t('settings.agentSkills')));
+      expect(container.textContent).not.toContain(i18next.t('settings.agentLoadingSkills'));
+      expect(sonnerToast.error).toHaveBeenCalledTimes(1);
+    } finally {
+      unmount();
+    }
   });
 });

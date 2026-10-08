@@ -35,10 +35,11 @@ export interface RenderPptxFromTemplateOptions {
   templatesRoot: string | undefined;
   /** 产出文件名（不含目录）。 */
   fileName: string;
+  controlledNative?: boolean;
 }
 
 export async function renderPptxFromTemplate(opts: RenderPptxFromTemplateOptions): Promise<Buffer> {
-  const parsed = parseTemplateDeck(opts.raw);
+  const parsed = parseTemplateDeck(opts.raw, { controlledNative: opts.controlledNative });
   if (!parsed.ok) throw new PptxTemplateFailureError(parsed.failure);
 
   // SECTION_CONTEXT is a physically narrow 5.83in × 0.33in box in the shipped

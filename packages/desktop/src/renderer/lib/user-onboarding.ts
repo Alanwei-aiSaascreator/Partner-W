@@ -1,3 +1,14 @@
+import {
+  PORTRAIT_AXES,
+  PORTRAIT_ROLE_CODES,
+  isPortraitGender,
+  parsePortraitAge,
+  type OnboardingPortrait,
+  type PortraitAxis,
+  type PortraitGender,
+  type PortraitRoleCode,
+} from './user-portrait';
+
 export const ONBOARDING_USE_CASE_IDS = [
   'general',
   'content',
@@ -16,8 +27,78 @@ export type OnboardingRoleId = (typeof ONBOARDING_ROLE_IDS)[number];
 export type ResponseDetail = 'concise' | 'balanced' | 'detailed';
 export type FilePermissionPreference = 'ask-every-time' | 'task-folder';
 
+export const ONBOARDING_INDUSTRY_CODES = ['C', 'H', 'J', 'K', 'L', 'P', 'R'] as const;
+export type OnboardingIndustryCode = (typeof ONBOARDING_INDUSTRY_CODES)[number];
+
+/**
+ * 产业目录版本（`OnboardingIndustry.catalogVersion` 的当前值）。
+ *
+ * ⚠️ 判据是 **`<= 本常量`**（2026-10-07 体检问题 8）：以前是 `!== 1` —— 目录升到 2 的那一刻，
+ *    全部存量档案（写着 1）会被判成非法、**整份拒收**（昵称/岗位/画像全丢、重跑首跑）。
+ *    老记录必须照读（它按写入时的目录语义解释）；只有**高于本版本**的记录
+ *    （别的版本的应用写的、我们看不懂）才拒收。
+ */
+export const INDUSTRY_CATALOG_VERSION = 1;
+export type OnboardingQuestionAnswer = 'yes' | 'no' | null;
+export type OnboardingQuestionAnswers = [
+  OnboardingQuestionAnswer,
+  OnboardingQuestionAnswer,
+  OnboardingQuestionAnswer,
+  OnboardingQuestionAnswer,
+];
+
+export interface OnboardingIndustry {
+  code: OnboardingIndustryCode | null;
+  generalConfirmed: boolean;
+  source: 'user';
+  catalogVersion: 1;
+}
+
+export interface OnboardingPersona {
+  id: string | null;
+  source: 'default' | 'user' | 'approved-rule';
+  ruleVersion: string | null;
+}
+
+export type OnboardingWorkMatch =
+  | { source: 'basic'; profileVersion: string }
+  | {
+      source: 'ai';
+      profileVersion: string;
+      requestId: string;
+      runId: string;
+      modelId: string;
+      summary: string;
+      starters: string[];
+      usageStatus: 'settled' | 'pending';
+    };
+
+export interface OnboardingWorkMatchInput {
+  userId: string;
+  scopeKey: string;
+  profileVersion: string;
+  industryCode: OnboardingIndustryCode | null;
+  generalConfirmed: boolean;
+  role: OnboardingRoleId;
+  customRole: string;
+  useCases: OnboardingUseCaseId[];
+  customGoal: string;
+  responseDetail: ResponseDetail;
+}
+
+export interface OnboardingWorkMatchReply {
+  profileVersion: string;
+  requestId: string;
+  runId: string;
+  modelId: string;
+  summary: string;
+  selectedAssistantIds: StarterId[];
+  starters: string[];
+  usageStatus: 'settled' | 'pending';
+}
+
 export interface OnboardingProfile {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   userId: string;
   nickname: string;
   role?: OnboardingRoleId;
@@ -28,10 +109,20 @@ export interface OnboardingProfile {
   responseDetail?: ResponseDetail;
   filePermission?: FilePermissionPreference;
   completedAt: string;
+  introduction?: string;
+  industry?: OnboardingIndustry;
+  questionnaire?: { version: 1; answers: OnboardingQuestionAnswers };
+  persona?: OnboardingPersona;
+  /**
+   * 3a 趣味画像（可选）。**旧记录没有这个键就是合法的**（`loadOnboardingProfile` 不注入默认值，
+   * 见 `firstRunFields`）；写入只在用户真的答过题、且四题不全跳过时发生（不生成虚构分数）。
+   */
+  portrait?: OnboardingPortrait;
+  workMatch?: OnboardingWorkMatch;
 }
 
 export interface NormalizedOnboardingProfile extends OnboardingProfile {
-  version: 2;
+  version: 2 | 3;
   role: OnboardingRoleId;
   customRole: string;
   selectedAssistantIds: StarterId[];
@@ -47,10 +138,219 @@ export interface AssistantRecommendation {
 export interface OnboardingStorage {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
+  /**
+   * 可选：保存 v3 时把同账号的 v1 老键清掉（见 `saveOnboardingProfile`）。
+   * 老的单测假存储可以没有它 —— 缺了就跳过清理，不影响保存。
+   */
+  removeItem?: (key: string) => void;
+}
+
+/**
+ * 只读存储视图（06 头像链的选择器用）。`window.localStorage` 结构上就满足它，
+ * 单测也可以塞一个只实现这三样的假货 —— 有意**不含 `setItem`**：读选择器不许写。
+ */
+export interface OnboardingStorageReader {
+  readonly length: number;
+  key: (index: number) => string | null;
+  getItem: (key: string) => string | null;
 }
 
 const STORAGE_PREFIX = 'rongying-cube:onboarding:v1:';
+const FIRST_RUN_STORAGE_PREFIX = 'rongying-cube:onboarding:v3:';
 const DEFAULT_STARTERS: StarterId[] = ['content', 'office', 'photography', 'research', 'ecommerce', 'family'];
+
+function boundedText(value: unknown, limit: number): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= limit;
+}
+
+/** 趣味四字码：E/I、S/N、T/F、J/P 各取一位；跳过的那位是 X。 */
+const PORTRAIT_LETTERS_RE = /^[EISTNFJPX]{4}$/;
+
+/**
+ * 解析并校验固化画像。
+ * 返回 `undefined` = 记录里没有这个键（**合法**：旧记录兼容，且不注入默认值）；
+ * `null` = 有但形状非法 ⇒ 整份 profile 拒收（与 industry / questionnaire / persona 同一风格）。
+ *
+ * ⚠️ 只校验**形状**、不重算分数：规则可能已换代，旧数据按它自己的 `ruleVersion` 解释，
+ *    换规则不清洗旧记录（施工图 §8 风险 3）。
+ */
+function parsePortrait(value: unknown): OnboardingPortrait | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const portrait = value as Partial<OnboardingPortrait>;
+  if (typeof portrait.letters !== 'string' || !PORTRAIT_LETTERS_RE.test(portrait.letters)) return null;
+  if (!PORTRAIT_ROLE_CODES.includes(portrait.role as (typeof PORTRAIT_ROLE_CODES)[number])) return null;
+  if (!boundedText(portrait.ruleVersion, 40)) return null;
+  if (typeof portrait.locked !== 'boolean') return null;
+  const axes = portrait.axes as Partial<Record<PortraitAxis, unknown>> | undefined;
+  if (typeof axes !== 'object' || axes === null || Array.isArray(axes)) return null;
+  const scores = {} as Record<PortraitAxis, number>;
+  for (const axis of PORTRAIT_AXES) {
+    const score = axes[axis];
+    if (typeof score !== 'number' || !Number.isInteger(score) || score < 0 || score > 100) return null;
+    scores[axis] = score;
+  }
+  /**
+   * 形象层补充信息（2026-10-08）：**只认形状**——旧档案没有这两键照读；值坏了/越界也只丢
+   * 那一项，不连整份画像一起作废（画像 = 形象层，丢一份头像就够了）。不加键时**不许注入
+   * `undefined`**（既有 `toEqual` 测试盯着画像对象，键的顺序/有无都算数）。
+   */
+  const gender = isPortraitGender(portrait.gender) ? portrait.gender : undefined;
+  const age = parsePortraitAge(portrait.age);
+  return {
+    axes: scores,
+    letters: portrait.letters,
+    role: portrait.role as (typeof PORTRAIT_ROLE_CODES)[number],
+    ruleVersion: portrait.ruleVersion,
+    locked: portrait.locked,
+    ...(gender ? { gender } : {}),
+    ...(age !== null ? { age } : {}),
+  };
+}
+
+/** 产业选择的形状校验（v3 档案与首跑草稿共用）：非法返回 `null`。 */
+function parseIndustry(value: unknown): OnboardingIndustry | null {
+  if (!value || typeof value !== 'object') return null;
+  const industry = value as Partial<OnboardingIndustry>;
+  // 版本语义是 `<= 当前`（见 `INDUSTRY_CATALOG_VERSION`）：老记录照读，高出版本才拒。
+  if (
+    industry.source !== 'user' ||
+    typeof industry.catalogVersion !== 'number' ||
+    industry.catalogVersion < 1 ||
+    industry.catalogVersion > INDUSTRY_CATALOG_VERSION ||
+    (industry.code !== null &&
+      industry.code !== undefined &&
+      !ONBOARDING_INDUSTRY_CODES.includes(industry.code as (typeof ONBOARDING_INDUSTRY_CODES)[number])) ||
+    (industry.code === null || industry.code === undefined
+      ? industry.generalConfirmed !== true
+      : industry.generalConfirmed !== false)
+  )
+    return null;
+  return {
+    code: (industry.code ?? null) as OnboardingIndustryCode | null,
+    generalConfirmed: industry.generalConfirmed === true,
+    source: 'user',
+    catalogVersion: INDUSTRY_CATALOG_VERSION,
+  };
+}
+
+function firstRunFields(
+  parsed: Partial<OnboardingProfile>,
+): Pick<
+  OnboardingProfile,
+  'introduction' | 'industry' | 'questionnaire' | 'persona' | 'portrait' | 'workMatch'
+> | null {
+  const industry = parseIndustry(parsed.industry);
+  if (!industry) return null;
+  const questionnaire = parsed.questionnaire;
+  if (
+    questionnaire?.version !== 1 ||
+    !Array.isArray(questionnaire.answers) ||
+    questionnaire.answers.length !== 4 ||
+    !questionnaire.answers.every((answer) => answer === 'yes' || answer === 'no' || answer === null)
+  )
+    return null;
+  const persona = parsed.persona;
+  if (
+    !persona ||
+    !['default', 'user', 'approved-rule'].includes(persona.source) ||
+    (persona.id !== null && (typeof persona.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(persona.id))) ||
+    (persona.ruleVersion !== null && typeof persona.ruleVersion !== 'string') ||
+    (persona.source === 'approved-rule' && (!persona.id || !persona.ruleVersion))
+  )
+    return null;
+  /**
+   * ⭐ 画像**逐字段降级**（2026-10-07 体检问题 8）：画像只是形象层，形状坏了就丢它自己，
+   *    **不许**连昵称/岗位/作答一起作废（那是"画坏一张头像 ⇒ 整份档案消失"）。
+   *    仍然不编默认画像：丢了就是 `undefined`，一头像退回图标。
+   */
+  const portrait = parsePortrait(parsed.portrait);
+  const workMatch = parsed.workMatch;
+  if (!workMatch || typeof workMatch.profileVersion !== 'string' || !workMatch.profileVersion) return null;
+  if (workMatch.source === 'ai') {
+    if (
+      !boundedText(workMatch.requestId, 160) ||
+      !boundedText(workMatch.runId, 160) ||
+      !boundedText(workMatch.modelId, 160) ||
+      typeof workMatch.summary !== 'string' ||
+      !workMatch.summary.trim() ||
+      workMatch.summary.length > 240 ||
+      !Array.isArray(workMatch.starters) ||
+      workMatch.starters.length > 3 ||
+      !workMatch.starters.every((entry) => typeof entry === 'string' && entry.trim() && entry.length <= 160) ||
+      !['settled', 'pending'].includes(workMatch.usageStatus)
+    )
+      return null;
+  } else if (workMatch.source !== 'basic') return null;
+  return {
+    introduction: typeof parsed.introduction === 'string' ? parsed.introduction : '',
+    industry: { ...industry },
+    questionnaire: { version: 1, answers: [...questionnaire.answers] },
+    persona: { ...persona },
+    // ⚠️ 没有就**不加键**（不许注入 `undefined`/默认画像）—— 两条既有 `toEqual` 测试盯着这里。
+    ...(portrait ? { portrait } : {}),
+    workMatch: workMatch.source === 'basic' ? { ...workMatch } : { ...workMatch, starters: [...workMatch.starters] },
+  };
+}
+
+export function buildOnboardingWorkMatchInput(profile: OnboardingProfile, scopeKey: string): OnboardingWorkMatchInput {
+  const industry = profile.industry;
+  if (!industry || !profile.userId || !scopeKey) throw new Error('onboarding_match_scope_or_industry_missing');
+  const fields = {
+    userId: profile.userId,
+    scopeKey,
+    industryCode: industry.code,
+    generalConfirmed: industry.generalConfirmed,
+    role: profile.role ?? 'custom',
+    customRole: profile.customRole?.trim().replace(/\s+/g, ' ') ?? '',
+    useCases: [...profile.useCases].sort(),
+    customGoal: profile.customGoal.trim().replace(/\s+/g, ' '),
+    responseDetail: profile.responseDetail ?? 'balanced',
+  };
+  const serialized = JSON.stringify(fields);
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return { ...fields, profileVersion: (hash >>> 0).toString(36) };
+}
+
+export function validateOnboardingWorkMatchReply(
+  input: OnboardingWorkMatchInput,
+  value: unknown,
+): OnboardingWorkMatchReply | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const reply = value as Partial<OnboardingWorkMatchReply>;
+  if (
+    reply.profileVersion !== input.profileVersion ||
+    !boundedText(reply.requestId, 160) ||
+    !boundedText(reply.runId, 160) ||
+    !boundedText(reply.modelId, 160) ||
+    !boundedText(reply.summary, 240) ||
+    !Array.isArray(reply.selectedAssistantIds) ||
+    reply.selectedAssistantIds.length < 1 ||
+    reply.selectedAssistantIds.length > 3 ||
+    !reply.selectedAssistantIds.every((id) => DEFAULT_STARTERS.includes(id)) ||
+    new Set(reply.selectedAssistantIds).size !== reply.selectedAssistantIds.length ||
+    !Array.isArray(reply.starters) ||
+    reply.starters.length < 1 ||
+    reply.starters.length > 3 ||
+    !reply.starters.every((entry) => boundedText(entry, 160)) ||
+    (reply.usageStatus !== 'settled' && reply.usageStatus !== 'pending')
+  )
+    return null;
+  return {
+    profileVersion: input.profileVersion,
+    requestId: reply.requestId,
+    runId: reply.runId,
+    modelId: reply.modelId,
+    summary: reply.summary.trim(),
+    selectedAssistantIds: [...reply.selectedAssistantIds],
+    starters: reply.starters.map((entry) => entry.trim()),
+    usageStatus: reply.usageStatus,
+  };
+}
 
 function storageKey(userId: string): string {
   return `${STORAGE_PREFIX}${userId}`;
@@ -58,13 +358,15 @@ function storageKey(userId: string): string {
 
 export function loadOnboardingProfile(
   userId: string,
-  storage: OnboardingStorage = window.localStorage,
+  storage: Pick<OnboardingStorage, 'getItem'> = window.localStorage,
 ): NormalizedOnboardingProfile | null {
   try {
-    const raw = storage.getItem(storageKey(userId));
+    const current = storage.getItem(`${FIRST_RUN_STORAGE_PREFIX}${userId}`);
+    const raw = current ?? storage.getItem(storageKey(userId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<OnboardingProfile>;
-    if ((parsed.version !== 1 && parsed.version !== 2) || parsed.userId !== userId || !Array.isArray(parsed.useCases)) {
+    if (current !== null && parsed.version !== 3) return null;
+    if (![1, 2, 3].includes(parsed.version ?? 0) || parsed.userId !== userId || !Array.isArray(parsed.useCases)) {
       return null;
     }
     const useCases = parsed.useCases.filter((value): value is OnboardingUseCaseId =>
@@ -79,8 +381,10 @@ export function loadOnboardingProfile(
     const responseDetail: ResponseDetail = ['concise', 'balanced', 'detailed'].includes(parsed.responseDetail as string)
       ? (parsed.responseDetail as ResponseDetail)
       : 'balanced';
+    const extra = parsed.version === 3 ? firstRunFields(parsed) : {};
+    if (!extra) return null;
     return {
-      version: 2,
+      version: parsed.version === 3 ? 3 : 2,
       userId,
       nickname: typeof parsed.nickname === 'string' ? parsed.nickname : '',
       role,
@@ -91,6 +395,7 @@ export function loadOnboardingProfile(
       responseDetail,
       filePermission: parsed.filePermission === 'task-folder' ? 'task-folder' : 'ask-every-time',
       completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : '',
+      ...extra,
     };
   } catch {
     return null;
@@ -101,7 +406,216 @@ export function saveOnboardingProfile(
   profile: OnboardingProfile,
   storage: OnboardingStorage = window.localStorage,
 ): void {
-  storage.setItem(storageKey(profile.userId), JSON.stringify(profile));
+  const key = profile.version === 3 ? `${FIRST_RUN_STORAGE_PREFIX}${profile.userId}` : storageKey(profile.userId);
+  storage.setItem(key, JSON.stringify(profile));
+  /**
+   * v3 落盘后把同账号的 **v1 老键清掉**（2026-10-07 体检问题 12d）：`loadOnboardingProfile`
+   * 只在 v3 缺失时才回读 v1，所以留着不影响读；但它是**上一位用户的画像**（趣味画像链
+   * 之外的旧格式），留着只会让"这台盘上有几份关于我的档案"这种排查越查越糊涂。
+   * `removeItem` 是可选的：老的单测假存储没实现它，缺了就当清理这一步不存在。
+   */
+  if (profile.version === 3) storage.removeItem?.(storageKey(profile.userId));
+}
+
+/* ────────────────────────── 首跑草稿（2026-10-07 体检问题 7） ────────────────────────── */
+
+/**
+ * 首跑向导的**保存点**（sessionStorage，按 `userId:scopeKey` 分键）。
+ *
+ * 为什么要有：首跑的三页输入全在内存里，中途关掉应用/刷新页面 = 全丢，用户得从头填。
+ * 这里只存"填到哪了"，**不存档案**（档案仍由 `saveOnboardingProfile` 落 v3 键）；
+ * 用 sessionStorage 是刻意的：一个应用会话内的中断（刷新/意外关闭页面）能接上，
+ * 而下次开机重新首跑时不该拿上一次会话的残渣冒充用户意图。
+ *
+ * ⚠️ 只服务**首跑**：编辑模式有真档案，草稿只会和档案打架（不读不写）。
+ */
+export const ONBOARDING_DRAFT_STORAGE_PREFIX = 'rongying-cube:onboarding-draft:v1:';
+
+export interface OnboardingDraftStorage {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem?: (key: string) => void;
+}
+
+export interface OnboardingDraft {
+  version: 1;
+  page: 'profile' | 'portrait' | 'result';
+  nickname: string;
+  introduction: string;
+  industry: OnboardingIndustry | null;
+  role: OnboardingRoleId;
+  customRole: string;
+  useCases: OnboardingUseCaseId[];
+  customGoal: string;
+  answers: OnboardingQuestionAnswers;
+  questionIndex: number;
+  portraitDone: boolean;
+  portraitTouched: boolean;
+  /**
+   * 画像页的形象层补充信息（可选；没填就不占键）。草稿里也带着它们，
+   * 刷新/意外中断后性别与年龄不用重选。
+   */
+  gender?: PortraitGender | null;
+  age?: number | null;
+  selectedAssistantIds: StarterId[];
+  /** 结果页的本地回执（首跑只会是 `basic`；AI 匹配通道未开放）。 */
+  match: { source: 'basic'; profileVersion: string } | null;
+}
+
+/**
+ * 草稿键的作用域 = 向导自己那份 React key（`App` 里就是 `userId:scopeKey`）。
+ * 换账号、换工作区都会得到不同的草稿 —— 不把上一个场景的输入搬过来。
+ */
+export function onboardingDraftScope(userId: string, scopeKey?: string): string {
+  return `${userId}:${scopeKey ?? 'account-local'}`;
+}
+
+function draftStorage(): OnboardingDraftStorage | null {
+  return typeof window === 'undefined' ? null : window.sessionStorage;
+}
+
+/** 读回首跑草稿；坏了 / 没存过 / 存储不可用一律 `null`（向导从默认值起步）。 */
+export function readOnboardingDraft(scope: string, storage?: OnboardingDraftStorage): OnboardingDraft | null {
+  try {
+    const source = storage ?? draftStorage();
+    if (!source) return null;
+    const raw = source.getItem(`${ONBOARDING_DRAFT_STORAGE_PREFIX}${scope}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<OnboardingDraft>;
+    if (parsed.version !== 1) return null;
+    const page: OnboardingDraft['page'] =
+      parsed.page === 'portrait' || parsed.page === 'result' || parsed.page === 'profile' ? parsed.page : 'profile';
+    const answers: OnboardingQuestionAnswers =
+      Array.isArray(parsed.answers) &&
+      parsed.answers.length === 4 &&
+      parsed.answers.every((answer) => answer === 'yes' || answer === 'no' || answer === null)
+        ? [...parsed.answers]
+        : [null, null, null, null];
+    const match =
+      parsed.match && parsed.match.source === 'basic' && boundedText(parsed.match.profileVersion, 160)
+        ? { source: 'basic' as const, profileVersion: parsed.match.profileVersion }
+        : null;
+    // 形象层补充信息：坏值只丢自己（`null` 与"没填过"在向导里是同一件事）。
+    const gender = isPortraitGender(parsed.gender) ? parsed.gender : null;
+    const age = parsePortraitAge(parsed.age);
+    return {
+      version: 1,
+      page,
+      nickname: typeof parsed.nickname === 'string' ? parsed.nickname : '',
+      introduction: typeof parsed.introduction === 'string' ? parsed.introduction : '',
+      industry: parseIndustry(parsed.industry),
+      role: ONBOARDING_ROLE_IDS.includes(parsed.role as OnboardingRoleId)
+        ? (parsed.role as OnboardingRoleId)
+        : 'custom',
+      customRole: typeof parsed.customRole === 'string' ? parsed.customRole : '',
+      useCases: Array.isArray(parsed.useCases)
+        ? parsed.useCases.filter((value): value is OnboardingUseCaseId =>
+            ONBOARDING_USE_CASE_IDS.includes(value as OnboardingUseCaseId),
+          )
+        : [],
+      customGoal: typeof parsed.customGoal === 'string' ? parsed.customGoal : '',
+      answers,
+      questionIndex:
+        typeof parsed.questionIndex === 'number' &&
+        Number.isInteger(parsed.questionIndex) &&
+        parsed.questionIndex >= 0 &&
+        parsed.questionIndex <= 3
+          ? parsed.questionIndex
+          : 0,
+      portraitDone: parsed.portraitDone === true,
+      portraitTouched: parsed.portraitTouched === true,
+      ...(gender ? { gender } : {}),
+      ...(age !== null ? { age } : {}),
+      selectedAssistantIds: Array.isArray(parsed.selectedAssistantIds)
+        ? parsed.selectedAssistantIds.filter((value): value is StarterId =>
+            DEFAULT_STARTERS.includes(value as StarterId),
+          )
+        : [],
+      match,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 存下当前进度（写不进去就算了 —— 是体验增强，不许挡首跑）。 */
+export function saveOnboardingDraft(scope: string, draft: OnboardingDraft, storage?: OnboardingDraftStorage): void {
+  try {
+    const target = storage ?? draftStorage();
+    target?.setItem(`${ONBOARDING_DRAFT_STORAGE_PREFIX}${scope}`, JSON.stringify(draft));
+  } catch {
+    // 隐私模式 / 配额满：忽略。
+  }
+}
+
+/** 档案真正落盘后把草稿清掉（再留着，下次进来会"复活"上一轮的输入）。 */
+export function clearOnboardingDraft(scope: string, storage?: OnboardingDraftStorage): void {
+  try {
+    const target = storage ?? draftStorage();
+    target?.removeItem?.(`${ONBOARDING_DRAFT_STORAGE_PREFIX}${scope}`);
+  } catch {
+    // 清不掉也不许挡流程。
+  }
+}
+
+/**
+ * 只读选择器（06 头像链）：某个账号的档案里固化的**六角色 code**，没有就 `null`。
+ *
+ * 为什么在这读、而不是等 props 下发：唯一真源仍然是 `rongying-cube:onboarding:v3:<userId>`
+ * （App 加载 → props 下发那条路不变）。但聊天里的 `MessageAvatar` 拿不到 profile，
+ * 而归它名下的只有这一个组件 —— 于是给它一个**纯读**的取数口。
+ *
+ * ⚠️ **必须带上账号**（2026-10-07 体检问题 5）：以前它扫 v3 前缀、返回**第一份**能解析的
+ *    档案 —— 盘上登录过两个账号时，B 的头像会取到 A 的立绘。现在按 `userId` 精确读；
+ *    不传 `userId` 才回落到扫描（旧兜底，只该出现在"压根没有账号上下文"的调用里）。
+ * ⚠️ 只读：不写、不缓存、不引入第二套 store；档案写坏的风险为零。
+ */
+export function readStoredPortraitRole(
+  userId?: string | null,
+  storage?: OnboardingStorageReader,
+): PortraitRoleCode | null {
+  return readStoredPortraitIdentity(userId, storage)?.role ?? null;
+}
+
+/** 头像链要用的那三样：六角色 code（立绘降级）+ 四字码 + 可选性别（16 型形象）。 */
+export interface StoredPortraitIdentity {
+  role: PortraitRoleCode;
+  /** 趣味四字码（可能含 `X`；不完整 = 查不到 16 型形象）。 */
+  letters: string;
+  gender: PortraitGender | null;
+}
+
+/**
+ * 同一条只读通道的**完整版**（2026-10-08 16 型形象）：除了六角色 code，还把画像里
+ * 固化的四字码与性别一并取出来（没填过 = `null`）——`MessageAvatar` 要按它挑 16 型头像。
+ *
+ * ⚠️ 规则与 `readStoredPortraitRole` 完全一致（同一份档案、同一个账号口径、只读不写）；
+ *    `readStoredPortraitRole` 现在是它的一层薄壳，两条链不会各读各的。
+ */
+export function readStoredPortraitIdentity(
+  userId?: string | null,
+  storage?: OnboardingStorageReader,
+): StoredPortraitIdentity | null {
+  const fromProfile = (profile: NormalizedOnboardingProfile | null): StoredPortraitIdentity | null => {
+    const portrait = profile?.portrait;
+    if (!portrait?.role) return null;
+    return { role: portrait.role, letters: portrait.letters, gender: portrait.gender ?? null };
+  };
+  try {
+    const source = storage ?? (typeof window === 'undefined' ? null : window.localStorage);
+    if (!source) return null;
+    if (userId) return fromProfile(loadOnboardingProfile(userId, source));
+    for (let index = 0; index < source.length; index += 1) {
+      const key = source.key(index);
+      if (!key || !key.startsWith(FIRST_RUN_STORAGE_PREFIX)) continue;
+      const identity = fromProfile(loadOnboardingProfile(key.slice(FIRST_RUN_STORAGE_PREFIX.length), source));
+      if (identity) return identity;
+    }
+  } catch {
+    // 读不到（隐私模式 / 坏 JSON / 存储被清）就当没有画像：头像退回既有图标。
+    return null;
+  }
+  return null;
 }
 
 export function goalAnalysisVersion(profile: OnboardingProfile): string {

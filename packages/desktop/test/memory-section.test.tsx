@@ -50,7 +50,13 @@ let setAgentFile: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getAgentFile = vi.fn(async () => ({ ok: true, result: { content: '我习惯先看结论。' } }));
+  // ⚠️ 真机载荷是 `{ agentId, workspace, file: AgentFileEntry }`（白皮书 / preset-agent-installer
+  //    / AgentsSection / TeamDetailView 四处都是 `result.file.content`）。桩成 `{content}` 的
+  //    错位形状正是 2026-10-07 体检抓到的"记忆页永远显示为空"那条路。
+  getAgentFile = vi.fn(async () => ({
+    ok: true,
+    result: { file: { name: 'USER.md', content: '我习惯先看结论。', missing: false } },
+  }));
   setAgentFile = vi.fn(async () => ({ ok: true }));
   (globalThis.window as unknown as { clawwork: Record<string, unknown> }).clawwork = { getAgentFile, setAgentFile };
   useUiStore.setState({
@@ -152,6 +158,40 @@ describe('MemorySection（记忆一期）', () => {
     await flush();
 
     expect((container.querySelector('[data-testid="memory-save"]') as HTMLButtonElement).disabled).toBe(true);
+    unmount();
+  });
+
+  /**
+   * 🔴 2026-10-07 体检问题 1/2 的同族：读失败**不许**当"空文件"。
+   * 空输入框 + 可保存 = 用户补一句一按，盘上真实存在的记忆被整份覆盖。
+   */
+  it('🔴 读失败（ok:false）⇒ 不显示可编辑的空输入框，如实报读失败', async () => {
+    getAgentFile.mockResolvedValue({ ok: false, error: 'gateway down' });
+    const { container, unmount } = render(<MemorySection />);
+    await flush();
+
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(container.querySelector('[data-testid="memory-save"]')).toBeNull();
+    expect(container.textContent).toContain('gateway down');
+    unmount();
+  });
+
+  it('🔴 载荷形状错位（旧代码读 result.content 的那种）⇒ 同样当读失败，不给编辑口', async () => {
+    getAgentFile.mockResolvedValue({ ok: true, result: { content: '错位的字段' } });
+    const { container, unmount } = render(<MemorySection />);
+    await flush();
+
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(container.textContent).toContain('memoryReadFailed');
+    unmount();
+  });
+
+  it('文件不存在（missing:true）⇒ 是"空记忆"不是"读失败"：照常给编辑口', async () => {
+    getAgentFile.mockResolvedValue({ ok: true, result: { file: { name: 'USER.md', content: '', missing: true } } });
+    const { container, unmount } = render(<MemorySection />);
+    await flush();
+
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
     unmount();
   });
 });

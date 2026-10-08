@@ -22,6 +22,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 
 /** 随包运行时在 `<resources>` 下的目录名 —— 必须与 `locate.ts` 的 BUNDLED_RUNTIME_DIR_NAME 一致。 */
 const BUNDLED_TO = 'runtime';
@@ -159,12 +160,30 @@ async function beforePack(context) {
   const message = checkBundledRuntime(config, projectDir);
   if (message) throw new Error(message);
 
-  const manifest = await require('./verify-runtime-archives.cjs').verifyRuntimeArchives(
-    staticExtraResourceSources(config, projectDir).find((entry) => entry.to === BUNDLED_TO).abs,
-  );
-
-  const { verifyRuntimeSupply } = await import('./verify-runtime-supply.mjs');
-  verifyRuntimeSupply(manifest);
+  const { RELAY_VIDEO_RUNTIME_PATCH_ID } = await import('../../../scripts/lib/relay-video-runtime.mjs');
+  const root = staticExtraResourceSources(config, projectDir).find((source) => source.to === BUNDLED_TO).abs;
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, MARKER), 'utf8'));
+  if (!Array.isArray(manifest.runtimes) || manifest.runtimes.length === 0) {
+    throw new Error('Missing runtime archive manifest entries');
+  }
+  for (const runtime of manifest.runtimes) {
+    if (!Array.isArray(runtime.patches) || !runtime.patches.includes(RELAY_VIDEO_RUNTIME_PATCH_ID)) {
+      throw new Error(`Missing required runtime patch: ${RELAY_VIDEO_RUNTIME_PATCH_ID}`);
+    }
+    if (typeof runtime.archive !== 'string') throw new Error('Invalid runtime archive path');
+    const archive = path.resolve(root, runtime.archive);
+    const relative = path.relative(root, archive);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error('Invalid runtime archive path outside bundled root');
+    }
+    const realRelative = path.relative(fs.realpathSync(root), fs.realpathSync(archive));
+    if (!realRelative || realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+      throw new Error('Invalid runtime archive path through a link');
+    }
+    const hash = createHash('sha256');
+    for await (const chunk of fs.createReadStream(archive)) hash.update(chunk);
+    if (hash.digest('hex') !== runtime.sha256) throw new Error(`Runtime archive hash mismatch: ${runtime.archive}`);
+  }
 
   const count = staticExtraResourceSources(config, projectDir).length;
   console.log(`[require-bundled-runtime] 随包运行时已就位（extraResources 静态源 ${count} 项全部存在）`);

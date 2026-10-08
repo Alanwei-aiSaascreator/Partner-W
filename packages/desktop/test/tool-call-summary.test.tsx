@@ -103,13 +103,73 @@ describe('ToolCallSummary', () => {
     unmount();
   });
 
-  it('已结束的消息里还在转圈的步骤，要说出没有结果', () => {
+  /**
+   * ⚠️ 区1 体检 P1-1（有意反转）：已结束的消息里还在转圈的步骤原来是**硬写成 error** 的 ——
+   * 用户中途取消/历史截断的一轮，重启后会看到「无法继续」+「重新尝试」，而它**从未失败**
+   * （重试 = 重发 = 计费）。现在单列第三态「未收到结果」：不计失败、不给 CTA。
+   */
+  it('⭐ 已结束的消息里还在转圈的步骤 ⇒ 单列「未收到结果」，不写成失败、不给重试 CTA', () => {
+    const onRetry = vi.fn();
     const { container, unmount } = render(
-      <ToolCallSummary settled toolCalls={[call('1', 'sessions_spawn', 'running')]} />,
+      <ToolCallSummary settled onRetry={onRetry} toolCalls={[call('1', 'sessions_spawn', 'running')]} />,
     );
     const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
-    expect(summary.dataset.status).toBe('error');
-    expect(container.querySelector('[data-testid="tool-failure-reason"]')?.textContent).toBe('toolActivity.noResult');
+
+    expect(summary.dataset.status).toBe('unreported');
+    expect(summary.dataset.status, '没收到结果不是失败').not.toBe('error');
+    expect(summary.textContent).toContain('toolActivity.unreported:1');
+    expect(container.querySelector('[data-testid="tool-unreported-reason"]')?.textContent).toBe(
+      'toolActivity.noResult',
+    );
+    // 假失败的两个尾巴都不许出现
+    expect(container.querySelector('[data-testid="tool-failure-cannot-continue"]')).toBeNull();
+    expect(container.querySelector('[data-testid="tool-failure-retry"]')).toBeNull();
+    expect(container.querySelector('[data-testid="tool-failure-reason"]')).toBeNull();
+    unmount();
+  });
+
+  it('⭐ 拿到过结果（网关 meta 摘要）就不许说"没有返回结果"', () => {
+    const withMeta: ToolCall = { ...call('1', 'sessions_spawn', 'running'), result: 'spawned 3 agents' };
+    const { container, unmount } = render(<ToolCallSummary settled toolCalls={[withMeta]} />);
+
+    expect(container.querySelector('[data-testid="tool-unreported-reason"]')?.textContent).toBe('spawned 3 agents');
+    expect(container.textContent).not.toContain('toolActivity.noResult');
+    unmount();
+  });
+
+  it('这一轮还在跑 ⇒ 维持 running 转圈（不能提前说"没收到结果"）', () => {
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[call('1', 'sessions_spawn', 'running')]} />);
+    const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
+
+    expect(summary.dataset.status).toBe('running');
+    expect(container.querySelector('[data-testid="tool-unreported-reason"]')).toBeNull();
+    unmount();
+  });
+
+  /**
+   * 区1 体检 P3-11：摘要收起会把整棵子树**卸载**（`AnimatePresence` 里按 `expanded` 渲染），
+   * 组与单卡的开合态原来放在它们自己的 `useState` 里 —— 收起再展开就得重新一层层点开。
+   * 现在两层开合态都提升到摘要（父级不卸载）。
+   */
+  it('⭐ 收起摘要再展开：组与单卡的开合态都保持', () => {
+    const calls: ToolCall[] = [{ ...call('1', 'ls'), result: 'ok: 42 files' }, call('2', 'exec')];
+    const { container, unmount } = render(<ToolCallSummary toolCalls={calls} />);
+    const summary = () => container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
+    const group = () =>
+      container.querySelector('[data-testid="tool-activity-group-listDirectory-done"]') as HTMLButtonElement;
+
+    act(() => summary().click());
+    act(() => group().click());
+    act(() => (container.querySelector('[data-testid="tool-call-card"] button') as HTMLButtonElement).click());
+    expect(container.textContent).toContain('ok: 42 files');
+
+    act(() => summary().click()); // 收起摘要 ⇒ 子树卸载
+    expect(container.textContent).not.toContain('ok: 42 files');
+
+    act(() => summary().click()); // 再展开 ⇒ 组还开着、那张卡也还开着
+    expect(container.querySelectorAll('[data-testid="tool-call-card"]')).toHaveLength(1);
+    expect(container.textContent).toContain('ok: 42 files');
+
     unmount();
   });
 
@@ -136,6 +196,8 @@ describe('ToolCallSummary', () => {
  */
 describe('工具过程显示"做了什么操作"', () => {
   const TITLED = 'memory_search 游戏 爆款 创作 内容';
+  /** 图12（2026-10-06）：title 上屏前剥掉开头的原始工具名（`memory_search` 不上屏）。 */
+  const TITLED_DISPLAY = '游戏 爆款 创作 内容';
 
   it('⭐ 运行中那一行优先显示 title，不是泛化文案', () => {
     const running: ToolCall = { ...call('1', 'memory_search', 'running'), title: TITLED };
@@ -143,7 +205,8 @@ describe('工具过程显示"做了什么操作"', () => {
 
     const summary = container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement;
     expect(summary.dataset.status).toBe('running');
-    expect(summary.textContent).toContain(TITLED);
+    expect(summary.textContent).toContain(TITLED_DISPLAY);
+    expect(summary.textContent).not.toContain('memory_search');
     unmount();
   });
 
@@ -154,15 +217,19 @@ describe('工具过程显示"做了什么操作"', () => {
     act(() => (container.querySelector('[data-testid="tool-activity-summary"]') as HTMLButtonElement).click());
 
     const card = container.querySelector('[data-testid="tool-call-card"]');
-    expect(card?.textContent).toContain(TITLED);
+    expect(card?.textContent).toContain(TITLED_DISPLAY);
+    expect(card?.textContent).not.toContain('memory_search');
     unmount();
   });
 
-  it('拿不到 title 时退回工具名，不留空白', () => {
-    const running: ToolCall = { ...call('1', 'exec', 'running') };
+  // ⚠️ 区1 体检 P3-12b：这条原来的名字写的是「退回工具名」，断言却是**动作词**——
+  //    名字说谎比没名字更糟（下一个人照着名字改代码）。按实现与图12 的口径改名并补齐断言。
+  it('拿不到 title 时退回**产品化动作词**（原始工具名不上屏），不留空白', () => {
+    const running: ToolCall = { ...call('1', 'memory_search', 'running') };
     const { container, unmount } = render(<ToolCallSummary toolCalls={[running]} />);
 
-    expect(container.textContent).toContain('toolActivity.actions.execute');
+    expect(container.textContent).toContain('toolActivity.actions.search');
+    expect(container.textContent).not.toContain('memory_search');
     unmount();
   });
 });

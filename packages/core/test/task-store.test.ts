@@ -10,6 +10,7 @@ function setup() {
     .fn<Parameters<typeof createTaskStore>[0]['loadTasks']>()
     .mockResolvedValue({ ok: true, rows: [] });
   const getDeviceId = vi.fn(async () => 'device-1');
+  const clearTaskMessages = vi.fn();
   const store = createTaskStore({
     persistTask,
     persistTaskUpdate: vi.fn(async () => ({ ok: true as const })),
@@ -19,8 +20,9 @@ function setup() {
     getDeviceId,
     getDefaultGatewayId: () => 'gw-1',
     getAgentCatalog: () => ({ agents: [{ id: 'main' }], defaultId: 'main' }),
+    clearTaskMessages,
   });
-  return { store, persistTask, deleteTask, patchSession, loadTasks, getDeviceId };
+  return { store, persistTask, deleteTask, patchSession, loadTasks, getDeviceId, clearTaskMessages };
 }
 
 describe('task store pending task metadata', () => {
@@ -275,5 +277,51 @@ describe('task store pending task metadata', () => {
 
     expect(store.getState().tasks.find((task) => task.id === 'team-task')?.ensemble).toBe(false);
     expect(store.getState().tasks.find((task) => task.id === 'ensemble-task')?.ensemble).toBe(true);
+  });
+});
+
+/**
+ * ⭐ 2026-10-07（质量战役区 3 · 问题 5 / 问题 10）：会话收尾的两条 store 级不变量。
+ */
+describe('会话收尾：待发态清理与删除后的消息清理（区 3）', () => {
+  it('⭐ setActiveTask 顺带清掉 pendingNewTask（显式切走 = 待发态到此为止）', () => {
+    const h = setup();
+    h.store.getState().startNewTask({ gatewayId: 'gw-1', agentId: 'main' });
+    expect(h.store.getState().pendingNewTask, '前提：待发态真的挂上了').not.toBeNull();
+
+    h.store.getState().setActiveTask('task-x');
+
+    expect(h.store.getState().activeTaskId).toBe('task-x');
+    expect(h.store.getState().pendingNewTask, '从待发态点已有对话后不许再残留').toBeNull();
+  });
+
+  it('⭐ commitPendingTask 不经过 setActiveTask ⇒ 待发转真任务那条路不受影响', () => {
+    const h = setup();
+    h.store.getState().startNewTask({ gatewayId: 'gw-1', agentId: 'main' });
+
+    const task = h.store.getState().commitPendingTask();
+
+    expect(task.id).toBeTruthy();
+    expect(h.store.getState().activeTaskId).toBe(task.id);
+  });
+
+  it('⭐ removeTask 成功后调用 clearTaskMessages（任务没了，消息不许留在内存里）', async () => {
+    const h = setup();
+    const task = h.store.getState().createTask();
+
+    await h.store.getState().removeTask(task.id);
+
+    expect(h.deleteTask).toHaveBeenCalledWith(task.id);
+    expect(h.clearTaskMessages).toHaveBeenCalledWith(task.id);
+  });
+
+  it('删除失败 ⇒ 不清消息（任务还在，界面上的那一段对话也还在）', async () => {
+    const h = setup();
+    const task = h.store.getState().createTask();
+    h.deleteTask.mockResolvedValueOnce({ ok: false, error: 'boom' });
+
+    await expect(h.store.getState().removeTask(task.id)).rejects.toThrow('boom');
+
+    expect(h.clearTaskMessages).not.toHaveBeenCalled();
   });
 });

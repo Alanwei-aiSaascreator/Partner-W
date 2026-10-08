@@ -17,11 +17,16 @@ const mocks = vi.hoisted(() => ({
       gw: {
         agents: [
           { id: 'a', name: 'A', model: { primary: 'm' } },
-          { id: 'b', name: 'B', model: { primary: 'm' } },
+          { id: 'b', name: 'B', model: { primary: 'kimi-k3' } },
         ],
       },
     },
-    modelCatalogByGateway: { gw: [{ id: 'm', provider: 'clawrouter' }] },
+    modelCatalogByGateway: {
+      gw: [
+        { id: 'm', provider: 'clawrouter' },
+        { id: 'kimi-k3', provider: 'clawrouter' },
+      ],
+    },
   },
 }));
 vi.mock('react-i18next', () => ({
@@ -144,6 +149,6 @@ describe('meeting entry', () => {
     const plan = mocks.start.mock.calls[0][0];
     expect(plan.tasks).toHaveLength(3);
     expect(plan.record.turns.map((turn: { agentId: string }) => turn.agentId)).toEqual(['a', 'b', 'a']);
-    expect(plan.tasks.every((task) => task.model === 'clawrouter/m')).toBe(true);
+    expect(plan.tasks.map((task) => task.model)).toEqual(['clawrouter/m', 'clawrouter/kimi-k3', 'clawrouter/m']);
   });
 });

@@ -10,6 +10,13 @@ import type {
   ArtifactWorkspaceScope,
 } from '@clawwork/shared';
 import { getWorkspaceScope, subscribeWorkspaceScope } from '../workspace/scope.js';
+import {
+  captureDeliveryActivityOwner,
+  isDeliveryActivityOwnerCurrent,
+  loadDeliveryActivities,
+  persistDeliveryActivity,
+  type DeliveryActivityOwner,
+} from '../db/delivery-activities.js';
 
 function broadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -23,8 +30,10 @@ function broadcast(channel: string, payload: unknown): void {
 
 const active = new Map<string, ArtifactDeliveryActivity>();
 const completed = new Map<string, ArtifactDeliveryActivity>();
+const failedPersistence = new Map<string, string>();
 const MAX_COMPLETED_OPERATIONS = 256;
 const MAX_PHASE_OBSERVATIONS = 64;
+let memoryOwner: DeliveryActivityOwner | null = null;
 const copyActivity = (event: ArtifactDeliveryActivity): ArtifactDeliveryActivity => ({
   ...event,
   ...(event.pageProgress ? { pageProgress: { ...event.pageProgress } } : {}),
@@ -33,16 +42,88 @@ const copyActivity = (event: ArtifactDeliveryActivity): ArtifactDeliveryActivity
 subscribeWorkspaceScope(() => {
   active.clear();
   completed.clear();
+  failedPersistence.clear();
+  memoryOwner = null;
 });
+
+function currentOwner(): DeliveryActivityOwner {
+  if (memoryOwner && !isDeliveryActivityOwnerCurrent(memoryOwner)) {
+    active.clear();
+    completed.clear();
+    failedPersistence.clear();
+  }
+  memoryOwner = captureDeliveryActivityOwner();
+  return memoryOwner;
+}
+
+/** Called only after task deletion commits, before the same ID can be re-adopted. */
+export function forgetTaskDeliveryActivities(taskId: string): void {
+  currentOwner();
+  for (const records of [active, completed]) {
+    for (const [operationId, event] of records) {
+      if (event.taskId !== taskId) continue;
+      records.delete(operationId);
+      failedPersistence.delete(operationId);
+    }
+  }
+}
+
+function taskIdentity(owner: DeliveryActivityOwner, event: Pick<ArtifactDeliveryActivity, 'taskId' | 'sessionKey'>) {
+  if (!owner.database || !isDeliveryActivityOwnerCurrent(owner)) return null;
+  try {
+    const row = owner.database
+      .prepare('SELECT rowid,created_at FROM tasks WHERE id=? AND session_key=?')
+      .get(event.taskId, event.sessionKey) as { rowid: number; created_at: string } | undefined;
+    return row ? JSON.stringify([row.rowid, row.created_at]) : null;
+  } catch (error) {
+    console.warn('[delivery-activity] task identity unavailable:', error);
+    return undefined;
+  }
+}
+
+function failedTerminals(owner: DeliveryActivityOwner): ArtifactDeliveryActivity[] {
+  if (!owner.database || !owner.binding || !isDeliveryActivityOwnerCurrent(owner)) return [];
+  const result: ArtifactDeliveryActivity[] = [];
+  for (const [operationId, identity] of failedPersistence) {
+    const event = completed.get(operationId);
+    const currentTask = event ? taskIdentity(owner, event) : null;
+    if (currentTask === undefined) continue;
+    if (event && currentTask === identity) result.push(event);
+    else {
+      failedPersistence.delete(operationId);
+      completed.delete(operationId);
+    }
+  }
+  return result;
+}
 
 let subscribed = false;
 export function registerDeliveryActivityHandlers(): void {
   ipcMain.handle('artifact:get-workspace-scope', getWorkspaceScope);
-  ipcMain.handle('artifact:get-delivery-activity-snapshot', () => ({
-    owner: getWorkspaceScope(),
-    activities: [...active.values()].map(copyActivity),
-    completedActivities: [...completed.values()].map(copyActivity),
-  }));
+  ipcMain.handle('artifact:get-delivery-activity-snapshot', () => {
+    const persistenceOwner = currentOwner();
+    const owner = getWorkspaceScope();
+    let history = [...completed.values()];
+    if (persistenceOwner.database) {
+      try {
+        history = loadDeliveryActivities(persistenceOwner, owner);
+      } catch (error) {
+        console.warn('[delivery-activity] terminal history unavailable:', error);
+        history = [];
+      }
+      const merged = new Map(history.map((event) => [event.operationId, event]));
+      for (const event of failedTerminals(persistenceOwner))
+        if (!merged.has(event.operationId)) merged.set(event.operationId, event);
+      history = [...merged.values()]
+        .sort((left, right) => (left.endedAt ?? left.startedAt) - (right.endedAt ?? right.startedAt))
+        .slice(-MAX_COMPLETED_OPERATIONS);
+    }
+    return {
+      owner,
+      activities: [...active.values()].map(copyActivity),
+      completedActivities: history.map(copyActivity),
+    };
+  });
   if (!subscribed) {
     subscribed = true;
     subscribeWorkspaceScope((scope) => broadcast('artifact:workspace-scope-changed', scope));
@@ -62,6 +143,7 @@ export function beginArtifactDeliveryActivity(
   finish: (status: ArtifactDeliveryTerminalStatus) => void;
 } | null {
   const owner = { ...input.owner };
+  const persistenceOwner = currentOwner();
   const identity = {
     taskId: input.taskId,
     sessionKey: input.sessionKey,
@@ -70,9 +152,15 @@ export function beginArtifactDeliveryActivity(
   };
   const ownsWorkspace = (): boolean => {
     const current = getWorkspaceScope();
-    return owner.scope !== null && current.scope === owner.scope && current.revision === owner.revision;
+    return (
+      owner.scope !== null &&
+      current.scope === owner.scope &&
+      current.revision === owner.revision &&
+      isDeliveryActivityOwnerCurrent(persistenceOwner)
+    );
   };
   if (!ownsWorkspace() || active.size >= 2048) return null;
+  const originalTaskIdentity = taskIdentity(persistenceOwner, identity);
   const operationId = randomUUID(),
     startedAt = Date.now();
   let sequence = 0,
@@ -82,7 +170,7 @@ export function beginArtifactDeliveryActivity(
   const observedPhases: ArtifactDeliveryPhaseObservation[] = [];
   let historyTruncated = false;
   const emit = (status: ArtifactDeliveryActivity['status']): void => {
-    if (terminal || !ownsWorkspace()) return;
+    if (terminal || !ownsWorkspace() || (sequence > 0 && !active.has(operationId))) return;
     if (status !== 'active') terminal = true;
     const observedAt = Date.now();
     if (status === 'active' && observedPhases.at(-1)?.phase !== phase) {
@@ -115,7 +203,17 @@ export function beginArtifactDeliveryActivity(
     else {
       active.delete(operationId);
       completed.set(operationId, event);
-      if (completed.size > MAX_COMPLETED_OPERATIONS) completed.delete(completed.keys().next().value!);
+      if (completed.size > MAX_COMPLETED_OPERATIONS) {
+        const oldest = completed.keys().next().value!;
+        completed.delete(oldest);
+        failedPersistence.delete(oldest);
+      }
+      try {
+        persistDeliveryActivity(persistenceOwner, event);
+      } catch (error) {
+        if (originalTaskIdentity) failedPersistence.set(operationId, originalTaskIdentity);
+        console.warn('[delivery-activity] terminal persistence unavailable:', error);
+      }
     }
     broadcast('artifact:delivery-activity', copyActivity(event));
   };

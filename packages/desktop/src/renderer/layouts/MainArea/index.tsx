@@ -34,6 +34,7 @@ import { useFileStore } from '@/stores/fileStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { cn, formatRelativeTime, formatCredits } from '@/lib/utils';
+import { anchoredScrollTop, resolveChatScrollAnchor, type ChatScrollSlot } from '@/lib/chat-scroll-anchor';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { resolveModelLabel } from '@/lib/model-display';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
@@ -50,6 +51,7 @@ import type { DraftPromptRequest, DraftPromptResolution } from '@/components/Cha
 import ImageLightbox from '@/components/ImageLightbox';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import EnsembleAgentBar from '@/components/EnsembleAgentBar';
+import TeamCollabBar from '@/features/team-meeting/TeamCollabBar';
 import FileBrowser from '../FileBrowser';
 import CronPanel from '@/layouts/CronPanel';
 import TeamsPanel from '@/layouts/TeamsPanel';
@@ -118,6 +120,27 @@ type MessageRow = (typeof EMPTY_MESSAGES)[number];
 const STICK_TO_BOTTOM_THRESHOLD_PX = 60;
 const MAX_HEADER_TITLE_LENGTH = 120;
 
+/**
+ * 时间线上"正在生成的那一格"（等待中或流式）。
+ *
+ * 渲染分支与滚动锚点**共用这一个判据** —— 两处各写一份（"有内容" / "轮到它等待"）
+ * 迟早会漂，而漂的表现恰好是"锚点找不到新回答"这种静默失效。
+ */
+function isLiveAnswerItem(item: TimelineItem, waitingSessionKey: string | undefined): boolean {
+  if (item.kind !== 'turn') return false;
+  if (item.turn?.finalized) return false;
+  const turnHasContent = Boolean(
+    item.turn && (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0),
+  );
+  return turnHasContent || item.sessionKey === waitingSessionKey;
+}
+
+/** 时间线项 → 滚动语义（`resolveChatScrollAnchor` 的输入）。 */
+function scrollSlotFor(item: TimelineItem, waitingSessionKey: string | undefined): ChatScrollSlot {
+  if (item.kind === 'message') return item.message.role === 'user' ? 'user' : 'assistant';
+  return isLiveAnswerItem(item, waitingSessionKey) ? 'live-answer' : 'other';
+}
+
 function artifactCreatedAtTimestamp(createdAt: string | null | undefined): number {
   const timestamp = Date.parse(createdAt ?? '');
   return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
@@ -142,6 +165,11 @@ interface MainAreaProps {
   onboardingProfile: OnboardingProfile;
   startupReadiness: StartupReadiness;
   onRetryStartup: StartupRetry;
+  /**
+   * 打开「编辑我的资料」引导（个性化中心那条入口，2026-10-06 由主 Agent 在 `App.tsx`
+   * 注入 `setEditingOnboardingProfile`）。不给就不渲染那个入口（`IdentityCenter` 的契约）。
+   */
+  onEditOnboardingProfile?: () => void;
 }
 
 interface ArchivedTaskRow {
@@ -462,40 +490,7 @@ function ChatHeader({
   );
 }
 
-function MediaReadinessStatus({
-  readiness,
-  gatewayId,
-}: {
-  readiness: StartupReadiness;
-  gatewayId: string | null | undefined;
-}) {
-  const { t } = useTranslation();
-  if (
-    gatewayId !== 'local-runtime' ||
-    readiness.gatewayId !== gatewayId ||
-    readiness.ai.phase !== 'ready' ||
-    !readiness.media
-  )
-    return null;
-  return (
-    <div
-      role="status"
-      aria-label={t('mediaReadiness.relayLabel')}
-      className="type-support mx-5 mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
-    >
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <span>{t('mediaReadiness.relayLabel')}</span>
-        <span>
-          {t('mediaReadiness.image')}: {t(`mediaReadiness.${readiness.media.image}`)}
-        </span>
-        <span>
-          {t('mediaReadiness.video')}: {t(`mediaReadiness.${readiness.media.video}`)}
-        </span>
-      </div>
-      <p className="mt-1">{t('mediaReadiness.chatModelNote')}</p>
-    </div>
-  );
-}
+// （2026-10-06 移除 MediaReadinessStatus 横幅——用户拍板：不需要该提示）
 
 export function ChatContent({
   onboardingProfile,
@@ -581,6 +576,19 @@ export function ChatContent({
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  /**
+   * 自动滚动到底把视口放到哪（2026-10-06，#16「答案要从下往上翻看」）：
+   * - `answerAnchorKey` —— 时间线里"新回答那一格"的 key。有它时**优先钉在回答首行**
+   *   （长回答不再只露个结尾）；定稿→收编后 key 不变、DOM 节点不变，所以锚点会自然活过去。
+   *   释放只有两种情形：那一格不在了（换任务等）、或用户又发了一条 —— 判据在
+   *   `resolveChatScrollAnchor`，那里的注释写了为什么"新回答"必须是紧跟在提问之后的那格。
+   * - `itemNodes` —— 上面那个 key → 那一格的包装节点（`ref` 回调登记）。
+   * - `followBottom` —— 用户**主动**停到最底部（滚到底/点回到底部按钮）：此后跟随尾部，
+   *   不再钉首行 —— 他明确在看最新那一截。
+   */
+  const itemNodes = useRef(new Map<string, HTMLDivElement>());
+  const answerAnchorKey = useRef<string | null>(null);
+  const followBottom = useRef(false);
   const isAutoScrolling = useRef(false);
   const draftRequestSequence = useRef(0);
   const activeDraftRequest = useRef<DraftPromptRequest | null>(null);
@@ -861,6 +869,22 @@ export function ChatContent({
 
     return [...messageItems, ...turnItems].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
   }, [activeTurns, messages, waitingSessionKey]);
+  /**
+   * 滚动锚点：视口要钉在**哪一个槽位**上（规则见 `resolveChatScrollAnchor` 的说明）。
+   *
+   * ⚠️ 在 render 里算（幂等；同 App/RightPanel 已有的 render 期 ref 写法）而不是放进 effect：
+   *    "定稿 → 收编"是同一次 set 里的换血，晚一帧就错过。
+   */
+  const scrollSlots = useMemo(
+    () => timelineItems.map((item) => ({ key: item.key, slot: scrollSlotFor(item, waitingSessionKey) })),
+    [timelineItems, waitingSessionKey],
+  );
+  const nextAnchorKey = resolveChatScrollAnchor(scrollSlots, answerAnchorKey.current);
+  if (nextAnchorKey !== answerAnchorKey.current) {
+    answerAnchorKey.current = nextAnchorKey;
+    // 新回答 = 从头读：上一轮"看尾部"的选择不继承（释放锚点则无所谓，反正随底）。
+    if (nextAnchorKey !== null) followBottom.current = false;
+  }
   const performerBySessionKey = useMemo(
     () => new Map((activeRoom?.performers ?? []).map((performer) => [performer.sessionKey, performer])),
     [activeRoom?.performers],
@@ -968,6 +992,9 @@ export function ChatContent({
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_THRESHOLD_PX;
     stickToBottom.current = atBottom;
+    // 用户**自己**回到最底部 = 他明确想看最新那一截：这一轮回答此后跟随尾部，
+    // 不再被钉回首行（见 `chat-scroll-anchor.ts` 的 `followBottom`）。
+    if (atBottom) followBottom.current = true;
     setShowScrollButton(!atBottom);
   }, []);
 
@@ -983,7 +1010,20 @@ export function ChatContent({
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         isAutoScrolling.current = true;
-        viewport.scrollTop = viewport.scrollHeight;
+        // 目标位置不再无条件等于"底部"（2026-10-06，#16）：新回答长过视口时钉在它的首行，
+        // 让用户从第一句读起；回答还装得下 / 用户主动停在底部时仍是随底（原行为）。
+        // 目标计算在 `lib/chat-scroll-anchor.ts`，这里只负责量锚点。
+        const anchorKey = answerAnchorKey.current;
+        const anchorNode = anchorKey ? itemNodes.current.get(anchorKey) : undefined;
+        const anchorTop = anchorNode
+          ? anchorNode.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop
+          : null;
+        viewport.scrollTop = anchoredScrollTop({
+          contentHeight: viewport.scrollHeight,
+          viewportHeight: viewport.clientHeight,
+          anchorTop,
+          followBottom: followBottom.current,
+        });
         requestAnimationFrame(() => {
           isAutoScrolling.current = false;
         });
@@ -1002,7 +1042,26 @@ export function ChatContent({
     if (!el) return;
     el.scrollTop = el.scrollHeight;
     stickToBottom.current = true;
+    followBottom.current = true;
     setShowScrollButton(false);
+  }, []);
+
+  /**
+   * 时间线每一项的包装节点登记（锚点靠它找"新回答那一格"）。
+   *
+   * ⚠️ 两条纪律：
+   * 1. 同一个 key 若先后登记过两个节点，**保住先来且还挂在文档上的那个** —— 它才是用户
+   *    真正在读的那一格（DOM 节点从流式一路活过来）。后来的同 key 节点不覆盖。
+   * 2. 清理是**守卫式删除**（还登记着我这个节点才删）：React 19 的 ref cleanup 顺序下，
+   *    后来者的清理不会把先来者的登记误删。
+   */
+  const registerItemNode = useCallback((key: string, node: HTMLDivElement | null): (() => void) | void => {
+    if (!node) return;
+    const registered = itemNodes.current.get(key);
+    if (!registered || !registered.isConnected) itemNodes.current.set(key, node);
+    return () => {
+      if (itemNodes.current.get(key) === node) itemNodes.current.delete(key);
+    };
   }, []);
 
   // ⚠️ 这里**不能**给聊天列挂 `key={activeTaskId}`：新任务的第一条消息会先把 pending
@@ -1012,10 +1071,6 @@ export function ChatContent({
   //    切任务需要重置的东西由下面的 effect 负责，不靠重挂载。
   return (
     <>
-      <MediaReadinessStatus
-        readiness={startupReadiness}
-        gatewayId={activeTask?.gatewayId ?? pendingGatewayId ?? defaultGatewayId}
-      />
       {/* 对比面板与对话区**互斥**：一轮对比在跑时，这一屏就是那几列。
           不叠在时间线上（两套滚动会互相打架），也不缩在角落（用户会以为没反应）。
           采纳/取消后 `compareActive` 归 null，对话区原样回来 —— 注意这里没有换 `key`，
@@ -1102,6 +1157,12 @@ export function ChatContent({
                     return (
                       <ChatMessage
                         message={message}
+                        // 本人头像立绘：从 App 下发的档案直接给（账号级真值），
+                        // 不让每条消息自己去扫 localStorage（2026-10-07 体检 5/12b）。
+                        // 16 型形象（2026-10-08）：四字码 + 性别同源下发，两件都有才走 MBTI 头像。
+                        portraitRole={onboardingProfile.portrait?.role ?? null}
+                        portraitLetters={onboardingProfile.portrait?.letters ?? null}
+                        portraitGender={onboardingProfile.portrait?.gender ?? null}
                         modelLabel={resolveModelLabel(message.model, modelCatalog)}
                         highlighted={message.id === highlightedId}
                         onHighlightDone={handleHighlightDone}
@@ -1133,11 +1194,7 @@ export function ChatContent({
                   //    同一个 DOM 节点。拆成"数组内 / 数组外"两处渲染时，key 一样也照样重建
                   //    —— 2026-09-20 实测：父节点、key、组件类型全都相同，节点还是被换掉（测试里
                   //    那两条 `expect(after).toBe(waiting)`）。
-                  const turnHasContent = Boolean(
-                    item.turn &&
-                    (item.turn.streamingText || item.turn.streamingThinking || item.turn.toolCalls.length > 0),
-                  );
-                  if (turnHasContent || item.sessionKey === waitingSessionKey) {
+                  if (isLiveAnswerItem(item, waitingSessionKey)) {
                     return (
                       <AssistantBlock
                         state="streaming"
@@ -1157,7 +1214,12 @@ export function ChatContent({
                 };
 
                 return (
-                  <div key={item.key} className={wrapperClass}>
+                  <div
+                    key={item.key}
+                    // 滚动锚点要能按 key 找回这一格的包装节点（见 `registerItemNode` 与自动滚动 effect）。
+                    ref={(node) => registerItemNode(item.key, node)}
+                    className={wrapperClass}
+                  >
                     {renderTile()}
                   </div>
                 );
@@ -1369,6 +1431,7 @@ export default function MainArea({
   onboardingProfile,
   startupReadiness,
   onRetryStartup,
+  onEditOnboardingProfile,
 }: MainAreaProps) {
   const mainView = useUiStore((s) => s.mainView);
   const messageLayout = useUiStore((s) => s.messageLayout);
@@ -1445,7 +1508,7 @@ export default function MainArea({
         <SkillMarket />
       ) : mainView === 'identity' ? (
         <div className="flex-1 min-h-0">
-          <IdentityCenter />
+          <IdentityCenter profile={onboardingProfile} onEditProfile={onEditOnboardingProfile} />
         </div>
       ) : mainView === 'growth' ? (
         <div className="flex-1 min-h-0">
@@ -1466,6 +1529,10 @@ export default function MainArea({
             onToggleCompare={() => setCompareMode(!compareMode)}
           />
           {activeTaskId && <EnsembleAgentBar taskId={activeTaskId} />}
+          {/* ⭐ 2026-10-06（V1 收口 · 任务 10/11）：聊天页的「团队协作」条（可折叠，默认收起）。
+              状态只来自真实信号（团队开会 turns / 团队花名册）；没有真实信号就显「未启用」，
+              不做假进度。非团队任务也渲染 —— 展开会如实说明"不属于任何团队"。 */}
+          {activeTaskId && <TeamCollabBar taskId={activeTaskId} />}
           <ChatContent
             onboardingProfile={onboardingProfile}
             startupReadiness={startupReadiness}

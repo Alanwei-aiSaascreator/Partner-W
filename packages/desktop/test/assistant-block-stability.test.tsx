@@ -245,7 +245,9 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
               id: 'video-1',
               name: 'video_generate',
               status: 'error',
-              result: 'provider unavailable',
+              // ⚠️ 2026-10-08（pre19 验收）：未映射的**内核英文**现在会被兜底成产品文案，
+              //    这条钉的是"失败原因可见"，所以用可读原因（中文原样显示）。
+              result: '视频生成能力当前不可用',
               startedAt: '2026-09-30T00:00:00.000Z',
             },
           ],
@@ -256,7 +258,7 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     expect(view.container.textContent).toContain(
       i18n.t('chatMessage.toolCallSummaryWithErrors', { count: 1, errorCount: 1 }),
     );
-    expect(view.container.textContent).toContain('provider unavailable');
+    expect(view.container.textContent).toContain('视频生成能力当前不可用');
     expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).toBeNull();
   });
 });

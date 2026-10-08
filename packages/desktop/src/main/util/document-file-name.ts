@@ -17,11 +17,20 @@ export const MAX_DOCUMENT_STEM_CHARS = 60;
  *    只要中间有一层把它解释成真字节，代码文件里就会出现真的 NUL ——
  *    grep 会直接把整个文件当二进制，那条正则也变成只匹配那两个码点。
  *    这里改成逐字符判断（`charCodeAt`），绕开所有转义层。
+ *
+ * ⭐ **连续点必须在这里洗掉（BUG-042-a，2026-10-08 亲验必炸）**：
+ *    标题 `关于...的说明` / `第1..3章` 会原样产出含 `..` 的主名，而落盘层的
+ *    `workspace/safe-name.ts` 把「名字里含 `..`」当**路径逃逸**无条件 throw ⇒
+ *    docgen 整份报 `render-failed`、一个文件都不出。
+ *    修在**源头**（这里），不是放松落盘层的守卫 —— 那道守卫守的是任意来源的名字。
+ *    单个 `.` 照旧保留（`v1.2 报告` 是正常文件名）；替换成一个安全字符 `·`
+ *    （与产品自己生成的名字同款分隔符，NTFS/exFAT 上都合法，也不是路径字符）。
  */
 export function documentFileStem(title: string, fallbackStem: string): string {
   const withoutControls = [...title].map((ch) => (ch.charCodeAt(0) < 0x20 ? ' ' : ch)).join('');
   const cleaned = withoutControls
     .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\.{2,}/g, '·')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_DOCUMENT_STEM_CHARS);

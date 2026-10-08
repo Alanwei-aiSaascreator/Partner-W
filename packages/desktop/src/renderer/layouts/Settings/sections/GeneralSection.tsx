@@ -19,6 +19,7 @@ import Toggle from '../components/Toggle';
 import SettingGroup from '@/components/semantic/SettingGroup';
 import PairMobileDialog from '../components/PairMobileDialog';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { isMobileGatewayAddress } from '@/lib/mobile-pairing';
 
 export default function GeneralSection() {
   const { t } = useTranslation();
@@ -36,6 +37,9 @@ export default function GeneralSection() {
   const rightPanelShortcut = useUiStore((s) => s.rightPanelShortcut);
   const setRightPanelShortcut = useUiStore((s) => s.setRightPanelShortcut);
   const notifications = useSettingsStore((s) => s.settings?.notifications);
+  const mobilePairingAvailable = useSettingsStore((s) =>
+    s.settings?.gateways.some((gateway) => isMobileGatewayAddress(gateway.url)),
+  );
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const loadSettings = useSettingsStore((s) => s.load);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
@@ -273,28 +277,30 @@ export default function GeneralSection() {
         </SettingGroup>
       </div>
 
-      <div>
-        <h3 className="type-section-title mb-4 text-[var(--text-primary)]">{t('settings.mobile')}</h3>
-        <SettingGroup>
-          <SettingRow
-            label={
-              <div className="flex items-center gap-3">
-                <Smartphone size={14} className="flex-shrink-0 text-[var(--text-muted)]" />
-                <span className="type-label text-[var(--text-primary)]">{t('settings.pairMobile')}</span>
-              </div>
-            }
-          >
-            <button
-              onClick={() => setShowPairDialog(true)}
-              className="glow-focus type-label rounded-lg border border-[var(--border)] px-3 py-1.5 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
+      {mobilePairingAvailable && (
+        <div>
+          <h3 className="type-section-title mb-4 text-[var(--text-primary)]">{t('settings.mobile')}</h3>
+          <SettingGroup>
+            <SettingRow
+              label={
+                <div className="flex items-center gap-3">
+                  <Smartphone size={14} className="flex-shrink-0 text-[var(--text-muted)]" />
+                  <span className="type-label text-[var(--text-primary)]">{t('settings.pairMobile')}</span>
+                </div>
+              }
             >
-              {t('settings.pairMobileButton')}
-            </button>
-          </SettingRow>
-        </SettingGroup>
-      </div>
+              <button
+                onClick={() => setShowPairDialog(true)}
+                className="glow-focus type-label rounded-lg border border-[var(--border)] px-3 py-1.5 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
+              >
+                {t('settings.pairMobileButton')}
+              </button>
+            </SettingRow>
+          </SettingGroup>
+        </div>
+      )}
 
-      <PairMobileDialog open={showPairDialog} onOpenChange={setShowPairDialog} />
+      {mobilePairingAvailable && <PairMobileDialog open={showPairDialog} onOpenChange={setShowPairDialog} />}
     </div>
   );
 }

@@ -12,7 +12,9 @@ it('distinguishes submitted source from verified PPTX delivery', () => {
 });
 
 it('requires the installed generation command after source preflight in the current turn', () => {
-  expect(skill).toContain('node "{baseDir}/scripts/generate.cjs" "\u4e5d\u6708\u7ecf\u8425\u7b80\u62a5.slidegen"');
+  expect(skill).toContain(
+    'node "<this-skill-dir>/scripts/generate.cjs" "\u4e5d\u6708\u7ecf\u8425\u7b80\u62a5.slidegen"',
+  );
   expect(skill).toContain('\u4e0d\u8981\u5728 `source-valid` \u540e\u7ed3\u675f\u56de\u590d');
   expect(skill).not.toContain(
     '\u6587\u4ef6\u662f**\u5ba2\u6237\u7aef\u5728\u8fd9\u4e00\u8f6e\u7ed3\u675f\u540e**\u751f\u6210\u7684',
