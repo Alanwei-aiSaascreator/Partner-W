@@ -224,6 +224,14 @@ export interface UiState {
   rightPanelWidth: number;
   setRightPanelWidth: (w: number) => void;
 
+  /**
+   * **预览模式**的宽度偏好（WorkBuddy A 批 Task 4）：与列表宽（240–500）分开存 ——
+   * 列表宽适合索引，看文档要更宽。窗口变小只 clamp「有效宽度」（布局纯函数），
+   * **不回写偏好**；窗口复原后宽度跟着回来。
+   */
+  artifactPreviewWidth: number;
+  setArtifactPreviewWidth: (w: number) => void;
+
   leftNavShortcut: PanelShortcutLeft;
   setLeftNavShortcut: (s: PanelShortcutLeft) => void;
 
@@ -546,6 +554,13 @@ export function createUiStore(deps: UiStoreDeps) {
       const clamped = Math.min(500, Math.max(240, w));
       deps.storage.set('cw:rightPanelWidth', String(clamped));
       set({ rightPanelWidth: clamped });
+    },
+
+    artifactPreviewWidth: fixedPanelWidth(deps.storage, 'cw:artifactPreviewWidth', 360, 1200, 500),
+    setArtifactPreviewWidth: (w) => {
+      const clamped = Math.min(1200, Math.max(360, w));
+      deps.storage.set('cw:artifactPreviewWidth', String(clamped));
+      set({ artifactPreviewWidth: clamped });
     },
 
     leftNavShortcut: 'Comma',

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { usePreventFileDropNavigation } from './hooks/usePreventFileDropNavigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, TOAST_DURATION_MS, TOAST_OPTIONS } from '@/lib/toast';
@@ -49,6 +49,9 @@ import {
 } from '@/lib/app-entry-flow';
 import { createEntryLicenseGate, EntryLicenseError } from '@/lib/entry-license-gate';
 import { useArtifactPanelViewScope } from '@/lib/artifact-preview-navigation';
+import { resolveArtifactPanelLayout } from '@/lib/artifact-panel-layout';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { useTranslation } from 'react-i18next';
 import { isInternalBetaEnabled, parseBetaRoute } from '@/features/internal-beta/beta-route';
 import { useGatewayDisappearanceNotice } from '@/lib/gateway-disappearance';
 
@@ -122,6 +125,19 @@ export default function App() {
   // ⭐ Task 3 视图门：离开聊天/打开设置 ⇒ 右侧预览复位回列表（回聊天**不**自动恢复 ——
   //    FileBrowser 期间改过共享选中 ID，自动恢复会预览出另一份文件）。
   useArtifactPanelViewScope();
+
+  // ── Task 4：预览布局裁定（宽窗并排 / 窄窗抽屉 / 极小全屏，24px 回滞）────────────
+  const { t } = useTranslation();
+  const artifactPanelMode = useUiStore((s) => s.artifactPanelMode);
+  const setArtifactPanelMode = useUiStore((s) => s.setArtifactPanelMode);
+  const artifactPreviewWidth = useUiStore((s) => s.artifactPreviewWidth);
+  const setArtifactPreviewWidth = useUiStore((s) => s.setArtifactPreviewWidth);
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1280 : window.innerWidth));
+  useEffect(() => {
+    const onResize = (): void => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const toggleCommandPalette = useUiStore((s) => s.toggleCommandPalette);
   const commandPaletteOpen = useUiStore((s) => s.commandPaletteOpen);
   const startNewTask = useTaskStore((s) => s.startNewTask);
@@ -140,6 +156,18 @@ export default function App() {
   const setRightPanelWidth = useUiStore((s) => s.setRightPanelWidth);
   const leftNavShortcut = useUiStore((s) => s.leftNavShortcut);
   const rightPanelShortcut = useUiStore((s) => s.rightPanelShortcut);
+  /** 回滞记忆：上一次裁定（纯函数按它决定临界区间的去留）。 */
+  const panelLayoutRef = useRef<ReturnType<typeof resolveArtifactPanelLayout>['mode'] | undefined>(undefined);
+  const panelLayout = useMemo(() => {
+    const next = resolveArtifactPanelLayout({
+      viewportWidth,
+      navigationWidth: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : leftNavWidth,
+      requestedPreviewWidth: artifactPreviewWidth,
+      previousMode: panelLayoutRef.current,
+    });
+    panelLayoutRef.current = next.mode;
+    return next;
+  }, [viewportWidth, leftNavCollapsed, leftNavWidth, artifactPreviewWidth]);
   const themeMode = useUiStore((s) => s.theme);
   const openSettings = useCallback(
     (section: SettingsSection) => {
@@ -646,25 +674,54 @@ export default function App() {
         </main>
 
         <AnimatePresence>
-          {rightPanelOpen && !settingsOpen && mainView === 'chat' && (
-            <>
-              <div
-                className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
-                onMouseDown={(e) => startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1)}
+          {rightPanelOpen &&
+            !settingsOpen &&
+            mainView === 'chat' &&
+            (artifactPanelMode === 'preview' && panelLayout.mode !== 'inline' ? (
+              /* 窄窗/小屏：预览改**抽屉**（Task 4）—— Radix Dialog 供 Esc 关闭与焦点归还，
+                 内容贴右缘（样式在 theme.css 的 .artifact-drawer*；宽度由布局裁定给）。 */
+              <DialogPrimitive.Root
+                open
+                onOpenChange={(open) => {
+                  if (!open) setArtifactPanelMode('list');
+                }}
               >
-                <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
-              </div>
-              <motion.aside
-                initial={{ width: 0, opacity: 0 }}
-                animate={{ width: rightPanelWidth, opacity: 1 }}
-                exit={{ width: 0, opacity: 0 }}
-                transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
-                className={cn('glass-heavy relative flex-shrink-0 overflow-hidden z-[1] border-l-0')}
-              >
-                <RightPanel />
-              </motion.aside>
-            </>
-          )}
+                <DialogPrimitive.Portal>
+                  <DialogPrimitive.Overlay className="artifact-drawer__overlay" />
+                  <DialogPrimitive.Content
+                    className="artifact-drawer"
+                    data-mode={panelLayout.mode}
+                    style={{ '--artifact-drawer-width': `${panelLayout.width}px` } as React.CSSProperties}
+                    aria-describedby={undefined}
+                  >
+                    <DialogPrimitive.Title className="sr-only">{t('rightPanel.artifacts')}</DialogPrimitive.Title>
+                    <RightPanel />
+                  </DialogPrimitive.Content>
+                </DialogPrimitive.Portal>
+              </DialogPrimitive.Root>
+            ) : (
+              <>
+                <div
+                  className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
+                  onMouseDown={(e) =>
+                    artifactPanelMode === 'preview'
+                      ? startPanelDrag(e, panelLayout.width, setArtifactPreviewWidth, -1)
+                      : startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1)
+                  }
+                >
+                  <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
+                </div>
+                <motion.aside
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: artifactPanelMode === 'preview' ? panelLayout.width : rightPanelWidth, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
+                  className={cn('glass-heavy relative flex-shrink-0 overflow-hidden z-[1] border-l-0')}
+                >
+                  <RightPanel />
+                </motion.aside>
+              </>
+            ))}
         </AnimatePresence>
         <AppToaster themeMode={themeMode} />
         <ApprovalDialog />

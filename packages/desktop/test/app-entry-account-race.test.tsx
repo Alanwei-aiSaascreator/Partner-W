@@ -105,6 +105,9 @@ vi.mock('../src/renderer/stores/uiStore', () => {
     // Task 3：App 的视图门会调用（桩必须与真实 store 同形）
     artifactPanelMode: 'list',
     setArtifactPanelMode: vi.fn(),
+    // Task 4：App 的布局裁定会读预览宽度偏好
+    artifactPreviewWidth: 500,
+    setArtifactPreviewWidth: vi.fn(),
     toggleRightPanel: vi.fn(),
     setSettingsOpen: vi.fn((value: boolean) => {
       entryFactsFixture.settingsOpen = value;

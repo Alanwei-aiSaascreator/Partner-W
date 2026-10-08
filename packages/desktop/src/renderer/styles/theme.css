@@ -1026,3 +1026,45 @@ button.tool-summary__trigger:hover {
     opacity: 1;
   }
 }
+
+/* ── 产物预览抽屉（WorkBuddy A 批 Task 4，2026-10-09）────────────────────────────
+   窄窗/小屏时预览不再挤并排栏，改贴右缘抽屉（Radix Dialog 提供 Esc/焦点归还）。
+   宽度由布局裁定经 --artifact-drawer-width 传入（内联变量，非类名任意值）。 */
+:root {
+  --artifact-drawer-width: 480px;
+}
+
+.artifact-drawer__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--overlay-scrim);
+}
+
+.artifact-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: var(--artifact-drawer-width, 480px);
+  max-width: 100vw;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-floating);
+  transition: width 0.28s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+.artifact-drawer[data-mode='fullscreen'] {
+  width: 100vw;
+  border-left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-drawer {
+    transition: none;
+  }
+}
