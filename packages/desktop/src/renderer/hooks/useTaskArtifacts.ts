@@ -345,7 +345,11 @@ function startFetch(entry: TaskArtifactEntry): Promise<void> {
 export function useTaskArtifacts(taskId: string | undefined): { artifacts: Artifact[]; pending: boolean } {
   const storeArtifacts = useFileStore((s) => s.artifacts);
   const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
-  const [pending, setPending] = useState(true);
+  /**
+   * G3：pending 按 `${epoch}::${taskId}` **派生**（不再是一个裸 boolean）——
+   * 同一实例换 key 时，旧任务的 false 不许先提交一帧（新 key 的落定状态现算现看）。
+   */
+  const [pendingState, setPendingState] = useState<{ key: string; value: boolean } | null>(null);
   /**
    * 本地镜像：共享快照里"现在权威"的那份 fresh 行（`rows: null` = 没有可用的 fresh）。
    * 带 `key` 标签 —— 换任务/换 epoch 的那一帧里，上一份镜像还没被 effect 清掉，
@@ -387,14 +391,14 @@ export function useTaskArtifacts(taskId: string | undefined): { artifacts: Artif
       if (!active) return;
       applyFreshMirror(readFreshRows());
     });
-    setPending(!entry.settled);
+    setPendingState({ key: entry.key, value: !entry.settled });
     applyFreshMirror(readFreshRows());
     const signatureNow = taskSignature(useFileStore.getState().artifacts, taskId);
     const wait = needsFetch(entry, signatureNow) ? ensureFetch(entry) : null;
     // 发起者先卸载不许卡死后来者：谁挂载谁自己对同一个 Promise await、各自落定。
     const settle = (): void => {
       if (!active) return;
-      setPending(false);
+      setPendingState({ key: entry.key, value: false });
       applyFreshMirror(readFreshRows());
     };
     if (wait) {
@@ -429,17 +433,24 @@ export function useTaskArtifacts(taskId: string | undefined): { artifacts: Artif
   const artifacts = useMemo(() => {
     if (!taskId) return NO_ARTIFACTS;
     const key = entryKey(workspaceEpoch, taskId);
-    // F3：镜像必须"键相符 **且** 修订指纹仍是当前值"才可用 —— 修订更新后当场弃用，
-    // 不让旧行先提交一帧等 effect 纠正。
-    const freshRows =
-      freshMirror !== null && freshMirror.key === key && freshMirror.signature === signature ? freshMirror.rows : null;
+    // G3（集中终审）：**共享快照就是首帧权威** —— 直接读模块级 entries
+    // （`usableRows` 里仍带 F3 的修订指纹校验：键/epoch/指纹不符或过期 ⇒ 当场弃用）。
+    // freshMirror 只充当"共享快照已变化"的**渲染信号**（订阅回调更新它 ⇒ 触发本 memo 重算），
+    // 不再直接作为数据来源 —— 只靠 effect 事后纠正，重挂载/冷 store 的首提交都会先露一帧旧行。
+    const entry = entries.get(key);
+    const freshRows = entry ? usableRows(entry, workspaceEpoch, signature) : null;
     return mergeRows(
       storeArtifacts.filter((artifact) => artifact.taskId === taskId),
       freshRows,
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `freshMirror` 是模块级共享快照的**更新信号**（订阅回调更新它来触发本 memo 重算，值本身已不参与合并——G3 直接读 entries）。漏掉这个依赖会让快照变化后不重算。
   }, [storeArtifacts, taskId, workspaceEpoch, freshMirror, signature]);
 
-  return { artifacts: taskId ? artifacts : NO_ARTIFACTS, pending: taskId ? pending : false };
+  // G3：pending 现算现看 —— 本 key 有落定记录就用它；没有（含刚切 key）就按共享条目的落定状态推导。
+  const activeKey = taskId ? entryKey(workspaceEpoch, taskId) : null;
+  const pending =
+    activeKey !== null && (pendingState?.key === activeKey ? pendingState.value : !entries.get(activeKey)?.settled);
+  return { artifacts: taskId ? artifacts : NO_ARTIFACTS, pending };
 }
 
 /**

@@ -646,3 +646,110 @@ describe('useTaskArtifacts · F3 修订渲染守卫（逐提交）', () => {
     container.remove();
   });
 });
+
+/**
+ * G3 回归（2026-10-08 集中终审 · P2 必修）：**共享核验快照就是首帧权威**。
+ *
+ * 旧实现里 freshMirror 初始为 null：重挂载后**第一次提交**只能先发 store 的旧结论
+ * （例如已知 missing 的行先以 available 出现一帧），要靠 effect 事后纠正；冷 store
+ * （store 里还没有该任务的行）首提交也会把共享的 available/missing/unknown 行整个丢掉。
+ * 修法：渲染时直接读共享 entries（`usableRows(entry, epoch, signature)`），
+ * freshMirror 只负责通知重算。下面是逐提交记录。
+ */
+describe('useTaskArtifacts · G3 首帧权威（共享快照）', () => {
+  it('⭐ 重挂载首帧直接读已有 missing 核验：不得先提交一帧 store 的 available', async () => {
+    const taskId = 'task-g3-remount';
+    const stored = makeArtifact({ id: 'g1', taskId, availability: 'available' });
+    useFileStore.setState({ artifacts: [stored] });
+    const listArtifacts = vi.fn().mockResolvedValue({ ok: true, result: [{ ...stored, availability: 'missing' }] });
+    Object.assign(window, { clawwork: { listArtifacts } });
+
+    // 第一次挂载：把共享快照落定成 missing
+    const first = renderHook(() => useTaskArtifacts(taskId));
+    await act(async () => {});
+    expect(first.result.current.artifacts[0]!.availability).toBe('missing');
+    first.unmount();
+
+    // 重挂载：逐提交记录每一次渲染发布的 availability
+    const published: string[] = [];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    function Probe() {
+      const { artifacts } = useTaskArtifacts(taskId);
+      published.push(artifacts.length > 0 ? String(artifacts[0]!.availability) : '(empty)');
+      return null;
+    }
+    act(() => root.render(<Probe />));
+    expect(published[0], '重挂载的第一次提交就必须读共享核验快照（missing），不得先发布 store 的 available').toBe(
+      'missing',
+    );
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('⭐ 冷 store（store 无该任务行）重挂载首帧：共享的 available 行不得丢', async () => {
+    const taskId = 'task-g3-cold';
+    const freshRow = makeArtifact({ id: 'g2', taskId, availability: 'available' });
+    const listArtifacts = vi.fn().mockResolvedValue({ ok: true, result: [freshRow] });
+    Object.assign(window, { clawwork: { listArtifacts } });
+
+    const first = renderHook(() => useTaskArtifacts(taskId));
+    await act(async () => {});
+    expect(first.result.current.artifacts.map((a) => a.id)).toEqual(['g2']);
+    first.unmount();
+
+    const published: string[][] = [];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    function Probe() {
+      const { artifacts } = useTaskArtifacts(taskId);
+      published.push(artifacts.map((a) => a.id));
+      return null;
+    }
+    act(() => root.render(<Probe />));
+    expect(published[0], '冷 store 首提交也必须带上共享行').toEqual(['g2']);
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('⭐ pending 按 task/epoch key 派生：切到在途任务后，落定前不得提交 pending=false 的帧', async () => {
+    const listA = vi.fn().mockResolvedValue({ ok: true, result: [] });
+    Object.assign(window, { clawwork: { listArtifacts: listA } });
+
+    const published: Array<{ taskId: string; pending: boolean }> = [];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    function Probe({ taskId }: { taskId: string }) {
+      const { pending } = useTaskArtifacts(taskId);
+      published.push({ taskId, pending });
+      return null;
+    }
+    act(() => root.render(<Probe taskId="task-g3-a" />));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(published.at(-1)!.pending, 'A 已落定').toBe(false);
+
+    const holdB = deferred<{ ok: boolean; result: Artifact[] }>();
+    Object.assign(window, { clawwork: { listArtifacts: vi.fn(() => holdB.promise) } });
+    published.length = 0;
+    act(() => root.render(<Probe taskId="task-g3-b" />));
+    expect(
+      published.filter((entry) => entry.taskId === 'task-g3-b' && entry.pending === false),
+      '切到在途任务后、落定前，不得继承上一任务的 false 先提交一帧',
+    ).toEqual([]);
+
+    await act(async () => {
+      holdB.resolve({ ok: true, result: [] });
+    });
+    expect(published.at(-1)!.pending).toBe(false);
+
+    act(() => root.unmount());
+    container.remove();
+  });
+});
