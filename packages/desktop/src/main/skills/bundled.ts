@@ -401,6 +401,7 @@ export function skillDirManifestSha(dir: string): string | null {
 
 /** 已装技能目录的清单指纹（路径白名单与安装同一把尺；未装/读不动 ⇒ `null`）。 */
 export function readInstalledSkillManifest(managedDir: string | undefined, slug: unknown): string | null {
+  if (!managedDir) return null;
   const dir = resolveInstallDir(managedDir, slug);
   return dir ? skillDirManifestSha(dir) : null;
 }
