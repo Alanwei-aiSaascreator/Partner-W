@@ -1,4 +1,4 @@
-import { Loader2, X } from 'lucide-react';
+import { Clock, Loader2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { formatElapsed } from '@/lib/waiting-copy';
@@ -50,19 +50,43 @@ interface ComposerActivityProps {
 
 export default function ComposerActivity({ sessionKey, sessionKeys, onCancel }: ComposerActivityProps) {
   const { t } = useTranslation();
-  const { active, elapsedMs, headline, quip, running } = useTurnActivity(sessionKey, sessionKeys);
+  // ⭐ P1-3：`awaitingApproval`/`awaitingAnswer` 是两类"等人"（等批准 / 等回答）——
+  //    不是我们在动，是在等你 ⇒ 下面据此把"正在动"的视觉（转圈）停掉。
+  const { active, elapsedMs, headline, quip, running, awaitingApproval, awaitingAnswer } = useTurnActivity(
+    sessionKey,
+    sessionKeys,
+  );
 
   if (!sessionKey || !active) return <ArtifactDeliveryActivity sessionKey={sessionKey} />;
+
+  const awaiting = awaitingApproval || awaitingAnswer;
 
   return (
     <>
       <div
         data-testid="composer-activity"
-        data-status={running ? 'running-tool' : 'working'}
+        data-status={
+          awaitingApproval
+            ? 'awaiting-approval'
+            : awaitingAnswer
+              ? 'awaiting-answer'
+              : running
+                ? 'running-tool'
+                : 'working'
+        }
         className="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2"
       >
         <div className="flex items-center gap-2.5">
-          <Loader2 size={14} className="shrink-0 animate-spin text-[var(--accent)]" aria-hidden />
+          {awaiting ? (
+            // 等人在推进：图标必须**静止**（还在转圈 = 在说"我们正在动"）
+            <Clock size={14} className="shrink-0 text-[var(--text-muted)]" aria-hidden />
+          ) : (
+            <Loader2
+              size={14}
+              className="shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
+              aria-hidden
+            />
+          )}
           <span className="type-label min-w-0 flex-1 truncate text-[var(--text-secondary)]" aria-live="polite">
             {headline}
           </span>

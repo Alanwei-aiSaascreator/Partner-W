@@ -1,4 +1,6 @@
+import { Clock } from 'lucide-react';
 import ActivityBars from './ActivityBars';
+import { cn } from '@/lib/utils';
 import { formatElapsed } from '@/lib/waiting-copy';
 import { useTurnActivity } from '@/hooks/useTurnActivity';
 
@@ -22,19 +24,39 @@ import { useTurnActivity } from '@/hooks/useTurnActivity';
  *   也不承诺完成时间（见 `waiting-copy.ts` 头注释）。
  * - 取消按钮**不在这里**再放一个：等待期用户唯一要做的"停"仍由输入框上方那条
  *   （`ComposerActivity`，带 `onCancel`）提供，避免同一轮出现两个停止口。
+ * - ⭐ 2026-10-08（P1-3）：**"等人"是两种**（等批准 / 等回答 `ask_user`），
+ *   两种都是"不是我们在动，是在等你" ⇒ 跳动条与扫光全部停下、图标换成静态时钟，
+ *   只由主行文案说清在等什么。**视觉静止 = 语义静止**，不靠用户去猜。
+ *   样式在 `theme.css`（`.turn-activity-row*`），组件只挂类名。
  */
 export default function TurnActivityRow({ sessionKey }: { sessionKey: string }) {
-  const { active, elapsedMs, headline } = useTurnActivity(sessionKey);
+  const { active, elapsedMs, headline, awaitingApproval, awaitingAnswer } = useTurnActivity(sessionKey);
   if (!active) return null;
+  // 两类"等人"共用同一套静止视觉（理由见头注释）；`awaiting-approval` 在 `data-status`
+  // 里与 `awaiting-answer` 分开，是为了样式/断言能各自定位，不为了两种视觉。
+  const awaiting = awaitingApproval || awaitingAnswer;
   return (
     <div
       data-testid="turn-activity-row"
+      data-status={awaitingApproval ? 'awaiting-approval' : awaitingAnswer ? 'awaiting-answer' : 'running'}
       role="status"
       aria-live="polite"
-      className="flex max-w-xl items-center gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2"
+      className="turn-activity-row"
     >
-      <ActivityBars className="shrink-0" />
-      <span className="type-label min-w-0 flex-1 truncate text-[var(--text-secondary)]">{headline}</span>
+      {awaiting ? (
+        <Clock size={14} className="shrink-0 text-[var(--text-muted)]" aria-hidden />
+      ) : (
+        <ActivityBars className="shrink-0" />
+      )}
+      <span
+        data-testid="turn-activity-row-headline"
+        className={cn(
+          'turn-activity-row__headline type-label text-[var(--text-secondary)]',
+          !awaiting && 'text-shimmer',
+        )}
+      >
+        {headline}
+      </span>
       <span data-testid="turn-activity-row-elapsed" className="type-mono-data shrink-0 text-[var(--text-muted)]">
         {formatElapsed(elapsedMs)}
       </span>

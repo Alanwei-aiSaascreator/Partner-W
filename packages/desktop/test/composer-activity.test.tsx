@@ -57,6 +57,32 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** 挂起提问（`ask_user`）的播种形状：只带 id 与**属于哪个会话**（本组用例的变量）。 */
+type QuestionSeed = { id: string; sessionKey: string };
+
+/**
+ * 一条**最小合法**的挂起提问负载 —— 走真实 `useQuestionStore.addQuestion`，
+ * 不手塞 state：`sessionKey` 是经 `parseQuestionRequest` 落地的（hook 正是按它过滤）。
+ */
+function questionPayload(seed: QuestionSeed): Record<string, unknown> {
+  return {
+    id: seed.id,
+    questions: [
+      {
+        questionId: 'doc_type',
+        header: '文档类型',
+        question: '你需要什么类型的文档？',
+        options: [{ label: '教案（教学设计）' }, { label: '学生练习 / 作业纸' }],
+        isOther: true,
+      },
+    ],
+    sessionKey: seed.sessionKey,
+    createdAtMs: T0,
+    expiresAtMs: T0 + 900_000,
+    status: 'pending',
+  };
+}
+
 async function setup(storeState: {
   processing?: boolean;
   startedAgoMs?: number;
@@ -66,12 +92,23 @@ async function setup(storeState: {
   /** 网关 `item` 流的 `kind:"preamble"` —— 模型自述的进度。 */
   progressText?: string | null;
   toolCalls?: { id: string; name: string; status: string; title?: string; startedAt: string }[];
-}): Promise<{ onCancel: ReturnType<typeof vi.fn> }> {
+  /** 挂起的结构化提问（先种再渲染）。 */
+  pendingQuestions?: QuestionSeed[];
+  /** 整任务会话列表（多智能体时主会话在前、performers 在后）。 */
+  sessionKeys?: readonly string[];
+}): Promise<{ onCancel: ReturnType<typeof vi.fn>; addQuestion: (seed: QuestionSeed) => void }> {
   const { useMessageStore } = await import('../src/renderer/stores/messageStore');
+  const { useQuestionStore } = await import('../src/renderer/stores/questionStore');
   const { default: ComposerActivity } = await import('../src/renderer/components/ComposerActivity');
 
   vi.useFakeTimers();
   vi.setSystemTime(T0);
+
+  // ⚠️ 必须**无条件**重置再种：提问 store 与下面各键同理（跨用例残留会把"另一个会话的
+  //    提问"带进下一个用例 —— 而本组用例的变量恰恰就是"属于谁"）。
+  useQuestionStore.getState().clear();
+  const addQuestion = (seed: QuestionSeed) => useQuestionStore.getState().addQuestion('gw-1', questionPayload(seed));
+  for (const seed of storeState.pendingQuestions ?? []) addQuestion(seed);
 
   useMessageStore.setState({
     processingBySession: storeState.processing === false ? new Set() : new Set([SK]),
@@ -88,8 +125,12 @@ async function setup(storeState: {
   });
 
   const onCancel = vi.fn();
-  act(() => root.render((<ComposerActivity sessionKey={SK} onCancel={onCancel} />) as ReactElement));
-  return { onCancel };
+  act(() =>
+    root.render(
+      (<ComposerActivity sessionKey={SK} sessionKeys={storeState.sessionKeys} onCancel={onCancel} />) as ReactElement,
+    ),
+  );
+  return { onCancel, addQuestion };
 }
 
 const q = (id: string) => container.querySelector(`[data-testid="${id}"]`);
@@ -558,5 +599,115 @@ describe('模型自述进度', () => {
     */
     expect(text).toContain('chatInput.waiting.awaitingApproval(rm -rf x)');
     expect(text, '被"执行中"抢了头条就等于没说').not.toContain('chatInput.waiting.runningTool');
+  });
+});
+
+/**
+ * ⭐「等人」的第二种：结构化提问（`ask_user`）—— Codex 审核 P1-3。
+ *
+ * 提问挂起时，微信那一头的模型也在等用户 —— 转圈/扫光说"我们正在动"就是撒谎；
+ * 图标换成静态时钟、文案说「等待你的回答」，且**必须按会话键过滤**：
+ * 同任务其他会话（performer）、其他任务的提问不得把**本**会话这条冻住。
+ */
+describe('⭐ 等人在回答（ask_user）', () => {
+  const PERFORMER = 'agent:main:clawwork:dev:task:t1:performer:1';
+  const OTHER_TASK = 'agent:main:clawwork:dev:task:t9';
+
+  /** 活的"正在动"视觉 = 转圈图标（`animate-spin`）。 */
+  function hasSpinner(): boolean {
+    return q('composer-activity')?.querySelector('.animate-spin') != null;
+  }
+
+  it('① 等人批准（无工具在跑）⇒ awaiting-approval + 静态 Clock，转圈停下', async () => {
+    await setup({
+      startedAgoMs: 4_000,
+      toolCalls: [
+        {
+          id: 'call_1',
+          name: 'exec',
+          status: 'awaitingApproval',
+          title: 'npm view diver name version description',
+          startedAt: new Date(T0).toISOString(),
+        },
+      ],
+    });
+
+    const bar = q('composer-activity')!;
+    expect(bar.getAttribute('data-status')).toBe('awaiting-approval');
+    expect(hasSpinner(), '等人时转圈 = 在说"我们正在动"').toBe(false);
+    expect(bar.querySelector('svg.lucide-clock'), '等待期图标必须是静态时钟').not.toBeNull();
+    expect(bar.textContent).toContain('chatInput.waiting.awaitingApproval(npm view diver name version description)');
+  });
+
+  it('② 本会话有挂起提问 ⇒ awaiting-answer + 文案「等待你的回答」（提问到达后当场生效）', async () => {
+    const { addQuestion } = await setup({ startedAgoMs: 4_000 });
+    // 先证明它一开始是"活的"（在跑，转圈 + 泛化文案），提问是**这一轮里**到达的
+    expect(hasSpinner()).toBe(true);
+    expect(q('composer-activity')!.textContent).toContain('chatInput.waiting.working');
+
+    await act(async () => {
+      addQuestion({ id: 'ask_live', sessionKey: SK });
+    });
+
+    const bar = q('composer-activity')!;
+    expect(bar.getAttribute('data-status')).toBe('awaiting-answer');
+    expect(bar.textContent).toContain('chatInput.waiting.awaitingAnswer');
+    expect(hasSpinner()).toBe(false);
+    expect(bar.querySelector('svg.lucide-clock')).not.toBeNull();
+  });
+
+  it('③ 提问属于**同任务另一个会话**（performer）⇒ 本会话照旧，不被冻住', async () => {
+    await setup({
+      startedAgoMs: 4_000,
+      sessionKeys: [SK, PERFORMER],
+      pendingQuestions: [{ id: 'ask_performer', sessionKey: PERFORMER }],
+    });
+
+    const bar = q('composer-activity')!;
+    expect(bar.getAttribute('data-status'), '别人的问题不该冻住这一格').toBe('working');
+    expect(bar.textContent).not.toContain('chatInput.waiting.awaitingAnswer');
+    expect(hasSpinner(), '本会话确实还在跑，转圈必须继续').toBe(true);
+  });
+
+  it('④ 提问属于**另一个任务** ⇒ 不受影响', async () => {
+    await setup({ startedAgoMs: 4_000, pendingQuestions: [{ id: 'ask_other_task', sessionKey: OTHER_TASK }] });
+
+    const bar = q('composer-activity')!;
+    expect(bar.getAttribute('data-status')).toBe('working');
+    expect(bar.textContent).not.toContain('chatInput.waiting.awaitingAnswer');
+  });
+
+  it('⑤ 批准与提问同时存在 ⇒ 批准优先（保持既有优先级语义）', async () => {
+    await setup({
+      startedAgoMs: 4_000,
+      pendingQuestions: [{ id: 'ask_1', sessionKey: SK }],
+      toolCalls: [
+        {
+          id: 'call_1',
+          name: 'exec',
+          status: 'awaitingApproval',
+          title: 'rm -rf /tmp/x',
+          startedAt: new Date(T0).toISOString(),
+        },
+      ],
+    });
+
+    const text = q('composer-activity')!.textContent ?? '';
+    expect(q('composer-activity')!.getAttribute('data-status')).toBe('awaiting-approval');
+    expect(text).toContain('chatInput.waiting.awaitingApproval(rm -rf x)');
+    expect(text, '批准要用户做决定、排在前面').not.toContain('chatInput.waiting.awaitingAnswer');
+  });
+
+  it('对照组：工具在跑 ⇒ 仍然转圈，并带上动效降级类（prefers-reduced-motion）', async () => {
+    await setup({
+      startedAgoMs: 4_000,
+      toolCalls: [
+        { id: 'c1', name: 'exec', status: 'running', title: 'exec npm test', startedAt: new Date(T0).toISOString() },
+      ],
+    });
+
+    const spinner = q('composer-activity')!.querySelector('.animate-spin');
+    expect(spinner).not.toBeNull();
+    expect(spinner!.getAttribute('class')).toContain('motion-reduce:animate-none');
   });
 });
