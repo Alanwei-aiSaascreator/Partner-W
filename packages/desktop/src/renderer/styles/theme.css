@@ -939,7 +939,12 @@
   cursor: pointer;
 }
 
-.tool-summary__trigger:hover {
+/* forcedOpen（运行/未确认失败）时表头是静态 div，不可点 —— 别继承按钮的 pointer 与悬停反馈。 */
+div.tool-summary__trigger {
+  cursor: default;
+}
+
+button.tool-summary__trigger:hover {
   color: var(--text-secondary);
 }
 
