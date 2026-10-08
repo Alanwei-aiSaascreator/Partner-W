@@ -58,7 +58,13 @@ export {
   activeTurnProducedOutput,
   EMPTY_MESSAGES,
 } from './stores/message-store.js';
-export type { MessageState, MessageStoreDeps, ActiveTurn, AutoRetryFailure } from './stores/message-store.js';
+export type {
+  MessageState,
+  MessageStoreDeps,
+  ActiveTurn,
+  ActiveTurnActivity,
+  AutoRetryFailure,
+} from './stores/message-store.js';
 
 export { createTaskStore, UnknownAgentError } from './stores/task-store.js';
 export type { TaskState, TaskStoreDeps, PendingNewTask } from './stores/task-store.js';

@@ -4579,3 +4579,45 @@ describe('actual slide producer page records', () => {
     h.dispatcher.reset();
   });
 });
+
+/**
+ * P1-1 验收（2026-10-08 对话可视化改造）：**旧 run 的迟到事件不得更新新 run**。
+ *
+ * 「最新活动」元数据是在 store 写入方法里同步留下的（`message-store-activity.test.ts`
+ * 钉住顺序语义），它能不能被旧帧污染，取决于 dispatcher 的 stale-run 闸门 ——
+ * 就是这里验证的东西：新 run 开始后，旧 run 的迟到 thinking 帧必须被丢弃，
+ * 连 `appendThinkingDelta` 都不许进（元数据与内容同守卫、同规则）。
+ */
+describe('最新活动元数据 —— 旧 run 迟到帧闸门', () => {
+  it('run2 开始后，run1 的迟到 thinking 帧被丢弃（不写 store、不碰活动）', () => {
+    const h = createHarness();
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+      runId: 'run-1',
+    });
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'thinking',
+      data: { text: 'A', delta: 'A' },
+      runId: 'run-1',
+    });
+    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledTimes(1);
+
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+      runId: 'run-2',
+    });
+    const before = h.messageStore.appendThinkingDelta.mock.calls.length;
+    h.emit('agent', {
+      sessionKey: TASK.sessionKey,
+      stream: 'thinking',
+      data: { text: 'A+迟到', delta: '迟到' },
+      runId: 'run-1',
+    });
+    expect(h.messageStore.appendThinkingDelta.mock.calls.length, '旧 run 的迟到帧不得写入新 run').toBe(before);
+  });
+});

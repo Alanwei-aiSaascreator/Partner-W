@@ -21,6 +21,44 @@ export interface ActiveTurn {
   thinkingContent?: string;
   runId?: string;
   timestamp: string;
+  /**
+   * 本轮**最新活动**（仅展示 · 2026-10-08 对话可视化改造）。
+   *
+   * 为什么必须在事件入口留痕：思考折叠块的展开/扫光判据是"最新活动是不是思考"
+   *（真实 WorkBuddy 的 `expand = isLastContent`）。而同一批 React 提交里，
+   * `thinking→tool` 与 `tool→thinking` 可以产生完全相同的最终文本与工具数组 ——
+   * **顺序信息只在写入那一刻存在**，props 侧再也推不出来。
+   *
+   * ⚠️ 契约：这是**瞬态展示元数据**。不落库、不进重试证据、不影响内容合并/计费；
+   *    `finalizeStream` 后的定稿视图不依赖它（历史一律按"已结束"渲染）。
+   */
+  activity?: ActiveTurnActivity;
+}
+
+/**
+ * 最新活动的瞬态元数据（见 `ActiveTurn.activity`）。
+ *
+ * - `kind`：`thinking`=推理输出中 / `output`=正文输出中 / `tools`=工具事件；
+ * - `revision`：每次活动更新 +1（响应式消费者/测试的观测点）；
+ * - `thinkingSegment`：**思考段号**——每次"非 thinking → thinking"才 +1。
+ *   界面用它复位"用户手动折叠"的选择：同一段里的新 delta 不强行展开，
+ *   新一段（如工具之后再次思考）重新自动展开。
+ */
+export interface ActiveTurnActivity {
+  kind: 'thinking' | 'output' | 'tools';
+  revision: number;
+  thinkingSegment: number;
+}
+
+/** 生成下一个 activity（纯函数，顺序敏感 —— 调用点即事件处理点）。 */
+function bumpActivity(turn: ActiveTurn, kind: ActiveTurnActivity['kind']): ActiveTurnActivity {
+  const prev = turn.activity;
+  const openedNewThinkingSegment = kind === 'thinking' && prev?.kind !== 'thinking';
+  return {
+    kind,
+    revision: (prev?.revision ?? 0) + 1,
+    thinkingSegment: openedNewThinkingSegment ? (prev?.thinkingSegment ?? 0) + 1 : (prev?.thinkingSegment ?? 0),
+  };
 }
 
 /**
@@ -509,15 +547,16 @@ export function createMessageStore(deps: MessageStoreDeps) {
           return {
             activeTurnBySession: {
               ...s.activeTurnBySession,
-              [sessionKey]: { ...turn, toolCalls: next },
+              [sessionKey]: { ...turn, toolCalls: next, activity: bumpActivity(turn, 'tools') },
             },
           };
         }
 
+        const fresh = newActiveTurn();
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
-            [sessionKey]: { ...newActiveTurn(), toolCalls: [tc] },
+            [sessionKey]: { ...fresh, toolCalls: [tc], activity: bumpActivity(fresh, 'tools') },
           },
         };
       });
@@ -555,6 +594,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
             [sessionKey]: {
               ...turn,
               streamingText: mergeGatewayStreamText(turn.streamingText, delta),
+              activity: bumpActivity(turn, 'output'),
             },
           },
         };
@@ -566,7 +606,10 @@ export function createMessageStore(deps: MessageStoreDeps) {
       set((s) => {
         const turn = s.activeTurnBySession[sessionKey] ?? newActiveTurn();
         return {
-          activeTurnBySession: { ...s.activeTurnBySession, [sessionKey]: { ...turn, streamingText: text } },
+          activeTurnBySession: {
+            ...s.activeTurnBySession,
+            [sessionKey]: { ...turn, streamingText: text, activity: bumpActivity(turn, 'output') },
+          },
         };
       }),
 
@@ -581,6 +624,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
               // ⚠️ 思考走**分段**合并：跨段要空行隔开，不能用通用那条（会直接拼接，
               //    把 8 段推理糊成一团 —— 见 `mergeThinkingSegments` 的注释与实测数据）。
               streamingThinking: mergeThinkingSegments(turn.streamingThinking, delta),
+              activity: bumpActivity(turn, 'thinking'),
             },
           },
         };
