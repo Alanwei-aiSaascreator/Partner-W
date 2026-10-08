@@ -48,6 +48,17 @@ describe('readDocxOutline', () => {
   it('对照：不是 docx ⇒ 明确报错，不是崩', async () => {
     await expect(readDocxOutline(Buffer.from('不是 docx'))).rejects.toThrow();
   });
+
+  /**
+   * Task 1（WorkBuddy 产物 UI A 批）· 内容诚实：**单段被裁到 500 字符**
+   * 此前不置 truncated —— 用户看到一段被砍断的话，却不知道下面还有。
+   */
+  it('⭐ 单段超长被裁 ⇒ truncated 必须置真（不能把裁断的正文当完整）', async () => {
+    const long = '长'.repeat(900);
+    const outline = await readDocxOutline(await docxOf([long, '正常段']));
+    expect(outline.paragraphs[0]!.length).toBe(500);
+    expect(outline.truncated, '被裁过就必须说').toBe(true);
+  });
 });
 
 describe('readPptxOutline', () => {
@@ -81,5 +92,25 @@ describe('readPptxOutline', () => {
     expect(outline.slides).toHaveLength(2);
     expect(outline.slides[0].lines).toEqual([]);
     expect(outline.slides[1].lines.join()).toContain('有字的一页');
+  });
+
+  /**
+   * Task 1 · 内容诚实：**单页行数超限 / 单行超长被裁**此前不置 truncated。
+   */
+  it('⭐ 单页超过 40 行被裁 ⇒ truncated 置真', async () => {
+    const pptx = new PptxGenJS();
+    const slide = pptx.addSlide();
+    for (let i = 0; i < 45; i += 1) {
+      slide.addText(`第 ${i + 1} 行`, { x: 0.5, y: 0.3 + i * 0.12, w: 8, h: 0.1, fontSize: 8 });
+    }
+    const outline = await readPptxOutline(Buffer.from((await pptx.write({ outputType: 'nodebuffer' })) as Buffer));
+    expect(outline.slides[0]!.lines.length).toBe(40);
+    expect(outline.truncated, '行级裁切也要说').toBe(true);
+  });
+
+  it('⭐ 单行超长被裁到 500 字符 ⇒ truncated 置真', async () => {
+    const outline = await readPptxOutline(await pptxOf(['测'.repeat(700)]));
+    expect(outline.slides[0]!.lines[0]!.length).toBe(500);
+    expect(outline.truncated).toBe(true);
   });
 });

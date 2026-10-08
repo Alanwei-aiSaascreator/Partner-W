@@ -68,6 +68,8 @@ describe('validated video artifact preview', () => {
     readArtifactFile.mockResolvedValue(result);
     await act(async () => root.render(<FilePreview artifact={artifact} onNavigateToTask={() => {}} />));
     expect(container.querySelector('video')).toBeNull();
-    expect(container.textContent).toContain(result.ok ? 'filePreview.tooLargeToRead' : 'artifact unsafe');
+    // ⚠️ 2026-10-09 有意改写（Task 1）：读失败不再把内部标记原样上屏，改显示可行动文案
+    //    （错误态仍与 tooLarge 分开，本用例的区分语义不变）。
+    expect(container.textContent).toContain(result.ok ? 'filePreview.tooLargeToRead' : 'filePreview.readFailed');
   });
 });

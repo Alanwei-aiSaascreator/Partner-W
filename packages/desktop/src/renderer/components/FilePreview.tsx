@@ -10,6 +10,7 @@ import { motion as motionPresets } from '@/styles/design-tokens';
 import { cn, formatFileSize } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getArtifactDisplayName } from '@/lib/artifact-labels';
+import { useTaskStore } from '@/stores/taskStore';
 import MarkdownContent from './MarkdownContent';
 
 interface FilePreviewProps {
@@ -95,7 +96,12 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
   const [content, setContent] = useState<string | null>(null);
   const [encoding, setEncoding] = useState<'utf-8' | 'base64'>('utf-8');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  /**
+   * 失败态存的是**键**（不是翻译好的句子）：读请求的 effect 依赖里不能出现 `t`
+   * （i18n 的 `t` 不保证跨渲染同身份，放进去会让 effect 自激循环 —— 2026-10-09 实测）。
+   * 渲染时再翻译（`t(`filePreview.${errorKind}`)` 前缀模板，i18n 扫描器认得）。
+   */
+  const [errorKind, setErrorKind] = useState<'readFailed' | null>(null);
   /**
    * 文件太大、我们**不肯整份搬进界面**时的字节数（`null` = 没这回事）。
    *
@@ -134,45 +140,90 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
   /** HTML：**直接从预览状态派生**，不需要 blob（走 `srcDoc`）—— 少一份生命周期要管。 */
   const htmlDoc = preview?.kind === 'html' ? preview.html : null;
 
+  /**
+   * 请求归属（Task 1，2026-10-09 WorkBuddy 产物 UI A 批）：
+   *
+   * - **每次读的归属** = `workspaceEpoch + id + sourceKey` 三项俱在；
+   *   effect 重跑（换文件/换工作区/同 id 原地修订）即作废旧回调 —— 迟到的
+   *   A 回包不许把 B 的内容盖掉，卸载后也不许再写状态。
+   * - **两条链都不许悬空**：preview / read 任一拒绝 ⇒ 落定成可行动错误，
+   *   绝不永远转圈（旧实现没有 rejection 处理，一拒就是永久 loading）。
+   * - **preview `ok:false`（认得出但解析失败）不再降级**去读原始字节 ——
+   *   二进制当文本上屏既是错的、又把真实原因吞了；如实报"读不了"。
+   *   只有 `unsupported`（主进程明确说"不认识这个格式"）才走文本/图片老路。
+   */
+  const workspaceEpoch = useTaskStore((s) => s.workspaceEpoch);
   useEffect(() => {
+    let active = true;
+    /** 只有仍是**当前这一次**读的回包才能落定（其余一律丢弃）。 */
+    const owned = (): boolean => active;
+
     setLoading(true);
-    setError(null);
+    setErrorKind(null);
     setContent(null);
     setPreview(null);
     setTooLarge(null);
 
-    const readPlain = () => {
-      window.clawwork.readArtifactFile(artifact.id, artifact.taskId).then((res) => {
-        const r = res.ok ? res.result : undefined;
-        if (r) {
-          // ⚠️ 先判 `tooLarge`：这一支**没有 `content`**，当成"内容为空"喂给高亮
-          //    会渲染出一块空白，而用户以为文件本来就是空的。
-          if ('tooLarge' in r) {
-            setTooLarge(r.size);
+    const readPlain = (): void => {
+      window.clawwork
+        .readArtifactFile(artifact.id, artifact.taskId)
+        .then((res) => {
+          if (!owned()) return;
+          const r = res.ok ? res.result : undefined;
+          if (r) {
+            // ⚠️ 先判 `tooLarge`：这一支**没有 `content`**，当成"内容为空"喂给高亮
+            //    会渲染出一块空白，而用户以为文件本来就是空的。
+            if ('tooLarge' in r) {
+              setTooLarge(r.size);
+            } else {
+              setContent(r.content);
+              setEncoding(r.encoding);
+            }
           } else {
-            setContent(r.content);
-            setEncoding(r.encoding);
+            setErrorKind('readFailed');
           }
-        } else {
-          setError(res.error ?? 'failed to read file');
-        }
-        setLoading(false);
-      });
+          setLoading(false);
+        })
+        .catch(() => {
+          if (!owned()) return;
+          setErrorKind('readFailed');
+          setLoading(false);
+        });
     };
 
     // ⭐ **先问富预览**：主进程认得 .docx/.xlsx/.pptx/.pdf 就把它读成能渲染的形状；
-    //    认不出会回 `unsupported`，那时再走老路（读文本/图片）。
+    //    认不出（`unsupported`）会走老路（读文本/图片）。
     //    ⚠️ 认不认得**只由主进程一处判**（`previewKindFor`）—— 渲染层再写一份扩展名清单，
     //       两份迟早只改一处，而症状是功能对某种格式**静默不生效**。
-    window.clawwork.previewArtifact(artifact.id, artifact.taskId).then((res) => {
-      if (res.ok && res.result && res.result.kind !== 'unsupported') {
-        setPreview(res.result);
+    window.clawwork
+      .previewArtifact(artifact.id, artifact.taskId)
+      .then((res) => {
+        if (!owned()) return;
+        if (res.ok && res.result && res.result.kind !== 'unsupported') {
+          setPreview(res.result);
+          setLoading(false);
+          return;
+        }
+        if (res.ok) {
+          readPlain();
+          return;
+        }
+        // 认得出、但读/解析失败 ⇒ 如实报错（不把原始字节当文本读）。
+        setErrorKind('readFailed');
         setLoading(false);
-        return;
-      }
-      readPlain();
-    });
-  }, [artifact.id, artifact.taskId]);
+      })
+      .catch(() => {
+        if (!owned()) return;
+        setErrorKind('readFailed');
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+    // ⚠️ 依赖里**没有 `t`**（错误只存键、渲染时翻译）：i18n 的 `t` 不保证跨渲染同身份，
+    //    放进来会让 effect 每次都重跑（自激循环）。这不是偷懒，是有意的稳定化。
+  }, [artifact.id, artifact.taskId, artifact.sourceKey, workspaceEpoch]);
 
   return (
     <motion.div className="glass-card flex flex-col h-full" {...motionPresets.slideIn}>
@@ -234,16 +285,18 @@ export default function FilePreview({ artifact, onNavigateToTask, onClose }: Fil
               <Loader2 size={20} className="animate-spin text-[var(--text-muted)]" />
             </div>
           )}
-          {error && <p className="type-support px-4 py-8 text-center text-[var(--danger)]">{error}</p>}
+          {errorKind && (
+            <p className="type-support px-4 py-8 text-center text-[var(--danger)]">{t(`filePreview.${errorKind}`)}</p>
+          )}
           {/* ⚠️ 不是错误、也不是"这种格式看不了"：文件是好的，只是太大。
               说清楚**有多大**，用户才知道下一步是"用系统程序打开"还是"这份文件不该在这看"。 */}
-          {!loading && !error && tooLarge !== null && (
+          {!loading && !errorKind && tooLarge !== null && (
             <p className="type-support px-4 py-8 text-center text-[var(--text-muted)]" data-testid="preview-too-large">
               {t('filePreview.tooLargeToRead', { size: formatFileSize(tooLarge) })}
             </p>
           )}
-          {!loading && !error && preview !== null && <RichPreview preview={preview} />}
-          {!loading && !error && content !== null && (
+          {!loading && !errorKind && preview !== null && <RichPreview preview={preview} />}
+          {!loading && !errorKind && content !== null && (
             <PreviewContent
               content={content}
               encoding={encoding}
@@ -371,12 +424,29 @@ function TruncatedNote() {
   );
 }
 
+/**
+ * 预览**模式**的如实标注（Task 1，2026-10-09）。
+ *
+ * docx/pptx 是**文字大纲**、xlsx 是**值**（公式不重算）—— 都是有用的近似，但都不是
+ * 版式还原。之前源码注释里写着"界面上如实标出来"，界面却没标：用户容易以为
+ * "我的文档就这么简陋"。这里把话说清楚（文案键 9 语言同步）。
+ */
+function PreviewModeNote({ kind }: { kind: 'text' | 'values' }) {
+  const { t } = useTranslation();
+  return (
+    <p className="type-meta mb-2 text-[var(--text-muted)]" data-testid="preview-mode-note">
+      {kind === 'text' ? t('filePreview.modeTextOnly') : t('filePreview.modeValuesOnly')}
+    </p>
+  );
+}
+
 function RichPreview({ preview }: { preview: ArtifactPreview }) {
   const { t } = useTranslation();
 
   if (preview.kind === 'sheet') {
     return (
       <div className="space-y-4 p-4">
+        <PreviewModeNote kind="values" />
         {preview.sheets.map((sheet) => (
           <section key={sheet.name}>
             <h4 className="type-label mb-1.5 text-[var(--text-secondary)]">{sheet.name}</h4>
@@ -408,6 +478,7 @@ function RichPreview({ preview }: { preview: ArtifactPreview }) {
   if (preview.kind === 'docx') {
     return (
       <div className="space-y-2 p-4">
+        <PreviewModeNote kind="text" />
         {preview.paragraphs.map((line, i) => (
           <p key={i} className="type-body whitespace-pre-wrap text-[var(--text-primary)]">
             {line}
@@ -421,6 +492,7 @@ function RichPreview({ preview }: { preview: ArtifactPreview }) {
   if (preview.kind === 'pptx') {
     return (
       <div className="space-y-4 p-4">
+        <PreviewModeNote kind="text" />
         {preview.slides.map((slide) => (
           <section key={slide.index} className="rounded-lg border border-[var(--border)] p-3">
             <h4 className="type-meta mb-1.5 text-[var(--text-muted)]">

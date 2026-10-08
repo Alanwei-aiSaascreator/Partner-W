@@ -47,15 +47,20 @@ function extractTexts(xml: string, prefix: string): string[] {
   return out;
 }
 
-/** 段落切分：按 `</w:p>` 切，每段里的 run 拼起来。 */
-function splitParagraphs(xml: string): string[] {
+/** 段落切分：按 `</w:p>` 切，每段里的 run 拼起来。返回 `cut` = 是否有段落被长度裁过。 */
+function splitParagraphs(xml: string): { paragraphs: string[]; cut: boolean } {
   const chunks = xml.split(new RegExp(`</${'w'}:p>`));
   const paragraphs: string[] = [];
+  let cut = false;
   for (const chunk of chunks) {
     const text = extractTexts(chunk, 'w:').join('').trim();
-    if (text) paragraphs.push(text.slice(0, MAX_LINE_CHARS));
+    if (!text) continue;
+    // ⚠️ Task 1（2026-10-09）：单段被裁也算截断 —— 用户看到一段被砍断的话，
+    //    必须知道下面还有（旧实现只把"段数超限"当截断，行级裁切静默）。
+    if (text.length > MAX_LINE_CHARS) cut = true;
+    paragraphs.push(text.slice(0, MAX_LINE_CHARS));
   }
-  return paragraphs;
+  return { paragraphs, cut };
 }
 
 export interface DocxOutline {
@@ -67,10 +72,10 @@ export async function readDocxOutline(buffer: Buffer): Promise<DocxOutline> {
   const xml = readZipEntry(buffer, 'word/document.xml');
   if (!xml) throw new Error('not a readable docx: word/document.xml missing');
 
-  const all = splitParagraphs(xml.toString('utf8'));
+  const { paragraphs, cut } = splitParagraphs(xml.toString('utf8'));
   return {
-    paragraphs: all.slice(0, MAX_PARAGRAPHS),
-    truncated: all.length > MAX_PARAGRAPHS,
+    paragraphs: paragraphs.slice(0, MAX_PARAGRAPHS),
+    truncated: cut || paragraphs.length > MAX_PARAGRAPHS,
   };
 }
 
@@ -91,17 +96,20 @@ export async function readPptxOutline(buffer: Buffer): Promise<PptxOutline> {
     .sort((a, b) => a.n - b.n);
 
   const slides: PptxSlide[] = [];
+  // ⚠️ Task 1（2026-10-09）：行级裁切（单页超 40 行 / 单行超 500 字符）同样要如实
+  //    说截断 —— 旧实现只把"页数超限"当截断，裁断的行被当完整正文展示。
+  let cutAtLineLevel = false;
   for (const { name, n } of ordered.slice(0, MAX_SLIDES)) {
     const xml = readZipEntry(buffer, name);
     if (!xml) continue;
     // ⚠️ 空白页也要占位：少一页会让后面**所有页码错位**
-    const lines = extractTexts(xml.toString('utf8'), 'a:')
+    const raw = extractTexts(xml.toString('utf8'), 'a:')
       .map((t) => t.trim())
-      .filter((t) => t.length > 0)
-      .slice(0, MAX_LINES_PER_SLIDE)
-      .map((t) => t.slice(0, MAX_LINE_CHARS));
+      .filter((t) => t.length > 0);
+    if (raw.length > MAX_LINES_PER_SLIDE || raw.some((t) => t.length > MAX_LINE_CHARS)) cutAtLineLevel = true;
+    const lines = raw.slice(0, MAX_LINES_PER_SLIDE).map((t) => t.slice(0, MAX_LINE_CHARS));
     slides.push({ index: n, lines });
   }
 
-  return { slides, truncated: ordered.length > MAX_SLIDES };
+  return { slides, truncated: cutAtLineLevel || ordered.length > MAX_SLIDES };
 }

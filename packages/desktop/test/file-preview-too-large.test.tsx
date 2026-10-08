@@ -125,7 +125,10 @@ describe('FilePreview — 文件太大', () => {
     const { container, unmount } = render(<FilePreview artifact={artifact} onNavigateToTask={() => {}} />);
     await flush();
 
-    expect(container.textContent).toContain('artifact unsafe');
+    // ⚠️ 2026-10-09 有意改写（Task 1）：错误态**仍在**（与 tooLarge 不混，本用例的语义不变），
+    //    只是不再把内部标记（`artifact unsafe`）原样上屏 —— 换成用户能读懂、可行动的一句话。
+    expect(container.textContent).toContain('filePreview.readFailed');
+    expect(container.textContent).not.toContain('artifact unsafe');
     expect(container.querySelector('[data-testid="preview-too-large"]')).toBeNull();
     unmount();
   });
