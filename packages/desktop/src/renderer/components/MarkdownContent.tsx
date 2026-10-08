@@ -2,6 +2,7 @@ import {
   isValidElement,
   memo,
   useMemo,
+  useRef,
   type ReactNode,
   useEffect,
   useState,
@@ -15,6 +16,14 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { isPendingFencedCode } from '@/lib/markdown-code-pending';
+
+/**
+ * react-markdown 注入的 hast 节点（只用位置信息；避免为此把 `hast` 引成依赖）。
+ */
+interface MarkdownNodePosition {
+  position?: { start?: { offset?: number } | null; end?: { offset?: number } | null } | null;
+}
 
 interface MarkdownContentProps {
   content: string;
@@ -170,6 +179,17 @@ function MarkdownContent({
   const copiedLabel = t('chatMessage.copied');
 
   /**
+   * 未闭合代码块判据（Task 6）需要**当前原文**与**是否流式**，但 `components` 表
+   * **必须引用稳定**（见下方注释：新 components 对象 = 每个子树卸载重建）。
+   * 所以走 ref：同一趟 render 里先写后读（渲染函数在父组件之后执行）。
+   * ⚠️ 这不是"改 ref 驱动界面"—— ref 只在渲染期传值，不承载状态。
+   */
+  const contentRef = useRef(content);
+  contentRef.current = content;
+  const showCursorRef = useRef(showCursor);
+  showCursorRef.current = showCursor;
+
+  /**
    * ⚠️ 插件数组与 `components` 表**必须引用稳定**，别在渲染里现造。
    *
    * 这不是风格问题：`react-markdown` 拿到**新的** `components` 对象时，
@@ -229,7 +249,7 @@ function MarkdownContent({
           </span>
         );
       },
-      pre: ({ children }: ComponentPropsWithoutRef<'pre'>) => {
+      pre: ({ children, node }: ComponentPropsWithoutRef<'pre'> & { node?: MarkdownNodePosition }) => {
         const code = flattenTextContent(children).replace(/\n$/, '');
         const lang = extractLang(children);
         /**
@@ -273,8 +293,20 @@ function MarkdownContent({
             </div>
           );
         }
+        /*
+          未闭合围栏占位（Task 6）：位置来自**解析器**（hast node.position，基于原文偏移），
+          判据只回答"这块是否贴到文档末尾且没有合法闭合行"（见 `markdown-code-pending.ts`）。
+          仅流式期间生效；docgen/htmlgen 在此之前已分支，不套通用代码样式。
+        */
+        const startOffset = node?.position?.start?.offset;
+        const endOffset = node?.position?.end?.offset;
+        const codePending =
+          showCursorRef.current &&
+          typeof startOffset === 'number' &&
+          typeof endOffset === 'number' &&
+          isPendingFencedCode(contentRef.current, startOffset, endOffset);
         return (
-          <div className="group/code relative max-w-full">
+          <div className="group/code relative max-w-full" data-code-pending={codePending ? 'true' : undefined}>
             {lang && (
               <span className="type-support pointer-events-none absolute left-3 top-2.5 select-none text-[var(--text-muted)]">
                 {lang}
@@ -327,7 +359,8 @@ function MarkdownContent({
         )}
       </div>
       {showCursor && (
-        <span className="inline-block w-1.5 h-4 bg-[var(--accent)] animate-pulse ml-0.5 align-middle rounded-sm" />
+        /* 流式光标：2px×15px 品牌色 1s step-end 闪烁（Task 6；样式在 theme.css `.stream-cursor`）。 */
+        <span className="stream-cursor" />
       )}
     </div>
   );

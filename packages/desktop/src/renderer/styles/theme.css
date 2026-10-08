@@ -598,10 +598,6 @@
   animation: msg-highlight 2s ease-out;
 }
 
-.animate-stream-cursor {
-  animation: stream-pulse 1.2s ease-in-out infinite;
-}
-
 @supports not (backdrop-filter: blur(1px)) {
   .glass {
     background: var(--bg-secondary);
@@ -629,16 +625,6 @@
 /* ============================================================
    Streaming keyframes
    ============================================================ */
-
-@keyframes stream-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
 
 @keyframes bar-bounce {
   0%,

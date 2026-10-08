@@ -89,7 +89,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
       */}
       <ThinkingCollapse text={(message.thinkingContent ?? '').trim()} phase="done" />
       {message.content.trim() ? (
-        <div className="inline-block max-w-full leading-relaxed rounded-2xl px-4 py-3 text-[var(--text-primary)]">
+        <div className="inline-block max-w-full type-chat-body rounded-2xl px-4 py-3 text-[var(--text-primary)]">
           <MarkdownContent
             content={message.content}
             onImageClick={onImageClick}
@@ -227,7 +227,7 @@ export function AssistantStreamingBody({
         </div>
       ) : null}
       {content && (
-        <div className="leading-relaxed text-[var(--text-primary)]">
+        <div className="type-chat-body text-[var(--text-primary)]">
           <MarkdownContent content={content} showCursor />
         </div>
       )}
