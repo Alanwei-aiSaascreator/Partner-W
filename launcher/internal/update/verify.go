@@ -246,6 +246,13 @@ func isAcceptableStagedEntry(entry fs.DirEntry) bool {
 }
 
 func VerifyProgramTree(programRoot string, files FileManifestV1) error {
+	return VerifyProgramTreeWithProgress(programRoot, files, nil)
+}
+
+// VerifyProgramTreeWithProgress 与 VerifyProgramTree 判据完全相同，只是在校验
+// 每个文件（sha256 是最慢的一段）之后回调 (done, total)，供进度窗显示真实百分比。
+// onProgress 可为 nil。
+func VerifyProgramTreeWithProgress(programRoot string, files FileManifestV1, onProgress func(done, total int)) error {
 	expected := make(map[string]FileEntry, len(files.Files))
 	for _, entry := range files.Files {
 		normalized, err := normalizeRelativePath(entry.Path)
@@ -291,6 +298,7 @@ func VerifyProgramTree(programRoot string, files FileManifestV1) error {
 	if len(actual) != len(expected) {
 		return fmt.Errorf("%w: staged tree holds %d files, the manifest lists %d", ErrFileIntegrity, len(actual), len(expected))
 	}
+	done := 0
 	for key, entry := range expected {
 		target, ok := actual[key]
 		if !ok {
@@ -298,6 +306,10 @@ func VerifyProgramTree(programRoot string, files FileManifestV1) error {
 		}
 		if err := verifyFileDigest(target, entry); err != nil {
 			return err
+		}
+		done++
+		if onProgress != nil {
+			onProgress(done, len(expected))
 		}
 	}
 	return nil

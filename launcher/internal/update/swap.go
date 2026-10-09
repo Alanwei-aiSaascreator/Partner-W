@@ -138,6 +138,10 @@ func Recover(_ context.Context, transaction TransactionV1, ops Ops) (RecoveryRes
 }
 
 func VerifyStagedTransaction(ops Ops, transaction TransactionV1, publicKey ed25519.PublicKey) error {
+	return verifyStagedTransactionWithProgress(ops, transaction, publicKey, nil)
+}
+
+func verifyStagedTransactionWithProgress(ops Ops, transaction TransactionV1, publicKey ed25519.PublicKey, progress ProgressFunc) error {
 	manifestBytes, err := ops.ReadFile(transaction.ManifestPath)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrManifestInvalid, err)
@@ -168,14 +172,22 @@ func VerifyStagedTransaction(ops Ops, transaction TransactionV1, publicKey ed255
 			transaction.TargetVersion,
 		)
 	}
-	return VerifyProgramTree(transaction.StagedProgramPath, files)
+	report(progress, Progress{Phase: PhaseVerify, Total: len(files.Files)})
+	return VerifyProgramTreeWithProgress(transaction.StagedProgramPath, files, func(done, total int) {
+		report(progress, Progress{Phase: PhaseVerify, Done: done, Total: total})
+	})
 }
 
 func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.PublicKey, ops Ops) error {
+	return ApplyWithProgress(ctx, transaction, publicKey, ops, nil)
+}
+
+// ApplyWithProgress 与 Apply 完全同语义，只把关键阶段经 progress 上报（nil = 不上报）。
+func ApplyWithProgress(ctx context.Context, transaction TransactionV1, publicKey ed25519.PublicKey, ops Ops, progress ProgressFunc) error {
 	if err := ValidateTransactionPaths(transaction); err != nil {
 		return err
 	}
-	if err := VerifyStagedTransaction(ops, transaction, publicKey); err != nil {
+	if err := verifyStagedTransactionWithProgress(ops, transaction, publicKey, progress); err != nil {
 		return err
 	}
 
@@ -194,6 +206,7 @@ func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.Pub
 	if err := scopedMkdirAll(ops, transaction, filepath.Dir(transaction.BackupProgramPath)); err != nil {
 		return err
 	}
+	report(progress, Progress{Phase: PhaseSwap})
 	if err := scopedRenameWithRetry(ops, transaction, transaction.CurrentProgramPath, transaction.BackupProgramPath); err != nil {
 		return err
 	}
@@ -216,11 +229,11 @@ func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.Pub
 		},
 	)
 	if err != nil {
-		return Rollback(ctx, transaction, ops)
+		return rollbackWithProgress(ctx, transaction, ops, progress)
 	}
-	if err := WaitForHealth(ctx, transaction, process, ops); err != nil {
+	if err := waitForHealthWithProgress(ctx, transaction, process, ops, progress); err != nil {
 		_ = process.Kill()
-		return Rollback(ctx, transaction, ops)
+		return rollbackWithProgress(ctx, transaction, ops, progress)
 	}
 
 	committed := transaction
@@ -229,8 +242,25 @@ func Apply(ctx context.Context, transaction TransactionV1, publicKey ed25519.Pub
 	return err
 }
 
+// rollbackWithProgress 是 Apply 两条失败路径共用的收尾：回滚成功 = 干净结果
+// （返回 nil；调用方按事务相位区分 committed / rolled-back），回滚失败才上抛。
+func rollbackWithProgress(ctx context.Context, transaction TransactionV1, ops Ops, progress ProgressFunc) error {
+	report(progress, Progress{Phase: PhaseRollback})
+	if err := Rollback(ctx, transaction, ops); err != nil {
+		return err
+	}
+	report(progress, Progress{Phase: PhaseRestored})
+	return nil
+}
+
 func WaitForHealth(ctx context.Context, transaction TransactionV1, process Process, ops Ops) error {
+	return waitForHealthWithProgress(ctx, transaction, process, ops, nil)
+}
+
+func waitForHealthWithProgress(ctx context.Context, transaction TransactionV1, process Process, ops Ops, progress ProgressFunc) error {
 	deadline := ops.Now().Add(defaultHealthTimeout)
+	started := ops.Now()
+	report(progress, Progress{Phase: PhaseHealth, Budget: defaultHealthTimeout})
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -251,6 +281,7 @@ func WaitForHealth(ctx context.Context, transaction TransactionV1, process Proce
 			return ErrHealthTimeout
 		}
 		ops.Sleep(healthPollInterval)
+		report(progress, Progress{Phase: PhaseHealth, Elapsed: ops.Now().Sub(started), Budget: defaultHealthTimeout})
 	}
 }
 

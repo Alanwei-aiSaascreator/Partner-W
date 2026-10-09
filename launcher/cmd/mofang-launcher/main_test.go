@@ -93,14 +93,18 @@ func (ops *fakeOps) Sleep(duration time.Duration) {
 }
 
 type fakeScreen struct {
-	shown   []string
-	updated []string
-	errors  []string
-	closed  int
+	shown    []string
+	updated  []string
+	progress []ui.ProgressView
+	errors   []string
+	closed   int
 }
 
 func (screen *fakeScreen) Show(title, message string) {
 	screen.shown = append(screen.shown, title+"|"+message)
+}
+func (screen *fakeScreen) Progress(view ui.ProgressView) {
+	screen.progress = append(screen.progress, view)
 }
 func (screen *fakeScreen) Update(message string) { screen.updated = append(screen.updated, message) }
 func (screen *fakeScreen) Close()                { screen.closed += 1 }
@@ -404,6 +408,7 @@ func TestLaunchRecoversAPendingTransactionBeforeStarting(t *testing.T) {
 	transaction := harness.transaction()
 	harness.installCurrentProgram(t)
 	harness.installVerifiedStage(t, transaction)
+	harness.writeHealthReceipt(t, transaction)
 	harness.writeState(t, transaction)
 
 	code := run(nil, harness.dependencies())
@@ -458,6 +463,52 @@ func TestApplySwapsTheTreesWithoutRelaunching(t *testing.T) {
 	}
 	if len(harness.screen.errors) != 0 {
 		t.Fatalf("a clean apply must not report an error: %v", harness.screen.errors)
+	}
+	titles := map[string]bool{}
+	for _, view := range harness.screen.progress {
+		titles[view.Title] = true
+	}
+	if !titles[harness.messages.PhaseVerify] || !titles[harness.messages.PhaseHealth] {
+		t.Fatalf("progress must cover verify and health phases, got %+v", harness.screen.progress)
+	}
+}
+
+// 健康回执失败 = 回滚收成"干净结果"（Apply 返回 nil）。界面必须如实说
+// "已恢复更新前的版本"，并把原版本直接打开——而不是无声退出让用户再双击一次
+// （2026-09-25 真机验收登记、2026-10-09 消账的 UX 欠账）。
+func TestApplyRollsBackWithNoticeAndReopensTheOldVersion(t *testing.T) {
+	harness := newHarness(t)
+	transaction := harness.transaction()
+	harness.installCurrentProgram(t)
+	harness.installVerifiedStage(t, transaction)
+	harness.writeState(t, transaction)
+	// 故意不写健康回执：新版本永远不确认 ⇒（假时钟）90 秒超时 ⇒ 回滚。
+
+	code := run([]string{"--apply", harness.stagePath(transaction)}, harness.dependencies())
+
+	if code != exitOK {
+		t.Fatalf("exit code = %d, want %d; logs: %s", code, exitOK, harness.logs.String())
+	}
+	if phase := phaseOf(t, harness, transaction); phase != "rolled-back" {
+		t.Fatalf("phase = %s, want rolled-back", phase)
+	}
+	if len(harness.screen.errors) != 0 {
+		t.Fatalf("a clean rollback must not raise an error dialog: %v", harness.screen.errors)
+	}
+	last := harness.screen.progress[len(harness.screen.progress)-1]
+	if last.Title != harness.messages.PhaseRestored {
+		t.Fatalf("the user must be told the previous version was restored, got %+v", harness.screen.progress)
+	}
+	// 原版本必须被真的拉起来：一次来自 Apply（新树启动尝试），一次是恢复后的重启。
+	expected := filepath.Join(harness.root, update.ProgramDirectoryName, update.ProgramExecutableName)
+	if len(harness.ops.started) != 2 || harness.ops.started[1] != expected {
+		t.Fatalf("the restored program must be started, started=%v", harness.ops.started)
+	}
+	if _, err := os.Stat(filepath.Join(harness.root, update.ProgramDirectoryName, "old.txt")); err != nil {
+		t.Fatalf("the old tree must be back: %v", err)
+	}
+	if harness.screen.closed == 0 {
+		t.Fatalf("the progress window must be closed before the relaunch")
 	}
 }
 
@@ -544,5 +595,66 @@ func TestApplyReportsRefusalForAnUnknownArgument(t *testing.T) {
 	}
 	if len(harness.screen.errors) != 1 || !strings.HasPrefix(harness.screen.errors[0], harness.messages.UnsupportedArgs) {
 		t.Fatalf("the user must be told the arguments are wrong: %v", harness.screen.errors)
+	}
+}
+
+// —— 2026-10-09 复审整改正式化（V1，来源 review_order_test.go）——
+// 回滚恢复的用户可见时序必须是：恢复提示 → 停留 2500ms → 关窗 → 重新拉起旧版本。
+// 既有检查（最终标题 / 启动次数 / 关过窗）对「删除生产 Sleep 行」没有区分力，
+// 本测试直接钉住尾序列本身。
+type restoreOrderOps struct {
+	update.Ops
+	events *[]string
+}
+
+func (ops restoreOrderOps) Sleep(duration time.Duration) {
+	if duration == 2500*time.Millisecond {
+		*ops.events = append(*ops.events, "hold:2500ms")
+	}
+	ops.Ops.Sleep(duration)
+}
+
+func (ops restoreOrderOps) StartApp(exePath string, args []string) (update.Process, error) {
+	*ops.events = append(*ops.events, "start")
+	return ops.Ops.StartApp(exePath, args)
+}
+
+type restoreOrderScreen struct {
+	ui.Screen
+	events        *[]string
+	restoredTitle string
+}
+
+func (screen restoreOrderScreen) Progress(view ui.ProgressView) {
+	if view.Title == screen.restoredTitle {
+		*screen.events = append(*screen.events, "restored")
+	}
+	screen.Screen.Progress(view)
+}
+
+func (screen restoreOrderScreen) Close() {
+	*screen.events = append(*screen.events, "close")
+	screen.Screen.Close()
+}
+
+func TestApplyRollbackRestoreOrderHoldsNoticeThenRelaunches(t *testing.T) {
+	harness := newHarness(t)
+	transaction := harness.transaction()
+	harness.installCurrentProgram(t)
+	harness.installVerifiedStage(t, transaction)
+	harness.writeState(t, transaction)
+	// 不写健康回执：90 秒（假时钟）超时 ⇒ 回滚。
+
+	var events []string
+	deps := harness.dependencies()
+	deps.ops = restoreOrderOps{Ops: deps.ops, events: &events}
+	deps.screen = restoreOrderScreen{Screen: deps.screen, events: &events, restoredTitle: harness.messages.PhaseRestored}
+
+	if code := run([]string{"--apply", harness.stagePath(transaction)}, deps); code != exitOK {
+		t.Fatalf("run returned %d; logs: %s", code, harness.logs.String())
+	}
+	want := []string{"restored", "hold:2500ms", "close", "start"}
+	if len(events) < len(want) || !reflect.DeepEqual(events[len(events)-len(want):], want) {
+		t.Fatalf("恢复尾序列 = %v, want 后缀 %v", events, want)
 	}
 }

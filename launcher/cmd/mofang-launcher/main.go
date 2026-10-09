@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"mofang-compass/portable-launcher/internal/ui"
 	"mofang-compass/portable-launcher/internal/update"
@@ -108,20 +109,74 @@ func launchProgram(deps dependencies, root string) int {
 	return exitOK
 }
 
-func applyTransaction(deps dependencies, transaction update.TransactionV1) int {
+// restoredNoticeHold 是"已恢复"提示在界面上停留的时长（经 ops.Sleep，测试里不真等）。
+const restoredNoticeHold = 2500 * time.Millisecond
+
+func applyTransaction(deps dependencies, transaction update.TransactionV1, statePath string) int {
 	if len(deps.publicKey) != ed25519.PublicKeySize {
 		deps.screen.Error(deps.messages.MissingPublicKey, deps.messages.MissingPublicKeyDetail)
 		return exitApplyFailed
 	}
-	deps.screen.Show(deps.messages.ApplyingTitle, deps.messages.Applying)
-	applyErr := update.Apply(context.Background(), transaction, deps.publicKey, deps.ops)
-	deps.screen.Close()
+	// Show 的 title 槽位 = 底部常驻提示；message = 首个主文案（随后被相位事件覆盖）。
+	deps.screen.Show(deps.messages.DontUnplug, deps.messages.Applying)
+	progress := func(event update.Progress) {
+		deps.screen.Progress(progressView(deps.messages, event))
+	}
+	applyErr := update.ApplyWithProgress(context.Background(), transaction, deps.publicKey, deps.ops, progress)
 	if applyErr != nil {
+		deps.screen.Close()
 		deps.logf("applying the update failed: %v", applyErr)
 		deps.screen.Error(deps.messages.ApplyFailed, deps.messages.ApplyFailedDetail)
 		return exitApplyFailed
 	}
+	// Apply 返回 nil 有两种干净结果：committed、或 rolled-back（健康回执失败被
+	// 回滚收成干净结果）。rolled-back 必须如实说、并把原版本拉起来，而不是无声
+	// 退出让用户再双击一次（2026-09-25 真机验收登记的 UX 欠账，2026-10-09 消账）。
+	state, readErr := update.ReadTransactionWith(deps.ops, statePath)
+	if readErr == nil && state.Phase == "rolled-back" {
+		deps.screen.Progress(ui.ProgressView{
+			Title:   deps.messages.PhaseRestored,
+			Percent: 100,
+			Note:    deps.messages.RestoredOpening,
+		})
+		deps.ops.Sleep(restoredNoticeHold)
+		deps.screen.Close()
+		return launchProgram(deps, filepath.Dir(deps.launcherPath))
+	}
+	deps.screen.Close()
 	return exitOK
+}
+
+// progressView 把 update 包的进度事件映射为进度窗文案。
+func progressView(messages ui.Messages, event update.Progress) ui.ProgressView {
+	switch event.Phase {
+	case update.PhaseVerify:
+		note := ""
+		if event.Total > 0 {
+			note = fmt.Sprintf("%d/%d", event.Done, event.Total)
+		}
+		return ui.ProgressView{Title: messages.PhaseVerify, Percent: verifyPercent(event), Note: note}
+	case update.PhaseSwap:
+		return ui.ProgressView{Title: messages.PhaseSwap, Percent: -1}
+	case update.PhaseHealth:
+		return ui.ProgressView{
+			Title:   messages.PhaseHealth,
+			Percent: -1,
+			Note:    fmt.Sprintf(messages.HealthNote, int(event.Elapsed.Seconds()), int(event.Budget.Seconds())),
+		}
+	case update.PhaseRollback:
+		return ui.ProgressView{Title: messages.PhaseRollback, Percent: -1}
+	case update.PhaseRestored:
+		return ui.ProgressView{Title: messages.PhaseRestored, Percent: 100, Note: messages.RestoredOpening}
+	}
+	return ui.ProgressView{Title: messages.Applying, Percent: -1}
+}
+
+func verifyPercent(event update.Progress) int {
+	if event.Total <= 0 {
+		return -1
+	}
+	return event.Done * 100 / event.Total
 }
 
 func run(args []string, deps dependencies) int {
@@ -207,7 +262,7 @@ func run(args []string, deps dependencies) int {
 
 	if transaction.Phase == "ready" {
 		if parsed.mode == modeApply {
-			return applyTransaction(deps, transaction)
+			return applyTransaction(deps, transaction, statePath)
 		}
 		// A launcher started by hand is the second chance for an update the
 		// app handed over but could not finish: the app spawns the launcher
@@ -219,7 +274,7 @@ func run(args []string, deps dependencies) int {
 		// swapping trees on the strength of a half-written record is not a
 		// thing this launcher gets to guess at.
 		if recovery == update.RecoveryReady {
-			if code := applyTransaction(deps, transaction); code == exitOK {
+			if code := applyTransaction(deps, transaction, statePath); code == exitOK {
 				return code
 			}
 			// A refused update must never cost the user the program.
