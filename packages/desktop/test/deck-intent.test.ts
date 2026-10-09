@@ -77,6 +77,48 @@ describe('⭐ 2026-10-09 复审反例：新任务首次改稿必须命中', () =
   );
 });
 
+/**
+ * ⭐ 2026-10-09（H2 修复 · 复现自只读探针 `reviews/e5024996-deck-probe.txt`）：
+ * **非 PPT 改稿不许把新任务标成 deck 路由**。
+ *
+ * 改稿族里的**省略形态**（无演示名词的「美化 / 重新排版 / 调整…字号」）此前在
+ * **首条消息**上直接命中 ⇒ 任务被误标 `deckRouted`（粘性）⇒ 后续所有消息被钉到
+ * DeepSeek。词表保留给"已有 deck 上下文"：无上下文时，裸"美化"只是普通动词
+ *（网页/Word/Excel 都能"美化"），不是"要一份演示文稿"的证据。
+ */
+describe('⭐ H2：非 PPT 改稿误路由（只读探针三条负例 ⇒ 无上下文不命中）', () => {
+  const CATALOG = ['qwen3.7-flash', 'deepseek-v4-flash'];
+
+  it.each(['美化这个网页', '帮我重新排版这份 Word 文档', '调整 Excel 的字号'])('不命中、不标记、不路由：%s', (text) => {
+    expect(looksLikeDeckRequest(text)).toBe(false);
+    expect(planDeckRouting({ sendMode: 'smart', task: {}, text, catalogModelIds: CATALOG })).toEqual({
+      route: false,
+      markTask: false,
+    });
+  });
+
+  it('⭐ 有可信上下文（任务已粘性）⇒ 省略形态照旧是 deck 改稿（继续路由、不重复标记）', () => {
+    expect(looksLikeDeckRequest('第一版不好看，重新排版', true)).toBe(true);
+    expect(
+      planDeckRouting({
+        sendMode: 'smart',
+        task: { deckRouted: true },
+        text: '第一版不好看，重新排版',
+        catalogModelIds: CATALOG,
+      }),
+    ).toEqual({ route: true, modelId: 'deepseek-v4-flash', markTask: false });
+  });
+
+  it('对照面：带演示名词的改稿不受影响（「美化这个 PPT」首条即命中）', () => {
+    expect(looksLikeDeckRequest('美化这个 PPT', false)).toBe(true);
+    expect(planDeckRouting({ sendMode: 'smart', task: {}, text: '美化这个 PPT', catalogModelIds: CATALOG })).toEqual({
+      route: true,
+      modelId: 'deepseek-v4-flash',
+      markTask: true,
+    });
+  });
+});
+
 describe('resolveDeckModelId —— 对着目录解析真实 id', () => {
   it('默认目标就是 deepseek-v4-flash', () => {
     expect(DECK_ROUTE_MODEL_ID).toBe('deepseek-v4-flash');

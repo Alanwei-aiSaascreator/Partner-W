@@ -118,7 +118,25 @@ describe('isDeckWorkRequest —— 三族取并（两个消费者共用这一个
     expect(isDeckWorkRequest(text)).toBe(false);
   });
 
-  it('已知的宽判（有意保留）：无演示名词的「美化」也命中改稿族 —— 渲染层按代价不对称接受（误判 = 一句聊天钉 DeepSeek，无害）', () => {
-    expect(isDeckWorkRequest('帮我把卧室美化一下，选浅色窗帘')).toBe(true);
+  it('⭐ 2026-10-09（H2 收紧）：改稿族的**省略形态**（无演示名词、无上下文）不再命中 —— 裸「美化/重新排版」不是"要一份演示文稿"的证据', () => {
+    // 真机探针（reviews/e5024996-deck-probe.txt）：这三条新任务首条消息曾全部命中
+    // ⇒ 任务被误标 deck 路由（粘性）、后续所有消息被钉到 DeepSeek。
+    expect(isDeckWorkRequest('美化这个网页')).toBe(false);
+    expect(isDeckWorkRequest('帮我重新排版这份 Word 文档')).toBe(false);
+    expect(isDeckWorkRequest('调整 Excel 的字号')).toBe(false);
+    expect(isDeckWorkRequest('帮我把卧室美化一下，选浅色窗帘')).toBe(false);
+  });
+
+  it('⭐ 同一批省略形态在**有 deck 上下文**时照旧命中（宽词表保留给已有上下文，不删）', () => {
+    expect(isDeckWorkRequest('重新排版', true)).toBe(true);
+    expect(isDeckWorkRequest('第一版不好看，重新排版', true)).toBe(true);
+    expect(isDeckWorkRequest('文字太挤了', true)).toBe(true);
+  });
+
+  it('「有上下文」只影响省略形态；制作族 / 带演示名词的形态与上下文无关', () => {
+    expect(isDeckWorkRequest('美化这个 PPT')).toBe(true);
+    expect(isDeckWorkRequest('美化这个 PPT', true)).toBe(true);
+    expect(isDeckWorkRequest('把材料做成一份 PPT')).toBe(true);
+    expect(isDeckWorkRequest('另做一份PPT')).toBe(true);
   });
 });

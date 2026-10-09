@@ -639,8 +639,11 @@ describe('slide quality delivery settlement', () => {
       undefined,
       expect.any(Function),
     );
-    // 文件已登记 ⇒ 不得再报「工作区里没有这些文件」；同时 last_receipt 指向用户手里最新的这份。
-    expect(control.last_receipt).toBe('unlinked-receipt.json');
+    // 文件已登记 ⇒ 不得再报「工作区里没有这些文件」。
+    // ⭐ E4（2026-10-09 H1–H6 E 轮终审 §3 裁决后**预期变更**）：结构修订失败（渲染被拒）时
+    //    **不许把 standalone 记成新父版本**——`last_receipt` 停在原已验证的父 A。
+    //    旧断言（'unlinked-receipt.json'）正是本次裁决要修掉的"结构失败污染父链"。
+    expect(control.last_receipt).toBe('parent-receipt.json');
     expect(
       sendMock.mock.calls.some(
         ([channel, data]) =>
@@ -1792,6 +1795,837 @@ describe('slide quality delivery settlement', () => {
   });
 
   /**
+   * ⭐ **H3（2026-10-09 复审）：按收据解析根 · 登记证明移出可选 agent 扫描**。
+   *
+   * 现场形态：助手目录 RPC 超时 / 网关离线 ⇒ `captureAgentRootBaseline` 回 null。
+   * 修前两处把整条链掐死：`:1105 if (!agentRoot …) break`（视觉审查一次都不跑）、
+   * `remember` 被 `agentRoot &&` 挡在门外（`last_receipt` 永远是 null）⇒ 下一轮自动修订丢父版本。
+   * 修后：每条收据在**它自己的根**上被审查/复核；登记证明（主根规范落位 ∪ 可选 agent 扫描）
+   * 逐字段核对（`Map.has()` 不是证明），`remember` 不再挂在 agent 根上。
+   */
+  describe('H3：收据根解析 + 登记证据移出可选 agent 扫描', () => {
+    /** 公共夹具：真实临时应用工作区 + 一条真字节对得上的 native 收据 + 受控态 mock。 */
+    async function h3Fixture(suffix: string) {
+      const { mkdtempSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createHash } = await import('node:crypto');
+      const realWorkspace = mkdtempSync(join(tmpdir(), `h3-${suffix}-`));
+      const bytes = Buffer.from('deck-bytes');
+      writeFileSync(join(realWorkspace, 'deck.pptx'), bytes);
+      const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+      vi.mocked(getWorkspacePath).mockReturnValue(realWorkspace);
+      vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+      const receiptFile = '.royin-ppt-receipt-77777777-2222-3333-4444-555555555555.json';
+      const entry = {
+        receiptFile,
+        source: '{}',
+        receipt: {
+          sourceFormat: 'native-template-v5',
+          revision: 0,
+          sourceFile: '.royin-native-x/source.json',
+          fileName: 'deck.pptx',
+          bytes: bytes.length,
+          outputSha256: createHash('sha256').update(bytes).digest('hex'),
+        },
+        outputDir: realWorkspace,
+      };
+      collectReceiptsMock.mockReturnValue({ receipts: [entry], rejected: 0 });
+      // 与真库同形：`remember` 的 UPDATE 带 `active_token=? AND canceled=0` —— 旧 token / 已取消
+      // 一律写不进去（这里如实模拟那句 WHERE，负例才有意义）。
+      const control = { active_token: '', canceled: 0, last_receipt: null as string | null, auto_count: 0 };
+      nativeControlMock.mockReturnValue({
+        beginUser: (_task: string, token: string) => {
+          control.active_token = token;
+          control.canceled = 0;
+        },
+        // ⭐ E4：受控链的**自动纠偏**要开新 run（`beginAutomatic`）—— 观察"具名诊断进纠正通道"
+        //    的用例需要它；不打开纠偏的用例走不到这里，加进来是惰性的。
+        beginAutomatic: (_task: string, previous: string, token: string) => {
+          if (control.canceled || control.active_token !== previous || control.auto_count >= 2) return false;
+          control.active_token = token;
+          control.auto_count++;
+          return true;
+        },
+        cancel: (_task: string, token: string) => {
+          if (control.active_token === token) control.canceled = 1;
+        },
+        get: () => control,
+        remember: (_task: string, token: string, receipt: string) => {
+          if (control.active_token !== token || control.canceled) return;
+          control.last_receipt = receipt;
+        },
+      });
+      sqliteMock.mockReturnValue({ prepare: () => ({ all: () => [], get: () => undefined }) });
+      slidesMock.mockResolvedValue({ saved: [], failed: [], warnings: [] });
+      nativeReviewMock.mockResolvedValue({ status: 'passed' });
+      saveArtifactMock.mockResolvedValue({
+        ...artifact,
+        id: 'h3-deck',
+        name: 'deck.pptx',
+        size: bytes.length,
+        localPath: `${taskId}/deck.pptx`,
+      });
+      const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+      /** 走一轮真实入口：起 run → 绑定 → create-message（整条收尾链在真实控制流里跑）。 */
+      const deliver = (
+        round: {
+          runId: string;
+          incomingId: string;
+          messageId: string;
+          timestamp: string;
+          userContent: string;
+        },
+        // ⭐ E4：受控链的自动纠偏要拿到任务行的网关 id（`input.gatewayId`）才会发车 ——
+        //    需要观察"具名诊断进了纠正通道"的用例把它打开（缺省不查任务行，与老用例一致）。
+        options?: { gatewayRow?: boolean },
+      ): string => {
+        const token = beginArtifactRun(realWorkspace, taskId, sessionKey, {
+          gatewayId: 'gateway-1',
+          userContent: round.userContent,
+        });
+        bindArtifactRun(taskId, sessionKey, token, round.runId);
+        selectGetMock
+          .mockReturnValueOnce({ id: round.messageId })
+          .mockReturnValueOnce(options?.gatewayRow ? { gid: 'gateway-1' } : undefined);
+        handleMap.get('data:create-message')!(
+          {},
+          {
+            id: round.incomingId,
+            taskId,
+            sessionKey,
+            runId: round.runId,
+            role: 'assistant',
+            content: 'Done',
+            timestamp: round.timestamp,
+          },
+        );
+        return token;
+      };
+      return { realWorkspace, bytes, entry, receiptFile, control, deliver };
+    }
+
+    it('⭐ RPC 失败（agentRoot=null）：审查按收据自己的根跑 · 登记后 remember 落库 · 下一轮以它为父版本', async () => {
+      const fixture = await h3Fixture('rpc-fail');
+      const { createHash } = await import('node:crypto');
+      const { writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+      // ⭐ E4（2026-10-09 复审）：**两轮持续** RPC 失败（不是 Once）—— 修前第二轮会恢复默认
+      //    助手根 mock（`C:\agent-quality-workspace`），刚好绕过"agentRoot=null 时受管修订
+      //    进不去"这个断点（假绿）。持续拒绝与现场"网关离线 / RPC 超时"同形：两轮都拿不到助手根。
+      vi.mocked(resolveAgentWorkspace).mockRejectedValue(new Error('gateway rpc failed'));
+      try {
+        fixture.deliver({
+          runId: 'h3-run-1',
+          incomingId: 'h3-incoming-1',
+          messageId,
+          timestamp: '2026-10-09T01:00:00.000Z',
+          userContent: '做一份PPT',
+        });
+        await waitForSettlement();
+
+        // ① 视觉审查跑起来了，工作区 = **这条收据自己的根**（修前：`!agentRoot ⇒ break`，0 次）
+        expect(nativeReviewMock).toHaveBeenCalledWith(
+          fixture.realWorkspace,
+          fixture.receiptFile,
+          undefined,
+          expect.any(Function),
+        );
+        // ② 规范落位登记照常（产物面板那一行就靠它）
+        expect(saveArtifactMock).toHaveBeenCalledWith(
+          expect.objectContaining({ fileName: 'deck.pptx', sourceKey: `slidegen-cli:${fixture.receiptFile}` }),
+        );
+        // ③ 登记后的当前性复核读的也是这条收据自己的根（不是空串、不是别的根）
+        expect(outputCurrentMock).toHaveBeenCalledWith(fixture.realWorkspace, expect.anything(), 'deck.pptx');
+        // ④ 登记证明成立 ⇒ 父版本证据落库（修前：agent 分支把它挡掉，last_receipt=null）
+        expect(fixture.control.last_receipt).toBe(fixture.receiptFile);
+        expect(settlements().at(-1)?.status).toBe('succeeded');
+
+        // ⑤ 二次修改：下一轮读回的就是 remember 落下的那条 —— 候选稿挂着别的父版本 ⇒
+        //    受管重渲染接管，`previous` 必须是第一轮那条收据（父版本不丢）。
+        const round2Bytes = Buffer.from('deck-v2-bytes');
+        writeFileSync(join(fixture.realWorkspace, 'deck-v2.pptx'), round2Bytes);
+        const round2ReceiptFile = '.royin-ppt-receipt-88888888-2222-3333-4444-555555555555.json';
+        collectReceiptsMock.mockReturnValue({
+          receipts: [
+            {
+              receiptFile: round2ReceiptFile,
+              source: '{}',
+              receipt: {
+                sourceFormat: 'native-template-v5',
+                revision: 0,
+                sourceFile: 'candidate.native-ppt.json',
+                fileName: 'deck-v2.pptx',
+                bytes: round2Bytes.length,
+                outputSha256: createHash('sha256').update(round2Bytes).digest('hex'),
+              },
+              outputDir: fixture.realWorkspace,
+            },
+          ],
+          rejected: 0,
+        });
+        nativeRenderMock.mockResolvedValue({ fileCreated: true, receiptFile: 'h3-round2-receipt.json' });
+        // 第二轮的新稿由助手工作区扫描登记（登记证明的第二种形态：agent 行）。
+        reconcileMock.mockResolvedValue({
+          ...emptyReconciliation,
+          saved: [
+            {
+              ...artifact,
+              id: 'h3-round2-agent-row',
+              messageId: 'persisted-assistant-2',
+              root: 'agent',
+              name: 'deck-v2.pptx',
+              size: round2Bytes.length,
+              localPath: 'deck-v2.pptx',
+              filePath: 'C:\\agent-quality-workspace\\deck-v2.pptx',
+            },
+          ],
+        });
+        // ⭐ E4：收据读回按**文件**分流 —— 受管修订在渲染前先读回父收据（A，revision 0），
+        //    渲染后再读回 child（revision 1、父链指向 A）。混用一条会把"父链核验"变成
+        //    永远对不上的假阴性；child 的 `outputSha256` 必须对得上盘上字节（规范落位要它）。
+        nativeReceiptMock.mockImplementation((_root: string, file: string) =>
+          file === fixture.receiptFile
+            ? {
+                sourceFormat: 'native-template-v5',
+                revision: 0,
+                sourceFile: '.royin-native-x/source.json',
+                fileName: 'deck.pptx',
+                bytes: fixture.bytes.length,
+                outputSha256: createHash('sha256').update(fixture.bytes).digest('hex'),
+              }
+            : {
+                sourceFormat: 'native-template-v5',
+                revision: 1,
+                sourceFile: 'candidate.native-ppt.json',
+                fileName: 'deck-v2.pptx',
+                bytes: round2Bytes.length,
+                outputSha256: createHash('sha256').update(round2Bytes).digest('hex'),
+                previousReceiptFile: fixture.receiptFile,
+              },
+        );
+        saveArtifactMock.mockResolvedValue({
+          ...artifact,
+          // ⭐ E4（2026-10-09 复审）：第二轮登记行的身份必须是**这一轮的消息**
+          //    （`persisted-assistant-2`）——沿用第一轮的 `persisted-assistant` 会让登记证明
+          //    对不上，把真正的断点掩盖成"登记行不匹配"。
+          id: 'h3-round2-deck',
+          messageId: 'persisted-assistant-2',
+          name: 'deck-v2.pptx',
+          size: round2Bytes.length,
+          localPath: `${taskId}/deck-v2.pptx`,
+        });
+        fixture.deliver({
+          runId: 'h3-run-2',
+          incomingId: 'h3-incoming-2',
+          messageId: 'persisted-assistant-2',
+          timestamp: '2026-10-09T01:05:00.000Z',
+          userContent: '修改这份 PPT',
+        });
+        await waitForSettlement(2);
+        // ⑥ 父收据在**候选自己的可信根**上被真实读回（不是拿同名 basename 猜父版本）
+        expect(nativeReceiptMock).toHaveBeenCalledWith(fixture.realWorkspace, fixture.receiptFile);
+        // ⑦ 受管重渲染的根 = 候选自己的可信根（agentRoot=null 时不回落空根、不是别根）
+        expect(nativeRenderMock).toHaveBeenCalledWith(
+          'candidate.native-ppt.json',
+          fixture.realWorkspace,
+          expect.objectContaining({ previous: fixture.receiptFile, sourceReceipt: round2ReceiptFile }),
+        );
+        // ⑧ 父版本证据只接**最终核验过**的受管收据（child 的父链回指第一轮那条）
+        expect(fixture.control.last_receipt).toBe('h3-round2-receipt.json');
+      } finally {
+        const { rmSync } = await import('node:fs');
+        rmSync(fixture.realWorkspace, { recursive: true, force: true });
+      }
+    });
+
+    /**
+     * ⭐ **E4（2026-10-09 复审）：生成出口的可信根**。
+     *
+     * 主进程旧行为：`:1039` 的本轮 write/edit 输入查找与 `:1098` 的生成出口都挂 `agentRoot` ——
+     * 助手目录 RPC 失败（网关离线 / 超时）时整条受管生成**一次都不跑**，即使模型这一轮真的
+     * 在本轮写了源文件、应用工作区就是那个可信根。
+     */
+    it('⭐ E4：RPC 失败（agentRoot=null）时本轮 write/edit 输入照常受管生成（同一可信根）', async () => {
+      const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createHash } = await import('node:crypto');
+      const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+      const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+      const realWorkspace = mkdtempSync(join(tmpdir(), 'h3-gen-root-'));
+      const bytes = Buffer.from('generated-deck');
+      writeFileSync(join(realWorkspace, 'deck.pptx'), bytes);
+      vi.mocked(getWorkspacePath).mockReturnValue(realWorkspace);
+      vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+      // 助手目录**持续**解析失败 ⇒ agentRoot=null（现场：网关离线 / RPC 超时）。
+      vi.mocked(resolveAgentWorkspace).mockRejectedValue(new Error('gateway rpc failed'));
+      const control = { active_token: '', canceled: 0, last_receipt: null as string | null, auto_count: 0 };
+      sqliteMock.mockReturnValue({ prepare: () => ({ all: () => [], get: () => undefined }) });
+      nativeControlMock.mockReturnValue({
+        beginUser: (_task: string, token: string) => {
+          control.active_token = token;
+          control.canceled = 0;
+        },
+        get: () => control,
+        remember: (_task: string, token: string, receipt: string) => {
+          if (control.active_token === token && !control.canceled) control.last_receipt = receipt;
+        },
+      });
+      collectReceiptsMock.mockReturnValue({ receipts: [], rejected: 0 });
+      nativeInputMock.mockReturnValue('this-round.native-ppt.json');
+      nativeRenderMock.mockResolvedValue({ fileCreated: true, receiptFile: 'gen-receipt.json' });
+      nativeReceiptMock.mockReturnValue({
+        sourceFormat: 'native-template-v5',
+        revision: 0,
+        sourceFile: 'this-round.native-ppt.json',
+        fileName: 'deck.pptx',
+        bytes: bytes.length,
+        outputSha256: createHash('sha256').update(bytes).digest('hex'),
+      });
+      nativeReviewMock.mockResolvedValue({ status: 'passed' });
+      slidesMock.mockResolvedValue({ saved: [], failed: [], warnings: [] });
+      saveArtifactMock.mockResolvedValue({
+        ...artifact,
+        id: 'h3-gen-root-deck',
+        name: 'deck.pptx',
+        size: bytes.length,
+        localPath: `${taskId}/deck.pptx`,
+      });
+      try {
+        const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+        const token = beginArtifactRun(realWorkspace, taskId, sessionKey, {
+          gatewayId: 'gateway-1',
+          userContent: '做一份PPT',
+        });
+        bindArtifactRun(taskId, sessionKey, token, 'h3-gen-root-run');
+        selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce(undefined);
+        handleMap.get('data:create-message')!(
+          {},
+          {
+            id: 'h3-gen-root-incoming',
+            taskId,
+            sessionKey,
+            runId: 'h3-gen-root-run',
+            role: 'assistant',
+            content: 'Done',
+            timestamp: '2026-10-09T05:00:00.000Z',
+            toolCalls: [
+              {
+                id: 'write-source',
+                name: 'write',
+                status: 'done',
+                startedAt: '',
+                args: { path: 'this-round.native-ppt.json', content: '{}' },
+              },
+            ],
+          },
+        );
+        await waitForSettlement();
+        // ① 本轮 write/edit 输入查找用的是**可信根**（修前 `agentRoot &&` ⇒ 整条跳过，0 次）
+        expect(nativeInputMock).toHaveBeenCalledWith(
+          realWorkspace,
+          expect.any(Array),
+          expect.objectContaining({ sinceMs: expect.any(Number) }),
+        );
+        // ② 生成出口在**同一个根**上跑（修前 agentRoot=null ⇒ 一次都不渲）
+        expect(nativeRenderMock).toHaveBeenCalledWith('this-round.native-ppt.json', realWorkspace, expect.any(Object));
+        // ③ 生成条目带着自己的根 ⇒ 规范落位登记照常（产物面板就看这一行）
+        expect(saveArtifactMock).toHaveBeenCalledWith(
+          expect.objectContaining({ fileName: 'deck.pptx', sourceKey: 'slidegen-cli:gen-receipt.json' }),
+        );
+        expect(control.last_receipt).toBe('gen-receipt.json');
+        expect(settlements().at(-1)?.status).toBe('succeeded');
+      } finally {
+        rmSync(realWorkspace, { recursive: true, force: true });
+      }
+    });
+
+    /**
+     * ⭐ **E4（2026-10-09 复审）：跨根父链不许猜**。
+     *
+     * 现场形态：第一轮 RPC 失败 ⇒ 父收据 A 落在应用工作区并被 remember；第二轮 RPC 恢复到
+     * **另一个根**（agentDir）⇒ 候选渲在 agentDir，父收据 A 不在这个根上。受管重渲染只吃一个根
+     * （源文件 + 源收据 + 父收据必须同根），读不回父就**具名失败**：不许拿同名 basename 猜父版本、
+     * 不许假记父链，候选与原文件照常保留（standalone 仍是本轮的合法产出）。
+     */
+    it('⭐ E4：父收据在别的可信根 ⇒ 具名失败（不猜父版本）· 候选保留 · 诊断进纠正通道', async () => {
+      const fixture = await h3Fixture('cross-parent');
+      const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createHash } = await import('node:crypto');
+      const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+      const agentDir = mkdtempSync(join(tmpdir(), 'h3-cross-parent-agent-'));
+      // 第一轮：RPC 失败 ⇒ 收据 A 落在应用工作区并被 remember（父版本证据）。
+      vi.mocked(resolveAgentWorkspace).mockRejectedValueOnce(new Error('gateway rpc failed'));
+      try {
+        fixture.deliver({
+          runId: 'h3-cp-run-1',
+          incomingId: 'h3-cp-incoming-1',
+          messageId,
+          timestamp: '2026-10-09T06:00:00.000Z',
+          userContent: '做一份PPT',
+        });
+        await waitForSettlement();
+        expect(fixture.control.last_receipt).toBe(fixture.receiptFile);
+
+        // 第二轮：RPC **恢复**到另一个根 ⇒ 候选渲在 agentDir；父收据 A 只在应用工作区读得回来。
+        vi.mocked(resolveAgentWorkspace).mockResolvedValue(agentDir);
+        const round2Bytes = Buffer.from('cross-root-v2');
+        writeFileSync(join(agentDir, 'deck-v2.pptx'), round2Bytes);
+        const round2ReceiptFile = '.royin-ppt-receipt-99999999-2222-3333-4444-555555555555.json';
+        collectReceiptsMock.mockReturnValue({
+          receipts: [
+            {
+              receiptFile: round2ReceiptFile,
+              source: '{}',
+              receipt: {
+                sourceFormat: 'native-template-v5',
+                revision: 0,
+                sourceFile: 'candidate.native-ppt.json',
+                fileName: 'deck-v2.pptx',
+                bytes: round2Bytes.length,
+                outputSha256: createHash('sha256').update(round2Bytes).digest('hex'),
+              },
+              outputDir: agentDir,
+            },
+          ],
+          rejected: 0,
+        });
+        // 收据读回按根分流：应用工作区拿得到 A（父），候选根拿不到任何收据。
+        nativeReceiptMock.mockImplementation((root: string) => {
+          if (root === fixture.realWorkspace)
+            return {
+              sourceFormat: 'native-template-v5',
+              revision: 0,
+              sourceFile: '.royin-native-x/source.json',
+              fileName: 'deck.pptx',
+              bytes: fixture.bytes.length,
+              outputSha256: createHash('sha256').update(fixture.bytes).digest('hex'),
+            };
+          throw new Error('receipt-invalid');
+        });
+        // 这一轮的候选照常登记（agent 扫描行）⇒ 候选保留下来就是本轮的合法产出。
+        reconcileMock.mockResolvedValue({
+          ...emptyReconciliation,
+          saved: [
+            {
+              ...artifact,
+              id: 'h3-cp-agent-row',
+              root: 'agent',
+              messageId: 'persisted-assistant-2',
+              name: 'deck-v2.pptx',
+              size: round2Bytes.length,
+              localPath: 'deck-v2.pptx',
+              filePath: join(agentDir, 'deck-v2.pptx'),
+            },
+          ],
+        });
+        nativeReviewMock.mockResolvedValue({ status: 'passed' });
+        nativeGuardMock.mockResolvedValue(undefined);
+        const sendChatMessage = vi.fn().mockResolvedValue({ runId: 'h3-cp-correction' });
+        nativeGatewayMock.mockReturnValue({ isConnected: true, sendChatMessage });
+
+        fixture.deliver(
+          {
+            runId: 'h3-cp-run-2',
+            incomingId: 'h3-cp-incoming-2',
+            messageId: 'persisted-assistant-2',
+            timestamp: '2026-10-09T06:05:00.000Z',
+            userContent: '修改这份 PPT',
+          },
+          { gatewayRow: true },
+        );
+        await waitForSettlement(2);
+
+        // ① 父收据不在候选根 ⇒ **不渲染**（受管重渲染只吃一个根，读不回父就不许赌）
+        expect(nativeRenderMock).not.toHaveBeenCalled();
+        // ② 具名诊断进了自动纠正通道（不是笼统的 parent-mismatch，也不是被吞掉的假成功）
+        expect(sendChatMessage).toHaveBeenCalledOnce();
+        expect(sendChatMessage.mock.calls[0]![1]).toContain('native-revision-parent-other-root');
+        // ③ 候选保留（文件与登记都还在，不会被删）；但**父版本停在第一轮的 A**。
+        //    ⭐ E4（2026-10-09 H1–H6 E 轮终审 §3 裁决后**预期变更**）：旧断言（= 候选 round2ReceiptFile）
+        //       把"父在别的可信根、结构修订根本没走完"的轮次当成了父版本更新 —— 下一轮纠正会以这份
+        //       候选为约束基准，而用户手里已验证的是 A。裁决：保留原父 A、结算至少 needs-review。
+        expect(fixture.control.last_receipt).toBe(fixture.receiptFile);
+      } finally {
+        rmSync(fixture.realWorkspace, { recursive: true, force: true });
+        rmSync(agentDir, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 跨根同名收据：每条按自己的根复核（共用一个全局根会把另一条读成"不当前"）', async () => {
+      const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createHash } = await import('node:crypto');
+      const realWorkspace = mkdtempSync(join(tmpdir(), 'h3-cross-ws-'));
+      const agentDir = mkdtempSync(join(tmpdir(), 'h3-cross-agent-'));
+      try {
+        vi.stubEnv('ROYIN_NATIVE_PPT_VALIDATION', '1');
+        const wsBytes = Buffer.from('workspace-deck');
+        const agentBytes = Buffer.from('agent-deck');
+        writeFileSync(join(realWorkspace, 'deck.pptx'), wsBytes);
+        writeFileSync(join(agentDir, 'deck.pptx'), agentBytes);
+        const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+        vi.mocked(getWorkspacePath).mockReturnValue(realWorkspace);
+        const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+        vi.mocked(resolveAgentWorkspace).mockResolvedValue(agentDir);
+        const control = { active_token: '', canceled: 0, last_receipt: null as string | null, auto_count: 0 };
+        nativeControlMock.mockReturnValue({
+          beginUser: (_task: string, token: string) => {
+            control.active_token = token;
+          },
+          get: () => control,
+          remember: (_task: string, token: string, receipt: string) => {
+            if (control.active_token === token && !control.canceled) control.last_receipt = receipt;
+          },
+        });
+        sqliteMock.mockReturnValue({ prepare: () => ({ all: () => [], get: () => undefined }) });
+        slidesMock.mockResolvedValue({ saved: [], failed: [], warnings: [] });
+        nativeReviewMock.mockResolvedValue({ status: 'passed' });
+        const entryOf = (file: string, bytes: Buffer, outputDir: string) => ({
+          receiptFile: file,
+          source: '{}',
+          receipt: {
+            sourceFormat: 'native-template-v5' as const,
+            revision: 0,
+            sourceFile: `.royin-native-x/${file}`,
+            fileName: 'deck.pptx',
+            bytes: bytes.length,
+            outputSha256: createHash('sha256').update(bytes).digest('hex'),
+          },
+          outputDir,
+        });
+        const agentEntry = entryOf(
+          '.royin-ppt-receipt-aaaaaaaa-1111-2222-3333-444444444444.json',
+          agentBytes,
+          agentDir,
+        );
+        const workspaceEntry = entryOf(
+          '.royin-ppt-receipt-bbbbbbbb-1111-2222-3333-444444444444.json',
+          wsBytes,
+          realWorkspace,
+        );
+        collectReceiptsMock.mockReturnValue({ receipts: [agentEntry, workspaceEntry], rejected: 0 });
+        // 当前性复核必须"回条问条根"：拿一个全局根来问，另一条永远回 false（= 修前形态）。
+        outputCurrentMock.mockImplementation(
+          (root: string, entries: Array<{ outputDir?: string; receipt: { fileName: string } }>, file: string) =>
+            entries.some((entry) => entry.outputDir === root && entry.receipt.fileName === file),
+        );
+        // 助手根那条由 agent 扫描登记；应用工作区那条由"规范落位"登记。
+        reconcileMock.mockImplementation(async (scan: { rootKind?: string }) =>
+          scan.rootKind === 'agent'
+            ? {
+                ...emptyReconciliation,
+                saved: [
+                  {
+                    ...artifact,
+                    id: 'agent-root-deck',
+                    root: 'agent',
+                    name: 'deck.pptx',
+                    size: agentBytes.length,
+                    localPath: 'deck.pptx',
+                    filePath: join(agentDir, 'deck.pptx'),
+                  },
+                ],
+              }
+            : emptyReconciliation,
+        );
+        saveArtifactMock.mockResolvedValue({
+          ...artifact,
+          id: 'workspace-deck',
+          name: 'deck.pptx',
+          size: wsBytes.length,
+          localPath: `${taskId}/deck.pptx`,
+        });
+
+        const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+        const token = beginArtifactRun(realWorkspace, taskId, sessionKey, {
+          gatewayId: 'gateway-1',
+          userContent: '做一份PPT',
+        });
+        bindArtifactRun(taskId, sessionKey, token, 'h3-cross-run');
+        selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce(undefined);
+        handleMap.get('data:create-message')!(
+          {},
+          {
+            id: 'h3-cross-incoming',
+            taskId,
+            sessionKey,
+            runId: 'h3-cross-run',
+            role: 'assistant',
+            content: 'Done',
+            timestamp: '2026-10-09T02:00:00.000Z',
+          },
+        );
+        await waitForSettlement();
+
+        // ① 两条各自的根都出现过（共用一个全局根时只会出现一个）
+        expect(new Set(outputCurrentMock.mock.calls.map(([root]) => root))).toEqual(new Set([agentDir, realWorkspace]));
+        // ② 两边的登记证明都成立 ⇒ 交付不是失败；父版本证据 = 最后一条 native 收据
+        expect(settlements().at(-1)?.status).not.toBe('failed');
+        expect(control.last_receipt).toBe(workspaceEntry.receiptFile);
+      } finally {
+        rmSync(realWorkspace, { recursive: true, force: true });
+        rmSync(agentDir, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 视觉审查没过：父版本照记（自动修订不许丢父版本），交付判 needs-review', async () => {
+      const fixture = await h3Fixture('review-revision');
+      const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+      vi.mocked(resolveAgentWorkspace).mockRejectedValueOnce(new Error('gateway rpc failed'));
+      nativeReviewMock.mockResolvedValue({ status: 'needs-revision', pages: [{ page: 1, issues: ['small-text'] }] });
+      try {
+        fixture.deliver({
+          runId: 'h3-review-run',
+          incomingId: 'h3-review-incoming',
+          messageId,
+          timestamp: '2026-10-09T03:00:00.000Z',
+          userContent: '做一份PPT',
+        });
+        await waitForSettlement();
+        expect(fixture.control.last_receipt).toBe(fixture.receiptFile);
+        expect(settlements().at(-1)?.status).toBe('needs-review');
+      } finally {
+        const { rmSync } = await import('node:fs');
+        rmSync(fixture.realWorkspace, { recursive: true, force: true });
+      }
+    });
+
+    it.each(['wrong-output-sha', 'stale-registration', 'canceled', 'superseded-token'] as const)(
+      '⭐ 负例（%s）：登记证明不成立 / 这一轮不再拥有 token ⇒ 一个字的父版本证据都不落',
+      async (kind) => {
+        const fixture = await h3Fixture(`negative-${kind}`);
+        const { rmSync } = await import('node:fs');
+        const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+        vi.mocked(resolveAgentWorkspace).mockRejectedValueOnce(new Error('gateway rpc failed'));
+        if (kind === 'wrong-output-sha') fixture.entry.receipt.outputSha256 = 'f'.repeat(64);
+        if (kind === 'stale-registration')
+          saveArtifactMock.mockResolvedValue({
+            ...artifact,
+            id: 'mismatched-row',
+            name: 'deck.pptx',
+            size: fixture.bytes.length + 1,
+            localPath: `${taskId}/deck.pptx`,
+          });
+        try {
+          fixture.deliver({
+            runId: 'h3-negative-run',
+            incomingId: 'h3-negative-incoming',
+            messageId,
+            timestamp: '2026-10-09T04:00:00.000Z',
+            userContent: '做一份PPT',
+          });
+          // 取消 / 旧 token：受控态里这一轮已经不再是活的（`isArtifactRunCanceled` 如实失效）——
+          // 登记与父版本证据都不许再落（收据/成品仍在盘上，下一轮照常能读回）。
+          if (kind === 'canceled') fixture.control.canceled = 1;
+          if (kind === 'superseded-token') fixture.control.active_token = 'a-newer-run-token';
+          await waitForSettlement();
+
+          expect(fixture.control.last_receipt).toBeNull();
+          if (kind === 'wrong-output-sha') {
+            // 字节/哈希与收据对不上 ⇒ 一个字节都不搬（连登记都没有，自然无从 remember）
+            expect(saveArtifactMock).not.toHaveBeenCalled();
+            expect(settlements().at(-1)?.status).toBe('failed');
+          }
+          if (kind === 'stale-registration') {
+            // 规范落位搬了，但登记行与收据对不上（size+1）⇒ **不算证明**（`Map.has()` 不是证明）
+            expect(saveArtifactMock).toHaveBeenCalled();
+            expect(settlements().at(-1)?.status).toBe('failed');
+          }
+          if (kind === 'canceled' || kind === 'superseded-token') {
+            // 这一轮已不是活的 ⇒ 连登记都不做（更不会有父版本证据），交付如实判 canceled
+            expect(saveArtifactMock).not.toHaveBeenCalled();
+            expect(settlements().at(-1)?.status).toBe('canceled');
+          }
+        } finally {
+          rmSync(fixture.realWorkspace, { recursive: true, force: true });
+        }
+      },
+    );
+
+    /**
+     * ⭐ **E4（2026-10-09 H1–H6 E 轮终审 §3）：结构修订失败不许污染父链 · 不许结算成功**。
+     *
+     * 十条反例 = 三类结构失败（child 收据读不回 / 渲染器拒绝业务数据变化 / 父在别的可信根 /
+     * 源生成读回的 child 指着无关父 C）× 四种外部环境（联网 / 离线 / 预算拒绝 / 自动纠正次数用尽）。
+     * 走的全是**真身控制流**（真实 handler + 真实 run 生命周期 + 真实结算 + 续轮控制表），
+     * 不是孤立单测：standalone 候选 B 已登记、结构修订没走完之后——
+     *   ① B **不许**被记成"新父版本"（`last_receipt` 停在原已验证父 A）；
+     *   ② 结算至少 needs-review（离线 / 预算不足 / 次数用尽时连自动纠正都发不出去，
+     *      绝不许落 succeeded——那直接违背完成契约）；错误父的源生成按既有 missingKinds 门判 failed；
+     *   ③ 候选文件与具名诊断都保留（失败不删文件、模型能拿到真因）。
+     *
+     * ⚠️ 纠正 run 的父版本（`nativeParentReceipt`）在**本文件**的等价证明：`nativeRegisteredReceipt`
+     *    只在 `remember` 真把 B 写进控制表的那一支里被赋值（代码要求 `state.last_receipt === 本轮 B`），
+     *    而这里 `control.last_receipt` 仍停在 A ⇒ 自动纠正取
+     *    `nativeRegisteredReceipt ?? run.nativePreviousReceipt` = A。
+     *    （对该字段的**直接**观察由审查侧取证套件 `E-round-review-E4.config.mjs` 的
+     *    `beginArtifactRun` 观察钩子承担——那是审查期注入，不进产品源码。）
+     */
+    it.each([
+      ['child-unverified', 'connected'],
+      ['child-unverified', 'disconnected'],
+      ['child-unverified', 'budget-refused'],
+      ['child-unverified', 'auto-limit'],
+      ['native-revision-data-changed', 'connected'],
+      ['native-revision-data-changed', 'disconnected'],
+      ['native-revision-data-changed', 'budget-refused'],
+      ['native-revision-data-changed', 'auto-limit'],
+      ['parent-other-root', 'connected'],
+      ['source-child-wrong-parent', 'connected'],
+    ] as const)(
+      '⭐ E4：结构修订失败（%s / %s）保留原父 A · 不 succeeded · 候选文件与诊断保留',
+      async (failure, channel) => {
+        const fixture = await h3Fixture('E4-forensic');
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const os = await import('node:os');
+        const { createHash } = await import('node:crypto');
+        const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+        // 场景①：父 A 落在应用工作区，候选 B 落在**另一个可信根**（现场：RPC 恢复后助手目录变了）。
+        const otherRoot =
+          failure === 'parent-other-root' ? fs.mkdtempSync(path.join(os.tmpdir(), 'E4-other-root-')) : undefined;
+        const candidateRoot = otherRoot ?? fixture.realWorkspace;
+        // 现场同形：助手目录 RPC **持续**失败（网关离线 / RPC 超时）——受管修订只吃候选自己的可信根。
+        vi.mocked(resolveAgentWorkspace).mockRejectedValue(new Error('continuous rpc failure'));
+        // "child 读回"次数 = 真的去读那条 child 收据的次数（读失败也算：失败本身就是要断言的事实）。
+        let childReads = 0;
+        const childIdentities: Array<{ revision: number; previousReceiptFile?: string }> = [];
+        try {
+          // 第一轮：A 出片并被登记 ⇒ 用户手里已验证的父版本就是 A。
+          fixture.deliver({
+            runId: 'E4-first',
+            incomingId: 'E4-first-incoming',
+            messageId,
+            timestamp: '2026-10-09T01:00:00Z',
+            userContent: '做一份PPT',
+          });
+          await waitForSettlement();
+          expect(fixture.control.last_receipt).toBe(fixture.receiptFile);
+          if (otherRoot) vi.mocked(resolveAgentWorkspace).mockResolvedValue(otherRoot);
+          const candidateBytes = Buffer.from('candidate-v2');
+          fs.writeFileSync(path.join(candidateRoot, 'deck-v2.pptx'), candidateBytes);
+          const standalone = '.royin-ppt-receipt-88888888-2222-3333-4444-555555555555.json';
+          const candidate = {
+            receiptFile: standalone,
+            source: '{}',
+            outputDir: candidateRoot,
+            receipt: {
+              sourceFormat: 'native-template-v5',
+              revision: 0,
+              sourceFile: 'candidate.native-ppt.json',
+              fileName: 'deck-v2.pptx',
+              bytes: candidateBytes.length,
+              outputSha256: createHash('sha256').update(candidateBytes).digest('hex'),
+            },
+          };
+          // 场景④：这一轮没有候选收据，模型直接写了源文件 ⇒ 走"带父输入生成"出口。
+          const sourceGeneration = failure === 'source-child-wrong-parent';
+          collectReceiptsMock.mockReturnValue({ receipts: sourceGeneration ? [] : [candidate], rejected: 0 });
+          if (sourceGeneration) nativeInputMock.mockReturnValue('candidate.native-ppt.json');
+          nativeReceiptMock.mockImplementation((root: string, file: string) => {
+            if (file === fixture.receiptFile && root === fixture.realWorkspace) return fixture.entry.receipt;
+            if (file === 'unverified-child.json') {
+              childReads++;
+              // child 收据读不回（child-unverified），或它自己说"我是 C 的改稿"（C 与本轮父 A 无关）
+              // —— 两种都是不该被接受的修订结果。
+              if (!sourceGeneration || root !== fixture.realWorkspace) throw Error('receipt-version-mismatch');
+              childIdentities.push({ revision: 1, previousReceiptFile: 'unrelated-C.json' });
+              return { ...candidate.receipt, revision: 1, previousReceiptFile: 'unrelated-C.json' };
+            }
+            throw Error('receipt-version-mismatch');
+          });
+          nativeRenderMock.mockResolvedValue(
+            failure === 'native-revision-data-changed'
+              ? { fileCreated: false, diagnostics: [{ code: 'native-revision-data-changed' }] }
+              : { fileCreated: true, receiptFile: 'unverified-child.json' },
+          );
+          // 候选 B 照常登记（规范落位 / agent 扫描）⇒ 保留候选就是这一轮对用户**诚实的**产出。
+          saveArtifactMock.mockResolvedValue({
+            ...artifact,
+            id: 'E4-standalone',
+            messageId: 'persisted-assistant-2',
+            name: 'deck-v2.pptx',
+            size: candidateBytes.length,
+            filePath: path.join(fixture.realWorkspace, taskId, 'deck-v2.pptx'),
+            localPath: `${taskId}/deck-v2.pptx`,
+          });
+          reconcileMock.mockResolvedValue(
+            otherRoot
+              ? {
+                  ...emptyReconciliation,
+                  saved: [
+                    {
+                      ...artifact,
+                      id: 'E4-agent-standalone',
+                      messageId: 'persisted-assistant-2',
+                      root: 'agent',
+                      name: 'deck-v2.pptx',
+                      size: candidateBytes.length,
+                      filePath: path.join(candidateRoot, 'deck-v2.pptx'),
+                      localPath: 'deck-v2.pptx',
+                    },
+                  ],
+                }
+              : emptyReconciliation,
+          );
+          const sendChatMessage = vi.fn().mockResolvedValue({ runId: 'E4-automatic' });
+          nativeGatewayMock.mockReturnValue({ isConnected: channel !== 'disconnected', sendChatMessage });
+          if (channel === 'auto-limit') fixture.control.auto_count = 2;
+          if (channel === 'budget-refused') nativeGuardMock.mockRejectedValue(Error('budget-refused'));
+          else nativeGuardMock.mockResolvedValue(undefined);
+          fixture.deliver(
+            {
+              runId: 'E4-second',
+              incomingId: 'E4-second-incoming',
+              messageId: 'persisted-assistant-2',
+              timestamp: '2026-10-09T01:05:00Z',
+              userContent: '修改这份 PPT',
+            },
+            { gatewayRow: true },
+          );
+          await waitForSettlement(2);
+
+          // ① 候选文件与候选登记都不许被删（失败必须保留现场）。
+          expect(fs.existsSync(path.join(candidateRoot, 'deck-v2.pptx'))).toBe(true);
+          // ② 渲染次数：父不在候选根 ⇒ 一次都不许赌；其余场景各一次。
+          expect(nativeRenderMock).toHaveBeenCalledTimes(failure === 'parent-other-root' ? 0 : 1);
+          if (failure === 'child-unverified') expect(childReads).toBe(1);
+          if (failure === 'source-child-wrong-parent')
+            expect(childIdentities).toEqual([{ revision: 1, previousReceiptFile: 'unrelated-C.json' }]);
+          // ③ 父链不被污染：结构修订没走完 ⇒ B 不记为新父版本，原父 A 留着（纠正 run 的父=A，见上方注释）。
+          expect(fixture.control.last_receipt).toBe(fixture.receiptFile);
+          // ④ 结算真实：既有 failed 优先级更高（错误父的源生成撞 missingKinds 门），其余至少 needs-review。
+          if (failure === 'source-child-wrong-parent') {
+            expect(settlements().at(-1)?.status).toBe('failed');
+          } else {
+            expect(settlements().at(-1)?.status).toBe('needs-review');
+          }
+          // ⑤ 具名诊断活着进纠正通道（被顶掉模型就永远收不到真因）；通道不通/次数用尽时一条都不发。
+          if (channel === 'connected') {
+            expect(sendChatMessage).toHaveBeenCalledOnce();
+            const expectedDiagnostic =
+              failure === 'native-revision-data-changed'
+                ? 'native-revision-data-changed'
+                : failure === 'parent-other-root'
+                  ? 'native-revision-parent-other-root'
+                  : 'native-revision-unverified';
+            expect(String(sendChatMessage.mock.calls[0]![1])).toContain(expectedDiagnostic);
+          } else expect(sendChatMessage).not.toHaveBeenCalled();
+        } finally {
+          fs.rmSync(fixture.realWorkspace, { recursive: true, force: true });
+          if (otherRoot) fs.rmSync(otherRoot, { recursive: true, force: true });
+        }
+      },
+    );
+  });
+
+  /**
    * ⭐ **演示意图硬门（H0，2026-10-07）的接线**。
    *
    * 判据来自**本轮用户请求**（"另做一份PPT / 改稿 / 美化" — 与 native 门同一批正则），
@@ -1802,9 +2636,13 @@ describe('slide quality delivery settlement', () => {
    *    两个旗标同时成立也不许冒出一条"没生成"。
    */
   describe('演示意图硬门接线', () => {
-    async function completeRunWith(userContent: string): Promise<void> {
+    async function completeRunWith(userContent: string, deckContext = false): Promise<void> {
       const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
-      const token = beginArtifactRun(workspacePath, taskId, sessionKey, { gatewayId: 'gateway-1', userContent });
+      const token = beginArtifactRun(workspacePath, taskId, sessionKey, {
+        gatewayId: 'gateway-1',
+        userContent,
+        deckContext,
+      });
       bindArtifactRun(taskId, sessionKey, token, 'deck-intent-run');
       selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce(undefined);
       expect(
@@ -1827,7 +2665,6 @@ describe('slide quality delivery settlement', () => {
     it.each([
       '另做一份PPT',
       '把这份 PPT 美化一下',
-      '第一版不好看，重新排版',
       // ⭐ 2026-10-09 复审反例（P1）：首次制作的实际措辞 —— 主进程旧口径（只认"另做/新的/改稿"）
       //    不命中，即使渲染层选到了 DeepSeek，docgen 的 pptx 硬门也不生效。
       //    判据已统一到 `@clawwork/shared` 的 `isDeckWorkRequest`（制作 ∨ 改稿 ∨ 全新的）。
@@ -1836,6 +2673,52 @@ describe('slide quality delivery settlement', () => {
       'Generate a PPT',
     ])('⭐ 演示意图（%s）⇒ docgen 收到改道旗标（pptx 不进产品通道）', async (userContent) => {
       await completeRunWith(userContent);
+      expect(documentsMock).toHaveBeenCalledWith(expect.objectContaining({ reroutePptxToSlidegen: true }));
+    });
+
+    // ⭐ H2（2026-10-09 合同）：裸改稿词（"美化/重新排版/调整…字号"）**不再单独成立** ——
+    //    要么带演示名词（上表），要么有**可信上下文**（任务粘性标记 / 受控链上一版收据）。
+    //    下面两条把两个方向钉死：有上下文照旧命中；无上下文不许把网页/Word/Excel 误标成 deck。
+    it('⭐ H2：已有 deck 上下文（任务粘性标记）⇒ 省略改稿词照旧命中硬门', async () => {
+      await completeRunWith('第一版不好看，重新排版', true);
+      expect(documentsMock).toHaveBeenCalledWith(expect.objectContaining({ reroutePptxToSlidegen: true }));
+    });
+
+    it.each(['第一版不好看，重新排版', '美化这个网页', '调整 Excel 的字号'])(
+      '⭐ H2 负例：无上下文的裸改稿词（%s）⇒ 不带改道旗标',
+      async (userContent) => {
+        await completeRunWith(userContent);
+        expect(documentsMock).toHaveBeenCalledWith(expect.objectContaining({ reroutePptxToSlidegen: false }));
+      },
+    );
+
+    it('⭐ H2：派发路径从任务行取粘性标记（deckRouted=true ⇒ deckContext 传入）', async () => {
+      const { beginArtifactRunForGatewayDispatch, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+      selectGetMock.mockReturnValueOnce({ id: taskId, deckRouted: true });
+      const token = beginArtifactRunForGatewayDispatch({
+        gatewayId: 'gateway-1',
+        sessionKey,
+        taskId,
+        userContent: '第一版不好看，重新排版',
+      });
+      expect(token).toEqual(expect.any(String));
+      bindArtifactRun(taskId, sessionKey, token!, 'deck-intent-dispatch');
+      selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce(undefined);
+      expect(
+        handleMap.get('data:create-message')!(
+          {},
+          {
+            id: 'deck-intent-dispatch-incoming',
+            taskId,
+            sessionKey,
+            runId: 'deck-intent-dispatch',
+            role: 'assistant',
+            content: 'Done',
+            timestamp: '2026-10-07T00:00:00.000Z',
+          },
+        ),
+      ).toEqual({ ok: true });
+      await waitForSettlement();
       expect(documentsMock).toHaveBeenCalledWith(expect.objectContaining({ reroutePptxToSlidegen: true }));
     });
 

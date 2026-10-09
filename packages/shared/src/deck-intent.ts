@@ -23,6 +23,19 @@
  * ⚠️ 只吃**用户自己手打的字**（发送路径里的 `content`），不吃被 @ 的文件正文 /
  *    附件名 —— 一份叫「培训课件.pdf」的附件不代表这一轮要"做课件"（与
  *    `attachment-actions.ts` 的 edit 判据同一条纪律）。
+ *
+ * ## 收紧（2026-10-09 · H2 修复：非 PPT 改稿误路由）
+ *
+ * 改稿族 `DECK_REVISE` 里有一批**省略形态**（不带演示名词的「美化 / 重新排版 /
+ * 调整…字号」——它们服务"在已有 deck 的上下文里改稿"）。把它直接当成"本轮要一份
+ * 演示文稿"的证据是错的：只读探针实证（`reviews/e5024996-deck-probe.txt`），新任务
+ * 首条消息「美化这个网页」「帮我重新排版这份 Word 文档」「调整 Excel 的字号」
+ * 全部命中 ⇒ 任务被误标 deck 路由（粘性），**后续所有消息**被钉到 DeepSeek。
+ * 裸"美化"是普通动词（网页/Word/Excel 都能美化），不是演示意图。
+ *
+ * ⇒ 省略形态只在调用方手里**已有可信 deck 上下文**（任务已标 deck 路由 / 受控链
+ *    有上一版收据）时才算命中；带演示名词的形态（「美化这个 PPT」）不受影响。
+ *    上下文**不得**用本轮文本自证（"因为说了美化所以是 deck 任务"是循环论证）。
  */
 
 /**
@@ -50,6 +63,9 @@ const DECK_CREATE_EN =
  *
  * ⚠️ 这条与主进程旧实现逐字等价（含 `文字.{0,16}(挤|字号)` 与 `(修改|调整|优化)+演示词/排版/字号`），
  *    不在这里"顺手改进"——它同时是受控 native 链的收据判定输入。
+ *
+ * ⚠️ 它本身**不是**"本轮是不是 deck 工作"的完整判据：省略形态（不带演示名词）要
+ *    经过 `isDeckWorkRequest` 的 `hasDeckContext` 把关（见模块头「收紧」节）。
  */
 const DECK_REVISE =
   /(?:改稿|美化|重新排版|(?:再|更)美观|文字.{0,16}(?:挤|字号)|(?:修改|调整|优化).{0,12}(?:PPT|幻灯片|演示文稿|排版|字号)|(?:revise|restyle|redesign).{0,24}(?:ppt|slides?|deck))/i;
@@ -89,7 +105,20 @@ export function isFreshDeckRequest(text: string): boolean {
 /**
  * 这一轮是不是 deck 工作（三族取并）——**渲染层路由**与**主进程 `reroutePptxToSlidegen`
  * 硬门**的共同判据（2026-10-09 起只有这一个出口）。
+ *
+ * ⚠️ 2026-10-09（H2 收紧）：改稿族的**省略形态**（无演示名词的「美化 / 重新排版 /
+ *    调整…字号」）只有 `hasDeckContext` 为真时才算命中（见模块头「收紧」节）；
+ *    带演示名词的形态与制作族 / 全新的族不受影响。
+ *
+ * ⚠️ `DECK_NOUN` 是非 /g 正则（无 lastIndex 状态），这里的 `.test` 可安全重复调用。
+ *
+ * @param hasDeckContext 调用方手上的**可信**上下文：任务已标记 deck 路由（粘性）
+ *   或受控链存在上一版收据。默认 false = 不假设上下文（新任务首条消息的场景）。
  */
-export function isDeckWorkRequest(text: string): boolean {
-  return isDeckCreateRequest(text) || isDeckRevisionRequest(text) || isFreshDeckRequest(text);
+export function isDeckWorkRequest(text: string, hasDeckContext = false): boolean {
+  return (
+    isDeckCreateRequest(text) ||
+    isFreshDeckRequest(text) ||
+    (isDeckRevisionRequest(text) && (hasDeckContext || DECK_NOUN.test(text)))
+  );
 }

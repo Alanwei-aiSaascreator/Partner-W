@@ -15,6 +15,11 @@
  *    误判 = 一句聊天发给 DeepSeek（无害，且这种任务随后多半真的在做 PPT）。
  *    所以不堆负向守卫（"怎么/如何"之类），保持规则短、可预测。
  *
+ * ⚠️ 2026-10-09（H2 收紧）：改稿族的**省略形态**（裸「美化 / 重新排版 / 调整字号」）
+ *    只在**已有 deck 上下文**（任务粘性 `deckRouted`）时命中 —— 没有上下文时它不是
+ *    "要一份演示文稿"的证据（真机 probe：「美化这个网页」曾把新任务误标 deck 路由，
+ *    后续所有消息被钉到 DeepSeek）。带演示名词的形态（「美化这个 PPT」）不受影响。
+ *
  * ⚠️ 只吃**用户自己手打的字**（发送路径里的 `content`），不吃被 @ 的文件正文 /
  *    附件名 —— 一份叫「培训课件.pdf」的附件不代表这一轮要"做课件"（与
  *    `attachment-actions.ts` 的 edit 判据同一条纪律）。
@@ -37,9 +42,14 @@ export const DECK_ROUTE_MODEL_ID = 'deepseek-v4-flash';
  *    制作 ∨ 改稿 ∨ "再来一份全新的"）：主进程的 `reroutePptxToSlidegen` 硬门用**同一个**
  *    出口 —— 此前两边各写一份词表，首次制作（"把材料做成一份 PPT"）与首次改稿
  *    （"美化这个 PPT"）各漏一个方向（见 shared 模块头注释）。空串/空白一律 false。
+ *
+ * @param hasDeckContext **可信**上下文（任务已标 deck 路由 / 受控链有上一版收据）——
+ *   改稿族的省略形态（裸「美化 / 重新排版」）只在有上下文时命中：裸"美化"是普通
+ *   动词（网页/Word/Excel 都能美化），无上下文时不是"要一份演示文稿"的证据
+ *   （2026-10-09 H2 修复：此前「美化这个网页」会把新任务误标成 deck 路由）。
  */
-export function looksLikeDeckRequest(text: string): boolean {
-  return isDeckWorkRequest(text);
+export function looksLikeDeckRequest(text: string, hasDeckContext = false): boolean {
+  return isDeckWorkRequest(text, hasDeckContext);
 }
 
 /**
@@ -81,6 +91,11 @@ export interface DeckRoutePlan {
  *    或将来下架）时也要把"这是 deck 任务"记下来 —— 这样等目录回来后，同一任务
  *    的后续消息（哪怕只是"把标题改一下"）仍能粘上。目录永远没有它的话，
  *    `route` 始终 false，等于什么都没发生。
+ *
+ * ⚠️ 2026-10-09（H2 收紧）：`hasDeckContext` **只取任务粘性**这一条可信证据 ——
+ *    无粘性时裸「美化 / 重新排版」不算命中（「美化这个网页」不许把新任务标成
+ *    deck 路由）；粘性任务本来就继续路由，`hit` 在这里只影响 `markTask`
+ *   （`!sticky && hit` ⇒ 粘性恒 false，不会重复标记）。裸文本不许自证上下文。
  */
 export function planDeckRouting(args: {
   sendMode: TaskModeSetting;
@@ -92,7 +107,7 @@ export function planDeckRouting(args: {
   if (sendMode === 'custom') return { route: false, markTask: false };
 
   const sticky = task?.deckRouted === true;
-  const hit = looksLikeDeckRequest(text);
+  const hit = looksLikeDeckRequest(text, sticky);
   if (!sticky && !hit) return { route: false, markTask: false };
 
   const modelId = resolveDeckModelId(catalogModelIds);

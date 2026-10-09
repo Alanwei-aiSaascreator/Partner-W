@@ -422,6 +422,11 @@ export function beginArtifactRun(
     nativeAutomaticFrom?: string;
     /** Internal automatic continuation: null means this run explicitly has no parent. */
     nativeParentReceipt?: string | null;
+    /**
+     * H2（2026-10-09 合同）：任务粘性 deck 上下文（`tasks.deck_routed`）——由派发路径
+     * 读任务行传入。裸改稿词（"美化/重新排版"）**只凭文本不成立**，它要这条可信证据。
+     */
+    deckContext?: boolean;
   },
 ): string {
   pruneArtifactRuns();
@@ -441,8 +446,13 @@ export function beginArtifactRun(
   //    在**这一瞬**定下来存进 run：收尾时用户请求早就不在手上了，现场重算只会算错。
   //    它管的是 docgen 的 pptx 请求（拦下并导流去「幻灯版面」）—— 与 native 那套
   //    正交：受控模式里 docgen pptx 本来就是静默跳过，两个旗标同时成立时受控优先。
-  //    ⇒ 判据 = 制作 ∨ 改稿 ∨ 全新的（与渲染层 deck 路由同一个出口）。
-  const deckIntent = isDeckWorkRequest(userContent);
+  //    ⚠️ H2（2026-10-09 合同）：裸改稿词（"美化/重新排版"）**不单独**成立 ——
+  //    "美化这个网页"不是 deck 工作。改稿族要么带演示名词（词表在 shared 判据里），
+  //    要么有**可信上下文**：任务粘性标记（渲染层首次命中写库 `tasks.deck_routed`，
+  //    由 `beginArtifactRunForGatewayDispatch` 以 `deckContext` 传入）或受控链的
+  //    上一版收据（`lastReceipt`，仅 env=1 可达）。判据本体仍唯一真源在 shared；
+  //    `deckIntent` 的落定放在 **env 块之后** —— 先把上下文证据取齐，再记录。
+  let hasDeckContext = opts?.deckContext === true;
   let nativePreviousReceipt: string | undefined;
   let nativeFenced = false;
   let nativeControlled =
@@ -453,6 +463,8 @@ export function beginArtifactRun(
     if (db) {
       const control = nativeTaskControl(db);
       const lastReceipt = control.get(taskId)?.last_receipt ?? undefined;
+      // H2：上一版收据 = "这个任务确实做过 deck"的可信证据（新任务首条裸改稿词没有它）。
+      if (lastReceipt) hasDeckContext = true;
       nativePreviousReceipt = opts?.nativeAutomaticFrom
         ? opts.nativeParentReceipt === undefined
           ? lastReceipt
@@ -471,6 +483,8 @@ export function beginArtifactRun(
       }
     }
   }
+  // H2：判据与上下文的说明见上方注释；此处只落定 —— 证据（deckContext / lastReceipt）已取齐。
+  const deckIntent = isDeckWorkRequest(userContent, hasDeckContext);
   const baseline = captureTaskArtifactBaseline({ workspacePath, taskId }).catch((error: unknown) => {
     console.error('[artifact_baseline_failed]', { taskId, error });
     throw error;
@@ -724,7 +738,9 @@ export function beginArtifactRunForGatewayDispatch(input: {
 }): string | null {
   if (!isDbReady()) return null;
   const task = getDb()
-    .select({ id: tasks.id })
+    // H2：任务行顺带读 `deck_routed` —— 它是"这个任务已被标成 deck 路由"的**唯一**
+    // 可信来源（渲染层首次命中时写库）；裸"美化/重新排版"不许拿本轮文本自证。
+    .select({ id: tasks.id, deckRouted: tasks.deckRouted })
     .from(tasks)
     .where(and(eq(tasks.id, input.taskId), eq(tasks.gatewayId, input.gatewayId)))
     .get();
@@ -733,6 +749,7 @@ export function beginArtifactRunForGatewayDispatch(input: {
   return beginArtifactRun(workspacePath, input.taskId, input.sessionKey, {
     gatewayId: input.gatewayId,
     userContent: input.userContent,
+    deckContext: task.deckRouted === true,
   });
 }
 
@@ -1000,15 +1017,34 @@ function finalizeAssistantArtifacts(input: {
         },
       ],
     });
+    /**
+     * ⭐ H3（2026-10-09 复审）：**每条收据在自己的根上被读**。
+     *
+     * 收据的根 = 采集时被验证过的那个目录（`outputDir`，见 `tool-receipts.ts` 的
+     * `reportOutputDir`：只有落在我们认的根里、且收据能在那读回来的目录才被认）；缺省
+     * 回落到主根（助手工作区，解析失败时是应用工作区）。
+     *
+     * ⚠️ 为什么不能共用一个全局根：跨根收据（一份渲在助手工作区、一份渲在应用工作区）
+     *    在别人的根上**读不回来** —— 拿一个根去问所有条，另一半永远"不当前"。
+     * ⚠️ 只吃**采集器已验证过的** entry：模型报告里编出来的路径不作数。
+     */
+    const receiptRootOf = (entry: ToolSlideReceipt): string => {
+      const root = entry.outputDir ?? receiptWorkspace;
+      if (!root) throw new Error('slidegen-receipt-workspace-unavailable');
+      return root;
+    };
     const toolProofs = [...confirmed.receipts];
     const hasNativeProof = confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5');
     let currentNativeInput: string | undefined;
-    if (agentRoot && run.nativeFenced && !hasNativeProof && isRunCurrent()) {
+    if (run.nativeFenced && !hasNativeProof && isRunCurrent()) {
       try {
         // ⭐ BUG-046 ③：判据重定义——mtime 优先 + 本轮 edit 也算当前源（见
         //    `native-tool-input.ts`）；sinceMs=run 起点 ⇒ 旧文件永不冒充新产物。
+        // ⭐ H3/E4（2026-10-09 复审）：根不再挂 `agentRoot` —— 助手目录解析失败时用
+        //    **同一局部可信根**（`receiptWorkspace`：助手工作区，解析失败时回落应用工作区）。
+        //    只换"从哪读"，write/edit 的 sinceMs 新鲜度守卫一字不放。
         currentNativeInput =
-          nativeInputFromCompletedWrites(agentRoot.workspacePath, tools, { sinceMs: run.createdAt }) ?? undefined;
+          nativeInputFromCompletedWrites(receiptWorkspace, tools, { sinceMs: run.createdAt }) ?? undefined;
       } catch {
         if (run.nativeControlled) nativeDiagnostics = [{ code: 'native-current-input-unavailable' }];
       }
@@ -1021,41 +1057,129 @@ function finalizeAssistantArtifacts(input: {
     requirePptProof ||= process.env.ROYIN_NATIVE_PPT_VALIDATION === '1' && hasNativeProof;
     requirePptProof ||= !!run.nativeControlled;
     let managedRevision = false;
-    if (run.nativeControlled && run.nativePreviousReceipt && agentRoot && isRunCurrent()) {
+    // ⭐ E4（2026-10-09 H1–H6 E 轮终审 §3）：**结构修订未完成**的轮次标记。
+    //    结构 = "真的把上一版 A 改成了下一版"：child 收据的父链必须回指本轮的 A
+    //    （`previousReceiptFile` 相符且 `revision>0`），且 child 的收据与源文件都要**真实读回**。
+    //    任何一步没走完（读不回 / 父对不上 / 渲染被拒 / 离线 / 预算不足 / 次数用尽）都停在这里为
+    //    true，只有**核验真的通过**那一刻才清掉。
+    //    ⚠️ 不能靠"有诊断就会纠正"——诊断只喂模型；父链一旦被 B 顶掉，下一轮纠正就以 B 而不是 A
+    //       为约束基准（`template-deck-file.ts` 按父版本校验业务事实/数值/图表），错误会被固化。
+    let nativeRevisionPending = false;
+    /** child 收据是不是"本轮 A 的改稿"——两个出口（受管修订 / 带父输入生成）共用同一判据。 */
+    const isExpectedNativeChild = (receipt: ToolSlideReceipt['receipt']): boolean =>
+      receipt.previousReceiptFile === run.nativePreviousReceipt && (receipt.revision ?? 0) > 0;
+    if (run.nativeControlled && run.nativePreviousReceipt && isRunCurrent()) {
       const candidates = confirmed.receipts.filter((entry) => entry.receipt.sourceFormat === 'native-template-v5');
       const unlinked = candidates.find((entry) => entry.receipt.previousReceiptFile !== run.nativePreviousReceipt);
       if (unlinked) {
+        // 发现"挂着别的父版本"的候选 = 这一轮**打算**走受管修订 ⇒ 从这一刻起结构未完成；
+        // 清掉它的唯一出口在下面两个出口里（child 收据 + 源文件都核验通过）。
+        nativeRevisionPending = true;
         try {
           if (candidates.length !== 1 || unlinked.receipt.revision !== 0)
             throw Error('native-revision-parent-mismatch');
-          activity.phase('generating-presentation');
-          const generated = await renderNativePptFile(unlinked.receipt.sourceFile, agentRoot.workspacePath, {
-            enabled: true,
-            templatesRoot: pptxTemplatesRoot(),
-            sourceReceipt: unlinked.receiptFile,
-            previous: run.nativePreviousReceipt,
-            onPage: (p) => activity.phase('generating-presentation', { completed: p.completed, total: p.total }),
-            isCurrent: () => owner.current() && !isArtifactRunCanceled(run),
-          });
-          if (generated.fileCreated && generated.receiptFile && isRunCurrent()) {
-            // ⭐ **父链真的成了才退役 standalone 候选**（2026-10-04 真机事故）：原先在重渲染
-            //    **之前**就把候选从 confirmed 移除并标 superseded ⇒ 一旦重渲染被拒（当时是数字
-            //    守卫把目录序号 07/08 误当业务事实），物理文件还在盘上，却既不算本轮成果也不能
-            //    被 reconcile 收走，界面最后只剩一句「工作区里没有这些文件」。失败必须保留文件
-            //    与诊断：候选留在 confirmed，照常被审查/登记，诊断进自动纠正通道。
-            managedRevision = true;
-            confirmed.receipts = confirmed.receipts.filter((entry) => !candidates.includes(entry));
-            for (const entry of candidates) supersededNativeFiles.add(entry.receipt.fileName);
-            const receipt = readSlideGenerationReceipt(agentRoot.workspacePath, generated.receiptFile);
-            confirmed.receipts.push({
-              receiptFile: generated.receiptFile,
-              receipt,
-              source: readWorkspaceBytes(agentRoot.workspacePath, receipt.sourceFile, 1024 * 1024).toString('utf8'),
+          // ⭐ H3/E4（2026-10-09 复审）：受管修订**不再要求 agent 根** —— 根按这条候选
+          //    **自己的可信根**解析（collector 验证过的 `outputDir`；解析不到才回落主根）。
+          //    RPC 连续失败（agentRoot=null）时这是"RPC 失败→review→登记→remember→二次修改"
+          //    链的最后一环：没有它，下一轮候选根本进不了受管重渲染。
+          const revisionRoot = receiptRootOf(unlinked);
+          // ⭐ E4：父收据必须在这条候选自己的根上**真实读回**（`readSlideGenerationReceipt`
+          //    自带工作区身份 + 字节哈希 + 父链核验）。读不回时不许拿同名 basename 猜父版本、
+          //    更不许假记父链 —— 具名失败，候选与原文件原样保留（照常被审查/登记）。
+          //    ⚠️ 这里只管"这份收据在这个根上是不是真的"；格式/合同是否配得上当父版本，
+          //      仍由渲染器自己判（它会带 `native-parent-invalid` 诊断回来）。
+          const readableParentAt = (root: string): boolean => {
+            try {
+              readSlideGenerationReceipt(root, run.nativePreviousReceipt!);
+              return true;
+            } catch {
+              return false;
+            }
+          };
+          if (!readableParentAt(revisionRoot)) {
+            // 区分"父在另一个已知可信根"（跨根父链：受管重渲染只吃一个根，读不回它的父）
+            // 与"父哪都读不回来"（缺失）—— 两种都具名，不把两个原因说成同一件事。
+            const otherRoots = [...new Set([receiptWorkspace, input.workspacePath])].filter(
+              (root) => root !== revisionRoot,
+            );
+            const parentElsewhere = otherRoots.some(readableParentAt);
+            const code = parentElsewhere ? 'native-revision-parent-other-root' : 'native-revision-parent-missing';
+            // 留痕（只进主进程日志/诊断包，不进模型与界面文案）：现场要能回答"父收据当时在哪读得到"。
+            getDebugLogger().warn({
+              domain: 'artifact',
+              event: 'artifact.native-revision-parent-unresolved',
+              taskId: input.taskId,
+              data: {
+                code,
+                revisionRoot,
+                receiptWorkspace,
+                workspacePath: input.workspacePath,
+                parentReceipt: run.nativePreviousReceipt,
+              },
             });
-          } else if (generated.fileCreated && generated.receiptFile) {
-            // 文件已落盘但任务在这一刻不再是最新（被取消/被新轮替换）：保留文件，不退役、不登记。
-            nativeDiagnostics = [{ code: 'native-task-canceled' }];
-          } else nativeDiagnostics = generated.diagnostics ?? [{ code: 'native-revision-failed' }];
+            // ⚠️ 不 throw：本块外层 catch 会把任何异常压成固定的 `native-revision-parent-mismatch`，
+            //    这里的具名诊断会被顶掉，模型拿不到真正的失败原因。
+            nativeDiagnostics = [{ code }];
+          } else {
+            activity.phase('generating-presentation');
+            const generated = await renderNativePptFile(unlinked.receipt.sourceFile, revisionRoot, {
+              enabled: true,
+              templatesRoot: pptxTemplatesRoot(),
+              sourceReceipt: unlinked.receiptFile,
+              previous: run.nativePreviousReceipt,
+              onPage: (p) => activity.phase('generating-presentation', { completed: p.completed, total: p.total }),
+              isCurrent: () => owner.current() && !isArtifactRunCanceled(run),
+            });
+            if (generated.fileCreated && generated.receiptFile && isRunCurrent()) {
+              // ⭐ E4 #3：**先**读回并核验 child 的父链（`previousReceiptFile` 必须还是 remember
+              //    的那条、revision 必须 >0 即"这是改稿不是新开"），**再**退役 standalone 候选 ——
+              //    核验不过则一个候选都不退役（文件与候选都留着，照常被审查/登记），诊断进自动
+              //    纠正通道。revision 的**精确算术**（child = parent+1）由 `readSlideGenerationReceipt`
+              //    自带的 `verify`（父链哈希核验）保证，这里不重复发明判据。
+              let managedReceipt: ToolSlideReceipt['receipt'] | undefined;
+              try {
+                const receipt = readSlideGenerationReceipt(revisionRoot, generated.receiptFile);
+                if (isExpectedNativeChild(receipt)) managedReceipt = receipt;
+              } catch {
+                managedReceipt = undefined;
+              }
+              if (managedReceipt) {
+                // ⭐ **父链真的成了才退役 standalone 候选**（2026-10-04 真机事故）：原先在重渲染
+                //    **之前**就把候选从 confirmed 移除并标 superseded ⇒ 一旦重渲染被拒（当时是数字
+                //    守卫把目录序号 07/08 误当业务事实），物理文件还在盘上，却既不算本轮成果也不能
+                //    被 reconcile 收走，界面最后只剩一句「工作区里没有这些文件」。失败必须保留文件
+                //    与诊断：候选留在 confirmed，照常被审查/登记，诊断进自动纠正通道。
+                // ⭐ E4：**源读回先于退役**（终审 §3 顺序冻结）：child 的源文件与本轮的当前性
+                //    都必须在**动候选之前**核验完 —— 否则 source 读回失败时候选已被退役，现场
+                //    变成"文件还在盘上、却既不算本轮成果也收不进 reconcile"（2026-10-04 真机事故）。
+                //    顺序固定：read child receipt（上面）→ verify expected parent（上面）→
+                //    read child source（这里）→ isRunCurrent → **清 pending** → 退役候选 / 追加 child。
+                const managedSource = readWorkspaceBytes(revisionRoot, managedReceipt.sourceFile, 1024 * 1024).toString(
+                  'utf8',
+                );
+                if (!isRunCurrent()) throw Error('native-task-canceled');
+                nativeRevisionPending = false;
+                managedRevision = true;
+                confirmed.receipts = confirmed.receipts.filter((entry) => !candidates.includes(entry));
+                for (const entry of candidates) supersededNativeFiles.add(entry.receipt.fileName);
+                confirmed.receipts.push({
+                  receiptFile: generated.receiptFile,
+                  // ⭐ E4：entry 显式带 `outputDir` —— 后续父链登记 / 当前性复核都回到这条
+                  //    自己的根上，不再依赖"全局根"猜（跨根收据各不相同）。
+                  outputDir: revisionRoot,
+                  receipt: managedReceipt,
+                  source: managedSource,
+                });
+              } else {
+                // 受管重渲染落了文件，但收据核验不过（父链没接上 / 读不回）⇒ 不许把无父
+                // standalone 当"修改成功"吞掉诊断：候选保留、诊断上自动纠正通道。
+                nativeDiagnostics = [{ code: 'native-revision-unverified' }];
+              }
+            } else if (generated.fileCreated && generated.receiptFile) {
+              // 文件已落盘但任务在这一刻不再是最新（被取消/被新轮替换）：保留文件，不退役、不登记。
+              nativeDiagnostics = [{ code: 'native-task-canceled' }];
+            } else nativeDiagnostics = generated.diagnostics ?? [{ code: 'native-revision-failed' }];
+          }
         } catch {
           nativeDiagnostics = [{ code: 'native-revision-parent-mismatch' }];
         }
@@ -1063,7 +1187,6 @@ function finalizeAssistantArtifacts(input: {
     }
     if (
       run.nativeControlled &&
-      agentRoot &&
       isRunCurrent() &&
       !managedRevision &&
       !confirmed.receipts.some((entry) => entry.receipt.sourceFormat === 'native-template-v5')
@@ -1071,8 +1194,12 @@ function finalizeAssistantArtifacts(input: {
       try {
         const source = currentNativeInput;
         if (source) {
+          // 带父的本轮输入生成同样是"结构修订"：child 必须回指本轮的 A 才算数（与上面同一判据）。
+          if (run.nativePreviousReceipt) nativeRevisionPending = true;
           activity.phase('generating-presentation');
-          const generated = await renderNativePptFile(source, agentRoot.workspacePath, {
+          // ⭐ E4：生成出口与上面的输入查找用**同一个局部可信根**（`receiptWorkspace`）——
+          //    助手根解析失败时不再整条链跳过（RPC 失败也要能出片/改稿）。
+          const generated = await renderNativePptFile(source, receiptWorkspace, {
             enabled: true,
             templatesRoot: pptxTemplatesRoot(),
             onPage: (p) => activity.phase('generating-presentation', { completed: p.completed, total: p.total }),
@@ -1080,12 +1207,27 @@ function finalizeAssistantArtifacts(input: {
             isCurrent: () => owner.current() && !isArtifactRunCanceled(run),
           });
           if (generated.fileCreated && generated.receiptFile) {
-            const receipt = readSlideGenerationReceipt(agentRoot.workspacePath, generated.receiptFile);
-            confirmed.receipts.push({
-              receiptFile: generated.receiptFile,
-              receipt,
-              source: readWorkspaceBytes(agentRoot.workspacePath, receipt.sourceFile, 1024 * 1024).toString('utf8'),
-            });
+            // ⭐ E4：生成出口**也要核验 child 的父链**（与受管修订出口共用 `isExpectedNativeChild`）。
+            //    修前这条出口谁来都收：child 的 `previousReceiptFile` 指着**无关的第三条收据 C** 也
+            //    被当成"本轮的成稿"登记、并顶掉父版本 ⇒ 下一轮以 C 为约束基准（结构诊断都没有）。
+            //    父对不上 ⇒ 具名诊断 `native-revision-unverified`，不收为修订结果；候选/文件保留。
+            const receipt = readSlideGenerationReceipt(receiptWorkspace, generated.receiptFile);
+            if (run.nativePreviousReceipt && !isExpectedNativeChild(receipt)) {
+              nativeDiagnostics = [{ code: 'native-revision-unverified' }];
+            } else {
+              const generatedSource = readWorkspaceBytes(receiptWorkspace, receipt.sourceFile, 1024 * 1024).toString(
+                'utf8',
+              );
+              if (!isRunCurrent()) throw Error('native-task-canceled');
+              nativeRevisionPending = false;
+              confirmed.receipts.push({
+                receiptFile: generated.receiptFile,
+                // 显式记根（与回退同值）：每条收据都带着自己的根走，下游不再共享一个全局根。
+                outputDir: receiptWorkspace,
+                receipt,
+                source: generatedSource,
+              });
+            }
           } else nativeDiagnostics = generated.diagnostics ?? [{ code: 'native-generation-failed' }];
         } else if (!registeredArtifactNames(input.taskId)?.size) {
           // ⭐ BUG-046 ③ 判据重定义（用户三情形）：
@@ -1102,14 +1244,25 @@ function finalizeAssistantArtifacts(input: {
       }
     }
     for (const entry of confirmed.receipts.filter((entry) => entry.receipt.sourceFormat === 'native-template-v5')) {
-      if (!agentRoot || !owner.current() || isArtifactRunCanceled(run)) break;
+      // ⭐ H3：agent 根解析失败不再掐死审查（修前 `!agentRoot ⇒ break` ⇒ review 0 次）。
+      //    退出条件只留"这一轮还算不算数"——根解析失败 ≠ 收据不存在，成品与收据可能就在
+      //    应用工作区（`allowedReceiptRoots` 本来就认它）。
+      if (!owner.current() || isArtifactRunCanceled(run)) break;
       const current = () => owner.current() && !isArtifactRunCanceled(run);
+      let reviewRoot: string;
+      try {
+        reviewRoot = receiptRootOf(entry);
+      } catch {
+        // 连收据的根都解析不出来 ⇒ 这条本轮审不了：留诊断（自动纠正通道看得见），不装成功、也不掀翻整轮。
+        nativeDiagnostics = [...nativeDiagnostics, { code: 'slidegen-receipt-workspace-unavailable' }];
+        continue;
+      }
       activity.phase('reconciling-artifacts');
       const review = await reviewNativePpt(
-        agentRoot.workspacePath,
+        reviewRoot,
         entry.receiptFile,
         nativeReviewPorts(
-          agentRoot.workspacePath,
+          reviewRoot,
           { taskId: input.taskId, sessionKey: input.sessionKey, runId: input.runId },
           current,
         ),
@@ -1232,7 +1385,10 @@ function finalizeAssistantArtifacts(input: {
       // （新增 / size 变 / mtime 变，同名覆盖也算）。判据与理由见 `slidegen/deck-file.ts`。
       if (!owner.current()) return;
       confirmedSlides = confirmed.receipts;
-      confirmedSlideWorkspace = agentRoot?.workspacePath ?? '';
+      // ⭐ H3：不再赋空串 —— 单根默认至少是收据主根（助手工作区，解析失败时是应用工作区）；
+      //    每条收据的**真实根**由 `receiptRootOf(entry)` 按条解析（跨根收据不能共用一个全局根）。
+      //    留这个变量是为了老消费者（如应用根扫描的当前性判据）还能读到"这一趟的主根"。
+      confirmedSlideWorkspace = receiptWorkspace;
       const deckFiles = agentRoot?.deckBaseline
         ? changedDeckFiles(agentRoot.deckBaseline, agentRoot.workspacePath)
         : [];
@@ -1368,13 +1524,13 @@ function finalizeAssistantArtifacts(input: {
             return confirmedSlides.some((entry) => {
               try {
                 const actual = realpathSync.native(candidate);
-                const proven = realpathSync.native(resolve(confirmedSlideWorkspace, entry.receipt.fileName));
+                // ⭐ H3：按**这条收据自己的根**解析（跨根收据在各自主根上比对）——
+                //    不再拿一个全局 `confirmedSlideWorkspace` 套所有条目（另一条的根上读不回来）。
+                const entryRoot = receiptRootOf(entry);
+                const proven = realpathSync.native(resolve(entryRoot, entry.receipt.fileName));
                 const samePath =
                   process.platform === 'win32' ? actual.toLowerCase() === proven.toLowerCase() : actual === proven;
-                return (
-                  samePath &&
-                  isToolSlideOutputCurrent(confirmedSlideWorkspace, confirmedSlides, entry.receipt.fileName, true)
-                );
+                return samePath && isToolSlideOutputCurrent(entryRoot, confirmedSlides, entry.receipt.fileName, true);
               } catch {
                 return false;
               }
@@ -1502,8 +1658,12 @@ function finalizeAssistantArtifacts(input: {
         };
         if (realWorkspace && isRunCurrent() && confirmedSlides.length > 0) {
           for (const entry of confirmedSlides) {
-            const outputDir = entry.outputDir ?? agentRoot?.workspacePath ?? '';
-            if (!outputDir) {
+            // ⭐ H3：落位源的根 = **这条收据自己的根**（顶层变量 + 单根回落的统一出口）——
+            //    不再借路 `agentRoot`（它可能是 null），也不再有"空串"这种假根。
+            let outputDir: string;
+            try {
+              outputDir = receiptRootOf(entry);
+            } catch {
               logRelocateSkip(entry.receipt.fileName, 'no-output-dir');
               continue;
             }
@@ -1585,14 +1745,20 @@ function finalizeAssistantArtifacts(input: {
       try {
         const agentRoot = run.agentBaseline ? await run.agentBaseline : null;
         if (!owner.current()) return;
-        // 没有第二个根只是「这趟不扫助手工作区」，不能 `return`：后面的结果/声称守卫仍要跑。
+        // ⭐ H3（2026-10-09 复审）：`staleSlideNames` 提到分支外 —— 它是"登记 + 当前性"核验的
+        //    共同结论，有两个写入者：下面 agent 扫描的 `isCandidateCurrent`（文件不当前）与
+        //    分支**之后**的登记核验（没有可信的登记证明）。留在分支里就等于"没有助手根时不做登记核验"。
+        const staleSlideNames = new Set<string>();
+        // 没有第二个根只是「这趟不扫助手工作区」，不能 `return`：后面的登记核验/结果/声称守卫仍要跑。
+        // ⭐ H3：**这一趟只剩第二根 reconcile 及其通知** —— 登记核验与 remember 移到分支之后（见下），
+        //    它们吃的登记证明由 `agentIndexed`（可选）与 `relocatedDecks`（主根规范落位，一定有）合并而成。
+        let agentIndexed: Artifact[] = [];
         if (!isArtifactRunCanceled(run) && agentRoot) {
           activity.phase('reconciling-artifacts');
-          const staleSlideNames = new Set<string>();
           // ⭐ 便携单根（助手工作区 == 应用工作区）：**这一趟不扫** —— 同一个目录已经被
           //    "应用工作区根层"那条链扫过，两批产物会撞 `local_path`（原注释写明的理由）。
           //    登记由"收据规范落位"那一步负责（confirmedSlides → 复制进任务目录 + 登记）。
-          //    ⚠️ 只跳过**扫描**，不跳过下面的核对/留痕（它们吃的是空结果，行为不变）。
+          //    ⚠️ 只跳过**扫描**，不跳过后面的核对/留痕（它们吃的是空结果，行为不变）。
           const agentResult = agentRoot.sameAsWorkspace
             ? { saved: [], existing: [], updated: [], skipped: [], missing: [], budgetExhausted: false }
             : await reconcileTaskArtifacts({
@@ -1619,56 +1785,7 @@ function finalizeAssistantArtifacts(input: {
                 },
               });
           if (!owner.current()) return;
-          if (isRunCurrent()) {
-            const indexed = [...agentResult.saved, ...agentResult.existing, ...(agentResult.updated ?? [])];
-            for (const entry of confirmedSlides) {
-              const expectedPath = resolve(agentRoot.workspacePath, entry.receipt.fileName);
-              const matchesPath = (value: string) =>
-                process.platform === 'win32'
-                  ? value.toLowerCase() === expectedPath.toLowerCase()
-                  : value === expectedPath;
-              // ⭐ B 包：跨根的稿子（渲在应用工作区，不走助手工作区）在**这一趟里永远找不到** ——
-              //    它由上一步"规范落位"复制进任务目录并登记（`relocatedDecks`），
-              //    这里按那份登记核（名字 + 字节数，诚实核对，不因为"搬过"就当它合格）。
-              const relocated = relocatedDecks.get(entry.receiptFile);
-              const registered =
-                relocated !== undefined
-                  ? relocated.taskId === input.taskId &&
-                    relocated.messageId === input.messageId &&
-                    relocated.size === entry.receipt.bytes &&
-                    relocated.name === entry.receipt.fileName
-                  : indexed.some(
-                      (artifact) =>
-                        artifact.taskId === input.taskId &&
-                        artifact.messageId === input.messageId &&
-                        artifact.root === 'agent' &&
-                        artifact.size === entry.receipt.bytes &&
-                        matchesPath(resolve(artifact.filePath)) &&
-                        matchesPath(resolve(agentRoot.workspacePath, artifact.localPath)),
-                    );
-              if (
-                !registered ||
-                !isToolSlideOutputCurrent(agentRoot.workspacePath, confirmedSlides, entry.receipt.fileName)
-              )
-                staleSlideNames.add(entry.receipt.fileName);
-            }
-          }
-          if (staleSlideNames.size) {
-            const normalized = (name: string) => (process.platform === 'win32' ? name.toLowerCase() : name);
-            const stale = new Set([...staleSlideNames].map(normalized));
-            const kept = slideWarnings.filter(
-              (warning) => !warning.artifactName || !stale.has(normalized(warning.artifactName)),
-            );
-            slideWarnings.splice(0, slideWarnings.length, ...kept);
-            if (!deliveryFailure.slideFailures?.some((failure) => failure.code === 'slidegen-output-unconfirmed')) {
-              deliveryFailure.slideFailures = [
-                ...(deliveryFailure.slideFailures ?? []),
-                { code: 'slidegen-output-unconfirmed' },
-              ];
-              for (const win of BrowserWindow.getAllWindows())
-                win.webContents.send('slidegen:failed', deliveryFailure.slideFailures);
-            }
-          }
+          agentIndexed = [...agentResult.saved, ...agentResult.existing, ...(agentResult.updated ?? [])];
           // ⭐ **正面证据**：真机排障时唯一能回答"这个功能跑没跑、找到了几条"的一行。
           //    没有它，用户说"产物还是空的"时只能猜：是没扫到？根没接上？还是真没文件？
           getDebugLogger().info({
@@ -1683,26 +1800,95 @@ function finalizeAssistantArtifacts(input: {
             },
           });
           notifyReconciledArtifacts(agentResult);
-          if (run.nativeControlled) {
-            const latest = confirmedSlides
-              .filter((entry) => entry.receipt.sourceFormat === 'native-template-v5')
-              .at(-1);
-            const registered =
-              latest &&
-              ([...agentResult.saved, ...agentResult.existing].some((a) => a.localPath === latest.receipt.fileName) ||
-                // 便携单根：agent 链不扫（空结果）⇒ 登记形态是"规范落位"搬出来的那一行。
-                relocatedDecks.has(latest.receiptFile));
-            const db = getSqlite();
-            if (db && latest && registered && !staleSlideNames.has(latest.receipt.fileName)) {
-              nativeTaskControl(db).remember(input.taskId, run.token, latest.receiptFile);
-              const current = nativeTaskControl(db).get(input.taskId);
-              if (
-                current?.active_token === run.token &&
-                !current.canceled &&
-                current.last_receipt === latest.receiptFile
-              )
-                nativeRegisteredReceipt = latest.receiptFile;
+        }
+        /**
+         * 这条收据有没有**逐字段对得上**的登记证明：主根规范落位（`relocatedDecks`）∪
+         * 可选 agent 扫描的登记行（有助手根时才有）。
+         * ⚠️ 不是 `Map.has()`：taskId / messageId / 字节数 / 文件名（agent 行另核 path）逐项核 ——
+         *    同一张 Map 里挂着一条 taskId 或字节数对不上的旧行，不许冒充"已登记"。
+         */
+        const isDeckRegistered = (entry: ToolSlideReceipt): boolean => {
+          const relocated = relocatedDecks.get(entry.receiptFile);
+          if (
+            relocated !== undefined &&
+            relocated.taskId === input.taskId &&
+            relocated.messageId === input.messageId &&
+            relocated.size === entry.receipt.bytes &&
+            relocated.name === entry.receipt.fileName
+          )
+            return true;
+          if (!agentRoot) return false;
+          const expectedPath = resolve(agentRoot.workspacePath, entry.receipt.fileName);
+          const matchesPath = (value: string) =>
+            process.platform === 'win32' ? value.toLowerCase() === expectedPath.toLowerCase() : value === expectedPath;
+          return agentIndexed.some(
+            (artifact) =>
+              artifact.taskId === input.taskId &&
+              artifact.messageId === input.messageId &&
+              artifact.root === 'agent' &&
+              artifact.size === entry.receipt.bytes &&
+              matchesPath(resolve(artifact.filePath)) &&
+              matchesPath(resolve(agentRoot.workspacePath, artifact.localPath)),
+          );
+        };
+        // ⭐ H3：登记核验**移出 agent 分支** —— 收据可能在应用工作区（"规范落位"搬出来的那一行
+        //    就是它的登记证明），助手根解析失败时这是父版本证据唯一还拿得到的来源。
+        if (isRunCurrent()) {
+          for (const entry of confirmedSlides) {
+            let outputCurrent = false;
+            try {
+              // 当前性复核读**这条收据自己的根**（跨根收据各不相同，不能共用一个全局根）。
+              outputCurrent = isToolSlideOutputCurrent(receiptRootOf(entry), confirmedSlides, entry.receipt.fileName);
+            } catch {
+              outputCurrent = false;
             }
+            if (!isDeckRegistered(entry) || !outputCurrent) staleSlideNames.add(entry.receipt.fileName);
+          }
+        }
+        if (staleSlideNames.size) {
+          const normalized = (name: string) => (process.platform === 'win32' ? name.toLowerCase() : name);
+          const stale = new Set([...staleSlideNames].map(normalized));
+          const kept = slideWarnings.filter(
+            (warning) => !warning.artifactName || !stale.has(normalized(warning.artifactName)),
+          );
+          slideWarnings.splice(0, slideWarnings.length, ...kept);
+          if (!deliveryFailure.slideFailures?.some((failure) => failure.code === 'slidegen-output-unconfirmed')) {
+            deliveryFailure.slideFailures = [
+              ...(deliveryFailure.slideFailures ?? []),
+              { code: 'slidegen-output-unconfirmed' },
+            ];
+            for (const win of BrowserWindow.getAllWindows())
+              win.webContents.send('slidegen:failed', deliveryFailure.slideFailures);
+          }
+        }
+        // ⭐ H3：父版本登记证据（= 下一轮**自动修订**的父收据）**不再要求助手根存在**。
+        //    证明沿用上面同一套完整核验出口（逐字段登记 + 当前性），不在这里另发明判据。
+        //    ⚠️ 它记录的是"下一轮拿谁当父版本"，**不等价于 PPT 交付成功**：交付判据仍由
+        //      review / 文件 / 登记守卫各自决定；也**不要求 review passed** —— 否则自动修订
+        //      在第一轮没过审查时就丢父版本（有界纠正的原语义）。
+        const latestNative = confirmedSlides
+          .filter((entry) => entry.receipt.sourceFormat === 'native-template-v5')
+          .at(-1);
+        const latestRegistered = latestNative !== undefined && isDeckRegistered(latestNative);
+        const current = () => owner.current() && !isArtifactRunCanceled(run);
+        if (
+          run.nativeControlled &&
+          // ⭐ E4：结构修订**没走完**的一轮不许改父版本 —— 否则 standalone B 会被记成"新父"，
+          //    下一轮纠正就以 B 为约束基准（A 才是用户手里已验证的那一版）。pending 时不写
+          //    `nativeRegisteredReceipt`（它在下面同条件内赋值）⇒ 自动纠正自然回落 `run.nativePreviousReceipt`=A。
+          !nativeRevisionPending &&
+          latestNative &&
+          latestRegistered &&
+          !staleSlideNames.has(latestNative.receipt.fileName) &&
+          current()
+        ) {
+          const db = getSqlite();
+          if (db) {
+            const control = nativeTaskControl(db);
+            control.remember(input.taskId, run.token, latestNative.receiptFile);
+            const state = control.get(input.taskId);
+            if (state?.active_token === run.token && !state.canceled && state.last_receipt === latestNative.receiptFile)
+              nativeRegisteredReceipt = latestNative.receiptFile;
           }
         }
       } catch (error) {
@@ -1820,10 +2006,15 @@ function finalizeAssistantArtifacts(input: {
         );
         const canceled = isArtifactRunCanceled(run);
         const hasWarnings = !canceled && slideWarnings.length > 0;
+        // ⭐ E4（终审 §3）：结算只**多一个结构因素**——结构修订没走完（pending）时，这一轮
+        //    最诚实的状态就是"未确认"：离线/预算不足/次数用尽时连自动纠正都发不出去，
+        //    绝不许落成 succeeded（那直接违背完成契约）。原有 canceled→failed→needs-review→
+        //    succeeded 优先级与 mediaRetrySettlement 复用本条判据，不新增表/store、不增加 retry。
         const nativeNeedsReview =
           !canceled &&
-          confirmedSlides.some((entry) => entry.receipt.sourceFormat === 'native-template-v5') &&
-          (nativeReviews.length === 0 || nativeReviews.some((review) => review.status !== 'passed'));
+          (nativeRevisionPending ||
+            (confirmedSlides.some((entry) => entry.receipt.sourceFormat === 'native-template-v5') &&
+              (nativeReviews.length === 0 || nativeReviews.some((review) => review.status !== 'passed'))));
         const settlement: ArtifactDeliverySettled = {
           taskId: input.taskId,
           sessionKey: input.sessionKey,
