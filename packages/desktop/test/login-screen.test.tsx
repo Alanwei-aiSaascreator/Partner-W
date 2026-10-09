@@ -65,7 +65,10 @@ describe('Login', () => {
     expect(container.querySelector('[data-login-region="form"]')).not.toBeNull();
     expect(container.querySelector('[data-guide-mascot]')).not.toBeNull();
     expect(container.textContent).toContain('mainArea.welcomeTitle');
-    expect(container.textContent).toContain('assistantWorkspaces.compass.description');
+    expect(container.textContent).toContain('login.brandSubline');
+    // 2026-10-09 登录页文案 A：左栏第二行改用登录向独立键；工作台的罗盘描述
+    // 不再借到登录页上（它指向"从下面选一个开始"的 starter 卡，本屏不存在）。
+    expect(container.textContent).not.toContain('assistantWorkspaces.compass.description');
     expect(container.textContent).not.toContain('assistantDefinitions.main');
     expect(container.textContent).not.toContain('数据不出内网');
     expect(container.querySelectorAll('[data-primary-action]')).toHaveLength(1);
@@ -176,7 +179,8 @@ describe('Login', () => {
     expect(container.textContent).not.toContain('login.purposes.ecommerce');
     expect(container.textContent).not.toContain('login.purposes.research');
     expect(window.localStorage.getItem('rongying-login-purpose')).toBeNull();
-    expect(container.textContent).toContain('fileBrowser.workspaceAccessDescription');
+    // 2026-10-09 登录页文案 A：权限机制说明已从登录页移除（FileBrowser 原位置保留）。
+    expect(container.textContent).not.toContain('fileBrowser.workspaceAccessDescription');
     unmount();
   });
 

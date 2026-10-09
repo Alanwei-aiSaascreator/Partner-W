@@ -1359,6 +1359,7 @@
     "agreement": "我已阅读并同意{0}与{1}",
     "authenticatedForActivation": "已登录，请确认此账号的使用资格。",
     "betaPhoneNotice": "手机号仅用于内测账号的注册与通知；测试结束后 30 天内删除，不用于其他用途。",
+    "brandSubline": "登录后，说出你想完成的事，即可开始。",
     "changeAccount": "更换账号",
     "changePhone": "更换手机号",
     "codePlaceholder": "验证码",

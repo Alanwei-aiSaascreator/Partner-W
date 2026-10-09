@@ -326,11 +326,8 @@ export default function Login({
         <div className="relative my-auto max-w-lg py-12">
           <h2 className="type-page-title max-w-md text-[var(--text-primary)]">{t('mainArea.welcomeTitle')}</h2>
           <p className="mt-3 max-w-md type-body leading-7 text-[var(--text-onboarding-muted)]">
-            {t('assistantWorkspaces.compass.description')}
+            {t('login.brandSubline')}
           </p>
-          <div className="type-body mt-7 max-w-md border-t border-[var(--border)] pt-4 leading-6 text-[var(--text-onboarding-muted)]">
-            {t('fileBrowser.workspaceAccessDescription')}
-          </div>
         </div>
 
         <div data-guide-mascot className="relative mx-auto w-full max-w-sm">

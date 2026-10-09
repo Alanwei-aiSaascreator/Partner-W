@@ -1359,6 +1359,7 @@
     "agreement": "{0}と{1}を読み、同意します",
     "authenticatedForActivation": "ログイン済みです。このアカウントの利用資格を確認します。",
     "betaPhoneNotice": "電話番号は本ベータ版のアカウント登録とご連絡にのみ使用します。テスト終了後 30 日以内に削除し、その他の目的には使用しません。",
+    "brandSubline": "ログイン後、やりたいことを伝えるだけで始められます。",
     "changeAccount": "アカウントを変更",
     "changePhone": "番号を変更",
     "codePlaceholder": "確認コード",

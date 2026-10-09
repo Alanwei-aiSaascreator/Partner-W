@@ -1359,6 +1359,7 @@
     "agreement": "Li e concordo com os {0} e a {1}",
     "authenticatedForActivation": "Sessão iniciada. Confirme o acesso desta conta.",
     "betaPhoneNotice": "O seu número de telefone é usado apenas para registar a conta e notificá-lo nesta beta. É eliminado nos 30 dias seguintes ao fim do teste e não é usado para mais nada.",
+    "brandSubline": "Após entrar, diga o que quer realizar para começar.",
     "changeAccount": "Trocar conta",
     "changePhone": "Alterar número",
     "codePlaceholder": "Código",

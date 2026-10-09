@@ -1359,6 +1359,7 @@
     "agreement": "我已閱讀並同意{0}與{1}",
     "authenticatedForActivation": "已登入，請確認此帳號的使用資格。",
     "betaPhoneNotice": "手機號僅用於內測帳號的註冊與通知；測試結束後 30 天內刪除，不用於其他用途。",
+    "brandSubline": "登入後，說出你想完成的事，即可開始。",
     "changeAccount": "更換帳號",
     "changePhone": "更換手機號",
     "codePlaceholder": "驗證碼",
