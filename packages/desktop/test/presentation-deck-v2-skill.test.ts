@@ -7,14 +7,18 @@ import { PPTX_TEMPLATE_IDS, PPTX_TEMPLATE_SET_ID, PPTX_TEMPLATES } from '../src/
 import { parseTemplateDeck } from '../src/main/docgen/pptx-template/parse';
 import { parseDocgenRequest } from '../src/main/docgen/request';
 import {
+  encodeSkillRecord,
   installBundledSkill,
   isBundledSkillInstalled,
   missingBundledSkills,
+  planSkillSync,
   readBundledSkills,
   readInstalledSkillContent,
+  readSkillFileSha,
   skillContentSha,
-  staleBundledSkills,
+  skillDirFilePaths,
   type BundledSkill,
+  type ManagedSkillRecordV2,
 } from '../src/main/skills/bundled';
 import { resolveOurSkillsRoot } from '../src/main/skills/locate';
 
@@ -223,70 +227,105 @@ describe('presentation-deck-v2 —— 内容与契约层不漂移', () => {
 
 describe('presentation-deck-v2 —— 四种盘上的行为', () => {
   const skill = bundledSkill();
+  const vendorPaths = () => skillDirFilePaths(path.join(OUR_SKILLS_ROOT!, SLUG))!;
+  /** 装下去那一刻的**真实**记账（逐文件 sha）。 */
+  const recordOf = (managedDir: string): ManagedSkillRecordV2 => ({
+    version: 2,
+    packageSha: skill.packageSha!,
+    files: Object.fromEntries(vendorPaths().map((rel) => [rel, readSkillFileSha(path.join(managedDir, SLUG), rel)!])),
+  });
+  /** 盘上那份的已装视图（真实读盘，走产品的读取出口）。 */
+  const viewOf = (managedDir: string) => {
+    const target = path.join(managedDir, SLUG);
+    const content = readInstalledSkillContent(managedDir, SLUG);
+    return {
+      skillSha: content === null ? null : skillContentSha(content),
+      fileSha: (relativePath: string) => readSkillFileSha(target, relativePath),
+    };
+  };
+  const install = (managedDir: string) => {
+    const result = installBundledSkill({ managedDir, root: OUR_SKILLS_ROOT!, slug: SLUG });
+    expect(result.ok, result.ok ? '' : result.error).toBe(true);
+  };
 
   it('场景 A（新盘）：既没装也没记账 ⇒ 走"补装"，装得上', () => {
     const managedDir = tmpDir();
     const missing = missingBundledSkills([skill], (slug) => isBundledSkillInstalled(managedDir, slug));
     expect(missing.map((s) => s.slug)).toEqual([SLUG]);
 
-    const result = installBundledSkill({ managedDir, root: OUR_SKILLS_ROOT!, slug: SLUG });
-    expect(result.ok, result.ok ? '' : result.error).toBe(true);
+    install(managedDir);
     expect(isBundledSkillInstalled(managedDir, SLUG)).toBe(true);
   });
 
-  it('场景 B（记录齐全的旧盘）：盘上还是我们装的那份 ⇒ 随包内容变了会升级、会覆盖', () => {
+  it('场景 B（记录齐全的旧盘）：盘上还是我们装的那份 ⇒ 随包内容变了只差分升级、别的文件不碰', () => {
     const managedDir = tmpDir();
-    expect(installBundledSkill({ managedDir, root: OUR_SKILLS_ROOT!, slug: SLUG }).ok).toBe(true);
+    install(managedDir);
+    const record = recordOf(managedDir);
 
-    const installed = readInstalledSkillContent(managedDir, SLUG);
-    expect(installed).not.toBeNull();
-    const recordedOld = skillContentSha(installed!); // 假装记账是上一版的内容
-
-    const stale = staleBundledSkills(
-      [skill],
-      (s) => readInstalledSkillContent(managedDir, s),
-      () => recordedOld,
-    );
-    // 盘上 == 记账，而随包 == 记账（同一份） ⇒ 没什么可升的
-    expect(stale).toEqual([]);
+    // 随包更新：SKILL.md 与 TEMPLATE-DECK.md 都变了（版本号也变 ⇒ 不命中 unchanged 快路径）。
+    const nextFiles = {
+      ...record.files,
+      'SKILL.md': 'a'.repeat(64),
+      'TEMPLATE-DECK.md': 'b'.repeat(64),
+    };
+    expect(
+      planSkillSync({
+        packageSha: 'c'.repeat(64),
+        nextFiles,
+        recorded: encodeSkillRecord(record),
+        installed: viewOf(managedDir),
+      }),
+    ).toEqual({ kind: 'update', write: ['SKILL.md', 'TEMPLATE-DECK.md'], remove: [] });
   });
 
-  it('⭐ 场景 C（**没有记账的老盘**）：已存在技能的内容更新卡死 —— 这是本轮要绕开的那个缺口', () => {
+  it('⭐ 场景 C-1（**没有记账的老盘，且盘上与当前包不一致**）：不许瞎猜 —— 具名冲突，等用户走修复出口', () => {
     const managedDir = tmpDir();
-    expect(installBundledSkill({ managedDir, root: OUR_SKILLS_ROOT!, slug: SLUG }).ok).toBe(true);
-
-    // 造一个"老盘"：盘上是**旧内容**，而我们**没有记账**
-    fs.writeFileSync(path.join(managedDir, SLUG, 'SKILL.md'), '# 老版本的旧正文\n');
+    install(managedDir);
+    const packageFiles = recordOf(managedDir).files; // 当前包的那一份（装下去时的真实字节）
+    fs.writeFileSync(path.join(managedDir, SLUG, 'TEMPLATE-DECK.md'), '老版本的旧模板说明\n');
 
     const missing = missingBundledSkills([skill], (slug) => isBundledSkillInstalled(managedDir, slug));
-    const stale = staleBundledSkills(
-      [skill],
-      (s) => readInstalledSkillContent(managedDir, s),
-      () => null,
-    );
-
-    // 三条路同时落空：不补装（已装）、不升级（没记账）
     expect(missing, '已装 ⇒ 不进补装').toEqual([]);
-    expect(stale, '没记账 ⇒ 不进升级').toEqual([]);
-    // ⇒ 这就是缺口本身。**本轮不修它**，只是把它钉成断言，免得被当成已修。
-    //    （修它要放宽 `staleBundledSkills` 的保守判据，那是另一个决定。）
+    // H1 之前这里三条路同时落空、连一条日志都没有；现在是一个**具名**冲突：
+    // 无账 + 与当前包不一致 ⇒ 来源无从核验（unverified-origin），保留现场。
+    expect(
+      planSkillSync({
+        packageSha: skill.packageSha!,
+        nextFiles: packageFiles,
+        recorded: undefined,
+        installed: viewOf(managedDir),
+      }),
+    ).toMatchObject({ kind: 'conflict', reason: 'unverified-origin' });
+  });
+
+  it('⭐ 场景 C-2（没有记账、但盘上与当前包逐字一致）⇒ 认领真实基线（不写盘、不改用户文件）', () => {
+    const managedDir = tmpDir();
+    install(managedDir);
+    const files = recordOf(managedDir).files;
+    const plan = planSkillSync({
+      packageSha: skill.packageSha!,
+      nextFiles: files,
+      recorded: undefined,
+      installed: viewOf(managedDir),
+    });
+    expect(plan).toEqual({ kind: 'adopt', record: { version: 2, packageSha: skill.packageSha!, files } });
   });
 
   it('场景 D（用户改过）：盘上内容与记账不一致 ⇒ 一个字节都不碰', () => {
     const managedDir = tmpDir();
-    expect(installBundledSkill({ managedDir, root: OUR_SKILLS_ROOT!, slug: SLUG }).ok).toBe(true);
+    install(managedDir);
+    const record = recordOf(managedDir);
     const original = readInstalledSkillContent(managedDir, SLUG)!;
-    const recorded = skillContentSha(original);
-
-    // 用户改过：盘上内容变了，记账还是装下去时那个
     fs.writeFileSync(path.join(managedDir, SLUG, 'SKILL.md'), `${original}\n\n（我自己加的一行）\n`);
 
-    const stale = staleBundledSkills(
-      [skill],
-      (s) => readInstalledSkillContent(managedDir, s),
-      () => recorded,
-    );
-    expect(stale, '有人改过 ⇒ 不碰').toEqual([]);
+    expect(
+      planSkillSync({
+        packageSha: 'c'.repeat(64), // 随包也更新了：依然不许碰
+        nextFiles: { ...record.files, 'SKILL.md': 'a'.repeat(64) },
+        recorded: encodeSkillRecord(record),
+        installed: viewOf(managedDir),
+      }),
+    ).toMatchObject({ kind: 'conflict', reason: 'user-modified', paths: ['SKILL.md'] });
     expect(readInstalledSkillContent(managedDir, SLUG)).toContain('我自己加的一行');
   });
 });

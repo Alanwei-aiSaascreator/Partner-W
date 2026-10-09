@@ -41,6 +41,7 @@ import type {
   IpcResult as SharedIpcResult,
   JoinTeamResult,
   LikeToggleResult,
+  OurSkillInstallResult,
   OurSkillsListResult,
   ParsedTeam,
   QuestionResolveParams,
@@ -496,7 +497,13 @@ export interface ClawWorkAPI {
   getSkillBins: (gatewayId: string) => Promise<IpcResult<SkillBinsResult>>;
   /** 「我们自己的技能」—— 随包目录（T-a2）。`installed` 靠主进程问网关要的目录判定。 */
   listOurSkills: (gatewayId?: string, agentId?: string) => Promise<IpcResult<OurSkillsListResult>>;
-  installOurSkill: (gatewayId: string, slug: string, agentId?: string) => Promise<IpcResult>;
+  /**
+   * 「我们自己的技能」的显式安装/修复。
+   *
+   * 已装的那个走 `confirmed-repair`（厂商文件全量重写）：成功后**保留**一份可恢复备份，
+   * 位置随结果返回（`OurSkillInstallResult.backupDir`）—— 界面必须能如实显示它（E3）。
+   */
+  installOurSkill: (gatewayId: string, slug: string, agentId?: string) => Promise<IpcResult<OurSkillInstallResult>>;
   /**
    * 开机自装随包技能：**缺了就补**，不动已装的。
    * 尽力而为 —— 失败只记日志，不挡启动（见 main/skills/handlers.ts 的注释）。

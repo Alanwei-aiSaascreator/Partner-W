@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * 装/卸随包技能之后，**通知网关把那一侧的技能缓存作废**（T-a2·A2-6）。
@@ -38,7 +41,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   handleMap: new Map<string, (...args: unknown[]) => unknown>(),
-  // ⚠️ 新机制要读写 `bundledSkillRecords`（内容指纹记账）⇒ 配置桩成**内存**的，
+  // ⚠️ 新机制要读写 `bundledSkillRecords`（来源记账）⇒ 配置桩成**内存**的，
   //    否则 `updateConfig` 抛 ENOENT、整条处理器被打回 `ok:false`，
   //    而测试只会看到"upgraded 是 undefined"这种看不出因果的形状。
   configState: { value: {} as Record<string, unknown> },
@@ -46,12 +49,10 @@ const mocks = vi.hoisted(() => ({
   getSkillsStatus: vi.fn(async () => ({ managedSkillsDir: 'C:/managed-skills' })),
   listAgents: vi.fn(async () => ({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] })),
   getGatewayClient: vi.fn(),
-  installBundledSkill: vi.fn(),
-  removeBundledSkill: vi.fn(),
-  // ⚠️ 返回类型必须写出来：不写就是 `never[]`，`mockReturnValue([{slug, content}])` 编不过。
-  readBundledSkills: vi.fn<() => Array<{ slug: string; content?: string }>>(() => []),
-  isBundledSkillInstalled: vi.fn(() => false),
-  readInstalledSkillContent: vi.fn<(dir: unknown, slug: string) => string | null>(() => null),
+  /** 随包技能根（每个用例一套临时目录 —— 装/升现在真的是**盘上**的行为）。 */
+  skillsRoot: '',
+  /** 安装前的一个观察点（"装到一半网关断了"那条用）。 */
+  beforeInstall: null as null | (() => void),
   warn: vi.fn(),
 }));
 
@@ -76,19 +77,21 @@ vi.mock('../src/main/ws/index.js', () => ({
   getGatewayClient: mocks.getGatewayClient,
 }));
 
-vi.mock('../src/main/skills/bundled.js', async (importOriginal) => ({
-  // ⚠️ 只桩 **IO 那几件**，`staleBundledSkills` / `readInstalledSkillContent` 用**真的**：
-  //    这两个正是要被测的逻辑，桩掉它们等于没测（"每个零件都测过、拼起来没测过"）。
-  ...(await importOriginal<typeof import('../src/main/skills/bundled.js')>()),
-  installBundledSkill: mocks.installBundledSkill,
-  removeBundledSkill: mocks.removeBundledSkill,
-  readBundledSkills: mocks.readBundledSkills,
-  isBundledSkillInstalled: mocks.isBundledSkillInstalled,
-  readInstalledSkillContent: mocks.readInstalledSkillContent,
-}));
+vi.mock('../src/main/skills/bundled.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/main/skills/bundled.js')>();
+  return {
+    // ⚠️ 全部用**真的**（staging、差分计划、装/卸都是真盘上行为 —— 桩掉它们等于没测）。
+    //    只给安装包一层观察点：`installBundledSkill` 照跑，跑之前先喊一声。
+    ...actual,
+    installBundledSkill: (options: Parameters<typeof actual.installBundledSkill>[0]) => {
+      mocks.beforeInstall?.();
+      return actual.installBundledSkill(options);
+    },
+  };
+});
 
 vi.mock('../src/main/skills/locate.js', () => ({
-  resolveOurSkillsRoot: () => 'C:/bundled-skills',
+  resolveOurSkillsRoot: () => mocks.skillsRoot,
 }));
 
 vi.mock('../src/main/debug/index.js', () => ({
@@ -114,6 +117,13 @@ async function invoke(channel: string, payload: unknown): Promise<Record<string,
   if (!handler) throw new Error(`handler 没注册：${channel}`);
   return (await handler({}, payload)) as Record<string, unknown>;
 }
+
+/** 每个用例的临时盘（随包根 + 托管目录）都要收干净。 */
+const temps: string[] = [];
+afterEach(() => {
+  for (const dir of temps.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  mocks.beforeInstall = null;
+});
 
 describe('notifySkillCacheChange —— 通知的形状与失败方式', () => {
   beforeEach(() => {
@@ -164,13 +174,29 @@ describe('notifySkillCacheChange —— 通知的形状与失败方式', () => {
 });
 
 describe('skills:our-install / skills:our-remove 成功之后会通知网关', () => {
+  let root = '';
+  let managedDir = '';
+  let replacedDir = '';
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.beforeInstall = null;
     mocks.handleMap.clear();
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-notify-'));
+    temps.push(root);
+    mocks.skillsRoot = path.join(root, 'bundle');
+    managedDir = path.join(root, 'managed');
+    replacedDir = path.join(root, 'replaced-managed');
+    for (const slug of ['copy-variants', 'formal-writing']) {
+      fs.mkdirSync(path.join(mocks.skillsRoot, slug), { recursive: true });
+      fs.writeFileSync(
+        path.join(mocks.skillsRoot, slug, 'SKILL.md'),
+        `---\nname: ${slug}\ndescription: x\n---\n\n正文\n`,
+      );
+    }
+    fs.mkdirSync(managedDir, { recursive: true });
+    mocks.getSkillsStatus.mockResolvedValue({ managedSkillsDir: managedDir });
     registerSkillsHandlers();
     mocks.getGatewayClient.mockReturnValue(connectedClient());
-    mocks.installBundledSkill.mockReturnValue({ ok: true });
-    mocks.removeBundledSkill.mockReturnValue({ ok: true });
     mocks.listAgents.mockResolvedValue({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
   });
 
@@ -198,9 +224,10 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
     const pending = invoke('skills:our-install', { gatewayId: 'gw-1', agentId: 'office', slug: 'formal-writing' });
     await Promise.resolve();
     mocks.getGatewayClient.mockReturnValue(connectedClient());
-    finish({ managedSkillsDir: 'C:/old-gateway-skills' });
+    finish({ managedSkillsDir: replacedDir });
     expect(await pending).toMatchObject({ ok: false, error: 'GATEWAY_UNAVAILABLE' });
-    expect(mocks.installBundledSkill).not.toHaveBeenCalled();
+    // 那条连接已经作废 ⇒ 它报出来的目录一个字节都不许写。
+    expect(fs.existsSync(path.join(replacedDir, 'formal-writing'))).toBe(false);
   });
 
   it('⭐ 装上成功 ⇒ 通知 enabled:true；IPC 结果仍是「装」那一份', async () => {
@@ -210,9 +237,9 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
   });
 
   it('⭐ 装失败 ⇒ **不通知**（没发生的变更不该去写配置）', async () => {
-    mocks.installBundledSkill.mockReturnValue({ ok: false, error: '随包目录里没有这个技能：nope' });
     const res = await invoke('skills:our-install', { gatewayId: 'gw-1', agentId: 'a-1', slug: 'nope' });
     expect(res.ok).toBe(false);
+    expect(res.error).toContain('随包目录里没有这个技能');
     expect(mocks.updateSkill).not.toHaveBeenCalled();
   });
 
@@ -245,10 +272,9 @@ describe('skills:our-install / skills:our-remove 成功之后会通知网关', (
       getSkillsStatus: mocks.getSkillsStatus,
       updateSkill: mocks.updateSkill,
     };
-    mocks.installBundledSkill.mockImplementation(() => {
+    mocks.beforeInstall = () => {
       client.isConnected = false;
-      return { ok: true };
-    });
+    };
     mocks.getGatewayClient.mockReturnValue(client);
     const res = await invoke('skills:our-install', { gatewayId: 'gw-1', agentId: 'a-1', slug: 'copy-variants' });
     expect(res).toEqual({ ok: true });
@@ -384,19 +410,42 @@ describe('内容升级：强制 bump（原子 nonce，不切换真技能 enabled
  * 而助手照旧说「环境限制…没法直接生成 PDF」——`missingBundledSkills` 只管"缺了才补"，
  * 老盘的技能**不缺**，于是永远不会被升级。
  *
- * 这条同时钉住两件事：**装了**（覆盖磁盘）+ **force bump 了**（否则运行时还拿着旧缓存）。
+ * ⚠️ H1 起这些用例跑在**真实临时盘**上（随包根 + 托管目录都是真目录）：装/升已经
+ *    不是"调用一次拷贝函数"，而是 staging → 差分 → 核验 → 记账，桩掉 IO 就没测到东西。
+ *    这条同时钉住三件事：**盘上真的换了** + **force bump 了**（否则运行时还拿着旧缓存）
+ *    + **记账迁移到 pkg2**。
  */
 describe('开机自装 × 内容升级', () => {
+  let root = '';
+  let managedDir = '';
+  const SKILL = 'document-deck';
+  const writeBundle = (files: Record<string, string>): void => {
+    const dir = path.join(mocks.skillsRoot, SKILL);
+    fs.rmSync(dir, { recursive: true, force: true });
+    for (const [rel, body] of Object.entries(files)) {
+      const target = path.join(dir, rel);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, body);
+    }
+  };
+  const installedFile = (rel: string): string => fs.readFileSync(path.join(managedDir, SKILL, rel), 'utf8');
+  const record = (slug: string): string | undefined =>
+    (mocks.configState.value.bundledSkillRecords as Record<string, Record<string, string>> | undefined)?.[managedDir]?.[
+      slug
+    ];
+
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.handleMap.clear();
-    mocks.installBundledSkill.mockReset();
-    mocks.installBundledSkill.mockReturnValue({ ok: true });
-    mocks.readBundledSkills.mockReset();
-    mocks.isBundledSkillInstalled.mockReset();
-    mocks.readInstalledSkillContent.mockReset();
     mocks.updateSkill.mockReset();
     mocks.updateSkill.mockImplementation(async () => ({}));
     mocks.getGatewayClient.mockReset();
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-ensure-'));
+    temps.push(root);
+    mocks.skillsRoot = path.join(root, 'bundle');
+    managedDir = path.join(root, 'managed');
+    fs.mkdirSync(managedDir, { recursive: true });
+    writeBundle({ 'SKILL.md': '旧正文只有三种格式\n' });
     // ⚠️ `managedSkillsDirOf` 要 `isConnected` + `getSkillsStatus`，少一个就**静默**
     //    返回 null ⇒ 处理器直接 `{ok:false, GATEWAY_UNAVAILABLE}`，而测试会以为
     //    "装没发生"是产品行为（第一版就是这么空过的）。
@@ -407,7 +456,7 @@ describe('开机自装 × 内容升级', () => {
       listAgents: mocks.listAgents,
     });
     mocks.listAgents.mockResolvedValue({ defaultId: 'office', agents: [{ id: 'video' }, { id: 'office' }] });
-    mocks.getSkillsStatus.mockResolvedValue({ managedSkillsDir: 'C:/managed-skills' });
+    mocks.getSkillsStatus.mockResolvedValue({ managedSkillsDir: managedDir });
     mocks.configState.value = {};
   });
 
@@ -417,53 +466,70 @@ describe('开机自装 × 内容升级', () => {
     const handler = mocks.handleMap.get('skills:our-ensure');
     return (await handler?.({}, { gatewayId: 'local-runtime' })) as {
       ok: boolean;
-      result?: { installed?: string[]; upgraded?: string[] };
+      result?: {
+        installed?: string[];
+        upgraded?: string[];
+        adopted?: string[];
+        conflicts?: Array<{ slug: string; reason: string; paths: string[] }>;
+        failed?: Array<{ slug: string }>;
+      };
     };
   };
 
-  it('内容一致 ⇒ 不升级、不重复装', async () => {
-    mocks.readBundledSkills.mockReturnValue([{ slug: 'a', content: '同一份' }]);
-    mocks.isBundledSkillInstalled.mockReturnValue(true);
-    mocks.readInstalledSkillContent.mockReturnValue('同一份');
+  it('内容一致 ⇒ 不升级、不重复装（第二次 ensure 一条 RPC 都不发）', async () => {
+    await runEnsure(); // 第一次：补装 + 记账
+    mocks.updateSkill.mockClear();
 
     const res = await runEnsure();
 
     expect(res.result?.upgraded).toEqual([]);
-    expect(mocks.installBundledSkill, '一致就不该动盘').not.toHaveBeenCalled();
-    expect(mocks.updateSkill, '也不该发通知').not.toHaveBeenCalled();
+    expect(res.result?.installed).toEqual([]);
+    expect(mocks.updateSkill, '一致就不该发通知').not.toHaveBeenCalled();
   });
 
-  it('⭐ 我们自己把它放旧了 ⇒ 覆盖安装 + 原子 nonce 强制 bump', async () => {
-    mocks.readBundledSkills.mockReturnValue([{ slug: 'document-deck', content: '新正文含 PDF 段' }]);
-    mocks.isBundledSkillInstalled.mockReturnValue(true);
-    mocks.readInstalledSkillContent.mockReturnValue('旧正文只有三种格式');
-    // ⚠️ **记账是判据的一部分**：盘上那份必须"还是我们装下去的那份"才敢升级。
-    //    没有这一笔时（老盘第一次跑这一版）按**不动**处理 —— 保守方向。
-    mocks.configState.value = {
-      bundledSkillRecords: { 'C:/managed-skills': { 'document-deck': skillContentSha('旧正文只有三种格式') } },
-    };
+  it('⭐ 我们自己把它放旧了（旧账）⇒ 盘上真的升级 + 原子 nonce 强制 bump', async () => {
+    await runEnsure();
+    mocks.updateSkill.mockClear(); // 补装那一刀不算在"升级必须强制 bump"里
+    // 造一个"老盘"：记账退回旧口径（只记 SKILL.md 指纹）。旧口径不能认证辅助文件，
+    // 但这个技能只有 SKILL.md 一个文件 ⇒ 差分升级照旧可达（并顺势迁到 pkg2）。
+    const config = mocks.configState.value as { bundledSkillRecords: Record<string, Record<string, string>> };
+    config.bundledSkillRecords[managedDir]![SKILL] = skillContentSha('旧正文只有三种格式\n');
+    writeBundle({ 'SKILL.md': '新正文含 PDF 段\n' });
 
     const res = await runEnsure();
 
-    expect(res.result?.upgraded).toEqual(['document-deck']);
-    expect(mocks.installBundledSkill).toHaveBeenCalledTimes(1);
+    expect(res.result?.upgraded).toEqual([SKILL]);
+    expect(installedFile('SKILL.md')).toBe('新正文含 PDF 段\n');
+    expect(record(SKILL), '升级后要按新口径记账').toMatch(/^pkg2:/);
     expect(mocks.updateSkill, '内容升级必须强制 bump（nonce 要真的变）').toHaveBeenCalledTimes(1);
     expect(mocks.updateSkill.mock.calls[0]?.[0]).toMatchObject({
-      skillKey: 'document-deck',
+      skillKey: SKILL,
       enabled: true,
       env: { CLAWWORK_CACHE_REFRESH_NONCE: expect.any(String) },
     });
   });
 
   it('没装的不算升级（那是 missing 那条路）', async () => {
-    mocks.readBundledSkills.mockReturnValue([{ slug: 'a', content: '正文' }]);
-    mocks.isBundledSkillInstalled.mockReturnValue(false);
-    mocks.readInstalledSkillContent.mockReturnValue(null);
+    const res = await runEnsure();
 
-    await runEnsure();
-
-    expect(mocks.installBundledSkill, '缺了要装（missing 那条路）').toHaveBeenCalledTimes(1);
+    expect(res.result?.installed).toEqual([SKILL]);
+    expect(res.result?.upgraded).toEqual([]);
     const enabledCalls = mocks.updateSkill.mock.calls.map((c) => (c[0] as { enabled: boolean }).enabled);
     expect(enabledCalls, '缺了那条路只打一刀').toEqual([true]);
+    // 补装那条路不带 nonce（值本来就变了，多打一刀是白打）。
+    expect(mocks.updateSkill.mock.calls[0]?.[0]).not.toHaveProperty('env');
+  });
+
+  it('⭐ 用户改过的技能 + 随包更新 ⇒ 盘上一个字节不动，冲突具名且**不进 failed**（重试无意义）', async () => {
+    await runEnsure();
+    fs.writeFileSync(path.join(managedDir, SKILL, 'SKILL.md'), '用户自己改的正文\n');
+    writeBundle({ 'SKILL.md': '新正文含 PDF 段\n' });
+
+    const res = await runEnsure();
+
+    expect(res.result?.upgraded).toEqual([]);
+    expect(res.result?.conflicts).toEqual([{ slug: SKILL, reason: 'user-modified', paths: ['SKILL.md'] }]);
+    expect(res.result?.failed, '冲突不是失败：重试一次还是同一个冲突').toEqual([]);
+    expect(installedFile('SKILL.md')).toBe('用户自己改的正文\n');
   });
 });

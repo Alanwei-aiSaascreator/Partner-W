@@ -4,12 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderNativePptFile } from '../src/main/docgen/native-file';
 import { readSlideGenerationReceipt } from '../src/main/slidegen/receipt';
-import {
-  readBundledSkills,
-  installBundledSkill,
-  staleBundledSkills,
-  skillContentSha,
-} from '../src/main/skills/bundled';
+import { readBundledSkills, installBundledSkill, planSkillSync, skillContentSha } from '../src/main/skills/bundled';
 
 const templatesRoot = path.join(import.meta.dirname, '../resources/pptx-templates');
 const content = JSON.parse(fs.readFileSync(path.join(templatesRoot, 'native-deck/content.example.json'), 'utf8'));
@@ -88,27 +83,33 @@ describe('templateDeck existing native lifecycle', () => {
     const previousBody = skill.content!.replace(/Choose a nonempty subset[^\n]*?ordered once\. /, '');
     expect(previousBody).not.toBe(skill.content);
     const previousSha = skillContentSha(previousBody);
+    // H1：升级计划（旧账只认证 SKILL.md；这里盘上没有辅助文件 ⇒ 允许把新正文写下去）。
+    const nextFiles = { 'SKILL.md': skillContentSha(skill.content!) };
+    const installed = (body: string) => ({ skillSha: skillContentSha(body), fileSha: () => null });
     expect(
-      staleBundledSkills(
-        [skill],
-        () => previousBody,
-        () => previousSha,
-      ),
-    ).toEqual([skill]);
+      planSkillSync({
+        packageSha: skill.packageSha!,
+        nextFiles,
+        recorded: previousSha,
+        installed: installed(previousBody),
+      }),
+    ).toEqual({ kind: 'update', write: ['SKILL.md'], remove: [] });
     expect(
-      staleBundledSkills(
-        [skill],
-        () => `${previousBody}\nUser edit`,
-        () => previousSha,
-      ),
-    ).toEqual([]);
+      planSkillSync({
+        packageSha: skill.packageSha!,
+        nextFiles,
+        recorded: previousSha,
+        installed: installed(`${previousBody}\nUser edit`),
+      }),
+    ).toMatchObject({ kind: 'conflict', reason: 'user-modified' });
     expect(
-      staleBundledSkills(
-        [skill],
-        () => previousBody,
-        () => null,
-      ),
-    ).toEqual([]);
+      planSkillSync({
+        packageSha: skill.packageSha!,
+        nextFiles,
+        recorded: undefined,
+        installed: installed(previousBody),
+      }),
+    ).toMatchObject({ kind: 'conflict', reason: 'unverified-origin' });
     const managedDir = path.join(workspace, 'private-skills');
     fs.mkdirSync(path.join(managedDir, skill.slug), { recursive: true });
     fs.writeFileSync(path.join(managedDir, skill.slug, 'SKILL.md'), previousBody);

@@ -808,6 +808,18 @@ export interface OurSkillsListResult {
   managedDirKnown: boolean;
 }
 
+/**
+ * `skills:our-install` 的成功结果（E2/E3，2026-10-09）。
+ *
+ * 显式安装是**用户明确的一次选择**（已装的那个走 `confirmed-repair`：厂商文件全量重写），
+ * 那条路上必须留下**可恢复资产** —— 备份位置随结果返回，界面要如实显示它。
+ * （失败时备份位置在 `error` 文本里：`…; 恢复备份已保留：<路径>`。）
+ */
+export interface OurSkillInstallResult {
+  /** 保留下来的恢复备份目录（没有保留时 = 该字段不出现）。 */
+  backupDir?: string;
+}
+
 export interface ConfigSnapshot {
   raw: string;
   hash: string;

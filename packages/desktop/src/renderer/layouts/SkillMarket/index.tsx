@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, PackagePlus, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { Loader2, PackagePlus, RefreshCw, Sparkles, Trash2, Wrench } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import ConfirmDialog from '@/components/semantic/ConfirmDialog';
 import EmptyState from '@/components/semantic/EmptyState';
 import InlineNotice from '@/components/semantic/InlineNotice';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
@@ -44,6 +45,17 @@ export default function SkillMarket() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   /** 正在装/卸哪一个 —— 只忙那一个按钮，别把整页锁住。 */
   const [busySlug, setBusySlug] = useState<string | null>(null);
+  /** 这一行的忙碌来自哪个动作（装/卸 vs 修复）：只有对应的那个按钮转圈。 */
+  const [busyAction, setBusyAction] = useState<'toggle' | 'repair' | null>(null);
+  /**
+   * ⭐ E3：待确认的「修复随包版本」（已装的那一行）。
+   *
+   * 修复是**替换用户盘上的厂商文件**，必须用户明确点过确认才发 IPC ——
+   * 但入口要看得见：已装的技能原来只有"卸载"一个动作，用户没法只换一份干净的厂商文件。
+   * ⚠️ 刻意**不复用卸载**：卸载会把整个技能目录删掉（连用户自己放的文件一起），
+   * 那是另一件事，不能用"卸了再装"冒充修复。
+   */
+  const [repairTarget, setRepairTarget] = useState<OurSkillEntry | null>(null);
   /**
    * 强制**重问网关**的计数器（2026-09-29）：刷新按钮、以及装卸之后 +1。
    *
@@ -73,6 +85,7 @@ export default function SkillMarket() {
     async (skill: OurSkillEntry) => {
       if (!gatewayId || busySlug) return;
       setBusySlug(skill.slug);
+      setBusyAction('toggle');
       try {
         const res = skill.installed
           ? await window.clawwork.removeOurSkill(gatewayId, skill.slug)
@@ -101,6 +114,42 @@ export default function SkillMarket() {
         setVerdictNonce((n) => n + 1);
       } finally {
         setBusySlug(null);
+        setBusyAction(null);
+      }
+    },
+    [gatewayId, busySlug, load, t],
+  );
+
+  /**
+   * ⭐ E3：「修复随包版本」——**只有用户点过确认框**才会走到这里。
+   *
+   * 走的是**现有**的 `skills:our-install`（已装 ⇒ 主进程走 confirmed-repair：厂商文件
+   * 全量重写、用户额外文件保留、修复前留一份可恢复备份）。**不新增 IPC、不调卸载**。
+   * 结果必须如实上屏：失败报失败（主进程的 error 里带着备份位置），成功报成功并给出
+   * 恢复备份的位置 —— 用户换掉的是自己盘上的东西，他得知道去哪儿找回。
+   */
+  const handleRepair = useCallback(
+    async (skill: OurSkillEntry) => {
+      setRepairTarget(null);
+      if (!gatewayId || busySlug) return;
+      setBusySlug(skill.slug);
+      setBusyAction('repair');
+      try {
+        const res = await window.clawwork.installOurSkill(gatewayId, skill.slug);
+        if (!res.ok) {
+          // 不假报成功：失败原文（含"恢复备份已保留：<路径>"）如实上屏。
+          toast.error(t('skillMarket.actionFailed', { reason: res.error ?? '' }));
+          return;
+        }
+        const backupDir = res.result?.backupDir;
+        toast.success(t('skillMarket.repaired', { name: skill.name ?? '' }), {
+          description: backupDir ? t('skillMarket.repairedBackup', { path: backupDir }) : undefined,
+        });
+        await load();
+        setVerdictNonce((n) => n + 1);
+      } finally {
+        setBusySlug(null);
+        setBusyAction(null);
       }
     },
     [gatewayId, busySlug, load, t],
@@ -222,31 +271,64 @@ export default function SkillMarket() {
                       {canAct ? <SkillVerdictBadge verdict={verdicts[skill.slug] ?? { kind: 'none' }} /> : null}
                     </div>
                   </div>
-                  <Button
-                    variant={skill.installed ? 'ghost' : 'default'}
-                    size="sm"
-                    disabled={!canAct || busySlug !== null}
-                    data-testid={skill.installed ? 'our-skill-remove' : 'our-skill-install'}
-                    onClick={() => void handleToggle(skill)}
-                    className="shrink-0"
-                  >
-                    {busySlug === skill.slug ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : skill.installed ? (
-                      <Trash2 size={14} />
-                    ) : (
-                      <PackagePlus size={14} />
-                    )}
-                    <span className="ml-1.5">
-                      {skill.installed ? t('skillMarket.remove') : t('skillMarket.install')}
-                    </span>
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {/* ⭐ E3：已装的那一行多一个**独立**的「修复随包版本」动作（卸载按钮原样保留）。
+                        它只做"换成当前随包的那份"，且必须用户确认过才发 IPC。 */}
+                    {skill.installed ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!canAct || busySlug !== null}
+                        data-testid="our-skill-repair"
+                        onClick={() => setRepairTarget(skill)}
+                        className="shrink-0"
+                      >
+                        {busySlug === skill.slug && busyAction === 'repair' ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Wrench size={14} />
+                        )}
+                        <span className="ml-1.5">{t('skillMarket.repair')}</span>
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant={skill.installed ? 'ghost' : 'default'}
+                      size="sm"
+                      disabled={!canAct || busySlug !== null}
+                      data-testid={skill.installed ? 'our-skill-remove' : 'our-skill-install'}
+                      onClick={() => void handleToggle(skill)}
+                      className="shrink-0"
+                    >
+                      {busySlug === skill.slug && busyAction === 'toggle' ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : skill.installed ? (
+                        <Trash2 size={14} />
+                      ) : (
+                        <PackagePlus size={14} />
+                      )}
+                      <span className="ml-1.5">
+                        {skill.installed ? t('skillMarket.remove') : t('skillMarket.install')}
+                      </span>
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
           )}
         </div>
       </ScrollArea>
+      {/* 确认框要说清三件事：换掉的是什么（厂商文件）、什么不会被碰（你自己的文件）、
+          出问题去哪儿找回（修复前的备份）。取消 = 一个 IPC 都不发。 */}
+      <ConfirmDialog
+        open={repairTarget !== null}
+        title={t('skillMarket.repairConfirmTitle', { name: repairTarget?.name ?? repairTarget?.slug ?? '' })}
+        description={t('skillMarket.repairConfirmBody')}
+        confirmLabel={t('skillMarket.repairConfirm')}
+        onConfirm={() => {
+          if (repairTarget) void handleRepair(repairTarget);
+        }}
+        onCancel={() => setRepairTarget(null)}
+      />
     </div>
   );
 }

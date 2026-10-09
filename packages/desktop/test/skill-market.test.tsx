@@ -636,3 +636,155 @@ describe('技能市场 · 助手侧能不能用', () => {
     unmount();
   });
 });
+
+/**
+ * ⭐⭐ E3（2026-10-09 终审）：`confirmed-repair` 原来**只有 IPC、没有用户可达入口** ——
+ * 已装的那一行只有「卸载」。这里钉住的是"入口存在 + 确认语义 + 如实报结果"：
+ *  · 修复是**独立动作**，绝不借用卸载（卸了再装会把用户额外文件一起删掉）；
+ *  · 取消确认 = 一个 IPC 都不发；
+ *  · 确认后只调 `installOurSkill`（主进程走 confirmed-repair）；
+ *  · 失败不假报成功；成功要把**恢复备份位置**如实上屏。
+ */
+describe('技能市场 · 修复随包版本（E3）', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    toastSpy.success.mockClear();
+    toastSpy.error.mockClear();
+    useUiStore.setState({ defaultGatewayId: GATEWAY });
+  });
+
+  const repairButton = (container: HTMLElement, slug: string): HTMLButtonElement | null =>
+    row(container, slug).querySelector('[data-testid="our-skill-repair"]');
+
+  const dialog = (): HTMLElement | null => document.body.querySelector('[role="dialog"]');
+
+  const dialogButton = (text: string): HTMLButtonElement | null => {
+    const root = dialog();
+    if (!root) return null;
+    return [...root.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes(text)) ?? null;
+  };
+
+  async function openRepair(container: HTMLElement, slug: string): Promise<void> {
+    await act(async () => {
+      repairButton(container, slug)?.click();
+    });
+    await flush();
+  }
+
+  it('⭐ 已装的行有独立「修复」入口（卸载按钮保留）；取消确认 = 零 IPC', async () => {
+    const stubs = installStubs();
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    expect(repairButton(container, 'weekly-report'), '已装的行必须有修复入口').not.toBeNull();
+    expect(repairButton(container, 'meeting-minutes'), '未装的行不显示修复（那是"安装"）').toBeNull();
+    expect(
+      row(container, 'weekly-report').querySelector('[data-testid="our-skill-remove"]'),
+      '卸载按钮必须保留：修复不是"卸了再装"',
+    ).not.toBeNull();
+
+    await openRepair(container, 'weekly-report');
+    const confirm = dialog();
+    expect(confirm, '点修复先弹确认框，不许直接替换').not.toBeNull();
+    const text = confirm?.textContent ?? '';
+    expect(text, '确认框要说清替换的是厂商文件').toContain('skillMarket.repairConfirmBody');
+    expect(text).toContain('skillMarket.repairConfirmTitle');
+
+    await act(async () => {
+      dialogButton('common.cancel')?.click();
+    });
+    await flush();
+    expect(stubs.installOurSkill, '取消 ⇒ 一个 IPC 都不发').not.toHaveBeenCalled();
+    expect(stubs.removeOurSkill).not.toHaveBeenCalled();
+    expect(dialog()).toBeNull();
+    unmount();
+  });
+
+  it('⭐ 确认之后只走「安装修复」这条路（卸载调用为 0），成功提示给出恢复备份位置', async () => {
+    const backupDir = 'C:/data/荣盈魔方-运行数据/skill-backups/royin-skill-backup-abc';
+    const stubs = installStubs({
+      installOurSkill: vi.fn(async () => ({ ok: true, result: { backupDir } })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    await openRepair(container, 'weekly-report');
+    await act(async () => {
+      dialogButton('skillMarket.repairConfirm')?.click();
+    });
+    await flush();
+
+    expect(stubs.installOurSkill).toHaveBeenCalledTimes(1);
+    expect(stubs.installOurSkill).toHaveBeenCalledWith(GATEWAY, 'weekly-report');
+    expect(stubs.removeOurSkill, '修复绝不走卸载').not.toHaveBeenCalled();
+    const success = toastSpy.success.mock.calls.at(-1) as [string, { description?: string } | undefined];
+    expect(success?.[0]).toContain('skillMarket.repaired');
+    expect(success?.[1]?.description, '恢复备份位置必须上屏').toContain(backupDir);
+    unmount();
+  });
+
+  it('⭐ 修复失败 ⇒ 如实报失败，不假报成功；列表也不重拉成"成功"的样子', async () => {
+    const stubs = installStubs({
+      installOurSkill: vi.fn(async () => ({ ok: false, error: 'skill-install-verify-failed; 恢复备份已保留：C:/b' })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+    expect(stubs.listOurSkills).toHaveBeenCalledTimes(1);
+
+    await openRepair(container, 'weekly-report');
+    await act(async () => {
+      dialogButton('skillMarket.repairConfirm')?.click();
+    });
+    await flush();
+
+    expect(toastSpy.error).toHaveBeenCalledTimes(1);
+    const error = toastSpy.error.mock.calls[0] as [string, { description?: string } | undefined];
+    expect(error[0]).toContain('skillMarket.actionFailed');
+    expect(error[0], '失败原因（含备份位置）如实上屏').toContain('恢复备份已保留');
+    expect(toastSpy.success).not.toHaveBeenCalled();
+    expect(stubs.listOurSkills, '失败不重拉列表（不制造"已完成"的假象）').toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('⭐ 网关没连上 ⇒ 修复按钮同样禁用（不能点了才知道不行）', async () => {
+    installStubs({
+      listOurSkills: vi.fn(async () => ({ ok: true, result: { managedDirKnown: false, skills: SKILLS.skills } })),
+    });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    expect(repairButton(container, 'weekly-report')?.disabled).toBe(true);
+    unmount();
+  });
+
+  it('⭐ 修复在途时按钮禁用：重复点击不会再发一个 IPC', async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const stubs = installStubs({ installOurSkill: vi.fn(() => pending) });
+    const { container, unmount } = render(<SkillMarket />);
+    await flush();
+
+    await openRepair(container, 'weekly-report');
+    await act(async () => {
+      dialogButton('skillMarket.repairConfirm')?.click();
+    });
+    await flush();
+
+    expect(stubs.installOurSkill).toHaveBeenCalledTimes(1);
+    expect(repairButton(container, 'weekly-report')?.disabled, '在途 ⇒ 禁用（重复点击守卫）').toBe(true);
+    await act(async () => {
+      repairButton(container, 'weekly-report')?.click();
+    });
+    await flush();
+    expect(stubs.installOurSkill, '重复点击不许再发一次').toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      release({ ok: true, result: { backupDir: 'C:/b' } });
+    });
+    await flush();
+    expect(repairButton(container, 'weekly-report')?.disabled).toBe(false);
+    unmount();
+  });
+});
