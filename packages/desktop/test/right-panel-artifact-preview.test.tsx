@@ -71,6 +71,8 @@ const artifact: Artifact = {
 let container: HTMLDivElement;
 let root: Root;
 const listArtifacts = vi.fn();
+/** `artifact:saved` 的信号回调（用例里手动触发"产物刚保存"）。 */
+let savedCallback: ((artifact: Artifact) => void) | null = null;
 
 const flushFrames = async (): Promise<void> => {
   for (let i = 0; i < 3; i += 1) {
@@ -88,10 +90,14 @@ beforeEach(() => {
   useUiStore.setState({ artifactPanelMode: 'list', rightPanelOpen: true, mainView: 'chat', settingsOpen: false });
   listArtifacts.mockResolvedValue({ ok: true, result: [artifact] });
   Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:test'), revokeObjectURL: vi.fn() });
+  savedCallback = null;
   Object.assign(window, {
     clawwork: {
       listArtifacts,
-      onArtifactSaved: vi.fn(() => () => {}),
+      onArtifactSaved: vi.fn((callback: (artifact: Artifact) => void) => {
+        savedCallback = callback;
+        return () => {};
+      }),
       readArtifactThumbnail: vi.fn(),
       previewArtifact: vi.fn().mockResolvedValue({
         ok: true,
@@ -181,5 +187,167 @@ describe('Task3 · RightPanel 列表/预览两态', () => {
       await flushFrames();
     });
     expect(container.querySelector('[data-testid="artifact-preview-pane"]')!.textContent).toContain('预览里的正文');
+  });
+
+  /**
+   * ⭐ H4b（2026-10-09 复审 RED 反例）：**新卡先出现，右栏旧列表还没有它**。
+   *
+   * 旧实现只按「旧快照属于当前任务」就敢判"不存在" ⇒ 把这次点击清回列表。
+   * 正确语义：这次选择必须等**它自己的**权威查询回答 —— 期间显示加载窗格、
+   * 保持预览模式，也绝不提前读文件。
+   */
+  it('⭐ 旧列表 + 在途刷新时点击新卡：pending 保持，刷新回来进预览', async () => {
+    // 先让面板以「旧列表 = []」加载完成（新卡刚出现、右栏还没刷到它的真实缺口场景）。
+    listArtifacts.mockResolvedValue({ ok: true, result: [] });
+    await act(async () => root.render(<RightPanel />));
+    await act(async () => {
+      await flushFrames();
+    });
+    expect(container.querySelector('[data-testid="artifact-card"]')).toBeNull();
+
+    // 让下一步的权威查询悬停（模拟在途刷新）。
+    let resolveList!: (value: { ok: true; result: Artifact[] }) => void;
+    const delayed = new Promise<{ ok: true; result: Artifact[] }>((resolve) => {
+      resolveList = resolve;
+    });
+    listArtifacts.mockReturnValue(delayed);
+
+    await act(async () => {
+      requestArtifactPreview(artifact);
+    });
+
+    expect(useUiStore.getState().artifactPanelMode, '旧列表没有这个 ID 不许判"不存在"').toBe('preview');
+    expect(container.querySelector('[data-testid="artifact-preview-pane"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="artifact-preview-pending"]'),
+      '等待自己的查询时必须是加载窗格',
+    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="artifact-card"]'), '不能把列表误装进预览窗格').toBeNull();
+    expect(window.clawwork.previewArtifact, '权威查询没回答前不许读文件').not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveList({ ok: true, result: [artifact] });
+    });
+    await act(async () => {
+      await flushFrames();
+    });
+    expect(useUiStore.getState().artifactPanelMode).toBe('preview');
+    expect(container.querySelector('[data-testid="artifact-preview-pane"]')!.textContent).toContain('预览里的正文');
+  });
+
+  /**
+   * ⭐ H4a：unknown / unsafe 直接不给进可读预览（按钮禁用 + 不发起 IPC）。
+   * unsafe 会落进「历史与问题文件」折叠区 —— 展开后按钮同样必须禁用。
+   */
+  it.each(['unknown', 'unsafe'] as const)(
+    '⭐ availability=%s 的卡：预览按钮禁用，点击不进入可读预览、不发起 IPC',
+    async (availability) => {
+      listArtifacts.mockResolvedValue({ ok: true, result: [{ ...artifact, availability }] });
+      await act(async () => root.render(<RightPanel />));
+      await act(async () => {
+        await flushFrames();
+      });
+      const archiveToggle = container.querySelector<HTMLButtonElement>('[data-action="toggle-artifact-archived"]');
+      if (archiveToggle) await act(async () => archiveToggle.click());
+
+      const button = container.querySelector<HTMLButtonElement>('[data-action="artifact-preview"]');
+      expect(button, '卡上仍要有预览入口（只是禁用）').not.toBeNull();
+      expect(button!.disabled).toBe(true);
+
+      await act(async () => button!.click());
+      await act(async () => {
+        await flushFrames();
+      });
+      expect(window.clawwork.previewArtifact).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-testid="artifact-preview-pane"]')).toBeNull();
+      expect(useUiStore.getState().artifactPanelMode).toBe('list');
+    },
+  );
+
+  /**
+   * ⭐ H4a（降级）：已显示的正文在产物刷新为不可用后**立即失效** ——
+   * 不许把"那个文件"的旧正文继续挂在新的可用性状态下面。
+   */
+  it('⭐ available→unknown 刷新：旧正文失效、回列表、不再读文件', async () => {
+    await act(async () => root.render(<RightPanel />));
+    await act(async () => {
+      await flushFrames();
+    });
+    await act(async () => {
+      requestArtifactPreview(artifact);
+    });
+    await act(async () => {
+      await flushFrames();
+    });
+    expect(container.textContent).toContain('预览里的正文');
+    const readCalls = vi.mocked(window.clawwork.previewArtifact).mock.calls.length;
+
+    listArtifacts.mockResolvedValue({ ok: true, result: [{ ...artifact, availability: 'unknown' }] });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="artifactCard.refresh"]')!.click();
+    });
+    await act(async () => {
+      await flushFrames();
+    });
+
+    expect(container.textContent, '不可用之后旧正文不许继续挂在屏上').not.toContain('预览里的正文');
+    expect(useUiStore.getState().artifactPanelMode, '权威答案说不可用 ⇒ 回列表').toBe('list');
+    expect(vi.mocked(window.clawwork.previewArtifact).mock.calls.length, '降级后不再读文件').toBe(readCalls);
+  });
+
+  /**
+   * ⭐ H4b（scope 作废）：切任务后，上一次选择的答案/正文都作废 ——
+   * 新任务集合里没有这份文件时必须回列表，不许把旧任务的正文跟过来。
+   */
+  it('⭐ 切任务（scope 变化）⇒ 本次选择作废：旧任务的文件不许继续预览', async () => {
+    await act(async () => root.render(<RightPanel />));
+    await act(async () => {
+      await flushFrames();
+    });
+    await act(async () => {
+      requestArtifactPreview(artifact);
+    });
+    await act(async () => {
+      await flushFrames();
+    });
+    expect(container.textContent).toContain('预览里的正文');
+    const readCalls = vi.mocked(window.clawwork.previewArtifact).mock.calls.length;
+
+    // 新任务：集合里没有这份文件。
+    taskState.activeTaskId = 'task-2';
+    listArtifacts.mockResolvedValue({ ok: true, result: [] });
+    await act(async () => root.render(<RightPanel />));
+    await act(async () => {
+      await flushFrames();
+    });
+
+    expect(container.textContent, '旧任务的文件不许跟到新任务').not.toContain('预览里的正文');
+    expect(useUiStore.getState().artifactPanelMode, '权威查询在新范围里说"没有" ⇒ 回列表').toBe('list');
+    expect(vi.mocked(window.clawwork.previewArtifact).mock.calls.length, '作废后不再读文件').toBe(readCalls);
+  });
+
+  /**
+   * ⭐ H4b（RAF 合并）：产物保存信号刚排进 RAF、还没执行时点击预览 ——
+   * 那次刷新的"起点"早于这次选择，不够资格回答它；取消它、合并成这次选择自己的一次刷新。
+   */
+  it('⭐ artifact:saved 的 RAF 尚未执行时点击预览：合并成一次刷新（不多发一轮）', async () => {
+    await act(async () => root.render(<RightPanel />));
+    await act(async () => {
+      await flushFrames();
+    });
+    const callsBefore = listArtifacts.mock.calls.length;
+
+    await act(async () => {
+      savedCallback?.(artifact); // 排进 RAF
+      requestArtifactPreview(artifact); // 立刻点击：这次选择把它合并掉
+    });
+    await act(async () => {
+      await flushFrames();
+    });
+
+    expect(useUiStore.getState().artifactPanelMode).toBe('preview');
+    expect(container.querySelector('[data-testid="artifact-preview-pane"]')).not.toBeNull();
+    // 一次刷新 = 两条 listArtifacts（会话内 + 全库）：只多出这一对（合并，不是两轮）。
+    expect(listArtifacts.mock.calls.length).toBe(callsBefore + 2);
   });
 });

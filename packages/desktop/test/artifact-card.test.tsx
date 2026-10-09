@@ -133,6 +133,38 @@ describe('ArtifactCard', () => {
   });
 
   /**
+   * ⭐ H4a（2026-10-09 复审）：预览按钮必须与打开/另存**同规**。
+   *
+   * 「在右侧预览」是要真去读文件的动作 —— 对 unknown（判不了）/missing（不在）/
+   * unsafe（不让读）的产物开放它，就是把用户送进一个必然失败的读取（随后只看到
+   * 「读取失败」，而列表 badge 明明写着"暂不可用"）。三层约束（按钮 / 导航适配层 /
+   * 预览面板解析）都要按 available 把关。
+   */
+  it.each(['unknown', 'missing', 'unsafe'] as const)(
+    '⭐ 预览按钮与打开/另存同规：availability=%s 时禁用（H4a）',
+    (availability) => {
+      const onPreview = vi.fn();
+      const { container, unmount } = render(
+        <ArtifactCard artifact={{ ...artifact, availability }} onPreview={onPreview} />,
+      );
+
+      const preview = container.querySelector<HTMLButtonElement>('[data-action="artifact-preview"]');
+      expect(preview, '卡上仍要有预览入口（只是禁用）').not.toBeNull();
+      expect(preview!.disabled, '非 available 不许进预览').toBe(true);
+      unmount();
+    },
+  );
+
+  it('对照：available 时预览按钮可用', () => {
+    const onPreview = vi.fn();
+    const { container, unmount } = render(<ArtifactCard artifact={artifact} onPreview={onPreview} />);
+
+    const preview = container.querySelector<HTMLButtonElement>('[data-action="artifact-preview"]');
+    expect(preview!.disabled).toBe(false);
+    unmount();
+  });
+
+  /**
    * ⭐ 2026-10-07 体检 P3-8：打开失败要**带着下一步**留下。
    *
    * 改之前是 2.4 秒一闪而过的通用文案（"操作未完成"）——等于什么都没说：

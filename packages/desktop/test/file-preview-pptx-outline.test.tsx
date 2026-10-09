@@ -39,6 +39,8 @@ const artifact = {
   size: 24_000,
   mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   localPath: 't1/九月经营简报.pptx',
+  // H4：真实 Artifact 必带 availability（缺省=unknown ≠ 可读）——夹具补上，语义不变。
+  availability: 'available',
 } as never;
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {

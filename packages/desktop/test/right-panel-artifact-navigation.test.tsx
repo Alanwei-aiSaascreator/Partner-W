@@ -5,11 +5,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Artifact } from '@clawwork/shared';
 
-const { taskState, setActiveTask, setHighlightedMessage, setMainView } = vi.hoisted(() => ({
+const { taskState, setActiveTask, setHighlightedMessage, setMainView, setArtifactPanelMode } = vi.hoisted(() => ({
   taskState: { activeTaskId: 'current' as string | null, workspaceEpoch: 1 },
   setActiveTask: vi.fn(),
   setHighlightedMessage: vi.fn(),
   setMainView: vi.fn(),
+  /** H5：去来源要先关抽屉 —— 右栏会调它，桩必须与真实 store 同形。 */
+  setArtifactPanelMode: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -26,7 +28,8 @@ vi.mock('../src/renderer/stores/messageStore', () => ({
   useMessageStore: (select: (state: unknown) => unknown) => select({ setHighlightedMessage }),
 }));
 vi.mock('../src/renderer/stores/uiStore', () => ({
-  useUiStore: (select: (state: unknown) => unknown) => select({ setMainView }),
+  useUiStore: (select: (state: unknown) => unknown) =>
+    select({ setMainView, setArtifactPanelMode, artifactPanelMode: 'list' as const }),
 }));
 vi.mock('../src/renderer/features/team-meeting/instance', () => ({
   useTeamMeetingStore: (select: (state: unknown) => unknown) => select({ records: [] }),
@@ -109,6 +112,9 @@ describe('artifact source navigation', () => {
     expect(setHighlightedMessage).toHaveBeenCalledExactlyOnceWith('previous-message');
     expect(setMainView).toHaveBeenCalledExactlyOnceWith('chat');
     expect(setActiveTask.mock.invocationCallOrder[0]).toBeLessThan(setHighlightedMessage.mock.invocationCallOrder[0]!);
+    // ⭐ H5：去来源那条动作是**先关抽屉**（模式回 list）再切会话 —— 顺序钉住。
+    expect(setArtifactPanelMode).toHaveBeenCalledExactlyOnceWith('list');
+    expect(setArtifactPanelMode.mock.invocationCallOrder[0]).toBeLessThan(setActiveTask.mock.invocationCallOrder[0]!);
   });
 
   it('uses the clicked card message even when another historical file has the same name', async () => {

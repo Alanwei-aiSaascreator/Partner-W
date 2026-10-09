@@ -18,7 +18,11 @@ vi.mock('react-i18next', () => ({
 }));
 
 import ArtifactCard from '../src/renderer/components/ArtifactCard';
-import { requestArtifactPreview, useArtifactPanelViewScope } from '../src/renderer/lib/artifact-preview-navigation';
+import {
+  requestArtifactPreview,
+  takeArtifactPreviewFocusTarget,
+  useArtifactPanelViewScope,
+} from '../src/renderer/lib/artifact-preview-navigation';
 import { useFileStore } from '../src/renderer/stores/fileStore';
 import { useUiStore } from '../src/renderer/stores/uiStore';
 
@@ -96,6 +100,60 @@ describe('Task3 · 成果卡上的预览动作', () => {
     expect(container.querySelector('[data-action="artifact-preview"]')).toBeNull();
     unmount();
   });
+
+  it.each(['unknown', 'missing', 'unsafe'] as const)(
+    '⭐ 导航适配层自己也拒绝非 available（H4a）：%s 不写任何 store',
+    (availability) => {
+      requestArtifactPreview({ ...artifact, availability });
+
+      expect(useFileStore.getState().selectedArtifactId, '不许选中').toBeNull();
+      expect(useUiStore.getState().artifactPanelMode, '不许进预览模式').toBe('list');
+      expect(useUiStore.getState().rightPanelOpen, '不许开面板').toBe(false);
+    },
+  );
+});
+
+describe('H5 · 预览入口的焦点引用（关闭时归还）', () => {
+  it('⭐ 请求预览时捕获当前焦点元素；take 只消费一次', () => {
+    const entry = document.createElement('button');
+    document.body.appendChild(entry);
+    entry.focus();
+
+    requestArtifactPreview(artifact);
+
+    expect(takeArtifactPreviewFocusTarget(), '仍连接的入口要能取回').toBe(entry);
+    expect(takeArtifactPreviewFocusTarget(), '只能消费一次').toBeNull();
+    entry.remove();
+  });
+
+  it('⭐ 焦点在 body（点空白/刚进页面）时不留假入口', () => {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    requestArtifactPreview(artifact);
+
+    expect(takeArtifactPreviewFocusTarget()).toBeNull();
+  });
+
+  it('⭐ take 不归还已经脱离文档的入口（换布局把原卡卸载了）', () => {
+    const entry = document.createElement('button');
+    document.body.appendChild(entry);
+    entry.focus();
+    requestArtifactPreview(artifact);
+    entry.remove();
+
+    expect(takeArtifactPreviewFocusTarget(), '断连的元素不能当落点').toBeNull();
+  });
+
+  it('⭐ 被拒绝的非 available 请求不改动已有入口引用（既不写入也不清空）', () => {
+    const entry = document.createElement('button');
+    document.body.appendChild(entry);
+    entry.focus();
+    requestArtifactPreview(artifact);
+
+    requestArtifactPreview({ ...artifact, availability: 'missing' });
+
+    expect(takeArtifactPreviewFocusTarget(), '上一次有效请求记下的入口不许被拒绝请求抹掉').toBe(entry);
+    entry.remove();
+  });
 });
 
 describe('Task3 · 视图门（App 挂载）', () => {
@@ -151,6 +209,25 @@ describe('Task3 · 视图门（App 挂载）', () => {
       useUiStore.getState().setMainView('chat');
     });
     expect(useUiStore.getState().artifactPanelMode, '回聊天必须回到列表').toBe('list');
+    unmount();
+  });
+
+  it('⭐ 离开聊天 / 打开设置时清掉预览入口引用（过期的入口不许再被归还）', () => {
+    const { unmount } = render(<Probe />);
+    const entry = document.createElement('button');
+    document.body.appendChild(entry);
+    entry.focus();
+    requestArtifactPreview(artifact);
+    expect(takeArtifactPreviewFocusTarget(), '先取一次确认引用确实在').toBe(entry);
+
+    // 重新记一个，再离开聊天 —— 引用必须被视图门清掉。
+    entry.focus();
+    requestArtifactPreview(artifact);
+    act(() => {
+      useUiStore.getState().setMainView('files');
+    });
+    expect(takeArtifactPreviewFocusTarget(), '离开聊天 = 这次预览结束').toBeNull();
+    entry.remove();
     unmount();
   });
 });

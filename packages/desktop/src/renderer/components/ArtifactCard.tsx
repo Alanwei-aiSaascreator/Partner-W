@@ -193,6 +193,9 @@ export default function ArtifactCard({
             type="button"
             variant="ghost"
             size="sm"
+            /* ⭐ H4a：预览是**真去读文件**的动作，必须和打开/另存同一套 available 判据 ——
+               对 unknown/missing/unsafe 开放它 = 把用户送进一次必然失败的读取。 */
+            disabled={!available || state === 'saving'}
             data-action="artifact-preview"
             aria-label={t('artifactCard.preview')}
             title={t('artifactCard.preview')}

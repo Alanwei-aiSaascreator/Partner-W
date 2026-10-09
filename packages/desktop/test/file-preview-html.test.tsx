@@ -25,6 +25,8 @@ const artifact = {
   size: 128,
   mimeType: 'text/html',
   localPath: 't1/页面.html',
+  // H4：真实 Artifact 必带 availability（缺省=unknown ≠ 可读）——夹具补上，语义不变。
+  availability: 'available',
 } as never;
 
 function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {

@@ -13,7 +13,7 @@
  *
  * ⚠️ 用真实组件；只桩 window.clawwork 的两个通道与 i18n。
  */
-import { act, type ReactElement } from 'react';
+import { act, useLayoutEffect, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -231,6 +231,98 @@ describe('Task1 · 失败必须落定且可行动', () => {
     expect(view.container.textContent).toContain('普通文本内容');
     expect(readArtifactFileSpy).toHaveBeenCalledTimes(1);
     view.unmount();
+  });
+});
+
+describe('H4 · 展示快照（每次 DOM 提交都属当前身份）', () => {
+  it('⭐ A→B 换选：换选后的 DOM 提交不许出现「B 的标题 + A 的正文」（H4c）', async () => {
+    // A 立刻回包并可读；B 的读取悬停（换选那一刻屏上最容易露出 A 的旧正文）。
+    const nextRead = deferred<unknown>();
+    previewArtifactSpy
+      .mockResolvedValueOnce({ ok: true, result: { kind: 'docx', paragraphs: ['SECRET_BODY_A'], truncated: false } })
+      .mockImplementationOnce(() => nextRead.promise);
+
+    const commits: string[] = [];
+    function Probe({ id }: { id: string }): ReactElement {
+      // 每次 DOM 提交都记录一次屏上文字：属性变了但状态还没换的提交会在这里现形。
+      useLayoutEffect(() => {
+        commits.push(document.body.textContent ?? '');
+      });
+      return <FilePreview artifact={docxArtifact(id, `${id}.docx`)} onNavigateToTask={() => {}} />;
+    }
+
+    const view = render(<Probe id="a" />);
+    await flush();
+    expect(view.container.textContent, 'A 必须真的上过屏').toContain('SECRET_BODY_A');
+
+    commits.length = 0;
+    view.rerender(<Probe id="b" />);
+    const afterSwitch = [...commits];
+    view.unmount();
+
+    expect(afterSwitch.length, '换选至少要提交一次（否则断言是空转）').toBeGreaterThan(0);
+    expect(
+      afterSwitch.some((text) => text.includes('b.docx') && text.includes('SECRET_BODY_A')),
+      `换选后的提交不许是「B 标题 + A 正文」：${JSON.stringify(afterSwitch)}`,
+    ).toBe(false);
+  });
+
+  it.each(['unknown', 'missing', 'unsafe'] as const)(
+    '⭐ availability=%s：直接挂 FilePreview 也不读文件、不显示旧正文（不依赖外层把关）',
+    async (availability) => {
+      previewArtifactSpy.mockResolvedValue({
+        ok: true,
+        result: { kind: 'docx', paragraphs: ['不该出现的正文'], truncated: false },
+      });
+      const view = render(
+        <FilePreview artifact={docxArtifact('a1', 'A.docx', { availability })} onNavigateToTask={() => {}} />,
+      );
+      await flush();
+
+      expect(previewArtifactSpy, '非 available 不许发起读取').not.toHaveBeenCalled();
+      expect(readArtifactFileSpy).not.toHaveBeenCalled();
+      expect(view.container.textContent).not.toContain('不该出现的正文');
+      expect(view.container.textContent, '如实显示不可用状态（不是 readFailed）').toContain(
+        `artifactCard.${availability}`,
+      );
+      view.unmount();
+    },
+  );
+
+  it('⭐ available→unknown 刷新：同一实例上立即隐藏旧正文，且不再发起读取', async () => {
+    previewArtifactSpy.mockResolvedValue({
+      ok: true,
+      result: { kind: 'docx', paragraphs: ['已显示的正文'], truncated: false },
+    });
+    const view = render(<FilePreview artifact={docxArtifact('a1', 'A.docx')} onNavigateToTask={() => {}} />);
+    await flush();
+    expect(view.container.textContent).toContain('已显示的正文');
+    const callsBefore = previewArtifactSpy.mock.calls.length;
+
+    view.rerender(
+      <FilePreview artifact={docxArtifact('a1', 'A.docx', { availability: 'unknown' })} onNavigateToTask={() => {}} />,
+    );
+    // ⚠️ 降级必须在**渲染提交**时就生效（等 effect 清空已经晚了一帧，用户能看见旧正文）。
+    expect(view.container.textContent, '降级必须渲染前生效').not.toContain('已显示的正文');
+    expect(view.container.textContent).toContain('artifactCard.unknown');
+    expect(view.container.textContent).not.toContain('filePreview.readFailed');
+
+    await flush();
+    expect(previewArtifactSpy.mock.calls.length, '降级后不许再发起读取').toBe(callsBefore);
+    view.unmount();
+  });
+
+  it('⭐ 卸载后 unsupported 回包不得继续启动文本读取（H4d observable：现行保护应已有效）', async () => {
+    const pending = deferred<unknown>();
+    previewArtifactSpy.mockImplementation(() => pending.promise);
+    const view = render(<FilePreview artifact={artifactOf('a1', 'note.txt')} onNavigateToTask={() => {}} />);
+    await flush();
+    view.unmount();
+    await act(async () => {
+      pending.resolve({ ok: true, result: { kind: 'unsupported' } });
+    });
+    await flush();
+    expect(readArtifactFileSpy, '卸载后的回包不许再启动 readArtifactFile').not.toHaveBeenCalled();
   });
 });
 

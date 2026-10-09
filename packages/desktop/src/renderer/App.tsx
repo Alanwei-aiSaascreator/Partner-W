@@ -48,7 +48,7 @@ import {
   runAuthBootstrap,
 } from '@/lib/app-entry-flow';
 import { createEntryLicenseGate, EntryLicenseError } from '@/lib/entry-license-gate';
-import { useArtifactPanelViewScope } from '@/lib/artifact-preview-navigation';
+import { takeArtifactPreviewFocusTarget, useArtifactPanelViewScope } from '@/lib/artifact-preview-navigation';
 import { resolveArtifactPanelLayout } from '@/lib/artifact-panel-layout';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
@@ -66,6 +66,21 @@ function AppToaster({ themeMode }: { themeMode: Theme }) {
       toastOptions={TOAST_OPTIONS}
     />
   );
+}
+
+/**
+ * 抽屉关闭、且**没有**可归还入口时的落点（H5，2026-10-09 复审）。
+ *
+ * - 当前在聊天：焦点交给**已挂载 Composer 的真实输入框**（textarea 在 Composer 自己的
+ *   `composer-drop-zone` 里，见 `components/ChatInput/index.tsx`）—— 这是用户接下来
+ *   最可能要打字的地方。没有现成的 `composer.focus()` 平台出口，就按真实 DOM 结构找。
+ * - 其他主视图：**不把焦点抢回聊天**（`mainView !== 'chat'` 时什么都不做），
+ *   也不聚焦 body / 旧任务元素。
+ */
+function focusCurrentViewFallback(): void {
+  if (useUiStore.getState().mainView !== 'chat') return;
+  const composerInput = document.querySelector<HTMLTextAreaElement>('[data-testid="composer-drop-zone"] textarea');
+  composerInput?.focus();
 }
 
 export default function App() {
@@ -245,24 +260,65 @@ export default function App() {
     toggleRightPanel,
   });
 
+  /**
+   * 正在拖拽的面板（H6，2026-10-09 复审）。
+   *
+   * 只用来**取消这一轴**的宽度过渡：拖拽期间右栏宽度必须跟手（旧实现里所有宽度变化
+   * 共用 moderate 过渡 —— 手柄实时改 store、实际 DOM 还在播动画，测量到 20ms 后
+   * 只走到 529/600）。opacity 的入场动画和 reduced-motion 出口都照旧。
+   */
+  const [draggingPanel, setDraggingPanel] = useState<'left' | 'right' | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
+
+  /** 收尾当前拖拽（幂等）：摘监听、还原 body 样式、清跟手标志。 */
+  const endPanelDrag = useCallback((): void => {
+    const cleanup = dragCleanupRef.current;
+    if (!cleanup) return;
+    cleanup();
+    setDraggingPanel(null);
+  }, []);
+
   const startPanelDrag = useCallback(
-    (e: React.MouseEvent, startWidth: number, setWidth: (w: number) => void, dir: 1 | -1) => {
+    (e: React.MouseEvent, startWidth: number, setWidth: (w: number) => void, dir: 1 | -1, panel: 'left' | 'right') => {
       e.preventDefault();
+      // 上一拖拽若没收尾（丢了 mouseup），先把它的监听/body 样式收干净再开新的。
+      endPanelDrag();
       const ox = e.clientX;
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'col-resize';
       const onMove = (ev: MouseEvent) => setWidth(startWidth + dir * (ev.clientX - ox));
-      const onUp = () => {
+      const onUp = (): void => endPanelDrag();
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      // 窗口失焦（鼠标甩出窗口 / Alt+Tab）收不到 mouseup —— 不一起收尾就会把列宽
+      // 拖拽卡在"跟手"态，下一次点击还会继续跟着鼠标跑。
+      window.addEventListener('blur', onUp);
+      dragCleanupRef.current = () => {
         document.body.style.userSelect = '';
         document.body.style.cursor = '';
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('blur', onUp);
       };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      setDraggingPanel(panel);
     },
-    [],
+    [endPanelDrag],
   );
+
+  /** 两侧手柄是否还挂着（渲染条件与下面 JSX 一致）：布局切换把手柄换掉时也要收尾。 */
+  const leftPanelHandleMounted = !leftNavCollapsed;
+  const rightPanelInlineVisible =
+    rightPanelOpen &&
+    !settingsOpen &&
+    mainView === 'chat' &&
+    !(artifactPanelMode === 'preview' && panelLayout.mode !== 'inline');
+  useEffect(() => {
+    // 手柄被卸载（或 App 整个卸载）⇒ 拖拽必须收尾：不能把全局鼠标监听和 body 光标留在外面。
+    // H6 终审 E6：`artifactPanelMode` 也进依赖 —— 预览退回列表时手柄 DOM 可能没卸载，
+    // 但**用途已经变了**（同一个手柄改拖的是另一种宽度）；旧的 setWidth 闭包必须当场
+    // 失效，否则后续 mousemove 会继续改预览宽度偏好、body 光标也不还原。
+    return () => endPanelDrag();
+  }, [leftPanelHandleMounted, rightPanelInlineVisible, artifactPanelMode, endPanelDrag]);
 
   useEffect(() => {
     const cleanup = window.clawwork.onArtifactSaved((artifact) => {
@@ -624,7 +680,13 @@ export default function App() {
             ⇒ 现在左侧只剩**一列**：导航列（`LeftNav`）。 */}
         <motion.aside
           animate={{ width: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : leftNavWidth }}
-          transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
+          transition={{
+            // H6：拖左栏时**只**取消宽度的过渡（跟手）；开关/收纳的动画照旧。
+            width: {
+              duration: draggingPanel === 'left' ? 0 : motionDuration.moderate,
+              ease: motionEase.standard,
+            },
+          }}
           className={cn(
             'relative z-[1] flex-shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)]',
           )}
@@ -639,7 +701,7 @@ export default function App() {
         {!leftNavCollapsed && (
           <div
             className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
-            onMouseDown={(e) => startPanelDrag(e, leftNavWidth, setLeftNavWidth, 1)}
+            onMouseDown={(e) => startPanelDrag(e, leftNavWidth, setLeftNavWidth, 1, 'left')}
           >
             <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
           </div>
@@ -693,6 +755,16 @@ export default function App() {
                     data-mode={panelLayout.mode}
                     style={{ '--artifact-drawer-width': `${panelLayout.width}px` } as React.CSSProperties}
                     aria-describedby={undefined}
+                    /* ⭐ H5：整棵树里**没有 Trigger** —— Radix 默认的"归还 Trigger"在这里
+                       无处可去（实测焦点落到 body）。所以自己归还：优先仍连接的进入点
+                       （请求预览那一刻在导航适配层捕获的元素），入口已经随布局卸载时退到
+                       当前聊天视图的稳定输入控件。焦点约束本身不取消（只接管这一次落点）。 */
+                    onCloseAutoFocus={(event) => {
+                      event.preventDefault();
+                      const target = takeArtifactPreviewFocusTarget();
+                      if (target) target.focus();
+                      else focusCurrentViewFallback();
+                    }}
                   >
                     <DialogPrimitive.Title className="sr-only">{t('rightPanel.artifacts')}</DialogPrimitive.Title>
                     <RightPanel />
@@ -708,8 +780,8 @@ export default function App() {
                     // 此时拖出的宽度会写进偏好 —— 那是用户的显式动作，语义上是"就调到这里"
                     //（窗口变化本身**不会**触碰偏好，见 ui-store 注释与布局纯函数）。
                     artifactPanelMode === 'preview'
-                      ? startPanelDrag(e, panelLayout.width, setArtifactPreviewWidth, -1)
-                      : startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1)
+                      ? startPanelDrag(e, panelLayout.width, setArtifactPreviewWidth, -1, 'right')
+                      : startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1, 'right')
                   }
                 >
                   <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
@@ -718,7 +790,15 @@ export default function App() {
                   initial={{ width: 0, opacity: 0 }}
                   animate={{ width: artifactPanelMode === 'preview' ? panelLayout.width : rightPanelWidth, opacity: 1 }}
                   exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: motionDuration.moderate, ease: motionEase.standard }}
+                  transition={{
+                    // H6：拖右栏时**只**取消宽度的过渡 —— 拖拽跟手、opacity 入场照旧；
+                    // 释放（mouseup/blur/卸载）后恢复既有 moderate 过渡。
+                    width: {
+                      duration: draggingPanel === 'right' ? 0 : motionDuration.moderate,
+                      ease: motionEase.standard,
+                    },
+                    opacity: { duration: motionDuration.moderate, ease: motionEase.standard },
+                  }}
                   className={cn('glass-heavy relative flex-shrink-0 overflow-hidden z-[1] border-l-0')}
                 >
                   <RightPanel />
