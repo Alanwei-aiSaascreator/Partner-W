@@ -20,6 +20,7 @@ import { removableDrives, setRemovableDrives } from './removable-drives.js';
 import {
   decideWorkspaceStartup,
   detectPortableRun,
+  sameVolumeRoot,
   volumeRootOf,
   workspaceLocationPatch,
   type WorkspaceStartupDecision,
@@ -241,6 +242,7 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     recordedPath,
     recordedRelPath: config?.workspaceRelPath,
     volumeMarker: config?.volumeMarker,
+    workspaceBinding: config?.workspaceBinding,
     portableRoot,
     defaultPath: getHomedirWorkspacePath(),
     // ⚠️ 记录的位置还在 ⇒ 判定必然停在第一分支（`configured`），压根不会读这个列表，
@@ -270,7 +272,8 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     case 'healed': {
       // ⚠️ 静默自愈：只有"唯一命中"才走这里（多命中/零命中在 portable.ts 里就被拦下了）
       if (await ensureWorkspace(ctx, decision.path)) {
-        updateConfig({ workspacePath: decision.path, ...locationOf(ctx, decision.path) });
+        // 自愈=把盘上工作区找回来 ⇒ 归属记 app-volume（B1）
+        updateConfig({ workspacePath: decision.path, ...locationOf(ctx, decision.path, 'app-volume') });
         ctx.log('workspace.healed', { from: decision.from, to: decision.path, evidence: decision.via.evidence });
       }
       workspacePath = decision.path;
@@ -281,7 +284,7 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
       if (await ensureWorkspace(ctx, decision.path)) {
         updateConfig({
           workspacePath: decision.path,
-          ...locationOf(ctx, decision.path),
+          ...locationOf(ctx, decision.path, 'app-volume'),
           portableSetupPending: false,
         });
         ctx.log('workspace.portable.auto', { path: decision.path });
@@ -304,12 +307,17 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
   return { kind: 'ready', path: opened, portable: Boolean(portableRoot), decision };
 }
 
-function locationOf(ctx: StartupContext, workspacePath: string): { workspaceRelPath?: string; volumeMarker?: string } {
+function locationOf(
+  ctx: StartupContext,
+  workspacePath: string,
+  binding: 'app-volume' | 'explicit-path',
+): { workspaceRelPath?: string; volumeMarker?: string; workspaceBinding?: 'app-volume' | 'explicit-path' } {
   return workspaceLocationPatch({
     workspacePath,
     removableDrives: ctx.drives(),
     exists: ctx.exists,
     runVolumeRoot: ctx.portableRoot,
+    binding,
   });
 }
 
@@ -355,8 +363,21 @@ async function resolveMissingWorkspace(
 
     if (choice.kind === 'use') {
       if (await ensureWorkspace(ctx, choice.path)) {
-        updateConfig({ workspacePath: choice.path, ...locationOf(ctx, choice.path) });
-        ctx.log('workspace.missing.picked', { path: choice.path });
+        /**
+         * 归属（R1，2026-10-10 集中终审 §3）：确认写入必须与「实际选中的位置」一致 ——
+         * 只有**当前运行卷上**的候选才算"跟着盘走"（app-volume）；用户确认的是别的卷
+         * 上的精确位置 ⇒ explicit-path。旧行为把任何选中的候选都记成 app-volume：
+         * 选完旧卷上的目录，下次启动又会因"记录卷 ≠ 运行卷"再问一遍，且归属是假话。
+         */
+        const onRunVolume = sameVolumeRoot(volumeRootOf(choice.path), ctx.portableRoot);
+        updateConfig({
+          workspacePath: choice.path,
+          ...locationOf(ctx, choice.path, onRunVolume ? 'app-volume' : 'explicit-path'),
+        });
+        ctx.log('workspace.missing.picked', {
+          path: choice.path,
+          binding: onRunVolume ? 'app-volume' : 'explicit-path',
+        });
         return choice.path;
       }
       recorded = choice.path;
@@ -367,7 +388,8 @@ async function resolveMissingWorkspace(
       const picked = await ctx.dialogs.browseForDirectory(recorded);
       if (!picked) continue; // 取消了就再问一次（对话框里始终有「退出」）
       if (await ensureWorkspace(ctx, picked)) {
-        updateConfig({ workspacePath: picked, ...locationOf(ctx, picked) });
+        // 用户手选目录 = 他明确要的位置 ⇒ explicit-path（B1：显式选择遵从用户）
+        updateConfig({ workspacePath: picked, ...locationOf(ctx, picked, 'explicit-path') });
         ctx.log('workspace.missing.browsed', { path: picked });
         return picked;
       }
@@ -377,10 +399,22 @@ async function resolveMissingWorkspace(
 
     // 新建工作区：原位置那个盘还在就还在原位置（等价于旧行为），否则退到默认位置
     const volumeRoot = volumeRootOf(recorded);
-    const target = volumeRoot && ctx.exists(volumeRoot) ? recorded : fallbackPath;
+    const onOriginalVolume = Boolean(volumeRoot && ctx.exists(volumeRoot));
+    const target = onOriginalVolume ? recorded : fallbackPath;
     if (await ensureWorkspace(ctx, target)) {
-      updateConfig({ workspacePath: target, ...locationOf(ctx, target) });
-      ctx.log('workspace.missing.created', { path: target });
+      // 归属（B1/R1）：原位置重建保持记录里原有的 explicit 归属；没有旧归属时按
+      // "目标位置在**当前运行卷**上 ⇒ app-volume / 其他 ⇒ explicit"推断。
+      // ⚠️ R1：不再按"原卷还在"推 app-volume —— 程序跑在 F、目标落在旧 E 时，
+      //    那条 app-volume 会与"记录卷 ≠ 运行卷"的判定打架，每次启动重复询问。
+      const oldBinding = readConfig()?.workspaceBinding ?? null;
+      const binding =
+        oldBinding === 'explicit-path'
+          ? 'explicit-path'
+          : sameVolumeRoot(volumeRootOf(target), ctx.portableRoot)
+            ? 'app-volume'
+            : 'explicit-path';
+      updateConfig({ workspacePath: target, ...locationOf(ctx, target, binding) });
+      ctx.log('workspace.missing.created', { path: target, binding });
       return target;
     }
     recorded = target;
@@ -390,7 +424,8 @@ async function resolveMissingWorkspace(
   //    最后一轮仍要留一个「选择其它目录」的出口，只有真的选不出来才退出。
   const rescued = await lastChanceDirectory(ctx, recorded);
   if (rescued) {
-    updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued) });
+    // 最后一问同样是用户手选目录 ⇒ explicit-path（B1）
+    updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued, 'explicit-path') });
     ctx.log('workspace.missing.last-chance', { path: rescued });
     return rescued;
   }
@@ -441,7 +476,8 @@ async function openWorkspaceDatabase(initialPath: string, ctx: StartupContext): 
     const picked = await ctx.dialogs.browseForDirectory(workspacePath);
     if (!picked) continue;
     if (await ensureWorkspace(ctx, picked)) {
-      updateConfig({ workspacePath: picked, ...locationOf(ctx, picked) });
+      // 用户手选目录 ⇒ explicit-path（B1）
+      updateConfig({ workspacePath: picked, ...locationOf(ctx, picked, 'explicit-path') });
     }
     workspacePath = picked;
   }
@@ -452,7 +488,8 @@ async function openWorkspaceDatabase(initialPath: string, ctx: StartupContext): 
   if (rescued) {
     const failure = tryOpen(rescued, ctx.database);
     if (!failure) {
-      updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued) });
+      // 最后一问同样是用户手选目录 ⇒ explicit-path（B1）
+      updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued, 'explicit-path') });
       ctx.log('workspace.db.last-chance', { workspacePath: rescued });
       return rescued;
     }

@@ -238,3 +238,126 @@ describe('entry license gate', () => {
     expect(bridge.commercialLicenseRecoverActivation).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * R2（2026-10-10 集中终审 §4）：显式换卡 intent='replace' —— 设置页/准备页的
+ * ActivationSection 走这条。与原 ensure 的全部差别都在这里钉住。
+ */
+describe('entry license gate — replace intent（显式换卡）', () => {
+  const replaceRequest = (bridge: EntryLicenseApi, activationKey = 'RY-NEW', userId = 'user-1') => ({
+    api: bridge,
+    activationKey,
+    userId,
+    isCurrent: () => true,
+    intent: 'replace' as const,
+  });
+  /** ok:true 但没带 result 的畸形回包（judge 探针形状）：replace 也按成功。 */
+  const bareOk = { ok: true } as unknown as IpcResult<EntryLicenseStatus>;
+
+  it('⭐ 旧卡有效也必须换新卡：replace 跳过"已有许可"预读（不调 status），直接激活', async () => {
+    const bridge = api();
+    bridge.commercialLicenseStatus.mockResolvedValue({ ok: true, result: license() }); // 旧卡完全有效
+    await expect(createEntryLicenseGate().ensure(replaceRequest(bridge))).resolves.toMatchObject({
+      licenseKey: 'RY-NEW',
+    });
+    expect(bridge.commercialLicenseStatus).not.toHaveBeenCalled();
+    expect(bridge.commercialLicenseActivate).toHaveBeenCalledWith('RY-NEW');
+    expect(bridge.commercialLicenseRecoverActivation).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 未知结果记 pending：下一次（同卡或换输入）先 recover、不再第二次 activate', async () => {
+    const bridge = api(),
+      gate = createEntryLicenseGate();
+    bridge.commercialLicenseActivate.mockResolvedValueOnce({ ok: false, errorCode: 'activation_outcome_unknown' });
+    bridge.commercialLicenseRecoverActivation.mockResolvedValue(bareOk); // 读不回 ⇒ 未确认
+    await expect(gate.ensure(replaceRequest(bridge))).rejects.toMatchObject({ code: 'activation_outcome_unknown' });
+    // 换输入也不能绕过 pending：仍按原 pending 卡恢复
+    await expect(gate.ensure(replaceRequest(bridge, 'RY-OTHER'))).rejects.toMatchObject({
+      code: 'activation_outcome_unknown',
+    });
+    expect(bridge.commercialLicenseActivate).toHaveBeenCalledTimes(1);
+    expect(bridge.commercialLicenseRecoverActivation).toHaveBeenCalledTimes(1);
+    expect(bridge.commercialLicenseRecoverActivation).toHaveBeenCalledWith('RY-NEW');
+  });
+
+  it('recovery 确认（licenseKey === 提交的卡）⇒ 清 pending 并以该状态成功', async () => {
+    const bridge = api(),
+      gate = createEntryLicenseGate();
+    bridge.commercialLicenseActivate.mockResolvedValueOnce({ ok: false, errorCode: 'activation_outcome_unknown' });
+    await expect(gate.ensure(replaceRequest(bridge))).rejects.toMatchObject({ code: 'activation_outcome_unknown' });
+    await expect(gate.ensure(replaceRequest(bridge))).resolves.toMatchObject({ licenseKey: 'RY-NEW' });
+    expect(bridge.commercialLicenseActivate).toHaveBeenCalledTimes(1);
+    expect(bridge.commercialLicenseRecoverActivation).toHaveBeenCalledTimes(1);
+  });
+
+  it('replace 成功判据 = 服务端受理（ok:true 无 result 也按成功；权威状态由 overview 刷新给出）', async () => {
+    const bridge = api();
+    bridge.commercialLicenseActivate.mockResolvedValueOnce(bareOk);
+    await expect(createEntryLicenseGate().ensure(replaceRequest(bridge))).resolves.toBeUndefined();
+  });
+
+  it('明确拒绝（license_not_found）⇒ 清 pending、原样抛该码，然后可以再换一张', async () => {
+    const bridge = api(),
+      gate = createEntryLicenseGate();
+    bridge.commercialLicenseActivate.mockResolvedValueOnce({ ok: false, errorCode: 'license_not_found' });
+    await expect(gate.ensure(replaceRequest(bridge))).rejects.toMatchObject({ code: 'license_not_found' });
+    await expect(gate.ensure(replaceRequest(bridge, 'RY-CORRECT'))).resolves.toMatchObject({
+      licenseKey: 'RY-CORRECT',
+    });
+    expect(bridge.commercialLicenseRecoverActivation).not.toHaveBeenCalled();
+  });
+
+  it('空卡号 ⇒ empty_key，一个 IPC 都不发', async () => {
+    const bridge = api();
+    await expect(createEntryLicenseGate().ensure(replaceRequest(bridge, '   '))).rejects.toMatchObject({
+      code: 'empty_key',
+    });
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+    expect(bridge.commercialLicenseStatus).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 单飞区分 intent/key：在飞的 ensure 不得冒充 replace（entry_busy）', async () => {
+    const bridge = api(),
+      gate = createEntryLicenseGate();
+    let finish: ((value: IpcResult<EntryLicenseStatus>) => void) | undefined;
+    bridge.commercialLicenseStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const first = gate.ensure(request(bridge)); // ensure 在飞（读 status 挂起）
+    await expect(gate.ensure(replaceRequest(bridge))).rejects.toMatchObject({ code: 'entry_busy' });
+    finish?.({ ok: true, result: license() });
+    await expect(first).resolves.toEqual(license());
+    expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
+  });
+
+  it('replace 在飞时，同账号 ensure 同样 entry_busy（互不搭车）', async () => {
+    const bridge = api(),
+      gate = createEntryLicenseGate();
+    let finish: ((value: IpcResult<EntryLicenseStatus>) => void) | undefined;
+    bridge.commercialLicenseActivate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const first = gate.ensure(replaceRequest(bridge));
+    await expect(gate.ensure(request(bridge))).rejects.toMatchObject({ code: 'entry_busy' });
+    finish?.({ ok: true, result: license({ licenseKey: 'RY-NEW' }) });
+    await expect(first).resolves.toMatchObject({ licenseKey: 'RY-NEW' });
+  });
+
+  it('replace 也核 isCurrent：换卡途中的 supersede 不许落结果', async () => {
+    const bridge = api();
+    let current = true;
+    bridge.commercialLicenseActivate.mockImplementationOnce(async () => {
+      current = false;
+      return { ok: true, result: license({ licenseKey: 'RY-NEW' }) };
+    });
+    await expect(
+      createEntryLicenseGate().ensure({ ...replaceRequest(bridge), isCurrent: () => current }),
+    ).rejects.toMatchObject({ code: 'entry_superseded' });
+  });
+});

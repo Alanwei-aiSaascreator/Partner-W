@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const overviewMock = vi.fn();
 const licenseStatusMock = vi.fn();
@@ -143,5 +143,121 @@ describe('commercial store', () => {
     const state = useCommercialStore.getState();
     expect(state.status).toBe('offline');
     expect(state.overview).toBe(cachedOverview);
+  });
+});
+
+/**
+ * R2（2026-10-10 集中终审 §4.7）：账号代次 + 读序号守卫 ——
+ * "A 的激活/overview 迟到于 B"不许再写回缓存/内存。
+ *
+ * ⚠️ 磁盘桩挂两处：store 里的 `localStorage` 是裸标识符（Node 环境解析到
+ * `globalThis.localStorage`，Node 24 默认没有这个全局）——只挂 `window.localStorage`
+ * 的话"磁盘那份"的断言是空转。这里把同一份 Map 桩同时挂到 globalThis 与 window。
+ */
+describe('commercial store — 账号代次守卫（R2）', () => {
+  let disk: Map<string, string>;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    disk = new Map<string, string>();
+    const stub = {
+      getItem: (key: string) => disk.get(key) ?? null,
+      setItem: (key: string, value: string) => void disk.set(key, value),
+      removeItem: (key: string) => void disk.delete(key),
+      clear: () => disk.clear(),
+      key: (index: number) => [...disk.keys()][index] ?? null,
+      get length() {
+        return disk.size;
+      },
+    } as Storage;
+    (globalThis as unknown as { localStorage: Storage }).localStorage = stub;
+    const target = (globalThis.window ??= {} as typeof globalThis.window) as unknown as Window & {
+      clawwork: Record<string, unknown>;
+      localStorage: Storage;
+    };
+    target.clawwork = { commercialAccountOverview: overviewMock } as unknown as typeof target.clawwork;
+    target.localStorage = stub;
+  });
+  afterEach(() => {
+    delete (globalThis as unknown as { localStorage?: Storage }).localStorage;
+  });
+
+  const resultFor = (userId: string) => ({
+    ok: true as const,
+    result: {
+      account: { userId, phone: null, email: null, nickname: null, avatar: null },
+      org: null,
+      license: null,
+      device: { fingerprint: 'f', shortFingerprint: 'f' },
+      fetchedAt: '2026-10-10T00:00:00.000Z',
+    },
+  });
+
+  it('⭐ clearCache 后旧账号的迟到回包：内存与磁盘缓存都不许写', async () => {
+    let finish!: (value: unknown) => void;
+    overviewMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const useCommercialStore = await loadStore();
+    const work = useCommercialStore.getState().load();
+    useCommercialStore.getState().clearCache();
+
+    finish(resultFor('A'));
+    await work;
+
+    const state = useCommercialStore.getState();
+    expect(state.overview).toBeNull();
+    expect(state.status).toBe('idle');
+    expect(disk.get('cw:commercial-overview')).toBeUndefined();
+  });
+
+  it('旧代次的迟到失败不把新代次的 status 打成 offline', async () => {
+    let reject!: (error: Error) => void;
+    overviewMock.mockImplementationOnce(() => new Promise((_resolve, no) => (reject = no)));
+    const useCommercialStore = await loadStore();
+    const work = useCommercialStore.getState().load();
+    useCommercialStore.getState().clearCache();
+
+    reject(new Error('late failure'));
+    await work;
+
+    expect(useCommercialStore.getState().status).toBe('idle');
+  });
+
+  it('⭐ 组件级判据在写回前合取：load(isCurrent=false) ⇒ 不写缓存、不落内存', async () => {
+    overviewMock.mockResolvedValue(resultFor('A'));
+    const useCommercialStore = await loadStore();
+
+    await useCommercialStore.getState().load(() => false);
+
+    expect(useCommercialStore.getState().overview).toBeNull();
+    expect(disk.get('cw:commercial-overview')).toBeUndefined();
+  });
+
+  it('refresh 的迟到回包同样被代次作废', async () => {
+    let finish!: (value: unknown) => void;
+    overviewMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const useCommercialStore = await loadStore();
+    useCommercialStore.setState({ status: 'ready', overview: { account: { userId: 'A' } } as never });
+
+    const work = useCommercialStore.getState().refresh();
+    useCommercialStore.getState().clearCache();
+    finish(resultFor('A'));
+    await work;
+
+    expect(useCommercialStore.getState().overview).toBeNull();
+    expect(disk.get('cw:commercial-overview')).toBeUndefined();
+  });
+
+  it('两个 load 竞速：后发者赢，先发的迟到回包被序号作废', async () => {
+    const resolvers: Array<(value: unknown) => void> = [];
+    overviewMock.mockImplementation(() => new Promise((resolve) => resolvers.push(resolve)));
+    const useCommercialStore = await loadStore();
+
+    const first = useCommercialStore.getState().load();
+    const second = useCommercialStore.getState().load();
+    resolvers[1](resultFor('NEW'));
+    resolvers[0](resultFor('OLD'));
+    await Promise.all([first, second]);
+
+    expect(useCommercialStore.getState().overview?.account?.userId).toBe('NEW');
+    expect(JSON.parse(disk.get('cw:commercial-overview') ?? '{}').account.userId).toBe('NEW');
   });
 });

@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildWorkspaceHealCandidates,
   decideWorkspaceStartup,
+  resolveWorkspaceRelative,
+  workspaceLocationPatch,
   type WorkspaceHealCandidate,
 } from '../src/main/workspace/portable.js';
 
@@ -351,5 +353,262 @@ describe('decideWorkspaceStartup —— 启动时用哪个工作区', () => {
     });
 
     expect(decision).toEqual({ kind: 'configured', path: WIN.join('C:\\', 'my-ws') });
+  });
+
+  // ——— B1（2026-10 基线审查 P1）：旧盘符上存在同名目录时，不许静默开旧工作区 ———
+  // 记录是盘上自动工作区（app-volume 语义），程序已经跑在 F 盘上。旧 E 上的同名
+  // 目录**还在**——`exists(recorded)` 只能证明"那个路径有东西"，不能证明"它属于
+  // 当前这块盘"。旧行为直接 configured(E)：启动成功但显示别处历史、往错误工作区写。
+
+  it('⭐ B1: 程序在 F 盘运行、旧 E 同名目录仍在且无证据 ⇒ 不静默开 E，自愈到 F', () => {
+    const decision = decideWorkspaceStartup({
+      ...base,
+      recordedPath: PORTABLE_WS, // E:\荣盈魔方工作区（旧盘符）
+      recordedRelPath: WS_NAME,
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\', // 程序这次跑在 F:
+      removableDrives: ['F:'],
+      exists: vfs(
+        PORTABLE_WS, // 旧 E 的同名目录"仍然存在"（无 marker、无工作区标记）
+        WIN.join('F:\\', WS_NAME),
+        WIN.join('F:\\', MANIFEST),
+      ),
+    });
+
+    expect(decision.kind).toBe('healed');
+    if (decision.kind !== 'healed') throw new Error('unreachable');
+    expect(decision.path).toBe(WIN.join('F:\\', WS_NAME));
+    expect(decision.from).toBe(PORTABLE_WS);
+  });
+
+  it('⭐ B1: 旧 E 的同名目录带工作区标记（两卷都命中）⇒ ask-user，绝不猜', () => {
+    const decision = decideWorkspaceStartup({
+      ...base,
+      recordedPath: PORTABLE_WS,
+      recordedRelPath: WS_NAME,
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(
+        PORTABLE_WS,
+        WIN.join(PORTABLE_WS, WORKSPACE_MARKER), // E 那份有我们自己的工作区标记
+        WIN.join('F:\\', WS_NAME),
+        WIN.join('F:\\', MANIFEST),
+      ),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    // 两个候选都要摆给用户，不许替用户选
+    expect(candidatePaths(decision.candidates).sort()).toEqual([PORTABLE_WS, WIN.join('F:\\', WS_NAME)].sort());
+  });
+
+  it('⭐ B1: binding=explicit-path 的外部工作区仍在 ⇒ 遵从用户选择（configured）', () => {
+    expect(
+      decideWorkspaceStartup({
+        ...base,
+        recordedPath: WIN.join('D:\\', 'someone', 'ws'),
+        recordedRelPath: null,
+        workspaceBinding: 'explicit-path',
+        portableRoot: 'F:\\',
+        removableDrives: ['F:'],
+        exists: vfs(WIN.join('D:\\', 'someone', 'ws')),
+      }),
+    ).toEqual({ kind: 'configured', path: WIN.join('D:\\', 'someone', 'ws') });
+  });
+
+  it('⭐ B1: app-volume 记录仍属当前运行卷 ⇒ configured（正常盘上重启不误伤）', () => {
+    expect(
+      decideWorkspaceStartup({
+        ...base,
+        recordedPath: WIN.join('F:\\', WS_NAME),
+        recordedRelPath: WS_NAME,
+        workspaceBinding: 'app-volume',
+        portableRoot: 'F:\\',
+        removableDrives: ['F:'],
+        exists: vfs(WIN.join('F:\\', WS_NAME)),
+      }),
+    ).toEqual({ kind: 'configured', path: WIN.join('F:\\', WS_NAME) });
+  });
+});
+
+describe('workspaceLocationPatch —— B1 归属记账', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('盘上自动工作区（记线索）⇒ 一并记 app-volume', () => {
+    expect(
+      workspaceLocationPatch({
+        workspacePath: WIN.join('E:\\', WS_NAME),
+        removableDrives: ['E:'],
+        exists: vfs(WIN.join('E:\\', MANIFEST)),
+        binding: 'app-volume',
+      }),
+    ).toEqual({ workspaceRelPath: WS_NAME, volumeMarker: MANIFEST, workspaceBinding: 'app-volume' });
+  });
+
+  it('用户显式选在可移动盘上 ⇒ 迁移线索照记、归属记为 explicit-path', () => {
+    const patch = workspaceLocationPatch({
+      workspacePath: WIN.join('E:\\', '我的资料'),
+      removableDrives: ['E:'],
+      exists: vfs(WIN.join('E:\\', MANIFEST)),
+      binding: 'explicit-path',
+    });
+    expect(patch.workspaceRelPath).toBe('我的资料');
+    expect(patch.workspaceBinding).toBe('explicit-path');
+  });
+
+  it('非盘上工作区 ⇒ 全部线索（含归属）显式清掉，老行为不变', () => {
+    expect(
+      workspaceLocationPatch({
+        workspacePath: WIN.join('C:\\', 'Users', 'u', 'ClawWork-Workspace'),
+        removableDrives: [],
+        exists: vfs(),
+        binding: 'app-volume',
+      }),
+    ).toEqual({ workspaceRelPath: undefined, volumeMarker: undefined, workspaceBinding: undefined });
+  });
+});
+
+/**
+ * R1（2026-10-10 集中终审 §3）：归属与路径线索的边界 —— 与主审裁判同构的正式回归。
+ *
+ * 三条反例走真实判定入口（decideWorkspaceStartup / buildWorkspaceHealCandidates / resolveWorkspaceRelative），
+ * 三条控制保持既有合同（运行卷唯一候选仍静默自愈、双命中仍询问、同卷有效路径不被坏线索改指）。
+ */
+describe('R1 —— 归属与路径线索边界（集中终审）', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const R1_BASE = { defaultPath: WIN.join('C:\\', 'Users', 'u', 'ClawWork-Workspace') };
+  const F_WS = WIN.join('F:\\', WS_NAME);
+
+  it('⭐ R1-① app-volume：旧卷唯一候选（带工作区标记）不得静默胜出 ⇒ ask-user 摆给用户', () => {
+    const decision = decideWorkspaceStartup({
+      ...R1_BASE,
+      recordedPath: PORTABLE_WS,
+      recordedRelPath: WS_NAME,
+      workspaceBinding: 'app-volume',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(PORTABLE_WS, WIN.join(PORTABLE_WS, WORKSPACE_MARKER), 'F:\\', WIN.join('F:\\', MANIFEST)),
+    });
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    expect(candidatePaths(decision.candidates)).toEqual([PORTABLE_WS]);
+    expect(decision.recordedPath).toBe(PORTABLE_WS);
+  });
+
+  it('⭐ R1-② explicit-path：记录缺失 ⇒ ask-user（不许静默自愈到同相对路径的 F、不许改归属）', () => {
+    const decision = decideWorkspaceStartup({
+      ...R1_BASE,
+      recordedPath: WIN.join('E:\\', 'external-chosen'),
+      recordedRelPath: 'external-chosen',
+      workspaceBinding: 'explicit-path',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(WIN.join('F:\\', 'external-chosen'), WIN.join('F:\\', MANIFEST)),
+    });
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    // 候选照摆（供用户确认），但绝不静默落过去
+    expect(candidatePaths(decision.candidates)).toEqual([WIN.join('F:\\', 'external-chosen')]);
+  });
+
+  it('⭐ R1-③ 上级路径线索（..\\private）必须拒绝 ⇒ 零候选 ⇒ ask-user，绝不开 F:\\private', () => {
+    const decision = decideWorkspaceStartup({
+      ...R1_BASE,
+      recordedPath: PORTABLE_WS,
+      recordedRelPath: '..\\private',
+      workspaceBinding: 'app-volume',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(WIN.join('F:\\', 'private'), WIN.join('F:\\', MANIFEST)),
+    });
+    expect(decision).toEqual({ kind: 'ask-user', recordedPath: PORTABLE_WS, candidates: [] });
+  });
+
+  it('R1 线索校验（窄函数）：绝对/盘符/UNC/上级/无效段/尾分隔一律拒绝', () => {
+    const root = 'F:\\';
+    expect(resolveWorkspaceRelative(root, WS_NAME)).toBe(WIN.join('F:\\', WS_NAME));
+    expect(resolveWorkspaceRelative(root, WIN.join('a', 'b'))).toBe(WIN.join('F:\\', 'a', 'b'));
+    expect(resolveWorkspaceRelative(root, 'a/b')).toBe(WIN.join('F:\\', 'a', 'b'));
+    const bad = [
+      '',
+      '\\rooted',
+      'C:\\abs',
+      'C:drive',
+      '\\\\server\\share',
+      '..\\private',
+      'a\\..\\b',
+      'a\\\\b',
+      'a\\',
+      '.\\a',
+      'a\\b:stream',
+      'a\u0000b',
+    ];
+    for (const raw of bad) {
+      expect(resolveWorkspaceRelative(root, raw), raw).toBeNull();
+    }
+  });
+
+  it('⭐ R1 控制①：唯一候选在运行卷上 ⇒ 仍然静默 healed（原控制不破）', () => {
+    const decision = decideWorkspaceStartup({
+      ...R1_BASE,
+      recordedPath: WIN.join('Z:\\', WS_NAME),
+      recordedRelPath: WS_NAME,
+      workspaceBinding: 'app-volume',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_WS, WIN.join('F:\\', MANIFEST)),
+    });
+    expect(decision).toEqual({
+      kind: 'healed',
+      path: F_WS,
+      from: WIN.join('Z:\\', WS_NAME),
+      via: { path: F_WS, origin: 'run-volume', evidence: 'volume-marker' },
+    });
+  });
+
+  it('⭐ R1 控制②：两卷都命中 ⇒ 仍 ask-user（禁止"一律选当前卷"的改法）', () => {
+    const decision = decideWorkspaceStartup({
+      ...R1_BASE,
+      recordedPath: PORTABLE_WS,
+      recordedRelPath: WS_NAME,
+      workspaceBinding: 'app-volume',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(PORTABLE_WS, WIN.join(PORTABLE_WS, WORKSPACE_MARKER), F_WS, WIN.join('F:\\', MANIFEST)),
+    });
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    expect(candidatePaths(decision.candidates).sort()).toEqual([PORTABLE_WS, F_WS].sort());
+  });
+
+  it('⭐ R1 控制③：同卷有效原路径不被未使用的坏 relPath 改指（configured）', () => {
+    expect(
+      decideWorkspaceStartup({
+        ...R1_BASE,
+        recordedPath: F_WS,
+        recordedRelPath: '..\\private',
+        workspaceBinding: 'app-volume',
+        portableRoot: 'F:\\',
+        removableDrives: ['F:'],
+        exists: vfs(F_WS),
+      }),
+    ).toEqual({ kind: 'configured', path: F_WS });
   });
 });

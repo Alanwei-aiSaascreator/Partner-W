@@ -30,6 +30,16 @@ import type { OnboardingProfile } from '@/lib/user-onboarding';
 
 type PanelStatus = 'loading' | 'ready' | 'offline';
 
+/**
+ * C2（R1 终审 §9，2026-10-10）：主进程分类出的充值失败码 → 可行动的本地化文案。
+ * 不在表里的码回落到通用 `rechargeFailed`（"请重试"）。
+ */
+const RECHARGE_ERROR_KEYS: Record<string, string> = {
+  recharge_no_license_target: 'account.rechargeCardRequired',
+  recharge_card_unavailable: 'account.rechargeCardUnavailable',
+  client_upgrade_required: 'account.rechargeClientUpgrade',
+};
+
 /** Snapshot cache so the panel can render something useful while offline. */
 const CACHE_KEY = 'cw:account-overview';
 
@@ -286,7 +296,10 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
           ? await window.clawwork.commercialRechargeCreateCustom(customCents)
           : await window.clawwork.commercialRechargeCreate(selectedSku);
       if (!res.ok || !res.result) {
-        setPlaceError(t('account.rechargeFailed'));
+        // C2（R1 终审 §9，2026-10-10）：把主进程分类出来的 errorCode 翻成**可行动的
+        // 本地化入口文案** —— 不再统一吞成 rechargeFailed（"请重试"对"没有卡/卡不可用/
+        // 版本过旧"都是误导：重试一百次也没用）。
+        setPlaceError(t(RECHARGE_ERROR_KEYS[res.errorCode ?? ''] ?? 'account.rechargeFailed'));
         return;
       }
       setRefundOpen(false);

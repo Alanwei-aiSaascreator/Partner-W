@@ -9,6 +9,7 @@ import { resetSettingsStore } from '../src/renderer/stores/settingsStore';
 import GatewaysSection from '../src/renderer/layouts/Settings/sections/GatewaysSection';
 import AccountSection from '../src/renderer/layouts/Settings/sections/AccountSection';
 import AboutSection from '../src/renderer/layouts/Settings/sections/AboutSection';
+import i18n from '../src/renderer/i18n';
 import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 
 vi.mock('sonner', () => ({
@@ -200,6 +201,62 @@ describe('settings UI regressions', () => {
     act(() => editButton.click());
     expect(onEditProfile).toHaveBeenCalledTimes(1);
     expect(window.clawwork.commercialSignOut).toBeUndefined();
+
+    unmount();
+  });
+
+  /**
+   * C2（R1 终审 §9，2026-10-10）：充值失败必须按 errorCode 显示**可行动的本地化文案** ——
+   * 旧行为把所有失败吞成「发起支付失败，请重试」（对"没有卡 / 卡不可用 / 版本过旧"
+   * 都是误导：重试一百次也没用）。主进程分类（classifyCreateError）→ renderer 映射
+   * （RECHARGE_ERROR_KEYS）这一整条在这里端到端钉住（真实 i18n 文案）。
+   */
+  it.each([
+    ['recharge_card_unavailable', 'account.rechargeCardUnavailable'],
+    ['recharge_no_license_target', 'account.rechargeCardRequired'],
+    ['client_upgrade_required', 'account.rechargeClientUpgrade'],
+    ['recharge_create_failed', 'account.rechargeFailed'],
+  ])('充值失败码 %s ⇒ 本地化入口文案 %s（不再统一"请重试"）', async (errorCode, expectedKey) => {
+    const profile: OnboardingProfile = {
+      version: 2,
+      userId: 'user-1',
+      nickname: '小荣',
+      role: 'operations',
+      customRole: '',
+      useCases: ['content'],
+      customGoal: '',
+      selectedAssistantIds: ['content'],
+      responseDetail: 'balanced',
+      filePermission: 'ask-every-time',
+      completedAt: '2026-09-16T00:00:00.000Z',
+    };
+    window.clawwork.commercialRechargeSkus = vi.fn().mockResolvedValue({
+      ok: true,
+      result: [{ sku: 'topup-10', label: '¥10', amountCents: 1000, bonusCents: 0 }],
+    });
+    window.clawwork.commercialRechargeCreate = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'synthetic failure',
+      errorCode,
+    });
+    const { container, unmount } = render(<AccountSection onboardingProfile={profile} onEditProfile={vi.fn()} />);
+    await flushAsync();
+    await flushAsync();
+
+    const sku = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('¥10'));
+    expect(sku, '充值的档位按钮应已渲染').toBeTruthy();
+    act(() => sku!.click());
+    const agree = container.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    act(() => agree.click());
+    const confirm = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes(i18n.t('account.rechargeConfirm')),
+    );
+    expect(confirm, '确认充值按钮应已渲染').toBeTruthy();
+    await act(async () => confirm!.click());
+    await flushAsync();
+
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(i18n.t(expectedKey));
 
     unmount();
   });

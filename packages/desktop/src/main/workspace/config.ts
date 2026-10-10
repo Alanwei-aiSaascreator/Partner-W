@@ -69,6 +69,12 @@ export interface AppConfig {
   /** 记下这个工作区时，盘根认到的 marker 文件名。 */
   volumeMarker?: string;
   /**
+   * 工作区归属（B1 修复）：`app-volume`=随盘移动的自动工作区（按当前运行卷解析）；
+   * `explicit-path`=用户显式选择的外部目录（遵从用户）。只在记了 `workspaceRelPath`
+   * 时有意义；缺省（老记录）按"有盘上线索 ⇒ app-volume，否则 explicit"保守判定。
+   */
+  workspaceBinding?: 'app-volume' | 'explicit-path';
+  /**
    * 兼容 0.0.25 写下的盘上首启标记。新版发现它后会清掉，避免把内置本地网关
    * 暴露成需要用户填写地址和令牌的远程网关表单。
    */

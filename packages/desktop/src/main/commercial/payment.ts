@@ -1,5 +1,6 @@
 import { CUSTOM_RECHARGE_MAX_CENTS, CUSTOM_RECHARGE_MIN_CENTS, type IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from './client.js';
+import { readLicenseStatus } from './license.js';
 import { readConfig } from '../workspace/config.js';
 
 /**
@@ -75,12 +76,42 @@ export async function readRechargeSkus(): Promise<IpcResult<RechargeSku[]>> {
 
 type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
 
-/** Maps an RPC failure message to a code the renderer can localise. */
+/**
+ * C2（2026-10-10 基线审查）：当前应计费卡 —— 充值订单的**目标卡**。
+ *
+ * 复用 `readLicenseStatus` 的解析链（存储卡 → 账号 → owner 校验）；解析不到返回 null。
+ * **绝不**拿"最早的卡 / 余额最大的卡"凑一个目标 —— 旧链正是因此在
+ * 「当前卡扣费、钱加到另一张卡」上两张皮。
+ */
+async function currentLicenseTarget(): Promise<string | null> {
+  try {
+    const status = await readLicenseStatus();
+    return status.ok && status.result?.licenseId ? status.result.licenseId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Maps an RPC failure message to a code the renderer can localise.
+ *
+ * C2（R1 终审 §9，2026-10-10）：migration 58 的新签名把「目标卡」错误做成
+ * **可分类的文案**（fail-closed）——这里逐条映射成语义码，renderer 再翻成
+ * 本地化入口文案（只改这里不够，AccountSection 也要接 errorCode）。
+ */
 function classifyCreateError(message: string): string {
   if (message.includes('not signed in')) return 'not_signed_in';
   if (message.includes('no organization')) return 'no_organization';
   if (message.includes('out of range')) return 'recharge_amount_out_of_range';
   if (message.includes('unknown or inactive sku')) return 'recharge_sku_unknown';
+  // —— 目标卡族（migration 58 的 raise 文案，逐字匹配）——
+  if (message.includes('license target is required')) return 'recharge_no_license_target';
+  if (message.includes('unknown license target')) return 'recharge_card_unavailable';
+  if (message.includes('license target is not owned by this user')) return 'recharge_card_unavailable';
+  if (message.includes('license target is not active')) return 'recharge_card_unavailable';
+  if (message.includes('license target is expired')) return 'recharge_card_unavailable';
+  // —— 旧客户端撞上新 SQL 的 fail-closed 指引（migration 58 两条旧签名）——
+  if (message.includes('client-upgrade-required')) return 'client_upgrade_required';
   return 'recharge_create_failed';
 }
 
@@ -149,9 +180,18 @@ export async function createRechargeOrder(sku: string): Promise<IpcResult<Rechar
   }
 
   try {
+    // C2：订单固化**当前应计费卡**（与扣费身份一致；履约只加目标卡）。
+    // 解析不到当前卡 ⇒ 不创建订单（宁缺毋错）——绝不拿别的卡凑目标。
+    const licenseTarget = await currentLicenseTarget();
+    if (!licenseTarget) {
+      return { ok: false, error: 'Recharge needs an active license target', errorCode: 'recharge_no_license_target' };
+    }
     // Amount comes from the pricing table inside the RPC. The renderer only
     // picks which tier, never how much.
-    const { data: order, error } = await supabase.rpc('create_recharge_order', { p_sku: trimmed });
+    const { data: order, error } = await supabase.rpc('create_recharge_order', {
+      p_sku: trimmed,
+      p_license_id: licenseTarget,
+    });
     if (error) return fail(error, classifyCreateError(String(error.message ?? '')));
 
     const orderNo = readOrderNo(order);
@@ -196,8 +236,14 @@ export async function createCustomRechargeOrder(amountCents: number): Promise<Ip
   }
 
   try {
+    // C2：同档位路径 —— 目标卡必须显式绑定当前应计费卡。
+    const licenseTarget = await currentLicenseTarget();
+    if (!licenseTarget) {
+      return { ok: false, error: 'Recharge needs an active license target', errorCode: 'recharge_no_license_target' };
+    }
     const { data: order, error } = await supabase.rpc('create_recharge_order_custom', {
       p_amount_cents: amountCents,
+      p_license_id: licenseTarget,
     });
     if (error) return fail(error, classifyCreateError(String(error.message ?? '')));
 

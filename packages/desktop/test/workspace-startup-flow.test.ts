@@ -776,3 +776,109 @@ describe('源码契约：失败路径不许 app.quit()', () => {
     expect(bootstrapRegion).toContain("domain: 'gateway'");
   });
 });
+
+/**
+ * R1（2026-10-10 集中终审 §3）：归属与路径线索边界 —— 真实启动入口
+ * （prepareWorkspaceAtStartup）。与主审裁判同构：三条反例＋控制。
+ *
+ * 断言口径（合同 §3 固定验收）：database.init 实际目标、弹框次数、最终 binding。
+ */
+describe('R1 边界：归属与路径线索（真实启动入口）', () => {
+  it('⭐ R1-① app-volume 旧 E 唯一有工作区标记、F 无工作区 ⇒ 必须询问，不许静默 init(E)', async () => {
+    const old = win32.join('E:\\', WS_NAME);
+    const h = makeHarness({ exePath: EXE_ON('F:\\'), removableDrives: ['F:'] });
+    seedConfig({
+      workspacePath: old,
+      workspaceRelPath: WS_NAME,
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'app-volume',
+    });
+    seedVirtual(h, 'E:\\', old, win32.join(old, WORKSPACE_MARKER_FILE), 'F:\\', win32.join('F:\\', MANIFEST));
+
+    const result = await h.run();
+
+    expect(h.database.init).not.toHaveBeenCalledWith(old);
+    expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+    const asked = h.dialogs.askForMissingWorkspace.mock.calls[0][0] as { candidates: string[] };
+    expect(asked.candidates).toEqual([old]);
+    // harness 默认应答 quit ⇒ 证明没有被静默决定
+    expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
+  });
+
+  it('⭐ R1-①附：用户从询问里确认了外部卷 E 的位置 ⇒ 如实记 explicit-path（不再冒充随盘工作区）', async () => {
+    const old = win32.join('E:\\', WS_NAME);
+    const h = makeHarness({ exePath: EXE_ON('F:\\'), removableDrives: ['E:', 'F:'] });
+    seedConfig({
+      workspacePath: old,
+      workspaceRelPath: WS_NAME,
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'app-volume',
+    });
+    seedVirtual(h, 'E:\\', old, win32.join(old, WORKSPACE_MARKER_FILE), 'F:\\', win32.join('F:\\', MANIFEST));
+    h.dialogs.askForMissingWorkspace.mockResolvedValue({ kind: 'use', path: old });
+
+    const result = await h.run();
+
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(h.database.init).toHaveBeenCalledWith(old);
+    expect(readConfig()?.workspacePath).toBe(old);
+    expect(readConfig()?.workspaceBinding).toBe('explicit-path');
+  });
+
+  it('⭐ R1-② explicit-path 缺失 ⇒ 必须询问；不许静默开 F 的同名目录、不许把归属改成 app-volume', async () => {
+    const wanted = win32.join('E:\\', 'external-chosen');
+    const h = makeHarness({ exePath: EXE_ON('F:\\'), removableDrives: ['F:'] });
+    seedConfig({
+      workspacePath: wanted,
+      workspaceRelPath: 'external-chosen',
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'explicit-path',
+    });
+    seedVirtual(h, win32.join('F:\\', 'external-chosen'), win32.join('F:\\', MANIFEST));
+
+    const result = await h.run();
+
+    expect(h.database.init).not.toHaveBeenCalledWith(win32.join('F:\\', 'external-chosen'));
+    expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
+    // 未经确认不写配置：归属仍是 explicit-path、路径没被改指
+    expect(readConfig()?.workspaceBinding).toBe('explicit-path');
+    expect(readConfig()?.workspacePath).toBe(wanted);
+  });
+
+  it('⭐ R1-③ 坏线索（relPath=..\\private）⇒ 零候选询问，不许 database.init(F:\\private)', async () => {
+    const intruder = win32.join('F:\\', 'private');
+    const h = makeHarness({ exePath: EXE_ON('F:\\'), removableDrives: ['F:'] });
+    seedConfig({
+      workspacePath: win32.join('E:\\', WS_NAME),
+      workspaceRelPath: '..\\private',
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'app-volume',
+    });
+    seedVirtual(h, intruder, win32.join('F:\\', MANIFEST));
+
+    const result = await h.run();
+
+    expect(h.database.init).not.toHaveBeenCalledWith(intruder);
+    expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+    const asked = h.dialogs.askForMissingWorkspace.mock.calls[0][0] as { candidates: string[] };
+    expect(asked.candidates).toEqual([]);
+    expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
+  });
+
+  it('⭐ R1 控制：同卷有效原路径 + 未使用的坏线索 ⇒ 照常 configured（路径不被改指）', async () => {
+    const current = win32.join('F:\\', WS_NAME);
+    const h = makeHarness({ exePath: EXE_ON('F:\\'), removableDrives: ['F:'] });
+    seedConfig({ workspacePath: current, workspaceRelPath: '..\\private', workspaceBinding: 'app-volume' });
+    seedVirtual(h, current);
+
+    const result = await h.run();
+
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(result.path).toBe(current);
+    expect(h.database.init).toHaveBeenCalledWith(current);
+    expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+  });
+});

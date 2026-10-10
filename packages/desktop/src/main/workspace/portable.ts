@@ -78,7 +78,7 @@ export const MAX_DELIVERY_DEPTH = 2;
 const INSTALL_DIR_SEGMENTS: readonly RegExp[] = [/^program files( \(x86\))?$/i, /^programs$/i, /^appdata$/i];
 
 /** 同一卷根吗（大小写不敏感，Windows 语义）。 */
-function sameVolumeRoot(a: string | null | undefined, b: string | null | undefined): boolean {
+export function sameVolumeRoot(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   const ra = normalizeVolumeRoot(a);
   const rb = normalizeVolumeRoot(b);
@@ -214,9 +214,39 @@ export function deriveWorkspaceRelPath(workspacePath: string): string | null {
   return rel;
 }
 
+/**
+ * 把配置里记的 `workspaceRelPath` **当相对路径**解析到某个卷根下（R1，2026-10-10）。
+ *
+ * ⚠️ 只在"用 relPath 做恢复"时调用（候选构造）；别拿去给其它地方做一般路径规整。
+ *
+ * 为什么必须有一层窄校验（集中终审 §3 反例③）：旧实现是
+ * `P().join(volumeRoot, relPath.replace(/^[\\/]+/, ''))` —— 先**剥掉前导斜杠再假装
+ * 它是相对路径**，且 `..\private` 这类上级路径会被 `path.join` 静默归一成卷根下的
+ * 另一个目录（`F:\private`）。坏线索（手改配置/历史残留）于是能把"恢复"变成
+ * "在盘根猜一个目录打开"。
+ *
+ * 判据（全部拒绝，返回 null）：
+ * - 空串 / 含 NUL；
+ * - 绝对路径、带盘符的根（`C:\x`、`\x`、`\\server\share`、`C:foo`）；
+ * - 任何一段为空（连续分隔符/尾分隔符）、`.`、`..`、或含 `:`；
+ * - 解析结果不落在目标卷根之下（防御性复验，正常输入不会触发）。
+ */
+export function resolveWorkspaceRelative(root: string, raw: string): string | null {
+  if (!raw || raw.includes('\0') || P().isAbsolute(raw) || P().parse(raw).root) return null;
+  const segments = raw.split(/[\\/]/);
+  if (segments.some((part) => !part || part === '.' || part === '..' || part.includes(':'))) return null;
+  const base = P().resolve(root);
+  const target = P().resolve(base, raw);
+  const relative = P().relative(base, target);
+  if (!relative || relative === '..' || relative.startsWith('..' + P().sep) || P().isAbsolute(relative)) return null;
+  return target;
+}
+
 export interface WorkspaceLocationDescription {
   workspaceRelPath?: string;
   volumeMarker?: string;
+  /** 归属（B1）：记线索时一并记下"这份工作区是否随盘走"。 */
+  workspaceBinding?: 'app-volume' | 'explicit-path';
 }
 
 /**
@@ -242,6 +272,8 @@ export function describeWorkspaceLocation(input: {
   volumeMarker?: string | null;
   /** 应用**自己运行所在**的卷根（启动时判出来的 `portableRoot`；非盘上运行时给 null）。 */
   runVolumeRoot?: string | null;
+  /** 归属（B1）：自动盘上工作区=app-volume；用户显式选择=explicit-path。 */
+  binding?: 'app-volume' | 'explicit-path';
 }): WorkspaceLocationDescription {
   const volumeRoot = volumeRootOf(input.workspacePath);
   if (!volumeRoot) return {};
@@ -255,6 +287,8 @@ export function describeWorkspaceLocation(input: {
   return {
     workspaceRelPath: rel,
     volumeMarker: input.exists(P().join(volumeRoot, marker)) ? marker : undefined,
+    // binding 只在"记了盘上线索"时有意义（B1）：非盘上工作区不写归属，判定按老行为。
+    ...(input.binding ? { workspaceBinding: input.binding } : {}),
   };
 }
 
@@ -271,9 +305,10 @@ export function workspaceLocationPatch(input: {
   exists: (p: string) => boolean;
   volumeMarker?: string | null;
   runVolumeRoot?: string | null;
-}): { workspaceRelPath?: string; volumeMarker?: string } {
+  binding?: 'app-volume' | 'explicit-path';
+}): { workspaceRelPath?: string; volumeMarker?: string; workspaceBinding?: 'app-volume' | 'explicit-path' } {
   const location = describeWorkspaceLocation(input);
-  return { workspaceRelPath: undefined, volumeMarker: undefined, ...location };
+  return { workspaceRelPath: undefined, volumeMarker: undefined, workspaceBinding: undefined, ...location };
 }
 
 /**
@@ -331,7 +366,10 @@ export interface WorkspaceHealInput {
  *    相对路径（`Users\…\ClawWork-Workspace`）去扫 U 盘是**猜**，不是找。
  */
 export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): WorkspaceHealCandidate[] {
-  const rel = input.relPath ? input.relPath.replace(/^[\\/]+/, '') : null;
+  // ⚠️ R1（2026-10-10 集中终审 §3）：**不剥前导斜杠、不做任何"规整"** ——
+  //    relPath 要么是合法相对路径（逐段过 `resolveWorkspaceRelative`），
+  //    要么一个候选都不给（走进 decide 的 ask-user）。坏线索不许悄悄变成"猜一个目录"。
+  const rel = input.relPath ?? null;
   /**
    * 没记 `relPath` 时的退路（2026-09-20 外部审计实机撞到）：
    *
@@ -375,8 +413,8 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
   const volumeRoot = volumeRootOf(input.recordedPath);
   if (volumeRoot) {
     for (const candidateRel of relCandidates) {
-      const candidate = P().join(volumeRoot, candidateRel);
-      if (!input.exists(candidate)) continue;
+      const candidate = resolveWorkspaceRelative(volumeRoot, candidateRel);
+      if (!candidate || !input.exists(candidate)) continue;
       const evidence = evidenceOf(candidate, volumeRoot);
       if (evidence) push({ path: candidate, origin: 'same-letter', evidence });
     }
@@ -388,8 +426,8 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
     const root = normalizeVolumeRoot(input.runVolumeRoot);
     if (root) {
       for (const candidateRel of relCandidates) {
-        const candidate = P().join(root, candidateRel);
-        if (!input.exists(candidate)) continue;
+        const candidate = resolveWorkspaceRelative(root, candidateRel);
+        if (!candidate || !input.exists(candidate)) continue;
         const evidence = evidenceOf(candidate, root);
         if (evidence) push({ path: candidate, origin: 'run-volume', evidence });
       }
@@ -402,8 +440,8 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
     if (!root) continue;
 
     for (const candidateRel of relCandidates) {
-      const candidate = P().join(root, candidateRel);
-      if (!input.exists(candidate)) continue;
+      const candidate = resolveWorkspaceRelative(root, candidateRel);
+      if (!candidate || !input.exists(candidate)) continue;
 
       const evidence = evidenceOf(candidate, root);
       if (!evidence) continue;
@@ -422,6 +460,15 @@ export interface WorkspaceStartupInput {
   volumeMarker?: string | null;
   /** 盘上运行时的卷根（`detectPortableRun().volumeRoot`，非盘上给 null）。 */
   portableRoot?: string | null;
+  /**
+   * 配置里记的工作区归属（B1 修复合同）：
+   * - `app-volume`：随盘移动的自动工作区 —— 按**当前运行卷** + 合法相对路径解析，
+   *   发现旧卷上的同名字目录**不切回旧卷**；
+   * - `explicit-path`：用户显式选择的外部目录 —— 遵从用户选择；
+   * - `null/undefined`：老记录。记过 `recordedRelPath`（盘上线索）的按 app-volume 保守处理，
+   *   否则按 explicit 处理（老行为）。
+   */
+  workspaceBinding?: 'app-volume' | 'explicit-path' | null;
   /** 首启且非盘上时使用的默认位置（`getDefaultWorkspacePath()`）。 */
   defaultPath: string;
   removableDrives: readonly string[];
@@ -447,8 +494,10 @@ export type WorkspaceStartupDecision =
  *
  * ```
  * 有记录：
- *   exists(记录)                        ⇒ configured
- *   候选 === 1                          ⇒ healed（静默）
+ *   exists(记录) 且（非 app-volume，或记录卷 == 当前运行卷）⇒ configured
+ *   explicit-path 且记录不存在           ⇒ ask-user（绝不静默跨卷自愈/改归属，R1）
+ *   候选 === 1 且（非 app-volume，或候选在运行卷上，或运行卷未知）⇒ healed（静默）
+ *   候选 === 1 但 app-volume 候选在别的卷 ⇒ ask-user（唯一候选不许从旧卷静默胜出，R1）
  *   候选 > 1                            ⇒ ask-user（多命中不许猜）
  *   候选 === 0 且 记过 relPath（盘上）   ⇒ ask-user（盘不在，不能拿别的卷顶）
  *   候选 === 0 且 卷都还在（本机目录）   ⇒ recreated（就地重建，旧行为）
@@ -460,7 +509,30 @@ export type WorkspaceStartupDecision =
 export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceStartupDecision {
   const recorded = input.recordedPath?.trim();
   if (recorded) {
-    if (input.exists(recorded)) return { kind: 'configured', path: recorded };
+    /**
+     * B1（2026-10 基线审查 P1）：`exists(recorded)` **不是**"这份工作区属于当前盘"的证明。
+     * 旧盘符上的同名字目录还在时（换了盘符的新盘 + 旧盘也插着/旧目录没清），老行为
+     * 直接 `configured(旧路径)` —— 启动成功，但**用的不是当前盘的数据**。
+     *
+     * 归属：app-volume（新记录显式声明；老记录记过盘上相对路径的按此保守处理）按
+     * "跟当前运行卷 + 合法相对路径"解析；explicit-path（用户显式选的外部目录）遵从用户。
+     */
+    const binding = input.workspaceBinding ?? null;
+    const appVolume = binding === 'app-volume' || (binding === null && Boolean(input.recordedRelPath));
+    /** R1：显式选择的外部位置 —— 缺失时只许走 ask-user（用户确认），绝不静默改指。 */
+    const explicitPath = binding === 'explicit-path';
+    const recordedExists = input.exists(recorded);
+    const runVolume = input.portableRoot ? (normalizeVolumeRoot(input.portableRoot) ?? input.portableRoot) : null;
+
+    if (recordedExists) {
+      if (!appVolume) return { kind: 'configured', path: recorded };
+      const recordedVolume = volumeRootOf(recorded);
+      if (!runVolume || !recordedVolume || sameVolumeRoot(recordedVolume, runVolume)) {
+        return { kind: 'configured', path: recorded };
+      }
+      // 记录的卷 ≠ 当前运行卷：不早退，落入下面的候选流程 —— 无证据的旧卷同名目录
+      // 会被候选构造拒绝（唯一 F 命中 ⇒ healed）；两卷都有证据 ⇒ ask-user（绝不猜）。
+    }
 
     const candidates = buildWorkspaceHealCandidates({
       recordedPath: recorded,
@@ -472,7 +544,27 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
       exists: input.exists,
     });
 
+    /**
+     * R1（2026-10-10 集中终审 §3）：explicit-path 的原始目录不在了 ⇒ 一律 ask-user。
+     * 候选照摆（用户可以从里面确认一个），但**未经确认不跨卷、不改归属** ——
+     * 旧行为会静默 opened(F) 并把归属改记成 app-volume，等于替用户换掉了工作区。
+     */
+    if (explicitPath && !recordedExists) {
+      return { kind: 'ask-user', recordedPath: recorded, candidates };
+    }
+
     if (candidates.length === 1) {
+      /**
+       * R1：app-volume 的唯一候选只有在**当前运行卷**上时才允许静默胜出 ——
+       * 旧卷/其他卷的唯一候选（旧盘还插着、marker 都在）是"别人家的同一份"，
+       * 摆给用户确认；当前运行卷没有合法目标时同样要问。
+       * ⚠️ 运行卷未知（非盘上启动）时保持旧的静默自愈 —— 没有"当前卷"可比，
+       *    唯一带证据的候选仍是 2026-09-18 实机那条救命路径（见该用例）。
+       */
+      const viaVolume = volumeRootOf(candidates[0].path);
+      if (appVolume && runVolume && !sameVolumeRoot(viaVolume, runVolume)) {
+        return { kind: 'ask-user', recordedPath: recorded, candidates };
+      }
       return { kind: 'healed', path: candidates[0].path, from: recorded, via: candidates[0] };
     }
     if (candidates.length > 1) {

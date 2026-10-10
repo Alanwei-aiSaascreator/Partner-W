@@ -55,7 +55,11 @@ const TEAM_WORKSPACE_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  *    再用这个入口把工作区设到那个盘上 —— 用缓存的话那一刻的列表里没有它，
  *    线索就永远记不上（见 `refreshRemovableDrives`）。
  */
-function locationPatch(workspacePath: string): { workspaceRelPath?: string; volumeMarker?: string } {
+function locationPatch(workspacePath: string): {
+  workspaceRelPath?: string;
+  volumeMarker?: string;
+  workspaceBinding?: 'app-volume' | 'explicit-path';
+} {
   return workspaceLocationPatch({
     workspacePath,
     removableDrives: refreshRemovableDrives(),
@@ -63,6 +67,9 @@ function locationPatch(workspacePath: string): { workspaceRelPath?: string; volu
     // 程序自己所在的那块盘（盘上形态才有）：`DriveType=3` 的盘不在可移动盘列表里，
     // 少了这一条，用户把工作区设到那块盘上时一条线索都记不上（换口就丢）。
     runVolumeRoot: getPortableWorkspaceRoot(),
+    // 这两个入口（workspace:setup / workspace:change）都是**用户主动选择** ⇒ explicit-path
+    // （B1：显式选择遵从用户，不按"跟盘"解析）。
+    binding: 'explicit-path',
   });
 }
 

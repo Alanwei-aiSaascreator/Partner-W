@@ -33,13 +33,18 @@ import { useCommercialStore } from '../src/renderer/stores/commercialStore';
  * 修法不是"取消已绑定提示"，而是**在提示旁边永远留一条换卡的路**。
  */
 
-function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
+function render(ui: ReactElement): {
+  container: HTMLDivElement;
+  rerender: (next: ReactElement) => void;
+  unmount: () => void;
+} {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
   act(() => root.render(ui));
   return {
     container,
+    rerender: (next: ReactElement) => act(() => root.render(next)),
     unmount: () => {
       act(() => root.unmount());
       container.remove();
@@ -125,5 +130,128 @@ describe('ActivationSection', () => {
 
   it('响应丢失使用专用提示，不冒充普通激活失败', () => {
     expect(activationErrorKey('activation_outcome_unknown')).toBe('activation.errorOutcomeUnknown');
+  });
+});
+
+/**
+ * R2（2026-10-10 集中终审 §4）：显式换卡的生命周期 —— 单飞 / 未知结果恢复 /
+ * 存活与 scope 作废 / 辅助刷新失败不改激活事实。与主审 U2 裁判同构的正式回归。
+ */
+describe('ActivationSection — 生命周期边界（R2）', () => {
+  function bridge(overrides: Record<string, unknown> = {}) {
+    const api = {
+      commercialLicenseActivate: vi.fn(async () => ({ ok: true })),
+      commercialLicenseRecoverActivation: vi.fn(async () => ({ ok: true })),
+      commercialAccountOverview: vi.fn(async () => ({ ok: true, result: null })),
+      commercialUsageReport: vi.fn(async () => 0),
+      ...overrides,
+    };
+    Object.defineProperty(window, 'clawwork', { configurable: true, value: api });
+    return api;
+  }
+  function fillAndSubmit(container: HTMLElement, value: string): void {
+    const inputEl = container.querySelector('input');
+    if (!inputEl) throw new Error('missing activation input');
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(inputEl, value);
+      inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  }
+
+  beforeEach(() => {
+    useCommercialStore.setState({ status: 'idle', overview: null, errorMessage: '' });
+  });
+
+  it('⭐ 同帧双 Enter 只发一次激活 IPC（ref 单飞，不靠尚未生效的 busy state）', async () => {
+    let finish!: (value: unknown) => void;
+    const api = bridge({
+      commercialLicenseActivate: vi.fn(() => new Promise((resolve) => (finish = resolve))),
+    });
+    const { container, unmount } = render(<ActivationSection />);
+    fillAndSubmit(container, 'RY-SAME-FRAME');
+    // 同一帧里第二次 Enter —— busy state 还没来得及生效
+    act(() =>
+      container.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })),
+    );
+    expect(api.commercialLicenseActivate).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ ok: true }));
+    unmount();
+  });
+
+  it('⭐ 未知结果：第二次 Enter 先 recover、不再第二次 activate（同卡）', async () => {
+    const api = bridge({
+      commercialLicenseActivate: vi.fn(async () => ({ ok: false, errorCode: 'activation_outcome_unknown' })),
+    });
+    const { container, unmount } = render(<ActivationSection />);
+    fillAndSubmit(container, 'RY-UNKNOWN');
+    await act(async () => {});
+    await act(async () => {
+      container.querySelector('input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(api.commercialLicenseActivate).toHaveBeenCalledTimes(1);
+    expect(api.commercialLicenseRecoverActivation).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('activation.errorOutcomeUnknown');
+    unmount();
+  });
+
+  it('⭐ 未知结果：换输入也不能绕过 pending（仍先 recover）', async () => {
+    const api = bridge({
+      commercialLicenseActivate: vi.fn(async () => ({ ok: false, errorCode: 'activation_outcome_unknown' })),
+    });
+    const { container, unmount } = render(<ActivationSection />);
+    fillAndSubmit(container, 'RY-UNKNOWN');
+    await act(async () => {});
+    fillAndSubmit(container, 'RY-DIFFERENT');
+    expect(api.commercialLicenseActivate).toHaveBeenCalledTimes(1);
+    expect(api.commercialLicenseRecoverActivation).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('⭐ 卸载后迟到的成功回包：不发 usageReport、不回调（不落任何新操作）', async () => {
+    let finish!: (value: unknown) => void;
+    const api = bridge({
+      commercialLicenseActivate: vi.fn(() => new Promise((resolve) => (finish = resolve))),
+    });
+    const onActivated = vi.fn();
+    const { container, unmount } = render(<ActivationSection onActivated={onActivated} />);
+    fillAndSubmit(container, 'RY-LATE');
+    unmount();
+    await act(async () => finish({ ok: true }));
+    expect(api.commercialAccountOverview).not.toHaveBeenCalled();
+    expect(api.commercialUsageReport).not.toHaveBeenCalled();
+    expect(onActivated).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 成功后的辅助统计失败不改写激活事实：无错误文案、仍回调一次', async () => {
+    bridge({
+      commercialUsageReport: vi.fn(async () => {
+        throw new Error('usage report down');
+      }),
+    });
+    const onActivated = vi.fn();
+    const { container, unmount } = render(<ActivationSection onActivated={onActivated} />);
+    fillAndSubmit(container, 'RY-OK');
+    await act(async () => {});
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(onActivated).toHaveBeenCalledTimes(1);
+    expect((container.querySelector('input') as HTMLInputElement).value).toBe('');
+    unmount();
+  });
+
+  it('scope 变化（切号）作废在途尝试：不回调、不落任何新操作', async () => {
+    let finish!: (value: unknown) => void;
+    const api = bridge({
+      commercialLicenseActivate: vi.fn(() => new Promise((resolve) => (finish = resolve))),
+    });
+    const onActivated = vi.fn();
+    const ui = render(<ActivationSection accountScope="A" onActivated={onActivated} />);
+    fillAndSubmit(ui.container, 'RY-SCOPED');
+    ui.rerender(<ActivationSection accountScope="B" onActivated={onActivated} />);
+    await act(async () => finish({ ok: true }));
+    expect(api.commercialAccountOverview).not.toHaveBeenCalled();
+    expect(api.commercialUsageReport).not.toHaveBeenCalled();
+    expect(onActivated).not.toHaveBeenCalled();
+    ui.unmount();
   });
 });

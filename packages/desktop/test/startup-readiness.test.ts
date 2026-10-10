@@ -460,10 +460,24 @@ describe('deriveStartupReadiness —— 助手失败时的文件系统判据', (
     expect(deriveWith({ state: 'ok', dev: '1611287400', ino: '4785074606070117' }).assistantBlocker).toBeNull();
   });
 
-  it('⭐ 负对照：量到零身份但助手**没失败** ⇒ 不下结论（探测可能是错的，别冤枉一块好盘）', () => {
-    expect(
-      deriveWith({ state: 'unsupported-identity', dev: '0', ino: '1' }, readyAssistants).assistantBlocker,
-    ).toBeNull();
+  it('⭐ U1（2026-10-10）：量到零身份即使助手**没失败**也立 blocker —— 不再等助手', () => {
+    // ⚠️ 本条 supersedes 旧的"助手没失败就不下结论"负对照。理由：探测失败时文件系统闸
+    //    会挡掉助手 bootstrap（`startup-workspace-gate.ts` 硬失败直接返回）—— 助手根本
+    //    跑不起来，"等助手失败才下结论"永远等不到（U1 实跑反例：准备页停在 4/6，
+    //    无 alert、无出口）。硬结论（两次复测）自身够格立 blocker；防冤枉的语义保留在
+    //    探测层（`unknown`/未探测不立，见下一条）。
+    expect(deriveWith({ state: 'unsupported-identity', dev: '0', ino: '1' }, readyAssistants).assistantBlocker).toBe(
+      'workspace-filesystem-unsupported',
+    );
+  });
+
+  it('⭐ U1：助手**还没跑**（idle，闸早退的主场景）+ 硬结论 ⇒ 立 blocker', () => {
+    expect(deriveWith({ state: 'unwritable', dev: null, ino: null }, idleAssistants).assistantBlocker).toBe(
+      'workspace-unwritable',
+    );
+    expect(deriveWith({ state: 'unsupported-identity', dev: '0', ino: '0' }, idleAssistants).assistantBlocker).toBe(
+      'workspace-filesystem-unsupported',
+    );
   });
 
   it('unknown / 还没探测（null / 缺省）⇒ 不下结论', () => {

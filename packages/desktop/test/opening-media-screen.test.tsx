@@ -22,11 +22,15 @@ function render(ui: ReactElement) {
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() => root.render(ui));
-  disposers.push(() => {
+  let alive = true;
+  const unmount = () => {
+    if (!alive) return;
     act(() => root.unmount());
     container.remove();
-  });
-  return { container, rerender: (next: ReactElement) => act(() => root.render(next)) };
+    alive = false;
+  };
+  disposers.push(unmount);
+  return { container, rerender: (next: ReactElement) => act(() => root.render(next)), unmount };
 }
 
 let playSpy: ReturnType<typeof vi.spyOn>;
@@ -127,6 +131,39 @@ describe('OpeningMedia 播放与循环', () => {
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
     }
   });
+
+  it('⭐ U3（2026-10-10 基线审查）：后台期间迟到的 canplay 不得起播，回可见才补上', async () => {
+    const { container } = render(<OpeningMedia {...mediaProps} />);
+    let hidden = true;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    try {
+      await act(async () => container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+      expect(playSpy).not.toHaveBeenCalled();
+      expect(phaseOf(container)).toBe('idle');
+      hidden = false;
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+      expect(playSpy).toHaveBeenCalledTimes(1);
+      expect(phaseOf(container)).toBe('playing');
+    } finally {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    }
+  });
+
+  it('⭐ U3：stopRequested 之后迟到的 play reject 不得恢复播放', async () => {
+    let rejectPlay: (reason: Error) => void = () => {};
+    playSpy.mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejectPlay = reject;
+        }),
+    );
+    const { container, rerender } = render(<OpeningMedia {...mediaProps} />);
+    act(() => container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+    rerender(<OpeningMedia {...mediaProps} stopRequested />);
+    await act(async () => rejectPlay(new Error('synthetic interrupted play')));
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(phaseOf(container)).not.toBe('playing');
+  });
 });
 
 describe('OpeningMedia 声音策略', () => {
@@ -216,4 +253,109 @@ describe('页面级不变式（视频事件绝不改变放行）', () => {
     expect(pauseSpy).toHaveBeenCalled();
     expect(phaseOf(container)).toBe('stopped');
   });
+});
+
+/**
+ * R6（2026-10-10 集中终审 §8）：**所有播放入口共用生命周期许可** ——
+ * 与主审 U3 裁判同构的正式回归：pending/hidden 必须 pause、unmute 迟到 resolve
+ * 不能救活 stopped、error 作废在途 play、卸载作废在途 reject、动态 reduce-motion
+ * 作废在途 resolve；外加 stop/failed/hidden 三个成功控制的迟到 resolve 不落 playing。
+ */
+describe('OpeningMedia 生命周期许可（R6）', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    return { promise, resolve, reject };
+  }
+  const setHidden = (value: boolean): void => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value });
+  };
+  afterEach(() => {
+    setHidden(false);
+  });
+
+  it('⭐ pending play 遇 hidden：必须 pause（不能只在 playing 相位才暂停）', async () => {
+    const work = deferred<void>();
+    playSpy.mockReturnValueOnce(work.promise);
+    const { container } = render(<OpeningMedia {...mediaProps} />);
+    act(() => container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+    pauseSpy.mockClear();
+    setHidden(true);
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    await act(async () => work.resolve());
+    expect(phaseOf(container)).not.toBe('playing');
+  });
+
+  it('⭐ unmute 的迟到 resolve 不能把 stopped 相位救活', async () => {
+    const { container, rerender } = render(<OpeningMedia {...mediaProps} />);
+    await act(async () => container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+    const button = container.querySelector<HTMLButtonElement>('button[aria-pressed]')!;
+    act(() => button.click()); // 静音
+    const work = deferred<void>();
+    playSpy.mockReturnValueOnce(work.promise);
+    act(() => button.click()); // 开声音 → play 挂起
+    rerender(<OpeningMedia {...mediaProps} stopRequested />);
+    expect(phaseOf(container)).toBe('stopped');
+    await act(async () => work.resolve());
+    expect(phaseOf(container)).toBe('stopped');
+  });
+
+  it('⭐ error 作废在途 play：迟到的 resolve 不许把"无视频"的界面顶成 playing（也不留声音键）', async () => {
+    const work = deferred<void>();
+    playSpy.mockReturnValueOnce(work.promise);
+    const { container } = render(<OpeningMedia {...mediaProps} />);
+    act(() => container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+    act(() => container.querySelector('video')!.dispatchEvent(new Event('error')));
+    expect(phaseOf(container)).toBe('unavailable');
+    await act(async () => work.resolve());
+    expect(phaseOf(container)).toBe('unavailable');
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('button[aria-pressed]')).toBeNull();
+  });
+
+  it('⭐ 卸载作废在途 reject：不许对已脱离文档的视频再 play（不重试）', async () => {
+    const work = deferred<void>();
+    playSpy.mockReturnValueOnce(work.promise);
+    const ui = render(<OpeningMedia {...mediaProps} />);
+    act(() => ui.container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+    ui.unmount();
+    await act(async () => work.reject(new Error('late play rejection')));
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 动态开启 reduce-motion：作废在途 resolve（非 playing、无视频、无声音键）', async () => {
+    const work = deferred<void>();
+    playSpy.mockReturnValueOnce(work.promise);
+    const { container, rerender } = render(<OpeningMedia {...mediaProps} />);
+    act(() => container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+    rerender(<OpeningMedia {...mediaProps} reduceMotion />);
+    await act(async () => work.resolve());
+    expect(phaseOf(container)).not.toBe('playing');
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('button[aria-pressed]')).toBeNull();
+  });
+
+  it.each(['stop', 'failed', 'hidden'] as const)(
+    '控制：初次 play 的迟到 resolve 在 %s 之后不得落 playing（play 恰一次）',
+    async (change) => {
+      const work = deferred<void>();
+      playSpy.mockReturnValueOnce(work.promise);
+      const ui = render(<OpeningMedia {...mediaProps} />);
+      act(() => ui.container.querySelector('video')!.dispatchEvent(new Event('canplay')));
+      if (change === 'hidden') {
+        setHidden(true);
+        act(() => document.dispatchEvent(new Event('visibilitychange')));
+      } else {
+        ui.rerender(<OpeningMedia {...mediaProps} stopRequested={change === 'stop'} failed={change === 'failed'} />);
+      }
+      await act(async () => work.resolve());
+      expect(phaseOf(ui.container)).not.toBe('playing');
+      expect(playSpy).toHaveBeenCalledTimes(1);
+    },
+  );
 });

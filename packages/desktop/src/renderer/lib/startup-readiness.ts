@@ -332,17 +332,17 @@ export function deriveStartupReadiness({
   //    不可被测试证伪的守卫只是噪音（同 [[stale-green-tests]] 那条教训）。
   const composerBlocked = !relayFailure && (aiPhase === 'starting' || aiPhase === 'loading-models');
 
-  // ⭐ 助手的失败里，"这块文件系统不支持"是一条**有结论**的失败：重试不会变、换盘才会好。
-  //    两个独立信号必须都对上：①助手真的失败了；②探测量到了零身份/不可写。
-  //    只有 ②（助手没事）时**不下结论** —— 探测可能是错的，别的盘上冤枉一次代价很大。
+  // ⭐ 工作区探测的**硬结论**（两次复测都量到）自身就是 blocker —— U1（2026-10 基线审查）：
+  //    探测失败时文件系统闸会挡掉助手 bootstrap（`startup-workspace-gate.ts` 硬失败直接
+  //    返回），助手**根本跑不起来** —— 旧逻辑"必须等助手也失败"于是永远等不到：准备页
+  //    停在 4/6，无 alert、无出口（实跑反例）。`unknown`/未探测保持 null（没量到就**不
+  //    下结论**，防冤枉语义保留在探测层：`unsupported-identity` 只在两次复测都为零时成立）。
   const assistantBlocker: StartupAssistantBlocker | null =
-    assistantPhase !== 'error'
-      ? null
-      : workspaceFsIdentity?.state === 'unsupported-identity'
-        ? 'workspace-filesystem-unsupported'
-        : workspaceFsIdentity?.state === 'unwritable'
-          ? 'workspace-unwritable'
-          : null;
+    workspaceFsIdentity?.state === 'unsupported-identity'
+      ? 'workspace-filesystem-unsupported'
+      : workspaceFsIdentity?.state === 'unwritable'
+        ? 'workspace-unwritable'
+        : null;
 
   return {
     gatewayId,

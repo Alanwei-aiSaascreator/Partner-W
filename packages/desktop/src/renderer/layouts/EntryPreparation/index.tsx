@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, KeyRound, Loader2 } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import OpeningMedia from '@/components/OpeningMedia';
 import WorkspaceRecreatedNotice from '@/components/WorkspaceRecreatedNotice';
+import ActivationSection from '@/layouts/Settings/sections/ActivationSection';
 import { Button } from '@/components/ui/button';
 import { useEntryDeployProgress } from '@/hooks/useEntryDeployProgress';
 import {
@@ -49,6 +50,17 @@ export default function EntryPreparation({
   const state = deriveEntryPreparation(facts);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  /**
+   * ⭐ U2（2026-10 基线审查）：确定性 relay 拒绝（去激活 / 组织不符 / 资格被拒）的出口是
+   *    **去激活/换卡** —— 与工作台 `StartupReadinessPanel` 同一套策略。那个「重新准备」
+   *    按钮对确定性失败按下去只是让用户再做一次无用功（hook 对非 retryable 直接不发请求）。
+   *    `activation-limit-reached`（名额已满）也不给按钮：出路是换卡/找客服，由文案说清。
+   */
+  const relayFailure = facts.startup.relayFailure;
+  const needsActivation = Boolean(
+    relayFailure && relayFailure.kind !== 'retryable' && relayFailure.kind !== 'activation-limit-reached',
+  );
+  const [showActivation, setShowActivation] = useState(false);
   /**
    * 本机运行时**部署**的真实进度（主进程报来）。
    *
@@ -105,6 +117,12 @@ export default function EntryPreparation({
   }, []);
   const run = async (action: () => Promise<void>) => {
     if (locked.current) return;
+    /**
+     * R2（2026-10-10 集中终审 §4 合同 6）：入口先核存活 —— 卸载后的迟到回调
+     * （如旧实例的"激活成功→重跑准备"）不许再发起任何新操作。
+     * 只在 catch/finally 里检查已经太晚：action 本身已经被调用了。
+     */
+    if (!active.current) return;
     locked.current = true;
     setBusy(true);
     setError(false);
@@ -164,10 +182,13 @@ export default function EntryPreparation({
   const deployElapsedMs = progress && progressNow !== null ? Math.max(0, progressNow - progress.startedAt) : null;
   return (
     <div className="relative min-h-screen overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
-      {/* 全屏媒体层（王者荣耀登录页式：视频铺满，内容压底） */}
+      {/* 全屏媒体层（王者荣耀登录页式：视频铺满，内容压底）。
+          ⚠️ U4（2026-10 基线审查）：这一层**不能**整体 aria-hidden —— 它里面住着
+          OpeningMedia 的**声音开关**（交互控件；aria-hidden 子树里的可聚焦按钮对
+          屏幕阅读器与键盘用户都是非法路径）。装饰性由各成员自己标注：
+          视频 `aria-hidden="true"`、吉祥物 `aria-hidden={videoVisible}`。 */}
       <motion.div
         data-entry-animation
-        aria-hidden="true"
         className="absolute inset-0"
         animate={reduceMotion || state.canContinue || state.hasError ? { y: 0 } : { y: [0, -8, 0] }}
         transition={{
@@ -316,13 +337,41 @@ export default function EntryPreparation({
                 </p>
               )}
             </section>
+            {showActivation && (
+              <section data-entry-activation-panel className="glass-scrim rounded-xl p-4 text-left">
+                <ActivationSection
+                  // R2（§4）：把**已核账号 scope**传下去 —— 切号/卸载后，表单里
+                  // 迟到的激活/刷新结果一律按这个 scope 作废（不许串到新账号）。
+                  accountScope={facts.accountUserId}
+                  onActivated={() => {
+                    setShowActivation(false);
+                    void run(onRetry);
+                  }}
+                />
+              </section>
+            )}
             <div className="flex flex-wrap justify-center gap-1">
               {/* ⭐ 运行端起不来时这个按钮**必须留着**（2026-10-07 体检问题 4）：
                   它现在由 IPC `runtime:bootstrap-retry` 真的重跑一轮 bootstrap ——
-                  不再是"重新初始化连接层"那种按了没用的按钮，也不再要求用户完全退出重开。 */}
-              <Button data-entry-retry variant="ghost" disabled={busy} onClick={() => void run(onRetry)}>
-                {t('startupReadiness.retry')}
-              </Button>
+                  不再是"重新初始化连接层"那种按了没用的按钮，也不再要求用户完全退出重开。
+                  ⚠️ U2（2026-10）：确定性 relay 拒绝时**不给它**（按了只会做无用功）——
+                  那一档的出口是「去激活/换卡」，与工作台面板同一套策略。 */}
+              {!needsActivation && (
+                <Button data-entry-retry variant="ghost" disabled={busy} onClick={() => void run(onRetry)}>
+                  {t('startupReadiness.retry')}
+                </Button>
+              )}
+              {needsActivation && (
+                <Button
+                  data-entry-activation
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setShowActivation((value) => !value)}
+                >
+                  <KeyRound size={14} />
+                  {t('startupReadiness.openActivation')}
+                </Button>
+              )}
               <Button data-entry-workspace variant="ghost" disabled={busy} onClick={onChooseWorkspace}>
                 {t('entryPreparation.chooseWorkspace')}
               </Button>
