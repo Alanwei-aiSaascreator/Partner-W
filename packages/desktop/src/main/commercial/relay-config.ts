@@ -1,5 +1,7 @@
 import { COMMERCIAL_DEFAULT_MODEL_ID } from '@clawwork/shared';
 import type { RelayMediaReadiness } from '@clawwork/shared';
+import { setActiveRelayKey } from './relay-key.js';
+import { RELAY_SEARCH_PLUGIN_ID } from '../runtime/relay-search-plugin.js';
 
 /**
  * 中转服务（relay）在客户端这一侧的常量与识别逻辑。
@@ -91,6 +93,13 @@ export function relayProviderIds(configSnapshot: unknown): Set<string> {
 
 /** 中转服务在网关配置里的 provider 名。插件声明的 `providers` 也是这个名字。 */
 export const RELAY_PROVIDER_ID = 'clawrouter';
+
+/**
+ * ⚠️ 历史教训（2026-10-12，一小时的现场排障）：**不要试图从 `gateway.getConfig()`
+ * 的快照里读 relay key**。网关对 apiKey 做**脱敏**（回读值恒为 `__OPENCLAW_REDACTED__`），
+ * 拿它出站的效果是每个请求 401 `invalid relay key`，而 chat 一切正常 —— 极具迷惑性。
+ * 活体 key 只在 `applyRelayConfig` 这一个漏斗里以明文出现，持有者见 `relay-key.ts`。
+ */
 
 /**
  * 图片那条路走**内置的 `openai` 图像 provider**（而不是自造插件）。
@@ -188,6 +197,12 @@ export interface RelayPatchInput {
   existingConfig?: unknown;
   /** 解析出来的默认模型 ref；仅当 `agents.defaults.model.primary` 未设置时才用。 */
   defaultModel?: string | null;
+  /**
+   * relay 目录的静态模型条目（思考档位/上下文窗口的接线，见
+   * `relayCatalogModelEntries` 的说明）。缺省 / 空 = **不写 `models` 键**
+   * （保留旧快照或由内核动态发现兜底；绝不写空数组把列表清掉）。
+   */
+  catalogModels?: readonly RelayCatalogModelEntry[] | null;
   /**
    * 联网搜索开关（用户在设置里能改）。
    *
@@ -340,6 +355,10 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
       baseUrl: activeRelayBaseUrl(),
       apiKey: input.relayKey,
       headers,
+      // ⭐ 2026-10-12：目录模型静态条目（思考档位接线，见 `relayCatalogModelEntries`）。
+      //    数组在 merge patch 里 = 全量替换：每次写入即目录快照；拉不到目录就不写这个键
+      //    （旧快照保留 / 无旧值时内核动态发现兜底）——**绝不写空数组**。
+      ...(input.catalogModels && input.catalogModels.length > 0 ? { models: input.catalogModels } : {}),
     },
   };
 
@@ -370,7 +389,9 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
 
   const patch: RelayConfigPatch = { models: { providers } };
   const search = (config?.tools as { web?: { search?: Record<string, unknown> } } | undefined)?.web?.search;
-  const searchOwned = search?.provider === 'duckduckgo';
+  // 我们写过的 provider：'rongying-search'（2026-10-12 起）或 'duckduckgo'（旧版遗留，
+  // 视同自己的、允许被这次改写接管到新 provider）。
+  const searchOwned = search?.provider === RELAY_SEARCH_PLUGIN_ID || search?.provider === 'duckduckgo';
   const userSearchConfigured =
     !searchOwned &&
     search !== undefined &&
@@ -379,11 +400,22 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
   const searchWired =
     input.bundledWebSearchAvailable === true &&
     !userSearchConfigured &&
-    !isPluginExplicitlyDisabled(config, 'duckduckgo');
+    !isPluginExplicitlyDisabled(config, RELAY_SEARCH_PLUGIN_ID);
   const enableBundledSearch = searchWired && input.webSearch !== false;
   if (enableBundledSearch) {
-    patch.tools = { web: { search: { enabled: true, provider: 'duckduckgo' } } };
-    patch.plugins = { entries: { duckduckgo: { enabled: true } } };
+    // provider 选择 + 插件条目（enabled + 连接配置一并写：插件目录由 state-config 落盘，
+    // 这里只补"怎么连 relay"——baseUrl 用**激活期活体**的 relay 地址，apiKey 用活体 relay key。
+    // ⚠️ 绝不从 gateway config 快照读 key（getConfig 对 apiKey 脱敏，见 relay-config 顶部红字教训）；
+    //    这里写的就是 input.relayKey 本身，与服务端其余通道同一把。
+    patch.tools = { web: { search: { enabled: true, provider: RELAY_SEARCH_PLUGIN_ID } } };
+    patch.plugins = {
+      entries: {
+        [RELAY_SEARCH_PLUGIN_ID]: {
+          enabled: true,
+          config: { webSearch: { baseUrl: activeRelayBaseUrl(), apiKey: input.relayKey } },
+        },
+      },
+    };
   } else if (searchWired && searchOwned && input.webSearch === false) {
     patch.tools = { web: { search: { enabled: false } } };
   }
@@ -398,7 +430,7 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
       RELAY_PROVIDER_ID,
       ...(imageWired ? [OPENAI_IMAGE_PROVIDER_ID] : []),
       ...(videoWired ? [XAI_VIDEO_PROVIDER_ID] : []),
-      ...(enableBundledSearch ? ['duckduckgo'] : []),
+      ...(enableBundledSearch ? [RELAY_SEARCH_PLUGIN_ID] : []),
     ];
     patch.plugins = {
       ...(patch.plugins as Record<string, unknown> | undefined),
@@ -574,6 +606,131 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
 const CATALOG_TIMEOUT_MS = 8_000;
 
 /**
+ * 内核思考档位词表：relay 目录的 effort 词 → 内核 level 词。
+ *
+ * **逐字对齐内核的 `CLAWROUTER_REASONING_EFFORT_LEVELS`**
+ * （`dist/provider-catalog-Cdx84e9y.mjs`，随包运行时同文件）——relay 用 `none`、
+ * 内核用 `off`，其余同名。改这里之前先对内核源；有专项测试钉住映射。
+ */
+const RELAY_EFFORT_TO_THINKING_LEVEL: ReadonlyArray<readonly [effort: string, level: string]> = [
+  ['none', 'off'],
+  ['minimal', 'minimal'],
+  ['low', 'low'],
+  ['medium', 'medium'],
+  ['high', 'high'],
+  ['xhigh', 'xhigh'],
+  ['max', 'max'],
+];
+
+/** 写进 `models.providers.clawrouter.models[]` 的静态模型条目（JSON 形状）。 */
+export interface RelayCatalogModelEntry {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  compat?: { supportsReasoningEffort: true; supportedReasoningEfforts: string[] };
+  thinkingLevelMap?: Record<string, string | null>;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+function readEfforts(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const advertised = new Set(value.filter((entry): entry is string => typeof entry === 'string'));
+  // 按内核词表顺序输出（内核 `normalizeClawRouterReasoningEfforts` 同规则），
+  // 未知词不传（内核也会自行过滤，这里双保险）。
+  return RELAY_EFFORT_TO_THINKING_LEVEL.filter(([effort]) => advertised.has(effort)).map(([effort]) => effort);
+}
+
+function buildThinkingLevelMap(efforts: readonly string[]): Record<string, string | null> {
+  const supported = new Set(efforts);
+  const map: Record<string, string | null> = {};
+  // 与内核 `buildThinkingLevelMap` 逐字同构：**每个** level 都写键，不支持 = null。
+  for (const [effort, level] of RELAY_EFFORT_TO_THINKING_LEVEL) map[level] = supported.has(effort) ? effort : null;
+  return map;
+}
+
+function asPositiveInt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * relay 目录（`/v1/catalog` 的响应体）→ **内核静态模型条目**。
+ *
+ * ## 为什么要有这批静态条目（2026-10-12 修复：思考档位接线）
+ *
+ * 内核对 clawrouter 模型的**思考档位**只认模型条目的 `compat.supportedReasoningEfforts`
+ * （内核 `dist/extensions/clawrouter/index.js` 的 `resolveClawRouterThinkingProfile`），
+ * 缺失 ⇒ 回落基础五档 `off|minimal|low|medium|high`。真机后果（2026-10-11）：
+ * deep 档 = `thinkingLevel:"max"` 被 `sessions.patch` 每发必拒
+ * （「不支持「最高」档思考」上屏、任务实际停在 high）——目录里 glm-5.3-flash 明明
+ * 声明了 `["low","high","max"]`，只是**没有任何路径把它传导进内核**。
+ *
+ * 把目录声明**静态写进网关配置**是内核官方支持的通道（`openai` 扩展的模型条目
+ * 同形；`capability model inspect` 实测静态条目带全 compat 进 catalog）。
+ * 字段形状与内核动态发现产物（`buildRoutedModel`）对齐：efforts 非空才写
+ * compat + thinkingLevelMap + reasoning=true。
+ *
+ * ⚠️ 写的是**目录原样快照**：JSON merge patch 里数组 = 全量替换，每次写入
+ * 即刷新（目录下架模型 ⇒ 列表随之移除）。
+ */
+export function relayCatalogModelEntries(catalog: unknown): RelayCatalogModelEntry[] {
+  const providers = (catalog as { providers?: unknown } | null)?.providers;
+  if (!Array.isArray(providers)) return [];
+
+  const entries: RelayCatalogModelEntry[] = [];
+  const seen = new Set<string>();
+  for (const provider of providers) {
+    const models = (provider as { models?: unknown } | null)?.models;
+    if (!Array.isArray(models)) continue;
+    for (const model of models) {
+      const row = model as {
+        id?: unknown;
+        displayName?: unknown;
+        supportedReasoningEfforts?: unknown;
+        pricing?: { maxInputTokens?: unknown; defaultMaxOutputTokens?: unknown } | null;
+      } | null;
+      const id = typeof row?.id === 'string' ? row.id.trim() : '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+
+      const displayName = typeof row?.displayName === 'string' && row.displayName.trim() ? row.displayName.trim() : id;
+      const efforts = readEfforts(row?.supportedReasoningEfforts);
+      const contextWindow = asPositiveInt(row?.pricing?.maxInputTokens);
+      const maxTokens = asPositiveInt(row?.pricing?.defaultMaxOutputTokens);
+      entries.push({
+        id,
+        name: displayName,
+        reasoning: efforts.length > 0,
+        ...(efforts.length > 0
+          ? {
+              compat: { supportsReasoningEffort: true as const, supportedReasoningEfforts: efforts },
+              thinkingLevelMap: buildThinkingLevelMap(efforts),
+            }
+          : {}),
+        ...(contextWindow ? { contextWindow } : {}),
+        ...(maxTokens ? { maxTokens } : {}),
+      });
+    }
+  }
+  return entries;
+}
+
+/**
+ * 拉一次 relay 目录并映射成静态模型条目；拿不到返回 null
+ * （= 不写 `models` 键，让内核动态发现兜底，绝不写空数组）。
+ */
+export async function fetchRelayCatalogModelEntries(relayKey: string): Promise<RelayCatalogModelEntry[] | null> {
+  const res = await fetch(`${normalizeBaseUrl(activeRelayBaseUrl())}/v1/catalog`, {
+    headers: { Authorization: `Bearer ${relayKey}` },
+    signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
+  });
+  if (!res.ok) return null;
+
+  const entries = relayCatalogModelEntries(await res.json());
+  return entries.length > 0 ? entries : null;
+}
+
+/**
  * 从中转服务的 catalog 里取一个模型，拼成 openclaw 的模型 ref。
  *
  * ref 的格式是 **`clawrouter/<catalog 里的 model id>`** —— **两段**。
@@ -649,6 +806,8 @@ export interface ApplyRelayConfigDeps {
   patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
   /** 解析一个可用的中转模型 ref；拿不到返回 null（不阻塞主流程）。 */
   resolveDefaultModel?: (relayKey: string) => Promise<string | null>;
+  /** 拉 relay 目录映射成静态模型条目；拿不到返回 null（不阻塞主流程）。 */
+  resolveCatalogModels?: (relayKey: string) => Promise<RelayCatalogModelEntry[] | null>;
   /** relay 的逐卡媒体能力探针；缺省或失败一律按两项关闭。 */
   resolveMediaCapabilities?: (relayKey: string) => Promise<RelayMediaCapabilities>;
   /** 日志。**不要传含 relay key 的数据进来**。 */
@@ -837,8 +996,8 @@ function searchPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean
   if (expected.enabled !== true) return true;
   const plugins = config?.plugins as { entries?: Record<string, { enabled?: unknown }>; allow?: string[] } | undefined;
   return (
-    plugins?.entries?.duckduckgo?.enabled === true &&
-    (!Array.isArray(plugins.allow) || plugins.allow.includes('duckduckgo'))
+    plugins?.entries?.[RELAY_SEARCH_PLUGIN_ID]?.enabled === true &&
+    (!Array.isArray(plugins.allow) || plugins.allow.includes(RELAY_SEARCH_PLUGIN_ID))
   );
 }
 
@@ -865,6 +1024,11 @@ export async function applyRelayConfig(
   const warnings: string[] = [];
   const log = deps.log ?? ((): void => {});
 
+  // 活体 key 的内存持有者（2026-10-12 视频接入）：这里是**唯一**拿到明文 key 的漏斗
+  // （激活与每轮启动 bootstrap 都走它）——网关的 `config.get` 对 apiKey 脱敏，
+  // 消息期的直呼 relay（视频）只能从这里取。null 即清除（见 relay-key.ts）。
+  setActiveRelayKey(input.relayKey);
+
   if (!input.relayKey) {
     return { ok: false, configured: false, errorCode: 'no-key', error: 'no relay key', warnings };
   }
@@ -877,6 +1041,17 @@ export async function applyRelayConfig(
       // 拿不到模型只是「默认模型不写」，不该拖垮整个配置写入。
       warnings.push('resolve-default-model-failed');
       log('relay.default-model-resolve-failed', { message: messageOf(error) });
+    }
+  }
+
+  let catalogModels: RelayCatalogModelEntry[] | null = null;
+  if (deps.resolveCatalogModels) {
+    try {
+      catalogModels = await deps.resolveCatalogModels(input.relayKey);
+    } catch (error) {
+      // 目录拉不到只是「静态模型条目不写」（旧快照保留 / 动态发现兜底），不该拖垮写入。
+      warnings.push('resolve-catalog-models-failed');
+      log('relay.catalog-models-resolve-failed', { message: messageOf(error) });
     }
   }
 
@@ -917,6 +1092,7 @@ export async function applyRelayConfig(
       ...input,
       existingConfig: snapshot,
       defaultModel,
+      catalogModels,
       imageGenerationWired: mediaCapabilities.image,
       videoGenerationWired: mediaCapabilities.video,
     });

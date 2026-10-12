@@ -25,15 +25,18 @@ const mocks = vi.hoisted(() => ({
   } | null,
   gatewayState: { agentCatalog: [{ id: 'main' }] as Array<{ id: string; name?: string }> },
   modelCatalogByGateway: {
+    // 2026-10-10 Cephalon 批：商业默认 = glm-5.3-flash（智能档同款）——
+    // 夹具目录按**切换后现实**准备（含新默认 + 旧渠道/其它目录项并存）。
     'gw-1': [
+      { id: 'glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
       { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
       { id: 'qwen3.5-plus', provider: 'clawrouter', name: 'Qwen 3.5 Plus' },
     ],
     'gw-2': [
       {
-        id: 'clawrouter/deepseek-v4-flash',
+        id: 'clawrouter/glm-5.3-flash',
         provider: 'clawrouter',
-        name: 'Gateway Two DeepSeek',
+        name: 'Gateway Two GLM',
       },
       { id: 'glm-4.7', provider: 'clawrouter', name: 'GLM 4.7' },
     ],
@@ -244,14 +247,14 @@ describe('WelcomeScreen assistant workspace', () => {
       />,
     );
 
-    // 工作台落在罗盘（不是画像推荐过的 video），模型照旧落到待发任务。
+    // 工作台落在罗盘（不是画像推荐过的 video），模型照旧落到待发任务（新商业默认 glm-5.3-flash）。
     expect(container.textContent).toContain('assistantWorkspaces.compass.description');
     expect(container.textContent).not.toContain('assistantWorkspaces.video.description');
     expect(mocks.setSelectedAgent).toHaveBeenCalledWith('gw-1', 'main');
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
       agentId: 'main',
-      model: 'deepseek-v4-flash',
+      model: 'glm-5.3-flash',
     });
     // chip 区只留一级入口（当前罗盘）：预置的 rongying-video 不再是其中一格（它归「技能与能力」）。
     const chipLabels = [...container.querySelectorAll('button')].map((button) => button.textContent?.trim());
@@ -284,7 +287,7 @@ describe('WelcomeScreen assistant workspace', () => {
     unmount();
   });
 
-  it('shows the real pending model label instead of the commercial default in a two-model catalog', () => {
+  it('chip 两级口径：模式档只显示模式名（模型不上屏）；custom 显示真实 pending 模型', () => {
     mocks.gatewayState.agentCatalog = [{ id: 'main' }, { id: 'rongying-video' }];
     const ui = () => (
       <WelcomeScreen
@@ -297,21 +300,28 @@ describe('WelcomeScreen assistant workspace', () => {
     );
     const view = render(ui());
 
-    expect(view.container.textContent).toContain('DeepSeek V4 Flash');
+    // 空待发态：待发档 = 默认档（智能）—— 2026-10-11 用户拍板后**只显示模式名**，
+    // 背后跑哪个模型（新商业默认 glm-5.3-flash）是内部实现，不上屏。
+    expect(view.container.textContent).toContain('chatInput.mode.smart');
+    expect(view.container.textContent).not.toContain('GLM 5.3 Flash');
+    // `pending.model` 仍是那条"留痕"（商业默认写到状态层）—— 显示层不上屏不改状态。
     expect(mocks.setPending).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayId: 'gw-1', model: 'deepseek-v4-flash' }),
+      expect.objectContaining({ gatewayId: 'gw-1', model: 'glm-5.3-flash' }),
     );
 
+    // ⚠️ 2026-10-11 两级口径：模式档只显示模式名（模型=内部实现）；
+    //    "真实 pending 模型"这一格由 **custom（用户显式选过模型）** 承载（见 useChatSend 同款判据）。
     mocks.pendingNewTask = {
       gatewayId: 'gw-1',
       agentId: 'rongying-video',
       model: 'qwen3.5-plus',
+      mode: 'custom',
     };
     mocks.setPending.mockClear();
     view.rerender(ui());
 
     expect(view.container.textContent).toContain('Qwen 3.5 Plus');
-    expect(view.container.textContent).not.toContain('DeepSeek V4 Flash');
+    expect(view.container.textContent).not.toContain('GLM 5.3 Flash');
     expect(mocks.setPending).not.toHaveBeenCalled();
 
     const compassButton = [...view.container.querySelectorAll('button')].find((button) =>
@@ -322,16 +332,18 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
       agentId: 'main',
-      model: 'deepseek-v4-flash',
+      model: 'glm-5.3-flash',
     });
     view.unmount();
   });
 
   it('preserves a same-scope non-default model on first mount and remount', () => {
+    // custom（用户显式选过模型）—— 只有这一档 chip 直接显示 pending.model（模式档显示模式解析模型）。
     mocks.pendingNewTask = {
       gatewayId: 'gw-1',
       agentId: 'main',
       model: 'qwen3.5-plus',
+      mode: 'custom',
     };
     const ui = () => (
       <WelcomeScreen
@@ -373,8 +385,12 @@ describe('WelcomeScreen assistant workspace', () => {
       />,
     );
 
-    expect(container.textContent).toContain('qwen3.5-plus');
+    // 2026-10-11 起模式档 chip 与模型解耦（此待发态无 mode ⇒ 默认智能档）：
+    // 目录一个可用模型都没有（还没加载）⇒ 显示可用性层"正在准备模型…"，不显示模型名；
+    // "同域模型没被清掉"由上两行状态断言钉住。
+    expect(container.textContent).toContain('chatInput.modelsLoading');
     expect(mocks.setPending).not.toHaveBeenCalled();
+    expect(mocks.updatePending).not.toHaveBeenCalled();
     unmount();
     mocks.modelCatalogByGateway['gw-1'] = previousCatalog;
   });
@@ -403,7 +419,7 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.updatePending.mockClear();
     view.rerender(ui());
 
-    expect(mocks.updatePending).toHaveBeenCalledWith({ model: 'deepseek-v4-flash' });
+    expect(mocks.updatePending).toHaveBeenCalledWith({ model: 'glm-5.3-flash' });
     expect(mocks.setPending).not.toHaveBeenCalled();
     expect(mocks.pendingNewTask?.tags).toEqual(['private', 'assistant-task-preset:compass:goal-breakdown']);
     view.unmount();
@@ -425,6 +441,7 @@ describe('WelcomeScreen assistant workspace', () => {
       gatewayId: 'gw-1',
       agentId: 'main',
       model: 'qwen3.5-plus',
+      mode: 'custom',
       tags: ['private', 'assistant-task-preset:compass:goal-breakdown'],
     };
     view.rerender(ui());
@@ -434,13 +451,15 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.setPending.mockClear();
     view.rerender(ui());
 
-    expect(view.container.textContent).toContain('Gateway Two DeepSeek');
+    // 2026-10-11：切网关后的待发态是全新默认档（智能）⇒ chip 只显示模式名；
+    // 目标网关的默认模型（Gateway Two GLM）只进 setPending 负载（下行断言），不再上屏。
+    expect(view.container.textContent).toContain('chatInput.mode.smart');
     expect(view.container.textContent).not.toContain('Qwen 3.5 Plus');
     expect(view.container.textContent).not.toContain('qwen3.5-plus');
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-2',
       agentId: 'main',
-      model: 'clawrouter/deepseek-v4-flash',
+      model: 'clawrouter/glm-5.3-flash',
       tags: ['private'],
     });
     view.unmount();
@@ -474,7 +493,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
       agentId: 'custom-agent',
-      model: 'deepseek-v4-flash',
+      model: 'glm-5.3-flash',
       tags: ['private'],
     });
     unmount();
@@ -692,21 +711,21 @@ describe('WelcomeScreen assistant workspace', () => {
    * 一边说"不在本机"、一边给一个指向同样不存在的助手的出口。那时只留"去团队页"。
    */
   /**
-   * ⭐ FEAT-01 集成（2026-10-08）：**chip 说的是"将要跑什么"，不是"上次跑过什么"**。
+   * ⭐ FEAT-01 集成（2026-10-08；**2026-10-11 用户拍板修订**）：**chip 说的是"将要跑什么"**。
    *
    * `createTask` 把新任务的 `mode` 写成默认档（智能），发送路径按 `MODE_POLICY` 对着目录
-   * 现解析模型（智能档 = `qwen3.7-flash`）；而 welcome 屏以前显示的是 `pending.model`
-   * （写死的商业默认模型 `deepseek-v4-flash`）——用户看到的模型和真跑的模型**不是同一个**。
-   * 现在：模式档位下显示「模式名 · 解析出的模型」。
+   * 现解析模型（Cephalon 批起三档统一 `glm-5.3-flash`，只差思考档）。
    *
-   * ⚠️ 目录里**没有**模式模型时不硬编：发送路径会回退到 `pending.model`，
-   *    chip 就显示那个模型（见下面「真实 pending 模型」那条既有用例）。
+   * ⚠️ 2026-10-11 用户拍板：**三档模式背后跑哪个模型是内部实现，不再上屏** ——
+   *    模式档 chip 只显示模式名（显示层与模型彻底解耦：目录里有没有模式模型、
+   *    发送路径回退到 `pending.model` 与否，都不改变"只显示模式名"）。
+   *    仅 `custom`（高级：用户显式选过模型）显示模型名。
    */
-  it('⭐ FEAT-01：目录里有模式模型时，待发 chip 显示「智能 · 按模式解析的模型」', () => {
+  it('⭐ FEAT-01（2026-10-11 修订）：智能档只显示模式名，背后模型不上屏', () => {
     const previous = mocks.modelCatalogByGateway['gw-1'];
     mocks.modelCatalogByGateway['gw-1'] = [
       { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
-      { id: 'qwen3.7-flash', provider: 'clawrouter', name: 'Qwen3.7 Flash' },
+      { id: 'glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
     ];
     const { container, unmount } = render(
       <WelcomeScreen
@@ -719,17 +738,20 @@ describe('WelcomeScreen assistant workspace', () => {
     );
 
     expect(container.textContent, '模式名要出现').toContain('chatInput.mode.smart');
-    expect(container.textContent, '要显示模式解析出的模型').toContain('Qwen3.7 Flash');
-    expect(container.textContent, '不许再显示写死的默认模型').not.toContain('DeepSeek V4 Flash');
-    // `pending.model` 仍是那条"留痕"（发送路径在模式档下会覆写它）—— 状态不被显示层改写。
-    expect(mocks.setPending).toHaveBeenCalledWith(expect.objectContaining({ model: 'deepseek-v4-flash' }));
+    expect(container.textContent, '背后模型不上屏（2026-10-11 用户拍板）').not.toContain('GLM 5.3 Flash');
+    expect(container.textContent, '目录里别的模型（旧默认时代那条）不上屏').not.toContain('DeepSeek V4 Flash');
+    // `pending.model` 仍是那条"留痕"（= 商业默认）—— 状态不被显示层改写。
+    expect(mocks.setPending).toHaveBeenCalledWith(expect.objectContaining({ model: 'glm-5.3-flash' }));
     unmount();
     mocks.modelCatalogByGateway['gw-1'] = previous;
   });
 
-  it('⭐ FEAT-01：快速档别名缺席 ⇒ 显示回退后的基础模型（与发送路径同一把尺）', () => {
+  it('⭐ FEAT-01（2026-10-11 修订）：快速档同样只显示模式名（三档 = glm-5.3-flash，不露给用户）', () => {
     const previous = mocks.modelCatalogByGateway['gw-1'];
-    mocks.modelCatalogByGateway['gw-1'] = [{ id: 'qwen3.7-flash', provider: 'clawrouter', name: 'Qwen3.7 Flash' }];
+    mocks.modelCatalogByGateway['gw-1'] = [
+      { id: 'glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
+      { id: 'qwen3.7-flash', provider: 'clawrouter', name: 'Qwen3.7 Flash' },
+    ];
     mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', mode: 'fast' };
     const { container, unmount } = render(
       <WelcomeScreen
@@ -742,7 +764,27 @@ describe('WelcomeScreen assistant workspace', () => {
     );
 
     expect(container.textContent).toContain('chatInput.mode.fast');
-    expect(container.textContent).toContain('Qwen3.7 Flash');
+    expect(container.textContent, '模型不上屏').not.toContain('GLM 5.3 Flash');
+    unmount();
+    mocks.modelCatalogByGateway['gw-1'] = previous;
+  });
+
+  it('⭐ 目录里没有模式模型（glm 缺席）也照样只显示模式名 —— 显示层与模型彻底解耦（2026-10-11）', () => {
+    const previous = mocks.modelCatalogByGateway['gw-1'];
+    mocks.modelCatalogByGateway['gw-1'] = [{ id: 'qwen3.5-plus', provider: 'clawrouter', name: 'Qwen 3.5 Plus' }];
+    mocks.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', mode: 'fast', model: 'qwen3.5-plus' };
+    const { container, unmount } = render(
+      <WelcomeScreen
+        onboardingProfile={{ ...onboardingProfile, useCases: [] }}
+        recentPresetIds={[]}
+        onSelectPreset={vi.fn()}
+        onCustomTask={vi.fn()}
+        onAssistantChange={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent, '模式名照常显示').toContain('chatInput.mode.fast');
+    expect(container.textContent, '回退目标（pending.model）也不上屏 —— 模型=内部实现').not.toContain('Qwen 3.5 Plus');
     unmount();
     mocks.modelCatalogByGateway['gw-1'] = previous;
   });

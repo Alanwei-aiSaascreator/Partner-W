@@ -31,9 +31,11 @@ import { isDeckWorkRequest, modelIdMatches, type TaskModeSetting } from '@clawwo
  * Deck 任务统一路由到的模型。**写本体、不写前缀** —— 目录里的 id 才是真身，
  * 解析结果原样当 `presetModel`（与 `resolveModeModelId` 同一把尺，见 task-modes.ts）。
  *
- * 目录里没有它时（还没拉到 / 下架）：**不路由、不拦截**，照原模型发。
+ * 2026-10-10 Cephalon 批：迁到**新平台渠道** `deepseek-v4-flash-cephalon`
+ * （旧 `deepseek-v4-flash` 在中转目录里可能并存为可选）；旧渠道还在目录里时
+ * **不悄悄回退旧渠道** —— 目录里没有新 ID ⇒ `undefined` ⇒ 不路由、不拦截，照原模型发。
  */
-export const DECK_ROUTE_MODEL_ID = 'deepseek-v4-flash';
+export const DECK_ROUTE_MODEL_ID = 'deepseek-v4-flash-cephalon';
 
 /**
  * 这条文本是不是"要一份演示文稿"？（纯函数，单独钉）

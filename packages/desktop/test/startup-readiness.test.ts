@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { ModelCatalogEntry, WorkspaceFsIdentity } from '@clawwork/shared';
+import type { GatewayFailureReason, ModelCatalogEntry, WorkspaceFsIdentity } from '@clawwork/shared';
 import {
   deriveStartupReadiness,
   gatewayFailureText,
@@ -706,16 +706,9 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
       }
     ).startupReadiness;
   const strip = (fullKey: string | null): string => (fullKey ?? '').replace('startupReadiness.', '');
-  const withReason = (
-    reason:
-      | 'port-occupied'
-      | 'auth-rejected'
-      | 'process-exited'
-      | 'ready-timeout'
-      | 'state-migration-blocked'
-      | 'deploy-failed'
-      | 'unknown',
-  ) =>
+  // ⚠️ K4-2：不手抄闭集 —— 直接消费 `@clawwork/shared` 的 GatewayFailureReason
+  //（多加一档时这里跟着走；手抄联合类型会让新增值在调用点报"看起来无关"的错）。
+  const withReason = (reason: GatewayFailureReason) =>
     deriveStartupReadiness({
       gatewayId: 'gw-1',
       gatewayStatus: 'disconnected',
@@ -742,6 +735,16 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
     expect(gatewayFailureText(withReason('deploy-failed'), key)).toBe('startupReadiness.gatewayDeployFailed');
   });
 
+  it.each([
+    ['node-missing', 'startupReadiness.gatewayNodeMissing'],
+    ['node-permission-denied', 'startupReadiness.gatewayNodePermissionDenied'],
+    ['node-probe-timeout', 'startupReadiness.gatewayNodeProbeTimeout'],
+    ['node-exec-failed', 'startupReadiness.gatewayNodeExecFailed'],
+    ['node-version-unsupported', 'startupReadiness.gatewayNodeVersionUnsupported'],
+  ] as const)('⭐ BUG-064：随盘 Node 失败 %s ⇒ 各自一句（各有各的下一步）', (reason, expected) => {
+    expect(gatewayFailureText(withReason(reason), key)).toBe(expected);
+  });
+
   it('⭐ `unknown` **不冒充**具体原因：交给通用那句', () => {
     expect(gatewayFailureText(withReason('unknown'), key)).toBeNull();
   });
@@ -757,15 +760,26 @@ describe('网关失败：四类各自说得出话，说不清的交给通用那�
     expect(gatewayFailureText(clean, key)).toBeNull();
   });
 
-  it('⭐⭐ 五句中文**两两不同**（抄错一句就会两处一模一样）', () => {
+  it('⭐⭐ 十句中文**两两不同**（抄错一句就会两处一模一样）', () => {
     // 用**真文案**而不是 key：key 天然互不相同，那样这条就白测了。
     const zh = readZh();
     // ⚠️ 返回的是**带前缀**的 key，查表前要去掉前缀（第一版就是栽在这里）。
-    const texts = (['port-occupied', 'auth-rejected', 'process-exited', 'ready-timeout', 'deploy-failed'] as const).map(
-      (reason) => zh[strip(gatewayFailureText(withReason(reason), key))],
-    );
+    const reasons = [
+      'port-occupied',
+      'auth-rejected',
+      'process-exited',
+      'ready-timeout',
+      'deploy-failed',
+      // BUG-064：随盘 Node 的五档（各自说各自的下一步）
+      'node-missing',
+      'node-permission-denied',
+      'node-probe-timeout',
+      'node-exec-failed',
+      'node-version-unsupported',
+    ] as const;
+    const texts = reasons.map((reason) => zh[strip(gatewayFailureText(withReason(reason), key))]);
     expect(texts.every((text) => typeof text === 'string' && text.length > 0)).toBe(true);
-    expect(new Set(texts).size, '五句话必须互不相同').toBe(5);
+    expect(new Set(texts).size, '十句话必须互不相同').toBe(reasons.length);
   });
 
   it('⭐⭐ 被拒那句**不许带凭据类字样**（它要过 IPC、上界面、进截图）', () => {

@@ -13,6 +13,13 @@ import { reviewNativePpt, type NativeVisualReview } from '../docgen/native-revie
 import { nativeReviewPorts } from '../docgen/native-review-runtime.js';
 import { tasks, messages, artifacts, taskRooms, taskRoomSessions, teams, teamAgents } from '../db/schema.js';
 import { autoExtractArtifacts } from '../artifact/auto-extract.js';
+import {
+  isLiveTurnSession,
+  registerTurnReleaseHandler,
+  registerTurnRunStateProbe,
+  settleLiveTurn,
+  type SessionTurnRunState,
+} from '../artifact/turn-lifecycle.js';
 import { saveArtifact } from '../artifact/save.js';
 import { forgetTaskDeliveryActivities } from '../artifact/delivery-activity.js';
 import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
@@ -25,6 +32,7 @@ import { generateDocumentsFromMessage } from '../docgen/generate.js';
 //    删掉任何一个，下面各自那个调用点就变成 TS2304（找不到名字）。
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
+import { startVideogenJobs } from '../videogen/start.js';
 import { generateSlidesFromMessage } from '../slidegen/generate.js';
 import {
   collectToolSlideReceipts,
@@ -517,7 +525,12 @@ export function beginArtifactRun(
   if (desynchronizedArtifactSessions.has(key)) return token;
   while (artifactRunCount() >= MAX_ARTIFACT_RUNS) desynchronizeOldestArtifactSession();
   if (desynchronizedArtifactSessions.has(key)) return token;
-  const expiryTimer = setTimeout(() => cancelArtifactRun(taskId, sessionKey, token), ARTIFACT_RUN_TTL_MS);
+  // ⭐ B1（2026-10-11 整改）：TTL 到点是**真实的有界兜底事件** —— 除了取消这个 run，
+  //    还要把「一轮在跑」软状态一并落地（见 settleLiveTurnOnRunExpiry 的保护条件）。
+  const expiryTimer = setTimeout(() => {
+    cancelArtifactRun(taskId, sessionKey, token);
+    settleLiveTurnOnRunExpiry(taskId, sessionKey, token);
+  }, ARTIFACT_RUN_TTL_MS);
   expiryTimer.unref?.();
   const queue = artifactRuns.get(key) ?? [];
   if (process.env.ROYIN_NATIVE_PPT_VALIDATION === '1') {
@@ -553,6 +566,117 @@ export function isArtifactRunPendingCurrent(taskId: string, sessionKey: string, 
   const queue = artifactRuns.get(artifactRunKey(taskId, sessionKey));
   const run = queue?.find((candidate) => candidate.token === token);
   return !!(run && run.state === 'active' && !run.gatewayRunId && queue?.at(-1) === run && !isArtifactRunCanceled(run));
+}
+
+/**
+ * ⚠️ DOCX-205 合同（2026-10-10）B 块：**同会话普通发送单飞**的主进程侧判据。
+ *
+ * `ws:send-message` 在建立新 ArtifactRun 之前问它：同一个 task+session 还有
+ * 「执行中」（active、未被 claim/取消）或「交付中」（已 claim、settle 未走完）的 run
+ * ⇒ 拒绝普通新请求（具名错误码 `TURN_IN_FLIGHT`，见 ws-handlers 的调用点）。
+ *
+ * 释放全部走**真实事件**，没有固定 sleep：
+ *  - 执行终态 → 终态消息 claim（`claimArtifactRun` 移出队列）；
+ *  - 交付 settled → `finalizeAssistantArtifacts` 的 finally 释放 claimed；
+ *  - 停止 / 发送失败 / 交付失败 → `cancelArtifactRun(s)`；
+ *  - 兜底 → 每个 run 自己的 15 分钟 TTL（有界，不是"等一觉"）。
+ */
+export function isArtifactTurnInFlight(taskId: string, sessionKey: string): boolean {
+  // 「一轮在跑」的软状态（agent.lifecycle.start 起、end/error 落）——
+  // 它在 run 建立之前就成立（派发进行中），比队列判据更早。
+  if (isLiveTurnSession(sessionKey)) return true;
+  const key = artifactRunKey(taskId, sessionKey);
+  const queue = artifactRuns.get(key);
+  if (queue?.some((run) => run.state === 'active' && !isArtifactRunCanceled(run))) return true;
+  for (const run of claimedArtifactRuns.values()) {
+    if (run.taskId === taskId && run.sessionKey === sessionKey) return true;
+  }
+  return false;
+}
+
+/**
+ * `turn-lifecycle` 的宽限释放出口：把该会话里还没被终态消息 claim 的 active run
+ * 取消（留成取消墓碑，保住 FIFO 位置语义）。只碰"没 claim 的 active"——
+ * 已 claim 的交付流水线由 finalize 的 finally 释放，不在这里动。
+ */
+function releaseStaleTurnRuns(sessionKey: string): void {
+  // ⚠️ 会话此刻**正在跑**（新的重发轮已经 lifecycle.start / 或仍在 live 窗口）⇒ 一律不动 ——
+  //    宽限计时器属于**上一轮**，误杀进行中的轮次会把真实交付打断。配合
+  //    `noteGatewayTurnLifecycle('start')` 清计时器，这是双保险。
+  if (isLiveTurnSession(sessionKey)) return;
+  for (const queue of [...artifactRuns.values()]) {
+    for (const run of [...queue]) {
+      if (run.sessionKey !== sessionKey) continue;
+      if (run.state !== 'active' || isArtifactRunCanceled(run)) continue;
+      getDebugLogger().warn({
+        domain: 'artifact',
+        event: 'artifact.turn-release-stale-run',
+        taskId: run.taskId,
+        data: { sessionKey, token: run.token, bound: Boolean(run.gatewayRunId) },
+      });
+      cancelArtifactRun(run.taskId, run.sessionKey, run.token);
+    }
+  }
+}
+
+registerTurnReleaseHandler(releaseStaleTurnRuns);
+
+/**
+ * ⭐ B1（2026-10-11 整改）：`turn-lifecycle` 重连核对用的**真实 run 状态**探针。
+ *
+ * 回答"这个会话的一轮在主进程侧真的还在跑吗"，只在拿到**正反两面的真实证据**时才
+ * 点头/摇头，其余一律 `unknown`（调用方对 unknown 是保守保留，绝不猜着清）：
+ *  - `running`：run 队列里还有未取消的 active run，或已 claim（交付在途）；
+ *  - `ended`  ：终态消息已经 claim 过这一轮（`completedAssistantMessages` 的 24h 记录，
+ *              且是这次软状态开始**之后**的 —— 更早的记录说的不是这一轮）；或该会话
+ *              的 run 已被取消（停止/被替代 = 真实终态，软状态若还挂着就是陈旧的）；
+ *  - `unknown`：没有任何可判定的记录（例如 begin 就失败的极边缘轮次）。
+ */
+function sessionTurnRunState(sessionKey: string, since: number): SessionTurnRunState {
+  for (const queue of artifactRuns.values()) {
+    for (const run of queue) {
+      if (run.sessionKey !== sessionKey) continue;
+      if (run.state === 'active' && !isArtifactRunCanceled(run)) return 'running';
+    }
+  }
+  for (const run of claimedArtifactRuns.values()) {
+    if (run.sessionKey === sessionKey) return 'running';
+  }
+  for (const record of completedAssistantMessages.values()) {
+    if (record.sessionKey === sessionKey && record.touchedAt >= since) return 'ended';
+  }
+  for (const queue of artifactRuns.values()) {
+    for (const run of queue) {
+      if (run.sessionKey === sessionKey && isArtifactRunCanceled(run)) return 'ended';
+    }
+  }
+  return 'unknown';
+}
+
+registerTurnRunStateProbe(sessionTurnRunState);
+
+/**
+ * ⭐ B1（2026-10-11 整改）：run 自己的 15 分钟 TTL 到点（注释见 `isArtifactTurnInFlight`
+ * 的"兜底"那条 —— 这正是软状态注释里承诺过的真实释放路径）时，把「一轮在跑」软状态
+ * 一并落地：网关在断连里结束/终态事件丢失、之后又不再重连（拿不到核对时机）时，
+ * 升级不会被永久判忙。
+ *
+ * 保护：该会话若还有**更新的**在途工作（别的未取消 run / 已 claim 交付），这不是它的
+ * 收尾，不动。只落地软状态 —— run 的取消/单飞门语义原样（不提前放行写盘/登记）。
+ */
+function settleLiveTurnOnRunExpiry(taskId: string, sessionKey: string, token: string): void {
+  const queue = artifactRuns.get(artifactRunKey(taskId, sessionKey));
+  const hasNewerWork =
+    (queue?.some((run) => run.token !== token && !isArtifactRunCanceled(run)) ?? false) ||
+    [...claimedArtifactRuns.values()].some((run) => run.token !== token && run.sessionKey === sessionKey);
+  if (hasNewerWork) return;
+  getDebugLogger().warn({
+    domain: 'artifact',
+    event: 'artifact.turn-release-run-expired',
+    taskId,
+    data: { sessionKey, token },
+  });
+  settleLiveTurn(sessionKey);
 }
 
 function cancelNativeRun(run: ArtifactRunContext): void {
@@ -780,16 +904,17 @@ export function beginArtifactRunForGatewayDispatch(input: {
  *    取不到时还要等满 1.85 秒的重试 —— 那是在收尾路径上，用户直接能感觉到。
  *
  * ⚠️ 只看**开头**围栏：被截断的那份正是"开了头、没有结尾"。
- *    大小写不敏感，但语言标记必须恰好是三种生成围栏之一。
+ *    大小写不敏感，但语言标记必须恰好是这几种生成围栏之一。
+ *    （`videogen` 2026-10-12 并入：视频块也走"截断要取全文"这条链。）
  */
-type StructuredFenceKind = 'docgen' | 'slidegen' | 'htmlgen';
+type StructuredFenceKind = 'docgen' | 'slidegen' | 'htmlgen' | 'videogen';
 
 function hasStructuredFenceKind(content: string, kind: StructuredFenceKind): boolean {
   return new RegExp('^```[ \\t]*' + kind + '[ \\t]*$', 'im').test(content);
 }
 
 function hasStructuredFence(content: string): boolean {
-  return (['docgen', 'slidegen', 'htmlgen'] as const).some((kind) => hasStructuredFenceKind(content, kind));
+  return (['docgen', 'slidegen', 'htmlgen', 'videogen'] as const).some((kind) => hasStructuredFenceKind(content, kind));
 }
 
 async function structuredReplyContent(input: {
@@ -856,6 +981,8 @@ function finalizeAssistantArtifacts(input: {
   gatewayHttpBase?: string;
   gatewayId?: string;
   toolCalls?: unknown[];
+  /** 门处已核对过的当前 run 期望产物类型（claim 失败时用于结构化未确认判定）。 */
+  expectedArtifactKinds?: string[];
 }): void {
   const owner = captureArtifactWorkspaceOwner();
   if (!owner.current()) return;
@@ -871,13 +998,31 @@ function finalizeAssistantArtifacts(input: {
   });
   const run = claimArtifactRun(input.taskId, input.sessionKey, input.runId);
   if (!run) {
-    completedAssistantMessages.set(messageKey, {
-      state: 'completed',
-      touchedAt: Date.now(),
-      sequence: nextCompletedMessageSequence++,
-      taskId: input.taskId,
-      sessionKey: input.sessionKey,
-    });
+    // ⚠️ DOCX-205 合同（2026-10-10）：claim 不到 run = 交付上下文未确认（会话失联/
+    //    竞争窗口）。**不得**先写 completed 然后静默 return —— 那会把这条消息的
+    //    迟到核实永久封死。清掉刚置的 inFlight 占位（允许后续重试），对文件任务
+    //    发结构化「交付上下文未确认」。
+    completedAssistantMessages.delete(messageKey);
+    if ((input.expectedArtifactKinds?.length ?? 0) > 0) {
+      getDebugLogger().warn({
+        domain: 'artifact',
+        event: 'artifact.delivery-context-unconfirmed',
+        taskId: input.taskId,
+        data: {
+          messageId: input.messageId,
+          runId: input.runId ?? null,
+          expectedKinds: input.expectedArtifactKinds,
+        },
+      });
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('artifact:delivery-settled', {
+          taskId: input.taskId,
+          sessionKey: input.sessionKey,
+          messageId: input.messageId,
+          status: 'needs-review',
+        });
+      }
+    }
     return;
   }
   const activity = captureArtifactDeliveryOperation(input);
@@ -1363,6 +1508,33 @@ function finalizeAssistantArtifacts(input: {
       if (!owner.current()) return;
       pipelineFailed = true;
       console.error('[htmlgen]', error);
+    }
+    // ⭐ 视频生成（2026-10-12 视频接入）：助手给出 ```` ```videogen ```` 块（文生视频请求），
+    //    去 relay 远端生成一段 mp4 并走同一条产物通道存下来。
+    //
+    //    ⚠️ 与上面三条的**本质差别**：视频是远端付费**异步**任务，生成以分钟计。
+    //    **绝不在这里 await** —— 那会把消息收尾记账 / 活动帧终态 / 驱动空闲判定
+    //    全部拖住几分钟（"120s idle 误杀整轮"就是这个形状的故障，BUG-014 链上有前科）。
+    //    改为 `startVideogenJobs` 的**脱离式后台任务**：自己的活动帧 + 完成时自己广播
+    //    （`artifact:saved` / `videogen:failed`）。启动器内含进程内去重（防重复付费）。
+    try {
+      if (structured.status === 'complete') {
+        startVideogenJobs({
+          workspacePath: input.workspacePath,
+          taskId: input.taskId,
+          sessionKey: input.sessionKey,
+          messageId: input.messageId,
+          runId: input.runId,
+          content: structured.content,
+        });
+      } else if (hasStructuredFenceKind(input.content, 'videogen')) {
+        // 回复不完整（截断）但有 videogen 开栏：块可能已经写坏了——如实报"块无效"，
+        // 与上面两条通道同款（不猜内容、不发远端请求）。
+        for (const win of BrowserWindow.getAllWindows())
+          win.webContents.send('videogen:failed', [{ code: 'videogen-block-invalid' }]);
+      }
+    } catch (error) {
+      console.error('[videogen]', error);
     }
     try {
       // ⭐ 幻灯片生成：助手给出 ```` ```slidegen ```` 块（**JSX + CSS 的版面源码**，
@@ -2260,6 +2432,20 @@ export function registerDataHandlers(): void {
         toolCalls?: unknown[];
         thinkingContent?: string;
         model?: string;
+        /**
+         * ⚠️ DOCX-205 合同（2026-10-10）：**整轮终态证据**。由 core 的 session-sync
+         * 在可信历史终态（runId 相符 + `stopReason==='stop'`）校验后
+         * 随消息下发；中间 tool/read 快照一律不带。交付入口据此决定是否允许
+         * claim ArtifactRun —— 消息落库 ≠ 整轮终态。
+         */
+        terminal?: { kind: 'final'; runId: string; stopReason?: string; source?: string };
+        /**
+         * ⚠️ DOCX-205 合同：**同步链路标记**。经 session-sync / 消息 store upsert
+         * 落库的消息一律带 `sync: true`；带标记的消息在本入口**只认终态证据**
+         * （不再按"正文非空"推断终态消费 ArtifactRun）。不带标记的旧调用方
+         * （历史存量、独立探针）保留兼容判据。
+         */
+        sync?: boolean;
       },
     ) => {
       if (!isDbReady()) return ipcError(new Error('database not ready'));
@@ -2339,22 +2525,76 @@ export function registerDataHandlers(): void {
           !hasRunningToolCall(msg.toolCalls) &&
           (msg.content.length > 0 || (msg.attachments?.length ?? 0) > 0 || (msg.toolCalls?.length ?? 0) > 0)
         ) {
-          const run = artifactRuns.get(artifactRunKey(msg.taskId, resolvedSessionKey));
+          const runQueue = artifactRuns.get(artifactRunKey(msg.taskId, resolvedSessionKey));
+          // 本消息对应的队列条目：优先 runId 精确匹配，否则取最老的活动条目（与 claimArtifactRun 同序）。
+          const run = runQueue?.find((c) => msg.runId && c.gatewayRunId === msg.runId) ?? runQueue?.[0];
           if (run && !completedAssistantMessages.has(completedMessageKey(msg.taskId, persistedMessageId))) {
-            const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
-            const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
-            finalizeAssistantArtifacts({
-              workspacePath,
-              taskId: msg.taskId,
-              sessionKey: resolvedSessionKey,
-              messageId: persistedMessageId,
-              runId: msg.runId,
-              content: msg.content,
-              attachments: msg.attachments as MessageAttachment[] | undefined,
-              gatewayHttpBase,
-              gatewayId: taskRow?.gid,
-              toolCalls: msg.toolCalls,
-            });
+            // ⚠️ DOCX-205 合同（2026-10-10）：**整轮终态驱动交付，消息落库不再等于结案**。
+            //    只有携带可信终态证据（经 core session-sync 校验后随消息传入）且 runId
+            //    与本人相符的消息，才允许 claim ArtifactRun 并进入
+            //    generate → write → validate → register → settlement。中间 tool/read 快照
+            //    不消费 run、不写 completed、不发 succeeded —— 它们此前会把
+            //    ArtifactRun 抢先取走，导致随后真正的最终正文永远进不了交付链。
+            //    兼容判据只服务**不带同步标记**的旧调用方（历史存量、独立探针）：
+            //    此时"正文非空或携带附件"仍视为候选终态；同步链路消息（`sync: true`）
+            //    即便有正文也必须有终态证据（正文非空不构成终态 —— 工具-only 完成
+            //    靠证据交付）。工具全 done 而无正文/附件的快照两条路径都不消费 run。
+            //    bare empty final（无正文/无工具）在更外层就被排除，不会走到这里。
+            const terminalEvidence = msg.terminal;
+            const evidenceShape = terminalEvidence?.kind === 'final' && typeof terminalEvidence.runId === 'string';
+            const evidenceMatches =
+              evidenceShape &&
+              terminalEvidence.runId === msg.runId &&
+              (!run.gatewayRunId || run.gatewayRunId === msg.runId);
+            const compatibilityTerminal =
+              msg.sync !== true &&
+              !evidenceShape &&
+              (msg.content.trim().length > 0 || (msg.attachments?.length ?? 0) > 0);
+            const terminalMatches = evidenceMatches || compatibilityTerminal;
+            if (terminalMatches) {
+              // 终态消息抵达 = 这一轮的「在跑」软状态落地（B 块单飞门立即放行。
+              // 交付锁（claimed）仍由 finalize 的 finally 持有到 settle 完成）。
+              settleLiveTurn(resolvedSessionKey);
+              const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
+              const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
+              finalizeAssistantArtifacts({
+                workspacePath,
+                taskId: msg.taskId,
+                sessionKey: resolvedSessionKey,
+                messageId: persistedMessageId,
+                runId: msg.runId,
+                content: msg.content,
+                attachments: msg.attachments as MessageAttachment[] | undefined,
+                gatewayHttpBase,
+                gatewayId: taskRow?.gid,
+                toolCalls: msg.toolCalls,
+                expectedArtifactKinds: run.expectedArtifactKinds,
+              });
+            } else if (evidenceShape && run.expectedArtifactKinds.length > 0) {
+              // 结构化「交付上下文未确认」：这是**已核实终态**（带证据）却接不上当前
+              // run 上下文（runId 不符 / 该 run 已绑定别的 run）的文件任务 —— 如实
+              // 告诉界面"这轮交付上下文未确认"，不得先写 completed 然后静默 return。
+              // 不消费 run、不写 completed，真正的当前 run 终态消息到来后照常交付。
+              // 中间 tool/read 快照（无证据）走下面"只落库"分支，不发任何结算。
+              getDebugLogger().warn({
+                domain: 'artifact',
+                event: 'artifact.delivery-context-unconfirmed',
+                taskId: msg.taskId,
+                data: {
+                  messageId: persistedMessageId,
+                  runId: msg.runId ?? null,
+                  expectedKinds: run.expectedArtifactKinds,
+                },
+              });
+              for (const win of BrowserWindow.getAllWindows()) {
+                win.webContents.send('artifact:delivery-settled', {
+                  taskId: msg.taskId,
+                  sessionKey: resolvedSessionKey,
+                  messageId: persistedMessageId,
+                  status: 'needs-review',
+                });
+              }
+            }
           } else {
             // Legacy/history hydration still needs attachment and fenced-code
             // extraction. Reconciliation deliberately fails closed without a

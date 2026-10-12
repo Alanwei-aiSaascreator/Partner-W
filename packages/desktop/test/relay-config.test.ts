@@ -9,6 +9,7 @@ import {
   removeRelayConfig,
   type ApplyRelayConfigDeps,
 } from '../src/main/commercial/relay-config.js';
+import { RELAY_SEARCH_ENABLED_MODEL_IDS } from '@clawwork/core';
 
 /** `getConfig()` 返回的形态：真正的配置在 `.config` 下（ConfigSnapshot）。 */
 function snapshot(config: Record<string, unknown>, hash = 'h1') {
@@ -358,7 +359,7 @@ describe('fetchFirstRelayModel', () => {
   // （clawrouter/openai/gpt-5.5）拼错了 —— 文档那句是「refs retain the
   // upstream namespace」，它那边的 model id 本身就带命名空间。
   const CATALOG = {
-    providers: [{ id: 'bailian', models: [{ id: 'deepseek-v4-flash' }, { id: 'qwen3.6-plus' }] }],
+    providers: [{ id: 'bailian', models: [{ id: 'glm-5.3-flash' }, { id: 'qwen3.6-plus' }] }],
   };
 
   it('拼出两段的模型 ref，不含 catalog 的 provider id', async () => {
@@ -368,7 +369,7 @@ describe('fetchFirstRelayModel', () => {
     );
     const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
 
-    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/deepseek-v4-flash');
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/glm-5.3-flash');
     vi.unstubAllGlobals();
   });
 
@@ -376,9 +377,12 @@ describe('fetchFirstRelayModel', () => {
    * ⭐ 默认模型**只能有一处定义**。
    *
    * 2026-09-17 实机：激活时这里取的是**中转目录第一条**（qwen3.5-27b），
-   * 而 composer 显示的是商业默认（deepseek-v4-flash）—— 同一个"默认"两个值，
+   * 而 composer 显示的是商业默认（当时 deepseek-v4-flash）—— 同一个"默认"两个值，
    * 于是用户看到的模型和实际生成消息的模型对不上（徽章显示 qwen，用户以为买了 Kimi 跑 glm）。
    * 这条测试把两边钉成同一个 id。
+   *
+   * 2026-10-10 Cephalon 批：商业默认迁到 `glm-5.3-flash`（`COMMERCIAL_DEFAULT_MODEL_ID`），
+   * 判据不变 —— 目录第一条不是商业默认时，仍优先取商业默认。
    */
   it('目录第一条不是商业默认时，也优先取商业默认（与 composer 显示保持一致）', async () => {
     vi.stubGlobal(
@@ -386,13 +390,13 @@ describe('fetchFirstRelayModel', () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
-          providers: [{ id: 'bailian', models: [{ id: 'qwen3.5-27b' }, { id: 'deepseek-v4-flash' }] }],
+          providers: [{ id: 'bailian', models: [{ id: 'qwen3.5-27b' }, { id: 'glm-5.3-flash' }] }],
         }),
       })),
     );
     const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
 
-    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/deepseek-v4-flash');
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/glm-5.3-flash');
     vi.unstubAllGlobals();
   });
 
@@ -753,6 +757,24 @@ describe('联网：按模型注入 enable_search', () => {
       'clawrouter/qwen-turbo',
       'clawrouter/qwen3.7-flash',
     ]);
+  });
+
+  it('⭐ Cephalon 批：GLM-5.3-Flash 与新 DeepSeek 渠道都不在联网白名单（默认三档/PPT 链不带 enable_search）', () => {
+    const patch = buildRelayPatch({ relayKey: 'rly_abc', deviceFingerprint: 'fp', webSearch: true });
+
+    const models = agentsDefaults(patch).models ?? {};
+    expect(Object.keys(models)).not.toContain('clawrouter/glm-5.3-flash');
+    expect(Object.keys(models)).not.toContain('clawrouter/deepseek-v4-flash-cephalon');
+    expect(JSON.stringify(models)).not.toContain('glm-5.3-flash');
+    expect(JSON.stringify(models)).not.toContain('deepseek-v4-flash-cephalon');
+  });
+
+  it('⭐ 两处白名单同步（core 能力快照 ≡ relay-config 注入真源）：都保持旧 Qwen 三件套、都不含 GLM/新 DeepSeek', () => {
+    // core 的 RELAY_SEARCH_ENABLED_MODEL_IDS 是状态推导用的判据快照；
+    // relay-config 的 ENABLE_SEARCH_MODEL_IDS 是注入真源 —— 两边必须一致（上面两条钉注入面）。
+    expect([...RELAY_SEARCH_ENABLED_MODEL_IDS].sort()).toEqual(['qwen-plus', 'qwen-turbo', 'qwen3.7-flash']);
+    expect(RELAY_SEARCH_ENABLED_MODEL_IDS).not.toContain('glm-5.3-flash');
+    expect(RELAY_SEARCH_ENABLED_MODEL_IDS).not.toContain('deepseek-v4-flash-cephalon');
   });
 
   it('⭐⭐ 快速档别名 qwen3.7-flash-fast **刻意不进白名单**（"快速档搜索硬关"就靠这一条）', () => {

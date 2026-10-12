@@ -9,7 +9,7 @@ const claw = vi.hoisted(() => {
   return {
     listeners: [] as ((state: PortableUpdatePublicState) => void)[],
     getUpdateState: vi.fn(async (): Promise<PortableUpdatePublicState | null> => null),
-    installUpdate: vi.fn(async () => ({ ok: true })),
+    installUpdate: vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true })),
     downloadUpdate: vi.fn(async () => ({ ok: true })),
     checkForUpdates: vi.fn(async () => ({
       currentVersion: '0.0.25',
@@ -43,9 +43,17 @@ vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
 }));
 
-vi.mock('@/lib/toast', () => ({ toast: vi.fn() }));
+const toast = vi.hoisted(() =>
+  Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), warning: vi.fn(), dismiss: vi.fn() }),
+);
+vi.mock('@/lib/toast', () => ({ toast }));
 
-import AboutSection from '../src/renderer/layouts/Settings/sections/AboutSection';
+import AboutSection, {
+  canStartInstallNow,
+  isAppBusyFromActivity,
+} from '../src/renderer/layouts/Settings/sections/AboutSection';
+import { useMessageStore } from '../src/renderer/stores/messageStore';
+import { useDeliveryActivityStore } from '../src/renderer/stores/deliveryActivityStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,6 +97,10 @@ describe('设置 → 关于：盘上运行的更新状态', () => {
     claw.listeners.length = 0;
     claw.getUpdateState.mockResolvedValue(null);
     claw.installUpdate.mockClear();
+    // 忙态判据读的是这两处真实活动状态：每个用例从"空闲"起步
+    useMessageStore.setState({ processingBySession: new Set(), activeTurnBySession: {} });
+    useDeliveryActivityStore.setState({ active: [] });
+    toast.mockClear();
     installClawMock();
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -285,5 +297,118 @@ describe('设置 → 关于：盘上运行的更新状态', () => {
 
     expect(container.textContent).toContain('settings.downloadUpdate');
     expect(buttonByText('settings.portableUpdate.downloadAndPrepare')).toBeUndefined();
+  });
+
+  // ─────────── 2026-10-11 升级补齐：忙态边界（生成/写文件期间不许换目录） ───────────
+  //
+  // 评审要点：更新检查与重启是**两个动作**。生成/写文件期间"换目录 + 退出应用"会打断
+  // 真实任务（还留下未结算的在途调用）—— 不能只靠按钮灰掉：这条界面上有禁用观感 +
+  // 说明文案，命令许可单独成立（`canStartInstallNow`），主进程 IPC 还有同源的第二道门。
+
+  it('⑦ 任务进行中：ready 也不许重启 —— 说清原因、点击不发 installUpdate、候选不丢', async () => {
+    useMessageStore.setState({ processingBySession: new Set(['s1']) });
+    await renderWith('ready');
+
+    expect(container.textContent).toContain('settings.portableUpdate.busyHint');
+    const button = buttonByText('settings.portableUpdate.restartNow');
+    expect(button, '找不到重启按钮').toBeDefined();
+    expect(button?.disabled, '忙态下按钮要有禁用观感').toBe(true);
+
+    await act(async () => {
+      button?.click();
+    });
+    expect(claw.installUpdate, '命令许可那一层也必须挡下').not.toHaveBeenCalled();
+    // ready 候选还在：任务结束后用户直接再点一次即可
+    expect(buttonByText('settings.portableUpdate.later')).toBeDefined();
+    expect(container.textContent).toContain('settings.portableUpdate.ready:0.0.26');
+  });
+
+  it('⑧ 文件交付在途同样算忙（不许把 ready 当任务空闲证明）', async () => {
+    useDeliveryActivityStore.setState({ active: [{ operationId: 'op-1' }] as never });
+    await renderWith('ready');
+
+    expect(container.textContent).toContain('settings.portableUpdate.busyHint');
+    await act(async () => {
+      buttonByText('settings.portableUpdate.restartNow')?.click();
+    });
+    expect(claw.installUpdate).not.toHaveBeenCalled();
+  });
+
+  it('⑨ 任务结束后：同一块界面立刻可重启（不自动强退、不结束生成）', async () => {
+    useMessageStore.setState({ processingBySession: new Set(['s1']) });
+    await renderWith('ready');
+
+    await act(async () => {
+      useMessageStore.setState({ processingBySession: new Set() });
+    });
+
+    expect(container.textContent).not.toContain('settings.portableUpdate.busyHint');
+    await act(async () => {
+      buttonByText('settings.portableUpdate.restartNow')?.click();
+    });
+    expect(claw.installUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('⑩ 忙态不挡「下载并准备」：候选照下，留给用户稍后安装', async () => {
+    useMessageStore.setState({ processingBySession: new Set(['s1']) });
+    await renderWith('available');
+    claw.downloadUpdate.mockClear();
+
+    await act(async () => {
+      buttonByText('settings.portableUpdate.downloadAndPrepare')?.click();
+    });
+
+    expect(claw.downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(claw.installUpdate).not.toHaveBeenCalled();
+  });
+
+  it('⑪ 主进程在边界上判忙（app-busy）：保留候选 + 说清原因，不落错误态', async () => {
+    claw.installUpdate.mockResolvedValueOnce({ ok: false, error: 'app-busy' });
+    await renderWith('ready');
+
+    await act(async () => {
+      buttonByText('settings.portableUpdate.restartNow')?.click();
+    });
+
+    expect(claw.installUpdate).toHaveBeenCalledTimes(1);
+    expect(toast, '要说清为什么没换成').toHaveBeenCalledWith('settings.portableUpdate.busyHint');
+    // 候选与可操作信息都还在：不显示错误面板，重启入口照旧
+    expect(container.textContent).not.toContain('settings.updateError');
+    expect(buttonByText('settings.portableUpdate.restartNow')).toBeDefined();
+  });
+
+  it('⑫ 命令许可（纯函数）：只有"准备好"且"不忙"才允许换目录/退出', () => {
+    expect(canStartInstallNow('ready', false)).toBe(true);
+    expect(canStartInstallNow('downloaded', false)).toBe(true);
+    expect(canStartInstallNow('ready', true)).toBe(false);
+    expect(canStartInstallNow('downloaded', true)).toBe(false);
+    expect(canStartInstallNow('available', false)).toBe(false);
+    expect(canStartInstallNow('error', false)).toBe(false);
+  });
+
+  it('⑬ 忙态判据（纯函数）：处理中/流式未收口/交付在途都算忙，finalized 不算', () => {
+    const idle = { processingBySession: new Set<string>(), activeTurnBySession: {}, activeDeliveryCount: 0 };
+    expect(isAppBusyFromActivity(idle)).toBe(false);
+    expect(isAppBusyFromActivity({ ...idle, processingBySession: new Set(['s1']) })).toBe(true);
+    expect(isAppBusyFromActivity({ ...idle, activeDeliveryCount: 1 })).toBe(true);
+    expect(
+      isAppBusyFromActivity({
+        ...idle,
+        activeTurnBySession: { s1: { finalized: false, streamingText: '正文' } },
+      }),
+    ).toBe(true);
+    expect(
+      isAppBusyFromActivity({
+        ...idle,
+        activeTurnBySession: { s1: { finalized: false, toolCalls: [{ id: 't' }] } },
+      }),
+    ).toBe(true);
+    // 已经收口（finalized）的一轮只剩"渲染用"的残影：不算忙（否则永远装不了更新）
+    expect(
+      isAppBusyFromActivity({
+        ...idle,
+        activeTurnBySession: { s1: { finalized: true, streamingText: '', toolCalls: [{ id: 't' }] } },
+      }),
+    ).toBe(false);
   });
 });

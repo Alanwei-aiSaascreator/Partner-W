@@ -18,8 +18,8 @@ vi.mock('../src/main/commercial/client.js', () => ({ getCommercialClient: getCom
 vi.mock('../src/main/debug/index.js', () => ({
   getDebugLogger: () => ({ info: vi.fn(), warn: vi.fn() }),
 }));
-vi.mock('../src/main/runtime/index.js', () => ({ getActiveLocalGatewayDeploymentRoot: () => 'search-test-runtime' }));
-vi.mock('../src/main/runtime/bundled-search.js', () => ({ hasBundledSearchProvider: () => true }));
+vi.mock('../src/main/runtime/index.js', () => ({ getActiveLocalGatewayStateDir: () => 'search-test-state' }));
+vi.mock('../src/main/runtime/bundled-search.js', () => ({ hasInstalledSearchProvider: () => true }));
 
 const INPUT = { relayKey: 'test-relay-key', deviceFingerprint: 'test-device' };
 const SEARCH_REFS = ['clawrouter/qwen-turbo', 'clawrouter/qwen-plus', 'clawrouter/qwen3.7-flash'];
@@ -170,7 +170,8 @@ describe('relay search preference merge patches', () => {
       });
       expect(result.status).toBe('applied');
       const { config } = await gateway.getConfig();
-      if (available && webSearch) expect(config).toHaveProperty(['tools', 'web', 'search', 'provider'], 'duckduckgo');
+      if (available && webSearch)
+        expect(config).toHaveProperty(['tools', 'web', 'search', 'provider'], 'rongying-search');
       else expect(config).not.toHaveProperty(['tools', 'web', 'search']);
     },
   );
@@ -226,7 +227,7 @@ describe('license activation search preference', () => {
         else expect(config).toHaveProperty(searchPath(ref), true);
       }
       if (gatewayId === 'local-runtime' && webSearch !== false) {
-        expect(config).toHaveProperty(['tools', 'web', 'search', 'provider'], 'duckduckgo');
+        expect(config).toHaveProperty(['tools', 'web', 'search', 'provider'], 'rongying-search');
       } else {
         expect(config).not.toHaveProperty(['tools', 'web', 'search']);
       }

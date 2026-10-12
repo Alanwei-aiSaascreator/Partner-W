@@ -36,7 +36,7 @@ import { useCommercialStore } from '@/stores/commercialStore';
 import { cn, formatRelativeTime, formatCredits } from '@/lib/utils';
 import { anchoredScrollTop, resolveChatScrollAnchor, type ChatScrollSlot } from '@/lib/chat-scroll-anchor';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
-import { resolveModelLabel } from '@/lib/model-display';
+import { resolveModelLabel, shouldShowModelBadge } from '@/lib/model-display';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -94,7 +94,7 @@ import {
   recordRecentAssistantTask,
   type RecentAssistantTask,
 } from '@/lib/assistant-task-history';
-import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import ComparePanel from '@/features/compare/ComparePanel';
 import CompareSetupBar from '@/features/compare/CompareSetupBar';
 import { compareRuntimeForTask } from '@/features/compare/compare-plan';
@@ -564,7 +564,7 @@ export function ChatContent({
   const rawCompareCatalog = useUiStore((s) =>
     compareGatewayId ? s.modelCatalogByGateway[compareGatewayId] : undefined,
   );
-  const compareCatalog = useMemo(() => relayModelsFrom(rawCompareCatalog ?? []), [rawCompareCatalog]);
+  const compareCatalog = useMemo(() => selectableModelsFrom(rawCompareCatalog), [rawCompareCatalog]);
   // 进入对比模式时给个能直接开跑的默认（目录里的前两个），省掉"还要先勾两个才能发"。
   // 「要不要回填」判在 store 里（`draftSeeded`）：用"现在是空的"当判据会在用户**主动清空**之后
   // 立刻填回去 —— 用户删一个、它补一个，永远清不干净。目录还没到时什么都不做（不置位），
@@ -975,16 +975,20 @@ export function ChatContent({
    */
   const identityByMessageId = useMemo(() => {
     const map = new Map<string, AssistantIdentity & { modelLabel?: string; modelTitle?: string }>();
+    // 2026-10-11（用户拍板）：三档模式（快速/智能/深度）背后跑哪个模型是内部实现 ⇒ **不上屏**——
+    // 模式驱动任务的助手消息不再渲染模型徽章；custom（高级：用户显式选过模型）照旧显示。
+    // 与 composer chip 的两级口径同规则（见 `ChatInput` 的 `modeDriven`）。
+    const showModelBadge = shouldShowModelBadge(activeTask?.mode);
     for (const message of messages) {
       map.set(message.id, {
         // ⚠️ 旧代码在这一支传的是 `agentId: message.agentId` —— 逐字对齐，别只剩会话键
         ...identityFor(message.sessionKey, message.agentId),
-        modelLabel: resolveModelLabel(message.model, modelCatalog),
-        modelTitle: message.model,
+        modelLabel: showModelBadge ? resolveModelLabel(message.model, modelCatalog) : undefined,
+        modelTitle: showModelBadge ? message.model : undefined,
       });
     }
     return map;
-  }, [identityFor, messages, modelCatalog]);
+  }, [identityFor, messages, modelCatalog, activeTask?.mode]);
 
   const handleScroll = useCallback(() => {
     if (isAutoScrolling.current) return;
@@ -1163,7 +1167,12 @@ export function ChatContent({
                         portraitRole={onboardingProfile.portrait?.role ?? null}
                         portraitLetters={onboardingProfile.portrait?.letters ?? null}
                         portraitGender={onboardingProfile.portrait?.gender ?? null}
-                        modelLabel={resolveModelLabel(message.model, modelCatalog)}
+                        // 2026-10-11（用户拍板）：与助手消息同一口径——模式驱动任务不上屏模型名。
+                        modelLabel={
+                          shouldShowModelBadge(activeTask?.mode)
+                            ? resolveModelLabel(message.model, modelCatalog)
+                            : undefined
+                        }
                         highlighted={message.id === highlightedId}
                         onHighlightDone={handleHighlightDone}
                         onImageClick={setLightboxSrc}

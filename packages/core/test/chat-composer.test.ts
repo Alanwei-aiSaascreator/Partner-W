@@ -671,6 +671,91 @@ describe('chat-composer —— 思考档位必须对着模型能力校验', () =
     expect(sent).toEqual([{ thinkingLevel: 'high' }]);
   });
 
+  it('⭐ Cephalon 批：目标模型 deepseek-v4-flash-cephalon 声明含 low/high/max ⇒ 三档原样透传', async () => {
+    supportedLevels = ['low', 'medium', 'high', 'xhigh', 'max'];
+    const { composer, patchSession } = setup();
+
+    for (const level of ['low', 'high', 'max'] as const) {
+      patchSession.mockClear();
+      await composer.send(TASK_ID, {
+        content: 'hi',
+        presetModel: 'deepseek-v4-flash-cephalon',
+        presetThinking: level,
+      });
+      expect(patchThinkingCalls(patchSession)).toEqual([{ thinkingLevel: level }]);
+    }
+  });
+
+  it('⭐ Cephalon 批：目标模型声明里没有该档（PPT 路由换模型后的真实风险）⇒ 回落该模型目录默认档，不硬发', async () => {
+    supportedLevels = ['low', 'medium'];
+    const { composer, patchSession, updateTaskMetadata } = setup();
+
+    await composer.send(TASK_ID, { content: 'hi', presetModel: 'deepseek-v4-flash-cephalon', presetThinking: 'max' });
+
+    expect(patchThinkingCalls(patchSession)).toEqual([{ thinkingLevel: 'low' }]);
+    expect(updateTaskMetadata).toHaveBeenCalledWith(TASK_ID, { thinkingLevel: 'low' });
+  });
+
+  /**
+   * ⭐ Cephalon 批（Task 4 验收缺口补验·实链接缝捕获）：`presetModel=glm-5.3-flash` 的
+   * **客户端最终请求**（真实 composer 的参数合并／序列化出口）不得携带 `enable_search`。
+   *
+   * 捕获范围 = 送往网关的全部载荷：`sessions.patch`（模型钉选 + 思考档）+ `chat.send`
+   * 派发载荷 + 任务元数据写入。模型内置搜索在网关侧按模型配置注入——**网关参数合并后
+   * 的最终上游 HTTP body 由同批 `relay-mode-final-body.integration.test.ts` 用实际
+   * 交付运行时 + 本地接收器捕获**（含旧 Qwen `enable_search=true` 正对照）；本用例覆盖
+   * 客户端一侧，两者合起来才是完整链路。
+   */
+  it('⭐ Cephalon 批：glm-5.3-flash 的最终请求（patch + 派发 + 元数据）不含 enable_search', async () => {
+    supportedLevels = ['low', 'medium', 'high', 'xhigh', 'max'];
+    const h = setup();
+
+    const result = await h.composer.send(TASK_ID, {
+      content: '把第三季度数据做一份周报',
+      presetModel: 'glm-5.3-flash',
+      presetThinking: 'high',
+    });
+
+    expect(result.ok).toBe(true);
+    // 模型钉选与思考档都真实到达参数接缝
+    const modelPatches = h.patchSession.mock.calls
+      .map((c) => c[2] as { model?: string })
+      .filter((p) => p?.model !== undefined);
+    expect(modelPatches).toEqual([{ model: 'glm-5.3-flash' }]);
+    expect(patchThinkingCalls(h.patchSession)).toEqual([{ thinkingLevel: 'high' }]);
+    expect(h.updateTaskMetadata).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({ model: 'glm-5.3-flash' }));
+    // 全部出站载荷逐字节扫一眼：不得出现 enable_search
+    const wire = JSON.stringify([h.patchSession.mock.calls, h.sendMessage.mock.calls, h.updateTaskMetadata.mock.calls]);
+    expect(wire).not.toContain('enable_search');
+  });
+
+  /**
+   * ⭐ BUG-067 接线条（Task 4 复验整改）：hook 的"已采用"判据（读任务行最新 model）必须与
+   * core 的真实接线一致——模型 patch 成功后**先更新 task.model**，后续派发返回失败或抛异常
+   * 都返回 `ok:false` 但模型**已采用**；patch 被拒则不动任务模型（未采用）。
+   */
+  it('⭐ BUG-067 接线条：patch 成功后派发失败／抛异常 ⇒ ok:false 但任务已记新模型；patch 被拒 ⇒ 不记', async () => {
+    // ① 派发返回失败：模型仍算已采用
+    const h1 = setup();
+    h1.sendMessage.mockResolvedValueOnce({ ok: false });
+    expect((await h1.composer.send(TASK_ID, { content: 'hi', presetModel: 'glm-5.3-flash' })).ok).toBe(false);
+    expect(h1.updateTaskMetadata).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({ model: 'glm-5.3-flash' }));
+
+    // ② 派发抛异常：同上
+    const h2 = setup();
+    h2.sendMessage.mockImplementationOnce(async () => {
+      throw new Error('dispatch boom');
+    });
+    expect((await h2.composer.send(TASK_ID, { content: 'hi', presetModel: 'glm-5.3-flash' })).ok).toBe(false);
+    expect(h2.updateTaskMetadata).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({ model: 'glm-5.3-flash' }));
+
+    // ③ patch 被拒：未采用，不许记模型
+    const h3 = setup();
+    h3.patchSession.mockResolvedValueOnce({ ok: false, error: 'pin rejected' });
+    expect((await h3.composer.send(TASK_ID, { content: 'hi', presetModel: 'glm-5.3-flash' })).ok).toBe(false);
+    expect(h3.updateTaskMetadata).not.toHaveBeenCalled();
+  });
+
   it('拿不到能力信息时**照发**（「还不知道」≠「不支持」，不能悄悄改用户选的档位）', async () => {
     supportedLevels = undefined;
     const { composer, patchSession } = setup();

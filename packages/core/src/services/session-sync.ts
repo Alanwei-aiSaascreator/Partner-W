@@ -54,6 +54,21 @@ export interface SessionSyncDeps {
       toolCalls?: unknown[];
       thinkingContent?: string;
       model?: string;
+      /**
+       * ⚠️ DOCX-205 合同（2026-10-10，终审修订）：**整轮终态证据**。只附在
+       * **承载可信历史终态的那一条 canonical**（历史末条 assistant 的 stop 记录，
+       * runId + 时间戳双匹配）上；同 run 的更早正文段、中间 tool/read 快照
+       * 一律不带 —— 这是"消息落库 ≠ 整轮终态"在数据面上的唯一凭证。
+       * 主进程交付入口据此决定是否允许 claim ArtifactRun。
+       */
+      terminal?: PersistTerminalEvidence;
+      /**
+       * ⚠️ DOCX-205 合同（2026-10-10）：**同步链路标记**。经本链路（session-sync /
+       * 消息 store 的 upsert）落库的消息一律带 `sync: true`；主进程交付入口对
+       * 带标记的消息**只认终态证据**（不允许"正文非空"之类的形状推断消费
+       * ArtifactRun）。不带标记的调用方（历史存量、独立探针等）保留兼容判据。
+       */
+      sync?: true;
     }) => Promise<IpcResult>;
   };
   gateway: {
@@ -138,6 +153,15 @@ export interface SessionSyncDeps {
 }
 
 const RETRY_DELAYS = [2000, 4000, 8000];
+
+/** 整轮终态证据（见 persistMessage 的说明）。 */
+export type PersistTerminalEvidence = {
+  kind: 'final';
+  runId: string;
+  stopReason: 'stop';
+  source: 'history';
+};
+
 export type RunSyncResult =
   | { kind: 'pending' }
   | { kind: 'completed'; messageIds: string[]; content: string }
@@ -162,7 +186,7 @@ function normalizeLocalAssistantMessage(row: { role: string; content: string; at
 export function createSessionSync(deps: SessionSyncDeps) {
   let hydrationPromise: Promise<void> | null = null;
   const syncChains = new Map<string, Promise<void>>();
-  const pendingWrites = new Map<string, PersistenceScope & { message: Message }>();
+  const pendingWrites = new Map<string, PersistenceScope & { message: Message; terminal?: PersistTerminalEvidence }>();
   const lateTools = new Map<string, PersistenceScope & { runId: string; tools: Map<string, ToolCall> }>();
   let syncEpoch = 0;
 
@@ -254,7 +278,15 @@ export function createSessionSync(deps: SessionSyncDeps) {
     }
   }
 
-  async function persistCanonicalMessage(message: Message): Promise<void> {
+  async function persistCanonicalMessage(
+    message: Message,
+    scope: PersistenceScope,
+    terminal?: PersistTerminalEvidence,
+  ): Promise<void> {
+    // ⚠️ DOCX-205 终审（2026-10-10）：终态证据**只透传调用方给的那一条**（挂在
+    //    pendingWrites entry 上，重试沿用同一证据），这里不再做任何"按 runId 补发"
+    //    的推断 —— 一次 run 的多段 canonical 里只有承载末条 stop 记录的那段带证据，
+    //    后一条的 terminal 绝不许赋给前一条。
     const result = await deps.persistence.persistMessage({
       id: message.id,
       taskId: message.taskId,
@@ -269,6 +301,9 @@ export function createSessionSync(deps: SessionSyncDeps) {
       thinkingContent: message.thinkingContent,
       // 消息级模型：落库后重启才还在（重载读回见 hydrateFromLocal）。
       model: message.model,
+      // ⚠️ DOCX-205 合同：同步链路标记 —— 带标记的消息在主进程只认终态证据。
+      sync: true,
+      ...(terminal ? { terminal } : {}),
     });
     if (!result.ok) throw new Error(result.error ?? 'Canonical message persistence failed');
   }
@@ -281,7 +316,17 @@ export function createSessionSync(deps: SessionSyncDeps) {
       for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
         if (syncEpoch !== epoch || pendingWrites.get(id) !== entry) break;
         try {
-          await persistCanonicalMessage(entry.message);
+          // ⚠️ 重试沿用**同一 entry 的证据**（合同 §3）：终态归属在入队时定死，
+          //    重试/重放不允许重新推断，也不允许把证据升级或丢失。
+          await persistCanonicalMessage(
+            entry.message,
+            {
+              taskId: entry.taskId,
+              sessionKey: entry.sessionKey,
+              gatewayId: entry.gatewayId,
+            },
+            entry.terminal,
+          );
           if (syncEpoch === epoch && pendingWrites.get(id) === entry) pendingWrites.delete(id);
           break;
         } catch (error) {
@@ -295,9 +340,17 @@ export function createSessionSync(deps: SessionSyncDeps) {
     }
   }
 
-  async function persistCanonicalMessages(messages: Message[], scope: PersistenceScope, epoch: number): Promise<void> {
+  async function persistCanonicalMessages(
+    messages: Message[],
+    scope: PersistenceScope,
+    epoch: number,
+    terminals?: Map<string, PersistTerminalEvidence>,
+  ): Promise<void> {
     if (syncEpoch !== epoch) return;
-    for (const message of messages) pendingWrites.set(message.id, { ...scope, message });
+    for (const message of messages) {
+      const terminal = terminals?.get(message.id);
+      pendingWrites.set(message.id, { ...scope, message, ...(terminal ? { terminal } : {}) });
+    }
     await flushPendingWrites(scope, epoch);
   }
 
@@ -409,6 +462,21 @@ export function createSessionSync(deps: SessionSyncDeps) {
 
     const raw = res.result as { messages?: RawHistoryMessage[] };
     const rawMsgs = raw.messages ?? [];
+    // ⚠️ DOCX-205 合同（2026-10-10，终审修订）：**可信历史终态 = 身份，不是 runId 白名单**。
+    //    判据：历史末条 assistant 的 `stopReason==='stop'` + runId 存在（**不要求正文非空**：
+    //    真正工具-only 完成也必须能交付）。一次 run 可能归一化成多段 canonical（较早可见
+    //    正文段 + 承载最终交付的末段），终态证据只许附在**身份（runId + 时间戳）与这条
+    //    末段记录吻合**的那一段上 —— 否则最早那段会消费 ArtifactRun，生成器拿到的是
+    //    较早正文而不是最终 docgen（2026-10-10 终审实证）。
+    const lastAssistantRaw = rawMsgs.filter((message) => message.role === 'assistant').at(-1);
+    const lastAssistantTurn =
+      lastAssistantRaw?.stopReason === 'stop' && lastAssistantRaw.__openclaw?.runId
+        ? normalizeAssistantTurns([lastAssistantRaw], httpBase).at(-1)
+        : undefined;
+    const verifiedFinal =
+      lastAssistantRaw?.__openclaw?.runId && lastAssistantTurn
+        ? { runId: lastAssistantRaw.__openclaw.runId, timestamp: lastAssistantTurn.timestamp }
+        : undefined;
     let finalTimestamp: string | undefined;
     if (expectedRunId) {
       const finalRaw = rawMsgs.filter((message) => message.role === 'assistant').at(-1);
@@ -515,7 +583,18 @@ export function createSessionSync(deps: SessionSyncDeps) {
         }));
       }
 
-      await persistCanonicalMessages([mergedCanonical], { taskId, sessionKey, gatewayId: task.gatewayId }, epoch);
+      // ⚠️ 终态证据**按条归属**：只有记录身份（runId + 时间戳）与可信末段吻合的那一段
+      //    才携带证据 —— 同 run 的更早正文段照常落库，但绝不带 terminal。
+      const terminalForFinal: PersistTerminalEvidence | undefined =
+        verifiedFinal && gm.runId === verifiedFinal.runId && gm.timestamp === verifiedFinal.timestamp
+          ? { kind: 'final', runId: verifiedFinal.runId, stopReason: 'stop', source: 'history' }
+          : undefined;
+      await persistCanonicalMessages(
+        [mergedCanonical],
+        { taskId, sessionKey, gatewayId: task.gatewayId },
+        epoch,
+        terminalForFinal ? new Map([[mergedCanonical.id, terminalForFinal]]) : undefined,
+      );
       if (syncEpoch !== epoch) return;
       if (mergedCanonical.runId) lateTools.delete(lateToolKey(scope, mergedCanonical.runId));
       acknowledged.add(mergedCanonical.id);
@@ -541,7 +620,18 @@ export function createSessionSync(deps: SessionSyncDeps) {
             ),
           },
         }));
-        await persistCanonicalMessages([confirmed], scope, epoch);
+        // ⚠️ 终审修订：终态证据只附在身份吻合的 confirmed 上（expectedRunId 路径下它
+        //    即可信末段；身份守卫仍全查，防止未来被别的调用路径复用）。
+        const terminalForConfirmed: PersistTerminalEvidence | undefined =
+          verifiedFinal && confirmed.runId === verifiedFinal.runId && confirmed.timestamp === verifiedFinal.timestamp
+            ? { kind: 'final', runId: verifiedFinal.runId, stopReason: 'stop', source: 'history' }
+            : undefined;
+        await persistCanonicalMessages(
+          [confirmed],
+          scope,
+          epoch,
+          terminalForConfirmed ? new Map([[confirmed.id, terminalForConfirmed]]) : undefined,
+        );
       }
       if (syncEpoch !== epoch) return { kind: 'pending' };
       return { kind: 'completed', messageIds: [confirmed.id], content: confirmed.content };

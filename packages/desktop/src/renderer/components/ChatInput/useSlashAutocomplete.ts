@@ -10,6 +10,7 @@ import {
   type SlashCommandView,
 } from '@/lib/slash-commands';
 import type { ArgOption } from '../SlashArgPicker';
+import { selectableModelsFrom } from './model-families';
 
 interface UseSlashAutocompleteOpts {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -55,7 +56,8 @@ export function useSlashAutocomplete(opts: UseSlashAutocompleteOpts) {
       const gwId =
         useTaskStore.getState().tasks.find((t) => t.id === useTaskStore.getState().activeTaskId)?.gatewayId ??
         useTaskStore.getState().pendingNewTask?.gatewayId;
-      const catalog = gwId ? (useUiStore.getState().modelCatalogByGateway[gwId] ?? []) : [];
+      // 2026-10-12：与发送路径同一把尺（/model 补全里此前能选到我们用不了的模型）。
+      const catalog = selectableModelsFrom(gwId ? useUiStore.getState().modelCatalogByGateway[gwId] : undefined);
       return catalog.map((m) => ({
         value: m.id,
         label: m.name ?? m.id,

@@ -4,6 +4,7 @@ import {
   isVerifiedFileName,
   verifyArtifactBuffer,
   verifyDocxBuffer,
+  verifyMp4Buffer,
   verifyPdfBuffer,
   verifyPptxBuffer,
   verifyXlsxBuffer,
@@ -237,6 +238,9 @@ describe('isVerifiedFileName', () => {
     ['表格.XLSX', true],
     ['报告.pdf', true],
     ['报告.PDF', true],
+    // 2026-10-12（视频接入）：mp4 并入受检名单（下载截断挡在登记之外）
+    ['短片.mp4', true],
+    ['SHORT.MP4', true],
     ['deck.xls', false],
     ['deck.doc', false],
     ['deck.pptx.exe', false],
@@ -244,5 +248,94 @@ describe('isVerifiedFileName', () => {
     ['deck', false],
   ])('%s → %s', (name, expected) => {
     expect(isVerifiedFileName(name)).toBe(expected);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2026-10-12 视频接入：`.mp4` 判据（顶层 box 链遍历）。
+ * 最常见的坏法 = 下载被截断——头几个字节照样是 `ftyp`，只有 size 链走到底才能现形。
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+function box(type: string, payload: Buffer, forceLargesize = false): Buffer {
+  if (forceLargesize) {
+    const header = Buffer.alloc(16);
+    header.writeUInt32BE(1, 0); // size==1 ⇒ 读 64 位 largesize
+    header.write(type, 4, 'latin1');
+    header.writeBigUInt64BE(BigInt(16 + payload.length), 8);
+    return Buffer.concat([header, payload]);
+  }
+  const header = Buffer.alloc(8);
+  header.writeUInt32BE(8 + payload.length, 0);
+  header.write(type, 4, 'latin1');
+  return Buffer.concat([header, payload]);
+}
+
+/** ftyp + moov + mdat 的最小结构性 mp4（负载内容随意——本判据不做解码）。 */
+function mp4Buffer(): Buffer {
+  return Buffer.concat([
+    box('ftyp', Buffer.from('isomisoftyp1', 'latin1')),
+    box('moov', Buffer.alloc(32, 7)),
+    box('mdat', Buffer.alloc(256, 1)),
+  ]);
+}
+
+describe('verifyMp4Buffer（视频下载完整性判据）', () => {
+  it('结构性完整（ftyp+moov+mdat，链铺满）→ ok', () => {
+    expect(verifyMp4Buffer(mp4Buffer())).toEqual({ ok: true });
+  });
+
+  it('⭐ 下载截断（切掉尾部 10 字节）→ 拒 —— 最常见的坏法', () => {
+    const full = mp4Buffer();
+    const cut = full.subarray(0, full.length - 10);
+    expect(verifyMp4Buffer(cut)).toEqual({ ok: false, reason: 'truncated-mp4' });
+  });
+
+  it('头都不是 ftyp（如别的二进制改名）→ not-an-mp4', () => {
+    const wrong = Buffer.concat([box('mdat', Buffer.alloc(64)), box('moov', Buffer.alloc(16))]);
+    expect(verifyMp4Buffer(wrong)).toEqual({ ok: false, reason: 'not-an-mp4' });
+  });
+
+  it('缺 mdat（只有元数据没有画面）→ no-media-data', () => {
+    const shell = Buffer.concat([box('ftyp', Buffer.alloc(8)), box('moov', Buffer.alloc(32))]);
+    expect(verifyMp4Buffer(shell)).toEqual({ ok: false, reason: 'no-media-data' });
+  });
+
+  it('缺 moov（播放器拿不到元数据）→ truncated-mp4', () => {
+    const noMoov = Buffer.concat([box('ftyp', Buffer.alloc(8)), box('mdat', Buffer.alloc(64))]);
+    expect(verifyMp4Buffer(noMoov)).toEqual({ ok: false, reason: 'truncated-mp4' });
+  });
+
+  it('64 位 largesize box（size==1）也认', () => {
+    const big = Buffer.concat([
+      box('ftyp', Buffer.alloc(8)),
+      box('moov', Buffer.alloc(16)),
+      box('mdat', Buffer.alloc(64), true),
+    ]);
+    expect(verifyMp4Buffer(big)).toEqual({ ok: true });
+  });
+
+  it('size==0 的收尾 box（"到文件尾"）按铺满语义放行', () => {
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(0, 0); // 0 = extends to end of file
+    header.write('mdat', 4, 'latin1');
+    const tail = Buffer.concat([
+      box('ftyp', Buffer.alloc(8)),
+      box('moov', Buffer.alloc(16)),
+      header,
+      Buffer.alloc(64, 2),
+    ]);
+    expect(verifyMp4Buffer(tail)).toEqual({ ok: true });
+  });
+
+  it('空 / 过短 buffer → 拒（不当成"没有内容所以放行"）', () => {
+    expect(verifyMp4Buffer(Buffer.alloc(0)).ok).toBe(false);
+    expect(verifyMp4Buffer(Buffer.from('ftyp')).ok).toBe(false);
+  });
+
+  it('派发入口按扩展名走 mp4 判据（.mp4 → truncated 拒；.mov 不在受检名单 → 放行）', () => {
+    const cut = mp4Buffer().subarray(0, 40);
+    expect(verifyArtifactBuffer('短片.mp4', cut).ok).toBe(false);
+    expect(isVerifiedFileName('短片.mov')).toBe(false);
+    expect(verifyArtifactBuffer('短片.mov', cut)).toEqual({ ok: true });
   });
 });

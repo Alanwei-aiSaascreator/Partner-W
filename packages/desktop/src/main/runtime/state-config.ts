@@ -33,6 +33,7 @@ import { writeJsonAtomic } from '../util/json-file.js';
 import { readConfig, updateConfig } from '../workspace/config.js';
 import type { AppConfig, GatewayServerConfig } from '../workspace/config.js';
 import { INBOX_READONLY_PLUGIN_ID, ensureInboxReadonlyPolicy } from '../guard/inbox-readonly.js';
+import { RELAY_SEARCH_PLUGIN_ID, ensureRelaySearchPlugin } from './relay-search-plugin.js';
 import { ensureLocalGatewayToken } from './token-store.js';
 import { preparePortableState } from './portable-state-migration.js';
 
@@ -239,12 +240,38 @@ export const MEMORY_TOOLS_DENIED = ['memory_search', 'memory_get'] as const;
 export const PLATFORM_IRRELEVANT_TOOLS_DENIED = ['canvas'] as const;
 
 /**
- * **网络搜索工具**（2026-10-07 交付日用户指令）：无稳定国内搜索源前，从 Planner 的默认
- * 可用能力中降级——不让用户持续看到"搜索失败"（根因见 BUG-033：DuckDuckGo 在大陆用户
- * 网络被反爬，实锤 0/2；dev 机代理下可用）。将来接入稳定国内源（或换回可用 provider）时，
- * **删掉这一行常量**即整体恢复（merge 并集、必备判据、workflow-tools 的跟随方全自动）。
+ * **网络工具降级名单**（2026-10-07 交付日用户指令；2026-10-12 一半恢复）。
+ *
+ * 2026-10-07 起因（BUG-033）：config 硬钉 `provider=duckduckgo`，而 DDG 在大陆用户网络
+ * 被反爬（实锤 0/2）→ 用户持续看到"搜索失败"→ 两个 web 工具一起摘掉降级。
+ *
+ * **2026-10-12 恢复 `web_search`**：接入博查（经 relay 转发）后，搜索走
+ * `rongying-search` provider 插件（`runtime/relay-search-plugin.ts`），有稳定国内源；
+ * 且随包补丁 `rongying-web-search-availability-v1` 会在"provider 未注册/未显式选中"
+ * （= 未激活/未接 relay）时让工具**根本不出现**（fail-closed）——所以这里摘名是安全的，
+ * 不会再出现"用户看到重复搜索失败"。
+ *
+ * `web_fetch` **保持摘除**：它不是本次接线的一部分（没有经过可用性验证），
+ * 读网页的通路是 browser 工具（用户拍板"浏览器作为兜底"，browser 一直在生效面里）。
  */
-export const WEB_TOOLS_DENIED = ['web_search', 'web_fetch'] as const;
+export const WEB_TOOLS_DENIED = ['web_fetch'] as const;
+
+/**
+ * **已退休的默认 deny 名**（2026-10-12 联网搜索接入新增的清除路径）。
+ *
+ * ⚠️ 为什么需要一张单独的名单：`mergeToolsDefaults` 的 deny 是**并集**（只加不减）——
+ *    对全新配置没问题，但**存量盘**的 `tools.deny` 里已经有上一版写进去的
+ *    `web_search`（2026-10-07 降级期），并集永远不会把它拿掉：
+ *    搜索对新用户恢复了、对**所有老用户仍然被 deny 挡着**（且无任何界面可解）。
+ *    同理 `hasMemoryToolsDenied` 的提前返回也要认它——否则"全名都在"直接提前返回，
+ *    连 prune 的机会都没有（自愈链断在第一步）。
+ *
+ * 清除的安全性：`tools.deny` 在本产品里**从来只有我们写**（用户侧开关是
+ * `tools.web.search.enabled` / 设置页的联网开关，不是 deny 名单）；名单里的
+ * `web_search` 只可能是我们这个版本区间自己写下的。将来再有"降级名恢复"，
+ * 往这里加名字即可。
+ */
+export const RETIRED_DEFAULT_DENIED = ['web_search'] as const;
 
 /**
  * **无沙箱的看图工具**（BUG-049，2026-10-08 真机定案）——同样并入 deny。
@@ -419,6 +446,9 @@ export function hasMemoryToolsDenied(raw: unknown): boolean {
   const deny = readToolsDeny(raw);
   if (deny === null) return false;
   const present = new Set(deny);
+  // 退休名单还在 ⇒ 判「未就绪」：必须走一次合并把它清掉（否则提前返回会让
+  // 老盘的 web_search 永久留在 deny 里，搜索永远回不来——见 RETIRED_DEFAULT_DENIED 注释）。
+  if (RETIRED_DEFAULT_DENIED.some((name) => present.has(name))) return false;
   return defaultDeniedToolNames().every((name) => present.has(name));
 }
 
@@ -538,7 +568,11 @@ export function mergeToolsDefaults(existing: Record<string, unknown> | null): Re
 
   return {
     ...tools,
-    deny: [...new Set([...deny, ...defaultDeniedToolNames()])],
+    // 并集（保证当前名单全在）→ 再剔除**退休名**（2026-10-12：web_search 恢复后，
+    // 老盘 deny 里的历史条目必须被清掉，否则搜索只对新用户恢复——见 RETIRED_DEFAULT_DENIED）。
+    deny: [...new Set([...deny, ...defaultDeniedToolNames()])].filter(
+      (name) => !(RETIRED_DEFAULT_DENIED as readonly string[]).includes(name),
+    ),
     fs: { ...fsSection, workspaceOnly: TOOL_GUARD_FS_WORKSPACE_ONLY },
     // ⚠️ 只写 `mode`：**不要**加 `askFallback`（见上面常量处的实测）。
     exec: { ...execRest, mode: TOOL_GUARD_EXEC_MODE },
@@ -642,6 +676,72 @@ export function mergeInboxReadonlyGuard(
   };
 }
 
+/**
+ * 联网搜索 provider 插件的**配置侧**（插件文件本体在 `runtime/relay-search-plugin.ts`）。
+ *
+ * 与收件箱守卫同一条"每次启动对齐"的路径、同一组装载三条件（load.paths + 插件文件
+ * + entries.enabled；少一条静默失效）——理由见 `mergeInboxReadonlyGuard` 的注释：
+ * `ensureStateConfig` 的提前返回是存量用户的必经之路，只在新装时写 = 对老用户不存在。
+ *
+ * ⚠️ 与守卫的差别只有一处：守卫是"拦住模型的写"，本插件是"给模型一条搜索通路"，
+ *    所以激活与否则交给 relay 接线（`relay-config.ts` 写 provider 选择与凭据）。
+ *    本模块只保证**插件装得上**（未激活机器上工具也不会出现——内核补丁 fail-closed）。
+ */
+function isRelaySearchProviderPath(candidate: string): boolean {
+  const normalized = candidate.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized === RELAY_SEARCH_PLUGIN_ID || normalized.endsWith(`/${RELAY_SEARCH_PLUGIN_ID}`);
+}
+
+/** 搜索插件条目是不是已经完整（load 路径 + 显式启用；有 allow 名单时必须含它）。 */
+export function hasRelaySearchProvider(raw: unknown, pluginDir: string): boolean {
+  if (!isRecord(raw)) return false;
+  const plugins = raw.plugins;
+  if (!isRecord(plugins)) return false;
+  const paths = readPluginsLoadPaths(raw);
+  if (!paths || !paths.some((path) => isSamePolicyPath(path, pluginDir))) return false;
+  // 同插件的**异路径**（旧盘符残留）也判「未就绪」：它在网关侧同样致命（该路径不存在 ⇒
+  // 整份配置非法 ⇒ 拒启），而提前返回会让它永远留在配置里。
+  if (paths.some((path) => isRelaySearchProviderPath(path) && !isSamePolicyPath(path, pluginDir))) return false;
+  const entries = plugins.entries;
+  if (!isRecord(entries)) return false;
+  const entry = entries[RELAY_SEARCH_PLUGIN_ID];
+  if (!isRecord(entry) || entry.enabled !== true) return false;
+  if (Array.isArray(plugins.allow)) {
+    return (plugins.allow as unknown[]).includes(RELAY_SEARCH_PLUGIN_ID);
+  }
+  return true;
+}
+
+/**
+ * plugins 段合并（纯函数）：**并进**搜索插件的 load 路径与显式启用，不动别的插件条目
+ * （含已有 entry 的 `config` —— relay 接线写进去的 baseUrl/apiKey 必须保留）。
+ */
+export function mergeRelaySearchProvider(
+  existing: Record<string, unknown> | null,
+  pluginDir: string,
+): Record<string, unknown> {
+  const plugins = existing && isRecord(existing.plugins) ? existing.plugins : {};
+  const load = isRecord(plugins.load) ? plugins.load : {};
+  const paths = readPluginsLoadPaths(existing) ?? [];
+  const pruned = paths.filter((path) => !isRelaySearchProviderPath(path) || isSamePolicyPath(path, pluginDir));
+  const nextPaths = pruned.some((path) => isSamePolicyPath(path, pluginDir)) ? pruned : [...pruned, pluginDir];
+  const entries = isRecord(plugins.entries) ? plugins.entries : {};
+  const pluginEntry = isRecord(entries[RELAY_SEARCH_PLUGIN_ID]) ? entries[RELAY_SEARCH_PLUGIN_ID] : {};
+  const allow = Array.isArray(plugins.allow)
+    ? plugins.allow.filter((value): value is string => typeof value === 'string')
+    : null;
+  return {
+    ...plugins,
+    load: { ...load, paths: nextPaths },
+    entries: { ...entries, [RELAY_SEARCH_PLUGIN_ID]: { ...pluginEntry, enabled: true } },
+    ...(allow && !allow.includes(RELAY_SEARCH_PLUGIN_ID)
+      ? { allow: [...allow, RELAY_SEARCH_PLUGIN_ID] }
+      : allow
+        ? { allow }
+        : {}),
+  };
+}
+
 /** 从（任意的）已有配置里挖出 token；没有则 null。 */
 export function readStateToken(raw: unknown): string | null {
   if (!isRecord(raw)) return null;
@@ -729,6 +829,19 @@ export function ensureStateConfig(
     );
   }
 
+  // ①c 联网搜索 provider 插件（2026-10-12）：同款"文件先落盘、再决定配不配"。
+  //     写失败 ⇒ 本次不装载（下次启动重试）；未装 ≠ 搜索坏掉——内核补丁在 provider
+  //     未注册/未选中时让工具根本不出现（fail-closed），不会给用户假能力。
+  let searchPluginDir: string | null = null;
+  try {
+    searchPluginDir = ensureRelaySearchPlugin(stateDir);
+  } catch (error) {
+    console.warn(
+      '[runtime] runtime.relay-search-unavailable：联网搜索插件未能写入状态目录，本次不装载（不影响启动）',
+      error,
+    );
+  }
+
   // ② 已经一致 ⇒ 一个字节都不写（不每次启动都重写别人的文件）
   //
   // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
@@ -746,18 +859,29 @@ export function ensureStateConfig(
     hasToolGuard(existing) &&
     !hasStaleExecKeys(existing) &&
     (!inboxGuardDir || hasInboxReadonlyGuard(existing, inboxGuardDir)) &&
+    (!searchPluginDir || hasRelaySearchProvider(existing, searchPluginDir)) &&
     (!splitState || hasPortableAgentDefaults(existing, portableWorkspacePath))
   ) {
     return { token: store.token, created: false, configPath, stateDir };
   }
 
   const gateway = existing && isRecord(existing.gateway) ? existing.gateway : {};
+  // plugins 段：守卫与搜索插件各自"并进"自己的条目，先守卫后搜索（互不覆盖对方的
+  // entry/路径——两个 merge 都以"合并前的现有段"为底、只动自己那一项）。
+  const pluginsAfterInbox: Record<string, unknown> | null = inboxGuardDir
+    ? mergeInboxReadonlyGuard(existing, inboxGuardDir)
+    : existing && isRecord(existing.plugins)
+      ? existing.plugins
+      : null;
+  const pluginsFinal: Record<string, unknown> | null = searchPluginDir
+    ? mergeRelaySearchProvider({ plugins: pluginsAfterInbox ?? {} }, searchPluginDir)
+    : pluginsAfterInbox;
   const merged: Record<string, unknown> = {
     ...(existing ?? {}),
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },
     memory: mergeMemoryDefaults(existing),
     tools: mergeToolsDefaults(existing),
-    ...(inboxGuardDir ? { plugins: mergeInboxReadonlyGuard(existing, inboxGuardDir) } : {}),
+    ...(pluginsFinal ? { plugins: pluginsFinal } : {}),
     ...(splitState ? { agents: mergePortableAgentDefaults(existing, portableWorkspacePath) } : {}),
   };
 

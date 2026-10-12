@@ -9,6 +9,11 @@ import InlineNotice from '@/components/semantic/InlineNotice';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { toast } from '@/lib/toast';
 import { useUiStore } from '@/stores/uiStore';
+import { useTaskStore } from '@/stores/taskStore';
+import {
+  captureBundledSkillsOperationScope,
+  reconcileBundledSkillsAfterResolvedSkill,
+} from '@/lib/ensure-bundled-skills';
 import { useSkillVerdicts } from './use-skill-verdicts';
 import SkillVerdictBadge from './SkillVerdictBadge';
 import type { OurSkillEntry } from '@clawwork/shared';
@@ -84,6 +89,10 @@ export default function SkillMarket() {
   const handleToggle = useCallback(
     async (skill: OurSkillEntry) => {
       if (!gatewayId || busySlug) return;
+      // ⭐ B3（复审二轮）：操作成功要收敛报告 —— 作用域（网关 + 真实工作区代次，从 store
+      //    读当下值，不从报告反推）在**发起这一刻**捕获；成功回调按结果收敛/记账。
+      //    （安装是异步的：期间用户切了网关/工作区 ⇒ 成功后不写；期间报告被读写不再拦收敛。）
+      const reportScope = captureBundledSkillsOperationScope(gatewayId, useTaskStore.getState().workspaceEpoch);
       setBusySlug(skill.slug);
       setBusyAction('toggle');
       try {
@@ -112,6 +121,16 @@ export default function SkillMarket() {
         await load();
         // 装完之后**必须重问一次助手那边**（这正是"装完到底能不能用"的答案来源）。
         setVerdictNonce((n) => n + 1);
+        // ⭐ B3（复审二轮）：**安装成功** = 这个 slug 的"未生效"报告已经解决
+        //    （与修复同一个带作用域/轮次校验的收敛入口）。此前只有修复路径接了
+        //    收敛 —— 开机 ensure 失败过的技能手动装上了，failed 还挂在提示里。
+        //    ⚠️ 卸载方向不动报告：卸掉不解决"随包版本没生效"这件事（下次开机 ensure
+        //    还会把它装回来），如实保留。
+        if (!skill.installed)
+          reconcileBundledSkillsAfterResolvedSkill(reportScope, skill.slug, {
+            gatewayId: useUiStore.getState().defaultGatewayId,
+            workspaceEpoch: useTaskStore.getState().workspaceEpoch,
+          });
       } finally {
         setBusySlug(null);
         setBusyAction(null);
@@ -132,6 +151,10 @@ export default function SkillMarket() {
     async (skill: OurSkillEntry) => {
       setRepairTarget(null);
       if (!gatewayId || busySlug) return;
+      // ⭐ B3（复审二轮）：作用域（网关 + 真实工作区代次）在**发起这一刻**捕获 ——
+      //    修复是异步的，期间切了网关/工作区的话，这次成功回调不许把它清成自己的
+      //    （旧完成不许回写新状态；报告被其他结论写过不再拦收敛，见 reconcile…）。
+      const reportScope = captureBundledSkillsOperationScope(gatewayId, useTaskStore.getState().workspaceEpoch);
       setBusySlug(skill.slug);
       setBusyAction('repair');
       try {
@@ -147,6 +170,13 @@ export default function SkillMarket() {
         });
         await load();
         setVerdictNonce((n) => n + 1);
+        // ⭐ B3：修复成功 = 这个 slug 的冲突已按**真实结果**解决（confirmed-repair 核验过）——
+        //    报告里只收敛它自己，其他冲突/失败保留；作用域（当下 store 值 vs 发起时捕获）
+        //    已变则一个副作用都不留（见 reconcileBundledSkillsAfterResolvedSkill）。
+        reconcileBundledSkillsAfterResolvedSkill(reportScope, skill.slug, {
+          gatewayId: useUiStore.getState().defaultGatewayId,
+          workspaceEpoch: useTaskStore.getState().workspaceEpoch,
+        });
       } finally {
         setBusySlug(null);
         setBusyAction(null);
@@ -240,17 +270,17 @@ export default function SkillMarket() {
                   data-slug={skill.slug}
                   data-installed={skill.installed ? 'true' : 'false'}
                   data-verdict={verdicts[skill.slug]?.kind ?? 'none'}
-                  className="flex flex-col items-start gap-3 py-3 sm:flex-row sm:items-center"
+                  className="-mx-2 flex flex-col items-start gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-[var(--bg-secondary)] sm:flex-row sm:items-center"
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)]">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-tertiary)]">
                       <span className="emoji-sm">{skill.emoji ?? '🧩'}</span>
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         {/* ⚠️ 技能名与描述来自 SKILL.md 的 frontmatter，**不进 i18n** ——
                         与市场里的官方模板同一个口径（内容自带，不随界面语言变）。 */}
-                        <span className="type-label break-words text-[var(--text-primary)]">
+                        <span className="type-label break-words font-medium text-[var(--text-primary)]">
                           {skill.name ?? skill.slug}
                         </span>
                         {skill.installed ? (
@@ -259,8 +289,14 @@ export default function SkillMarket() {
                           </span>
                         ) : null}
                       </div>
+                      {/* 描述限宽 + 两行封顶（2026-10-12 排版精修）：此前全宽换行，
+                          宽屏上一条描述横跨一千多像素，行行见尾才换行 —— 扫读性最差的一处。
+                          完整文案保留在 title（悬停可见），信息不丢。 */}
                       {skill.description ? (
-                        <p className="type-support mt-1 break-words text-[var(--text-secondary)]">
+                        <p
+                          className="type-support mt-1.5 line-clamp-2 max-w-2xl break-words text-[var(--text-secondary)]"
+                          title={skill.description}
+                        >
                           {skill.description}
                         </p>
                       ) : null}

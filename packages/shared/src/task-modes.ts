@@ -10,11 +10,13 @@
  *
  * ## 三档 + 高级（custom）
  *
+ * （2026-10-10 Cephalon 批：三档统一 `glm-5.3-flash`，只差思考强度。）
+ *
  * | 模式 | 模型 | 思考档 |
  * |---|---|---|
- * | `fast` 快速 | `qwen3.7-flash-fast`（relay 别名；不在目录时回退 `qwen3.7-flash`） | `minimal` |
- * | `smart` 智能（默认） | `qwen3.7-flash` | `medium` |
- * | `deep` 深度 | `qwen3.7-flash` | `high` |
+ * | `fast` 快速 | `glm-5.3-flash` | `low` |
+ * | `smart` 智能（默认） | `glm-5.3-flash` | `high` |
+ * | `deep` 深度 | `glm-5.3-flash` | `max` |
  * | `custom` 高级：指定模型 | **用户自己选的模型**（保留既有行为） | 用户自己的档位 |
  *
  * ## 存量保护（硬要求）
@@ -39,18 +41,20 @@ export type TaskModeSetting = TaskMode | 'custom';
 export const DEFAULT_TASK_MODE: TaskMode = 'smart';
 
 /**
- * 快速档的 relay 模型别名。**另一路并行上线**，目录里可能还没有它
- *（客户端先发版、relay 后发版是常态）⇒ 缺失时回退到基础模型，不拦截、不报错。
+ * 旧快速档的 relay 模型别名（`qwen3.7-flash-fast`，relay 保留在售、下拉隐藏）。
+ * 2026-10-10 Cephalon 批后**三档已不再使用它** —— 常量保留只为：①隐藏名单
+ * `MODE_ALIAS_MODEL_IDS` 继续把存量目录里的旧别名挡在高级列表外；②测试与未来
+ * 迁移引用同一真源。不要顺手删。
  */
 export const FAST_MODEL_ALIAS_ID = 'qwen3.7-flash-fast';
 
-/** 智能 / 深度档的模型，也是快速档别名缺席时的回退目标。 */
-export const MODE_BASE_MODEL_ID = 'qwen3.7-flash';
+/** 三档共用的基础模型（id 本体，不带 `clawrouter/` 前缀）。 */
+export const MODE_BASE_MODEL_ID = 'glm-5.3-flash';
 
 export const MODE_POLICY: Record<TaskMode, { modelId: string; thinkingLevel: string }> = {
-  fast: { modelId: FAST_MODEL_ALIAS_ID, thinkingLevel: 'minimal' },
-  smart: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'medium' },
-  deep: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'high' },
+  fast: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'low' },
+  smart: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'high' },
+  deep: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'max' },
 };
 
 /** 模式专用别名（不是"某个可选模型"）—— 高级模型列表里要隐藏它们。 */
@@ -101,14 +105,12 @@ export function isModeAliasModelId(modelId: string): boolean {
  *「这个模型不在目录里」的闸门拦下。
  *
  * 规则：
- *   1. 按 `MODE_POLICY` 找；找不到且是快速档 ⇒ 回退基础模型；
- *   2. 还找不到 ⇒ `undefined`（调用方**保持现状、不拦截**：目录没拉到时照发，
+ *   1. 按 `MODE_POLICY` 找（三档同为 `glm-5.3-flash`，命中即返回目录里那个 id）；
+ *   2. 找不到 ⇒ `undefined`（调用方**保持现状、不拦截**：目录没拉到时照发，
  *      由上游与目录自己说话；拿它当"不支持"去拦住用户是更坏的失败）。
+ *      2026-10-10 Cephalon 批起**不再回退旧 Qwen 别名**——旧别名只隐藏、不使用。
  */
 export function resolveModeModelId(mode: TaskMode, catalogModelIds: readonly string[]): string | undefined {
   const policy = MODE_POLICY[mode];
-  const preferred = catalogModelIds.find((id) => modelIdMatches(id, policy.modelId));
-  if (preferred) return preferred;
-  if (mode === 'fast') return catalogModelIds.find((id) => modelIdMatches(id, MODE_BASE_MODEL_ID));
-  return undefined;
+  return catalogModelIds.find((id) => modelIdMatches(id, policy.modelId));
 }

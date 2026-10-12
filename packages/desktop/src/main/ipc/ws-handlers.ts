@@ -31,10 +31,12 @@ import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import {
   beginArtifactRunForGatewayDispatch,
   isArtifactRunPendingCurrent,
+  isArtifactTurnInFlight,
   bindArtifactRun,
   cancelArtifactRun,
   cancelArtifactRunsForSession,
 } from './data-handlers.js';
+import { noteGatewayTurnStop } from '../artifact/turn-lifecycle.js';
 
 async function gatewayRpc(
   gatewayId: string,
@@ -230,6 +232,21 @@ export function registerWsHandlers(): void {
           error: { message: 'gateway not connected' },
         });
         return { ok: false, error: 'gateway not connected', errorCode: 'GATEWAY_NOT_CONNECTED' };
+      }
+      // ⚠️ DOCX-205 合同（2026-10-10）B 块：**同会话普通发送单飞**的第二道门。
+      //    渲染层的门（useChatSend.handleSend 的会话活动判据）处理键盘/按钮路径；
+      //    这道门兜住任何"不经过渲染层门"的普通新请求（API/竞态窗口），判据见
+      //    `isArtifactTurnInFlight` 的注释（执行终态与交付 settled 都是真实事件，
+      //    另有 15 分钟 TTL 兜底）。审批回应/提问回应/显式停止不走这条 handler。
+      if (taskId && isArtifactTurnInFlight(taskId, payload.sessionKey)) {
+        getDebugLogger().info({
+          domain: 'ipc',
+          event: 'ipc.ws.send-message.turn-in-flight',
+          gatewayId: payload.gatewayId,
+          sessionKey: payload.sessionKey,
+          taskId,
+        });
+        return { ok: false, error: '上一项仍在处理，请完成后再发送。', errorCode: 'TURN_IN_FLIGHT' };
       }
       const controlledNative = process.env.ROYIN_NATIVE_PPT_VALIDATION === '1';
       let artifactRunToken: string | null = null;
@@ -755,9 +772,24 @@ export function registerWsHandlers(): void {
   ipcMain.handle('ws:abort-chat', async (_event, payload: { gatewayId: string; sessionKey: string }) => {
     cancelArtifactRunsForSession(payload.sessionKey);
     const gw = getGatewayClient(payload.gatewayId);
-    if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
+    // ⭐ B1（2026-10-11 整改 · 复审二轮）：停止的**同轮状态**要可核对 ——
+    //    本地取消 run 只说明"我们这边停了"；软状态保留为「未确认停止」，
+    //    直到 abort 被网关确认，或重连补发拿到应答（见 turn-lifecycle 注释）。
+    //    ⚠️ 失败路径**不**宣称远端已停（ok:false 原样返回；软状态保留，等真实证据）。
+    if (!gw?.isConnected) {
+      noteGatewayTurnStop(payload.sessionKey, false);
+      return { ok: false, error: 'gateway not connected' };
+    }
+    // abort 在途就先记"未确认"：超时/异常时记录停在正确的轮次上（不会误标到之后新开的轮）。
+    // ⭐ 复审三轮：await **前**捕获这次操作的 stop ticket —— 迟到的回执只许结算
+    //    同一次操作（ticket 身份不符 ⇒ 不许消费，见 turn-lifecycle.noteGatewayTurnStop）。
+    const stopTicket = noteGatewayTurnStop(payload.sessionKey, false);
     try {
-      return { ok: true, result: await gw.abortChat(payload.sessionKey) };
+      const result = await gw.abortChat(payload.sessionKey);
+      // 网关已处理这次 abort（aborted true=已中止 / false=本来就没有在跑）⇒ 确认的
+      // 生命周期证据；只落地**这次操作捕获的那一轮**。
+      noteGatewayTurnStop(payload.sessionKey, true, stopTicket);
+      return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };
@@ -924,9 +956,21 @@ export function registerWsHandlers(): void {
     ) => {
       cancelArtifactRunsForSession(payload.sessionKey);
       const gw = getGatewayClient(payload.gatewayId);
-      if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
+      // ⭐ B1（复审二轮）：会话销毁入口同样先本地取消 run —— 失败路径必须把
+      //    「未确认停止」留在可核对的轮次记录里（重连后补发核对），不许凭本地删除
+      //    就把软状态丢掉（那会让升级忙态/单飞门永久悬着或提前放行）。
+      if (!gw?.isConnected) {
+        noteGatewayTurnStop(payload.sessionKey, false);
+        return { ok: false, error: 'gateway not connected' };
+      }
+      // ⭐ 复审三轮：作用域在 await **前**捕获（这次操作的 stop ticket）—— 失败的
+      //    回执只许结算这一轮；catch 不再重新捕获（那个"当前轮"可能是期间新开的，
+      //    不是这次操作的对象 —— 旧实现会把新轮误标成"未确认停止"）。
+      const stopTicket = noteGatewayTurnStop(payload.sessionKey, false);
       try {
         await gw.resetSession(payload.sessionKey, payload.reason);
+        // 重置已被网关受理 = 真实 RPC 合同的确认 ⇒ 只消费这次操作捕获的那一轮。
+        noteGatewayTurnStop(payload.sessionKey, true, stopTicket);
         return { ok: true };
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown error';
@@ -946,9 +990,17 @@ export function registerWsHandlers(): void {
     ) => {
       cancelArtifactRunsForSession(payload.sessionKey);
       const gw = getGatewayClient(payload.gatewayId);
-      if (!gw?.isConnected) return { ok: false, error: 'gateway not connected' };
+      // ⭐ B1（复审二轮）：同 ws:session-reset —— 失败路径保留「未确认停止」记录。
+      if (!gw?.isConnected) {
+        noteGatewayTurnStop(payload.sessionKey, false);
+        return { ok: false, error: 'gateway not connected' };
+      }
+      // ⭐ 复审三轮：同 ws:session-reset —— await 前捕获这次操作的 ticket，catch 不重捕。
+      const stopTicket = noteGatewayTurnStop(payload.sessionKey, false);
       try {
         await gw.deleteSession(payload.sessionKey, true);
+        // 删除已被网关受理 = 真实 RPC 合同的确认 ⇒ 只消费这次操作捕获的那一轮。
+        noteGatewayTurnStop(payload.sessionKey, true, stopTicket);
         return { ok: true };
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown error';

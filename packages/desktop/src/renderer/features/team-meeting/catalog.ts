@@ -1,6 +1,6 @@
 import type { AgentInfo, ModelCatalogEntry, Team } from '@clawwork/shared';
 import { canonicalModelRef } from '@/lib/team-model-ref';
-import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import type { MeetingMember } from './plan';
 
 export function meetingCatalog(
@@ -8,7 +8,8 @@ export function meetingCatalog(
   agents: AgentInfo[],
   catalog: ModelCatalogEntry[],
 ): { members: MeetingMember[]; models: string[] } {
-  const available = relayModelsFrom(catalog).filter((entry) => entry.available !== false);
+  // 2026-10-12：与建队/发送同一把尺（selectableModelsFrom 含剔除模式别名——会议角色不会解析到内部别名）。
+  const available = selectableModelsFrom(catalog);
   const models = [...new Set(available.map(canonicalModelRef).filter(Boolean))];
   const members = team.agents.flatMap((member) => {
     const agent = agents.find((entry) => entry.id === member.agentId);

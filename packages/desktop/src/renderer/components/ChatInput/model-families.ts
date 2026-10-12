@@ -17,9 +17,55 @@
  *（名字用户可改）。这里做不到 —— 渲染层拿不到网关配置。留作已知局限：
  * 将来若允许用户自定义 provider，这个筛法要跟着改。
  */
-import type { ModelCatalogEntry } from '@clawwork/shared';
+import { isModeAliasModelId, type ModelCatalogEntry } from '@clawwork/shared';
 
 export const RELAY_PROVIDER_ID = 'clawrouter';
+
+/**
+ * ⭐ 「用户能选的模型」= **唯一一把尺**（2026-10-12 统一，用户真机反馈
+ * "设置里的模型下拉还有残留"）。三层收敛：
+ *
+ *   ① `relayModelsFrom`：我们服务得了的（发送不会 404）——顺带挡掉
+ *      内核内置示例模型（`GPT-6 Astra (openai)` 这类，我们没有 openai 渠道）；
+ *   ② `available !== false`：目录当前标为不可用的不列；
+ *   ③ `!isModeAliasModelId`：模式内部别名（`qwen3.7-flash-fast`）不是"某个可选模型"，
+ *      出现在用户可点的清单里等于把实现细节摆上台面（与 ChatInput 高级列表同口径）。
+ *
+ * **任何给用户选模型的列表**（设置-智能体覆盖模型、建队、`/model` 补全、对比列）
+ * 都走这里；读侧解析（展示历史消息的模型名、查 provider/档位）仍用 raw 目录，
+ * 那是另一个问题（见 `model-display.ts` 顶部注释）。
+ */
+export function selectableModelsFrom(models: readonly ModelCatalogEntry[] | undefined | null): ModelCatalogEntry[] {
+  return relayModelsFrom([...(models ?? [])]).filter(
+    (model) => model.available !== false && !isModeAliasModelId(model.id),
+  );
+}
+
+/**
+ * 展示名净化（2026-10-12 用户口径：**供应链渠道名不上用户可见面**——用户看到
+ * "Cephalon/端脑"会去找外部平台。平台计费 ID 在 `id` 里原样保留，只洗展示名）。
+ *
+ * 兜底层：源头（relay 目录）已改中性展示名；这里再防一手旧缓存/未来渠道字样——
+ * 目录进 store 前统一净化，所有消费点（下拉/标签/系统消息）自动干净。
+ */
+const CHANNEL_TRACE_PATTERN = /\s*(?:[·|]\s*)?\(?\bCephalon\b\)?|端脑|\s*[-–—]\s*cephalon\b/gi;
+
+export function sanitizeModelDisplayName(value: string | undefined | null): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value
+    .replace(CHANNEL_TRACE_PATTERN, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/** 目录入 store 前的净化：**只洗 name**（缺省时用净化后的 id 顶展示），id/provider 原样。 */
+export function sanitizedCatalogModels(models: readonly ModelCatalogEntry[]): ModelCatalogEntry[] {
+  return models.map((model) => {
+    const name = sanitizeModelDisplayName(model.name) ?? sanitizeModelDisplayName(model.id) ?? model.name;
+    return name === model.name ? model : { ...model, name };
+  });
+}
 
 /**
  * 只留下中转服务能提供的模型。

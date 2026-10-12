@@ -34,7 +34,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { useTeamInstall } from '@/layouts/TeamsPanel/useTeamInstall';
 import { toSlug, withAgentIds, EMOJI_OPTIONS } from '@/layouts/TeamsPanel/utils';
 import type { AgentDraft, TeamInfo, InstallStatus } from '@/layouts/TeamsPanel/types';
-import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
 import { buildResponseLanguageContext } from '@/lib/response-language';
@@ -330,7 +330,7 @@ export default function TeamBuilderDialog({ open, onOpenChange, gatewayId, onCre
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
   const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
   const models = modelCatalogByGateway[gatewayId] ?? EMPTY_MODELS;
-  const relayModels = useMemo(() => relayModelsFrom(models).filter((model) => model.available !== false), [models]);
+  const relayModels = useMemo(() => selectableModelsFrom(models), [models]);
   const defaultAgentId = agentCatalogByGateway[gatewayId]?.defaultId ?? 'main';
 
   const loadTeams = useTeamStore((s) => s.loadTeams);

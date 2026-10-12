@@ -11,12 +11,81 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Check, Copy, Save, Loader2, Presentation, Globe } from 'lucide-react';
+import { Check, Copy, Save, Loader2, Presentation, Globe, Video } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { pendingFencedCodeStarts } from '@/lib/markdown-code-pending';
+import { useArtifactDeliveryProof, type RequestCardState } from '@/lib/artifact-delivery-proof';
+
+const REQUEST_CARD_ICON = { docgen: Presentation, htmlgen: Globe, videogen: Video } as const;
+
+const REQUEST_CARD_STATE_KEY: Record<RequestCardState, string> = {
+  pending: 'Pending',
+  generating: 'Generating',
+  failed: 'Failed',
+  unconfirmed: 'Unconfirmed',
+  delivered: 'Delivered',
+};
+
+/**
+ * ⚠️ DOCX-205 合同 §5.C（2026-10-10）：`docgen` / `htmlgen` 围栏的**状态卡片**。
+ * （2026-10-12 视频接入：`videogen` 并入同款卡片 —— 五态语义完全一样，
+ * 差别只在：视频是后台作业（分钟级），活动帧与产物按 `videogen` 专属判据取，
+ * 见 `artifact-delivery-proof.ts` 的 `kind` 参数。）
+ *
+ * 文案跟随**真实交付状态**（`useArtifactDeliveryProof`：交付活动 × 已登记且实时
+ * 可读的产物），不再无条件写"成品见右侧「产物」"；只有 `delivered`（活动 succeeded
+ * 且该 messageId 有 availability=available 的登记产物）才出现成功文案与「打开」按钮，
+ * 且按钮只指向**已登记**的那一版（`openArtifactFile(id, taskId)`）。
+ */
+function RequestArtifactCard({
+  kind,
+  taskId,
+  messageId,
+}: {
+  kind: 'docgen' | 'htmlgen' | 'videogen';
+  taskId?: string;
+  messageId?: string;
+}) {
+  const { t } = useTranslation();
+  const [openFailed, setOpenFailed] = useState(false);
+  const { state, artifactId } = useArtifactDeliveryProof(taskId, messageId, kind);
+  const Icon = REQUEST_CARD_ICON[kind];
+  const open = async (): Promise<void> => {
+    if (!artifactId || !taskId) return;
+    try {
+      const response = await window.clawwork.openArtifactFile(artifactId, taskId);
+      if (!response.ok) throw new Error(response.error);
+      setOpenFailed(false);
+    } catch {
+      setOpenFailed(true);
+    }
+  };
+  return (
+    <div
+      data-testid={`${kind}-block`}
+      data-delivery-state={state}
+      className="my-1.5 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
+    >
+      <Icon size={14} className="shrink-0 text-[var(--accent)]" />
+      <span className="type-support">{t(`chatMessage.${kind}${REQUEST_CARD_STATE_KEY[state]}`)}</span>
+      {state === 'delivered' && artifactId && (
+        <button
+          type="button"
+          onClick={() => void open()}
+          className="type-support ml-auto shrink-0 underline underline-offset-2 hover:text-[var(--text-primary)]"
+        >
+          {t('artifactCard.open')}
+        </button>
+      )}
+      {openFailed && (
+        <span className="type-support shrink-0 text-[var(--danger)]">{t('artifactCard.openFailedHint')}</span>
+      )}
+    </div>
+  );
+}
 
 /**
  * react-markdown 注入的 hast 节点（只用位置信息；避免为此把 `hast` 引成依赖）。
@@ -258,45 +327,34 @@ function MarkdownContent({
         const code = flattenTextContent(children).replace(/\n$/, '');
         const lang = extractLang(children);
         /**
-         * ⭐ `docgen` / `htmlgen` 块**不是代码**，是"请生成一份文件 / 网页"的请求
-         * （schema 见 `main/docgen/request.ts` 与 `main/htmlgen/request.ts`）。
+         * ⭐ `docgen` / `htmlgen` / `videogen` 块**不是代码**，是"请生成一份文件 /
+         * 网页 / 视频"的请求（schema 见 `main/docgen/request.ts`、
+         * `main/htmlgen/request.ts`、`main/videogen/request.ts`）。
          * 把原始 JSON 摊给用户看既是噪音、又像是让他去编辑它 ——
          * **更要命的是它带一个"复制"按钮**：用户会以为"我得自己存成文件"，
          * 而那正是这条通道想消灭的行为。
-         * 这里换成一行卡片：真正的东西是客户端渲染出来的文件，出现在右侧「产物」里。
+         * 这里换成一行卡片：真正的东西是客户端渲染/生成出来的文件，出现在右侧「产物」里。
          *
-         * ⚠️ 两条通道必须**同时**在这里有分支：`htmlgen` 曾经漏掉，
+         * ⚠️ 三条通道必须**同时**在这里有分支：`htmlgen` 曾经漏掉，
          *    于是它渲染成普通代码块 + 复制按钮 —— 界面上等于告诉用户
          *    "这功能不存在，你自己复制吧"。加通道时别忘了这里。
          */
         const requestCard = (() => {
           switch (lang.toLowerCase()) {
             case 'docgen':
-              return {
-                testId: 'docgen-block',
-                Icon: Presentation,
-                label: t('chatMessage.docgenBlock'),
-              };
+              return { kind: 'docgen' as const };
             case 'htmlgen':
-              return {
-                testId: 'htmlgen-block',
-                Icon: Globe,
-                label: t('chatMessage.htmlgenBlock'),
-              };
+              return { kind: 'htmlgen' as const };
+            case 'videogen':
+              return { kind: 'videogen' as const };
             default:
               return null;
           }
         })();
         if (requestCard) {
-          return (
-            <div
-              data-testid={requestCard.testId}
-              className="my-1.5 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
-            >
-              <requestCard.Icon size={14} className="shrink-0 text-[var(--accent)]" />
-              <span className="type-support">{requestCard.label}</span>
-            </div>
-          );
+          // ⚠️ DOCX-205 合同 §5.C：卡片文案**跟随真实交付状态**（待处理/正在生成/
+          //    失败/未确认/已生成）—— 不再无条件承诺"成品见右侧「产物」"。
+          return <RequestArtifactCard kind={requestCard.kind} taskId={taskId} messageId={messageId} />;
         }
         /*
           未闭合围栏占位（Task 6 / G2）：位置来自**真实解析器**（hast node.position 起点），
@@ -332,8 +390,10 @@ function MarkdownContent({
         );
       },
     }),
-    // ⚠️ `t` 也在里面用到（`pre` 那支的说明文案）—— 漏了它，切语言后那段文案不会更新。
-    [copyCodeLabel, copiedLabel, messageId, onImageClick, t, taskId],
+    // ⚠️ 这里**不需要** `t`：docgen/htmlgen 卡片的文案由 `RequestArtifactCard`
+    //    自己订阅（内部 `useTranslation`），切语言时那张卡片自行重渲染；
+    //    memo 里只用到上面这些已解构出的标签与稳定回调。
+    [copyCodeLabel, copiedLabel, messageId, onImageClick, taskId],
   );
 
   return (

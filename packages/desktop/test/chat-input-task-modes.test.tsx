@@ -261,16 +261,18 @@ import ChatInput from '../src/renderer/components/ChatInput';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 import { compareStore } from '../src/renderer/features/compare/compare-store-instance';
 
-const BASE_MODEL_ID = 'qwen3.7-flash';
+const BASE_MODEL_ID = 'glm-5.3-flash';
 const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
 const LEGACY_MODEL_ID = 'deepseek-v4-flash';
 const OTHER_MODEL_ID = 'qwen3.5-27b';
+const CEPHALON_DEEPSEEK_ID = 'deepseek-v4-flash-cephalon';
 
 const catalog: ModelCatalogEntry[] = [
   { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
-  { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+  { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text', 'image'] },
   { id: OTHER_MODEL_ID, name: 'Qwen 3.5 27B', provider: 'clawrouter' },
   { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
+  { id: CEPHALON_DEEPSEEK_ID, name: 'DeepSeek V4 Flash · Cephalon', provider: 'clawrouter' },
 ];
 
 function renderChatInput(): { container: HTMLDivElement; unmount: () => void } {
@@ -416,8 +418,23 @@ describe('任务模式 chip（输入框）', () => {
     expect(text, '别名名字也不该露出来').not.toContain(ALIAS_MODEL_ID);
     expect(text).not.toContain('Qwen 3.7 Flash Fast');
     // 对照：基础模型与普通模型照常可选（不是把整张表藏了）
-    expect(text).toContain('Qwen 3.7 Flash');
+    expect(text).toContain('GLM 5.3 Flash');
     expect(text).toContain('Qwen 3.5 27B');
+
+    unmount();
+  });
+
+  it('⭐ Cephalon 批：高级列表中新旧两条 DeepSeek 渠道与 GLM 都可见（别名仍隐藏）', () => {
+    const { container, unmount } = renderChatInput();
+
+    const buttonTexts = [...container.querySelectorAll('button')].map((b) => b.textContent ?? '');
+    // 旧渠道保持可选（用户原有下拉选择不受影响）
+    expect(buttonTexts.filter((t) => t === 'DeepSeek V4 Flash')).toHaveLength(1);
+    // 新渠道（平台计费 ID）也在下拉里、显示为 Cephalon 版本
+    expect(buttonTexts.filter((t) => t === 'DeepSeek V4 Flash · Cephalon')).toHaveLength(1);
+    expect(buttonTexts.some((t) => t.includes('GLM 5.3 Flash'))).toBe(true);
+    const text = container.textContent ?? '';
+    expect(text, '模式别名仍隐藏').not.toContain(ALIAS_MODEL_ID);
 
     unmount();
   });
@@ -440,7 +457,18 @@ describe('任务模式 chip（输入框）', () => {
     const { container, unmount } = renderChatInput();
 
     const text = container.textContent ?? '';
-    expect(text, 'deep ⇒ 高').toContain('chatInput.thinkingHigh');
+    expect(text, 'deep ⇒ 最高（max，Cephalon 批）').toContain('chatInput.thinkingMax');
+    expect(text).toContain('chatInput.thinkingLockedByMode');
+
+    unmount();
+  });
+
+  it('⭐ 快速档 ⇒ 思考档显示为低（low，Cephalon 批）', () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'fast' }];
+    const { container, unmount } = renderChatInput();
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('chatInput.thinkingLow');
     expect(text).toContain('chatInput.thinkingLockedByMode');
 
     unmount();

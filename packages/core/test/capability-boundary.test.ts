@@ -24,13 +24,16 @@ describe('能力边界提示词（注入给模型的能力清单）', () => {
     expect(prompt).toContain('deepseek-v4-flash');
   });
 
-  it('把"暂不支持"的规则写死：其它厂商模型 / 图片视频生成 / 语音', () => {
+  it('把"暂不支持"的规则写死：其它厂商模型 / 图片生成 / 语音（v3：视频不再列不支持）', () => {
     expect(prompt).toContain('当前暂不支持该模型或能力');
     expect(prompt).toContain('GPT');
     expect(prompt).toContain('Claude');
     expect(prompt).toContain('图片生成');
-    expect(prompt).toContain('视频生成');
     expect(prompt).toContain('语音');
+    // v3（2026-10-12 视频接入）：视频生成已接入 —— 不得再出现在"暂不支持"一侧
+    expect(prompt).not.toMatch(/图片生成、视频生成/);
+    // 且必须作为可用能力行出现（防"主罗盘拒答、其它助手能生成"的指令层矛盾）
+    expect(prompt).toContain('视频生成：按随包《视频生成》技能规范');
   });
 
   it('禁止底层试错（不许调用工具试出来再报失败）', () => {
@@ -41,6 +44,29 @@ describe('能力边界提示词（注入给模型的能力清单）', () => {
     const bare = buildCapabilityBoundaryPrompt(buildCapabilityRegistry());
     expect(bare).toContain('当前暂不支持该模型或能力');
     expect(bare).not.toContain('qwen3.7-flash');
+  });
+
+  it('⭐ 对话模型两档如实列：已实测可用 / 目录可选未实测（2026-10-10 Task 2 复核校正）', () => {
+    const registry = buildCapabilityRegistry({
+      models: [...MODELS, { id: 'qwen-turbo', provider: 'clawrouter', input: ['text'] }],
+    });
+    const twoTier = buildCapabilityBoundaryPrompt(registry);
+    const verifiedLine = twoTier.split('\n').find((line) => line.includes('已实测可用的对话模型')) ?? '';
+    const unverifiedLine = twoTier.split('\n').find((line) => line.includes('尚未逐一实测')) ?? '';
+    // 账本有实测的进第一档；没有实测记录的（qwen-turbo）只进第二档，绝不混入第一档。
+    expect(verifiedLine).toContain('qwen3.7-flash');
+    expect(verifiedLine).toContain('deepseek-v4-flash');
+    expect(verifiedLine).not.toContain('qwen-turbo');
+    expect(unverifiedLine).toContain('qwen-turbo');
+    expect(unverifiedLine).not.toContain('qwen3.7-flash');
+  });
+
+  it('⭐ 只有未实测模型时：照列但不许写成"已实测可用"', () => {
+    const onlyUnverified = buildCapabilityBoundaryPrompt(
+      buildCapabilityRegistry({ models: [{ id: 'qwen-turbo', provider: 'clawrouter', input: ['text'] }] }),
+    );
+    expect(onlyUnverified).toContain('qwen-turbo');
+    expect(onlyUnverified).not.toContain('已实测可用的对话模型');
   });
 });
 

@@ -38,6 +38,7 @@ const session = vi.hoisted(() => ({
 const models = vi.hoisted(() => ({
   catalog: [
     { id: 'clawrouter/qwen3.5-27b', provider: 'clawrouter', name: 'Qwen 3.5 27B' },
+    { id: 'clawrouter/glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
     { id: 'clawrouter/deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
   ] as Array<{ id: string; provider?: string; name?: string; available?: boolean }>,
 }));
@@ -169,6 +170,7 @@ describe('AgentBuilderDialog', () => {
     session.error = null;
     models.catalog = [
       { id: 'clawrouter/qwen3.5-27b', provider: 'clawrouter', name: 'Qwen 3.5 27B' },
+      { id: 'clawrouter/glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
       { id: 'clawrouter/deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
     ];
     Object.assign(window, {
@@ -199,8 +201,8 @@ describe('AgentBuilderDialog', () => {
     expect(session.start.mock.calls[0]?.[0]).toMatchObject({
       gatewayId: 'gw-1',
       purpose: 'agent-builder',
-      // 目录里第一条是 qwen3.5-27b（就是实机卡住的那个）；这里必须是商业默认模型
-      model: 'clawrouter/deepseek-v4-flash',
+      // 目录里第一条是 qwen3.5-27b（就是实机卡住的那个）；这里必须是商业默认模型（Cephalon 批 = GLM 5.3 Flash）
+      model: 'clawrouter/glm-5.3-flash',
     });
     view.unmount();
   });
@@ -373,7 +375,7 @@ describe('AgentBuilderDialog', () => {
   it('preselects the available model in the form so the user can create without waiting for the AI', () => {
     const view = render();
     const select = view.container.querySelector('select') as HTMLSelectElement;
-    expect(select.value).toBe('clawrouter/deepseek-v4-flash');
+    expect(select.value).toBe('clawrouter/glm-5.3-flash');
     view.unmount();
   });
 

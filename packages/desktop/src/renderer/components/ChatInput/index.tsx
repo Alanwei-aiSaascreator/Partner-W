@@ -1200,7 +1200,8 @@ export default function ChatInput({
                             title={
                               modelStatusLabel ??
                               (modeDriven
-                                ? `${t(MODE_LABEL_KEYS[currentMode])}${displayModelEntry ? ` · ${displayModelEntry.name ?? displayModelEntry.id}` : ''}`
+                                ? // 2026-10-11（用户拍板）：三档下悬浮标题也不带模型名——内部路由不上屏。
+                                  t(MODE_LABEL_KEYS[currentMode])
                                 : (currentModelEntry?.name ?? modelLabel))
                             }
                             aria-busy={modelIsPreparing}

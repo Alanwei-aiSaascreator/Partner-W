@@ -94,7 +94,12 @@ describe('bootstrapLocalGatewayRuntime', () => {
     };
     const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({ userDataDir: USER_DATA, deps });
-    expect(deps.log).toHaveBeenCalledWith('runtime.node.resolve.done', { durationMs: 64, ok: true });
+    // ⚠️ BUG-064 后这个事件的载荷多了结构化诊断（contractMs/attempts/probeRecords，
+    //    测试桩的 resolveNode 返回里没有 ⇒ undefined）；耗时与 ok 照旧钉死。
+    expect(deps.log).toHaveBeenCalledWith(
+      'runtime.node.resolve.done',
+      expect.objectContaining({ durationMs: 64, ok: true }),
+    );
     expect(deps.log).toHaveBeenCalledWith('runtime.gateway.start', {});
     expect(deps.log).toHaveBeenCalledWith('runtime.gateway.ready', { durationMs: 110000, ownership: 'spawned' });
     expect(JSON.stringify(vi.mocked(deps.log).mock.calls)).not.toContain('tok-1');
@@ -395,6 +400,8 @@ describe('bootstrapLocalGatewayRuntime', () => {
       resolveNode: vi.fn(async () => ({
         ok: false as const,
         attempts: [],
+        // BUG-064 归因分档：本 fixture 明确表达"版本不受支持"（终审 K4-1）。
+        failureClass: 'version-unsupported' as const,
         message: '找不到可用的 Node。\n要求版本：>=24.16.0 <25, or >=26.1.0\n  - env  …→ 20.19.1（版本不受支持）',
       })),
     });

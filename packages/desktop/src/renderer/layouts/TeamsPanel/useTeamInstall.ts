@@ -11,7 +11,7 @@ import type {
 import type { InstallerDeps } from '@clawwork/core';
 import { installTeam, serializeIdentityMd } from '@clawwork/core';
 import { WORKSPACE_UNAVAILABLE_MESSAGE, checkInstallWorkspaceCapability } from '@/lib/install-workspace';
-import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import { resolveTeamModelRef } from '@/lib/team-model-ref';
 import { useUiStore } from '@/stores/uiStore';
 import { toSlug, withAgentIds } from './utils';
@@ -155,9 +155,7 @@ export function useTeamInstall(onDone?: () => void) {
       }
 
       const gwId = teamInfo.gatewayId;
-      const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
-        (model) => model.available !== false,
-      );
+      const availableModels = selectableModelsFrom(modelCatalogByGateway[gwId]);
       const modelResolution = resolveRequestedTeamModels(agents, availableModels);
       if (!modelResolution.ok) {
         setInstallEvents([{ type: 'error', message: modelResolution.message }]);
@@ -330,9 +328,7 @@ export function useTeamInstall(onDone?: () => void) {
       const agents = withAgentIds(agentDrafts);
       try {
         const gwId = teamInfo.gatewayId;
-        const availableModels = relayModelsFrom(modelCatalogByGateway[gwId] ?? []).filter(
-          (model) => model.available !== false,
-        );
+        const availableModels = selectableModelsFrom(modelCatalogByGateway[gwId]);
         const modelResolution = resolveRequestedTeamModels(agents, availableModels);
         if (!modelResolution.ok) {
           setInstallEvents([{ type: 'error', message: modelResolution.message }]);

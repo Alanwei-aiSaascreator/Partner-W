@@ -62,6 +62,7 @@ it('all supported languages translate every actual delivery stage', () => {
       'generating-document',
       'generating-html',
       'generating-presentation',
+      'generating-video',
       'reconciling-artifacts',
       'saving-artifacts',
     ]);
@@ -74,6 +75,7 @@ it.each([
   'generating-presentation',
   'generating-document',
   'generating-html',
+  'generating-video',
   'saving-artifacts',
   'reconciling-artifacts',
 ] as const)('shows actual %s after the model turn finishes', (phase) => {

@@ -14,6 +14,7 @@ import { deviceFingerprint, mapActivationError, readLicenseStatus } from './lice
 import {
   webSearchEnabled,
   fetchFirstRelayModel,
+  fetchRelayCatalogModelEntries,
   fetchRelayMediaCapabilities,
   setActiveRelayBaseUrl,
 } from './relay-config.js';
@@ -33,8 +34,8 @@ import { sendToWindow } from '../ws/window-utils.js';
 import { getMainWindow } from '../window-manager.js';
 import { getDebugLogger } from '../debug/index.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
-import { getActiveLocalGatewayDeploymentRoot } from '../runtime/index.js';
-import { hasBundledSearchProvider } from '../runtime/bundled-search.js';
+import { getActiveLocalGatewayStateDir } from '../runtime/index.js';
+import { hasInstalledSearchProvider } from '../runtime/bundled-search.js';
 import { buildCommercialAccessCleanupDeps, drainPendingCommercialAccessCleanup } from './relay-cleanup.js';
 
 /**
@@ -49,7 +50,7 @@ export function findConnectedGateway(): RelayGatewayHandle | null {
   const picked = preferred?.isConnected ? preferred : Array.from(clients.values()).find((gw) => gw.isConnected);
   if (!picked) return null;
   return {
-    bundledWebSearchAvailable: picked === preferred && hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot()),
+    bundledWebSearchAvailable: picked === preferred && hasInstalledSearchProvider(getActiveLocalGatewayStateDir()),
     getConfig: () => picked.getConfig(),
     patchConfig: (params) => picked.patchConfig(params),
     runConfigMutation: (work) =>
@@ -217,6 +218,7 @@ export function buildRelayBootstrapDeps(): RelayBootstrapDeps {
     fetchRelayKey: fetchRelayKeyForLicense,
     getGateway: findConnectedGateway,
     resolveDefaultModel: fetchFirstRelayModel,
+    resolveCatalogModels: fetchRelayCatalogModelEntries,
     resolveMediaCapabilities: fetchRelayMediaCapabilities,
     deviceFingerprint,
     log,

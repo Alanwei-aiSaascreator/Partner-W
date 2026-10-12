@@ -4,7 +4,7 @@ import { electronApp, is } from '@electron-toolkit/utils';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { nativeTheme } from 'electron';
-import { initAllGateways, destroyAllGateways, getGatewayClient } from './ws/index.js';
+import { initAllGateways, destroyAllGateways, getGatewayClient, reconnectGateway } from './ws/index.js';
 import { getMainWindow, setMainWindow } from './window-manager.js';
 import { sendToWindow } from './ws/window-utils.js';
 import { initDebugLogger, getDebugLogger } from './debug/index.js';
@@ -604,7 +604,13 @@ continueAfterPortableAppData(
               sendToWindow(getMainWindow(), 'runtime-status', getRuntimeBootstrapStatus());
               // 网关是**这一次**才起来的（首跑被 migration-blocked 挡下、用户点重试）⇒
               // 补一次能力边界注入（同一条 fire-and-forget，失败不挡任何东西）。
-              if (result.ok) kickCapabilityBoundaryInjection();
+              if (result.ok) {
+                // ⭐ BUG-064 D：本机运行时是被「重新准备」救回来的 —— 把因
+                //   `gateway.reconnect.suppressed-runtime-down` 停下的本地网关**显式**
+                //   唤醒（快照此刻已是 ok，重连照常走；只唤醒本机这一个网关）。
+                reconnectGateway(LOCAL_GATEWAY_ID);
+                kickCapabilityBoundaryInjection();
+              }
               return getRuntimeBootstrapStatus();
             } finally {
               runtimeRetryInFlight = false;

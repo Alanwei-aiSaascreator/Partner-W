@@ -82,6 +82,12 @@ describe('EntryPreparation', () => {
     'auth-rejected',
     'state-migration-blocked',
     'deploy-failed',
+    // ⚠️ BUG-064（2026-10-10）：随盘 Node 的五档同样必须给出原因 + 「重新准备」出口。
+    'node-missing',
+    'node-permission-denied',
+    'node-probe-timeout',
+    'node-exec-failed',
+    'node-version-unsupported',
     'unknown',
   ] as const)('shows %s with the in-app retry exit (不再是"完全退出重开")', async (reason) => {
     const cb = callbacks();
@@ -89,6 +95,8 @@ describe('EntryPreparation', () => {
     const { container } = render(<EntryPreparation facts={failed} {...cb} />);
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('entryPreparation.runtimeRetryHint');
     expect(container.textContent).toContain('entryPreparation.needsAttention');
+    // ⭐ BUG-064 合同 #4：**终态失败停止等待动画** —— 已出结论还在转圈就是在承诺"再等等"。
+    expect(container.querySelectorAll('.animate-spin'), '失败态不许转圈').toHaveLength(0);
     // ⭐ 运行端起不来时「重新准备」**必须留着**：它现在真的重跑一轮 bootstrap
     //   （IPC `runtime:bootstrap-retry`），不是原来那个按了没用的按钮。
     const retry = container.querySelector<HTMLButtonElement>('[data-entry-retry]');

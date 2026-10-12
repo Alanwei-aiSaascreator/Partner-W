@@ -15,6 +15,7 @@ import {
   ensureCapabilityBoundaryPromptWithRetry,
   type CapabilityBoundaryGateway,
 } from '../src/main/capability/capability-boundary-prompt';
+import { CAPABILITY_BOUNDARY_PROMPT_VERSION } from '@clawwork/core';
 
 /**
  * BUG-043 · 能力边界的**注入端**（主进程 → 网关 RPC → main 助手的 AGENTS.md）。
@@ -54,7 +55,7 @@ describe('能力边界注入（AGENTS.md）', () => {
     const [agentId, name, content] = gateway.setAgentFile.mock.calls[0] as unknown as [string, string, string];
     expect(agentId).toBe('main');
     expect(name).toBe('AGENTS.md');
-    expect(content).toContain('mofang-capability-boundary:1:begin');
+    expect(content).toContain(`mofang-capability-boundary:${CAPABILITY_BOUNDARY_PROMPT_VERSION}:begin`);
     expect(content).toContain('当前暂不支持该模型或能力');
     expect(content).toContain('qwen3.7-flash');
     // 网关全量目录里的非本服务模型（claude）不许混进"可用模型"清单。
@@ -85,7 +86,7 @@ describe('能力边界注入（AGENTS.md）', () => {
     const content = (gateway.setAgentFile.mock.calls[0] as unknown as [string, string, string])[2];
     expect(content.startsWith(original)).toBe(true);
     expect(content).toContain('我们的团队约定：先复述需求再动手。');
-    expect(content).toContain('mofang-capability-boundary:1:end');
+    expect(content).toContain(`mofang-capability-boundary:${CAPABILITY_BOUNDARY_PROMPT_VERSION}:end`);
   });
 
   it('读不出来（RPC 报错 / 形状不认识）⇒ 一律不写，如实 failed', async () => {

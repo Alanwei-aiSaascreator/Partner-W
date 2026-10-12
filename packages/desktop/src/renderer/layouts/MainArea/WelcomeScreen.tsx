@@ -18,13 +18,7 @@ import { motion as animationPresets } from '@/styles/design-tokens';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
 import { removeAssistantTaskPresetTags } from '@/lib/assistant-task-preset-tags';
-import {
-  DEFAULT_TASK_MODE,
-  normalizeTaskModeSetting,
-  resolveModeModelId,
-  type TaskMode,
-  type TaskModeSetting,
-} from '@clawwork/shared';
+import { DEFAULT_TASK_MODE, normalizeTaskModeSetting, type TaskMode, type TaskModeSetting } from '@clawwork/shared';
 import AssistantTaskWorkbench from './AssistantTaskWorkbench';
 
 /**
@@ -106,39 +100,37 @@ export default function WelcomeScreen({
   const defaultModel = resolveCommercialDefaultModel(serviceableCatalog);
   const selectedModelId = pendingNewTask?.gatewayId === selectedGwId ? pendingNewTask.model : undefined;
   /**
-   * ⭐ FEAT-01（2026-10-08）：**chip 说的是"将要跑什么"，不是"上次跑过什么"**。
+   * ⭐ FEAT-01（2026-10-08；2026-10-11 用户拍板修订）：**chip 说的是"将要跑什么"** ——
+   * 但三档模式（快速/智能/深度）背后跑哪个模型**不再上屏**（内部实现，用户无需知道）。
    *
    * 新任务在 `createTask` 里就写入默认档（智能），发送路径按 `MODE_POLICY` 对着目录
-   * **现解析**模型（智能/深度 = `qwen3.7-flash`，快速 = 别名缺席时回退基础模型）；
-   * 而 `pending.model` 只是那条"留痕"（商业默认模型）。此前 chip 直接显示留痕 ⇒
-   * 用户看到的模型和真跑的模型对不上（2026-09-17 实机老账的同一类）。
+   * **现解析**模型；`pending.model` 只是那条"留痕"（商业默认模型）。此前模式档显示
+   * 「模式名 · 模型名」（FEAT-01 初版）会暴露内部路由——2026-10-11 用户拍板收紧：
    *
-   * 规则（与 `useChatSend` 的发送判据逐条对齐）：
+   * 规则（**可用性层优先**，与 `ChatInput` 的 `modelStatusLabel ?? 模式名` 同规则）：
    *   · 待发态的模式：没选过 = 默认档（与 `createTask` 写入的默认档一致）；
-   *   · 模式档位下能解析出模型 ⇒ 显示「模式名 · 模型名」；
-   *   · 解析不出（目录没拉到 / 模型下架）⇒ 显示 `pending.model` —— 那正是发送路径的
-   *     回退目标（`resolveModeModelId` 返回 undefined 时它保持现状），不硬编也不说谎。
+   *   · 目录里**一个能用的模型都没有** ⇒ 说可用性层（已知失败 ⇒「没有可用的模型」/
+   *     否则 ⇒「正在准备模型…」）—— 那说的是"手上没有"，不是"模式背后是谁"；
+   *   · 有可用模型 ⇒ 模式档**只显示模式名**（背后的模型是内部实现，不硬编、不上屏）；
+   *   · `custom`（高级：用户显式选过模型）⇒ 显示所选模型的展示名。
    */
   const pendingMode: TaskModeSetting =
     pendingNewTask?.gatewayId === selectedGwId
       ? (normalizeTaskModeSetting(pendingNewTask?.mode) ?? DEFAULT_TASK_MODE)
       : DEFAULT_TASK_MODE;
   const modeDriven = pendingMode !== 'custom';
-  const modeModelId = modeDriven
-    ? resolveModeModelId(
-        pendingMode,
-        serviceableCatalog.map((entry) => entry.id),
-      )
-    : undefined;
-  const modeModelLabel = modeModelId ? (resolveModelLabel(modeModelId, rawModelCatalog) ?? modeModelId) : undefined;
-  const modelLabel =
-    modeDriven && modeModelLabel
-      ? `${t(TASK_MODE_LABEL_KEYS[pendingMode])} · ${modeModelLabel}`
-      : selectedModelId
-        ? (resolveModelLabel(selectedModelId, rawModelCatalog) ?? selectedModelId)
-        : // ⚠️ 已知失败时不许回落"正在准备模型…"：那一步**永远不会**发生（2026-09-21 第二台机器实机）。
-          //    这一格说的是"手上没有能用的模型"，与失败是哪一种无关（所以措辞不许断言目录缺失）。
-          (defaultModel?.label ?? (failureText ? t('chatInput.modelsUnusable') : t('chatInput.modelsLoading')));
+  const noServiceableModel = serviceableCatalog.length === 0;
+  const modelLabel = modeDriven
+    ? noServiceableModel
+      ? // ⚠️ 已知失败时不许说"正在准备模型…"：那一步**永远不会**发生（2026-09-21 第二台机器实机）。
+        //    这一格说的是"手上没有能用的模型"，与失败是哪一种无关（所以措辞不许断言目录缺失）。
+        failureText
+        ? t('chatInput.modelsUnusable')
+        : t('chatInput.modelsLoading')
+      : t(TASK_MODE_LABEL_KEYS[pendingMode])
+    : selectedModelId
+      ? (resolveModelLabel(selectedModelId, rawModelCatalog) ?? selectedModelId)
+      : (defaultModel?.label ?? (failureText ? t('chatInput.modelsUnusable') : t('chatInput.modelsLoading')));
   const definition = resolveAssistantWorkspace(effectiveAgentId);
   const currentAgent = agentCatalog.find((agent) => agent.id === effectiveAgentId);
   const firstLevelAgents = [

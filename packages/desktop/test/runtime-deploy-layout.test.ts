@@ -9,7 +9,7 @@ import {
   readCurrentDeployment,
   writeCurrentPointer,
 } from '../src/main/runtime/deploy.js';
-import { nodeCandidates, pickNode, probeNodeVersion } from '../src/main/runtime/node-runtime.js';
+import { nodeCandidates, pickNode, probeNodeAsync } from '../src/main/runtime/node-runtime.js';
 import {
   SUPPORTED_NODE_RANGE,
   buildSource,
@@ -162,11 +162,26 @@ describe('部署布局：本机缓存自包含', () => {
     expect(cur.status).toBe('ok');
 
     const candidates = nodeCandidates({ deployedNodePath: cur.nodePath });
-    const res = pickNode({
+    const res = await pickNode({
       candidates,
       // 本机那份 node.exe 是 fixture 造的假文件（真 100MB 二进制不该进单测），
-      // 所以只对它注入版本号。
-      probe: (exe) => (exe === cur.nodePath ? '26.3.1' : probeNodeVersion(exe)),
+      // 所以只对它注入版本号；其余走**真实异步探测**（BUG-064）。
+      probe: async (exe) =>
+        exe === cur.nodePath
+          ? {
+              kind: 'ok',
+              version: '26.3.1',
+              durationMs: 0,
+              diagnostics: {
+                code: null,
+                signal: null,
+                exitCode: 0,
+                existedAtStart: true,
+                timeoutTriggered: false,
+                stderrHead: null,
+              },
+            }
+          : probeNodeAsync(exe),
       isSupported: isSupportedNode,
       supportedRange: SUPPORTED_NODE_RANGE,
     });
@@ -180,8 +195,14 @@ describe('部署布局：本机缓存自包含', () => {
     //    这正是"拔盘不影响启动"的结构性保证：不是"碰巧没探到"，而是压根没这条路。
     expect(candidates).toHaveLength(1);
     expect(candidates.some((c) => c.exe.includes(unpluggedRoot))).toBe(false);
-    // 独立确认"盘上那份确实探不到"：走真 execFileSync，不是模拟
-    expect(probeNodeVersion(path.join(unpluggedRoot, 'node', 'node.exe'))).toBeNull();
+    // 独立确认"盘上那份确实探不到"：走真实探测，不是模拟。
+    // ⚠️ 钉的是**拔盘后的原路径**（fx.root 已被 rename ⇒ 文件真的不在 ⇒ missing）；
+    //    fixture 里那份 node.exe 是**假文件**，所以对"改名后仍存在"的新路径做探测
+    //    会得到 exec-failed —— 那是"存在但不可执行"的如实分档（BUG-064），不是缺陷。
+    const gone = await probeNodeAsync(path.join(fx.root, 'node', 'node.exe'));
+    expect(gone.kind).toBe('missing');
+    const fakeFile = await probeNodeAsync(path.join(unpluggedRoot, 'node', 'node.exe'));
+    expect(fakeFile.kind).toBe('exec-failed');
   });
 
   it('部署失败不会留下一个"看着像部署好了"的目录', async () => {

@@ -30,10 +30,18 @@ const mocks = vi.hoisted(() => {
         taskId: string,
         options?: Record<string, unknown>,
       ) => Promise<{ ok: boolean; taskId?: string; partialFailure?: string }>
-    >(async () => ({
-      ok: true,
-      taskId: 'task-1',
-    })),
+    >(async (taskId, options) => {
+      // ⭐ BUG-067 复验整改：成功 mock 必须模拟**真实 composer 的模型采用**
+      // （chat-composer：presetModel 的会话 patch 成功后立即把 task.model 更新为该模型）
+      // —— UI 侧的"已采用"判据读的就是这份状态；不能用 ok=true 冒充采用。
+      const presetModel = options?.presetModel;
+      if (typeof presetModel === 'string') {
+        mocks.taskState.tasks = mocks.taskState.tasks.map((item) =>
+          item.id === taskId ? { ...item, model: presetModel } : item,
+        );
+      }
+      return { ok: true, taskId: 'task-1' };
+    }),
     toastWarning: vi.fn(),
     toastError: vi.fn(),
     // 图片路由「切了才提示」走 toast.info（轻量、无按钮）—— 同一套 sonner mock 里补一只。
@@ -121,8 +129,13 @@ vi.mock('../src/renderer/platform', () => ({
   //（对比模式那条路要用）—— 少了它们，走对比分支的用例会在建实例时炸。
   messageStore: { getState: () => mocks.messageState },
   taskStore: { getState: () => mocks.taskState },
-  useTaskStore: <T,>(selector?: (state: typeof mocks.taskState) => T) =>
-    selector ? selector(mocks.taskState) : mocks.taskState,
+  // 与真实 platform 同形：`useTaskStore.getState = taskStoreApi.getState`
+  //（BUG-067 整改后 hook 会读 `useTaskStore.getState().tasks` 判"已采用"——
+  //  mock 少了这个 getState，采用判定会静默落空）。
+  useTaskStore: Object.assign(
+    <T,>(selector?: (state: typeof mocks.taskState) => T) => (selector ? selector(mocks.taskState) : mocks.taskState),
+    { getState: () => mocks.taskState },
+  ),
   useMessageStore: Object.assign(
     <T,>(selector?: (state: typeof mocks.messageState) => T) =>
       selector ? selector(mocks.messageState) : mocks.messageState,
@@ -285,6 +298,9 @@ function MaterialHarness({
 describe('useChatSend abort flow', () => {
   beforeEach(() => {
     mocks.messageState.messagesByTask = {};
+    // B 块单飞门读这两个字段；用例改了必须复位，否则泄漏给后面所有用例。
+    mocks.messageState.processingBySession = new Set<string>();
+    mocks.messageState.activeTurnBySession = {};
     vi.useFakeTimers();
     document.body.innerHTML = '';
     mocks.abort.mockClear();
@@ -464,6 +480,22 @@ describe('useChatSend abort flow', () => {
       unmount();
     },
   );
+
+  it('⭐ 上一轮仍在处理 ⇒ 普通发送被具名拦住（保留草稿、不发请求）', async () => {
+    // ⚠️ DOCX-205 合同（2026-10-10）B 块：会话在执行中时普通新请求单飞 ——
+    //    键盘 Enter 与发送按钮都走 `handleSend`（按钮变"停止"不代表 Enter 被拦）。
+    mocks.messageState.processingBySession = new Set(['agent:main:clawwork:task:task-1']);
+    const { container, unmount } = render(<Harness initialValue="再发一条消息" />);
+    await act(async () => {
+      container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.turnInFlight', expect.any(Object));
+    expect(mocks.send).not.toHaveBeenCalled();
+    // 草稿保留：输入框里还是原文。
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('再发一条消息');
+    unmount();
+  });
 
   it('allows sends to tasks outside an active meeting', async () => {
     mocks.meetingState.records = [{ id: 'meeting-1', status: 'running', turns: [{ taskId: 'task-other' }] }];
@@ -2068,28 +2100,29 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
  * 任务模式（快速 / 智能 / 深度 / 高级指定模型）——**发送链**的接线。
  *
  * 判据只有一条：这一轮真正交给 composer 的 `presetModel` / `presetThinking` 是什么。
- * 三档按 `MODE_POLICY` 走；高级（custom）与旧任务（mode 为空）**原样保留既有行为**
+ * 三档按 `MODE_POLICY` 走（2026-10-10 Cephalon 批：三档统一 `glm-5.3-flash` +
+ * low/high/max）；高级（custom）与旧任务（mode 为空）**原样保留既有行为**
  * —— 不劫持用户当年显式选过的模型，是这一批的硬要求。
  *
- * 别名回退（`qwen3.7-flash-fast` 是另一路并行上线的 relay 条目）也钉在这里：
- * 目录里没有它时必须优雅回退到 `qwen3.7-flash`，而不是发一个目录里不存在的模型；
- * 两个都没有 ⇒ 保持现状、**不拦截**（发出去由上游说话，比拦住用户更诚实）。
+ * 目录解析：只认目录里真实存在的 id；解析不出来（目录没拉到 / 模型下架）⇒
+ * 保持现状、**不拦截**（照发原模型 —— 发出去由上游说话，比拦住用户更诚实）。
+ * 旧 Qwen 快速别名（`qwen3.7-flash-fast`）保留在目录/隐藏下拉里，但**不再被任何一档使用**。
  */
 describe('任务模式：发送链的 presetModel / presetThinking', () => {
-  const BASE_MODEL_ID = 'qwen3.7-flash';
+  const BASE_MODEL_ID = 'glm-5.3-flash';
   const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
   const LEGACY_MODEL_ID = 'deepseek-v4-flash';
 
   const catalogBase: ModelCatalogEntry[] = [
     { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
-    { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+    { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text', 'image'] },
   ];
   const catalogWithAlias: ModelCatalogEntry[] = [
     ...catalogBase,
     { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
   ];
-  /** 目录里既没有别名、也没有基础模型（模拟目录未就绪 / 模型下架）。 */
-  const catalogWithoutModeModels: ModelCatalogEntry[] = [catalogBase[0]!];
+  /** 目录里没有模式基础模型（目录未就绪 / 模型下架）；旧别名仍在目录里也不使用。 */
+  const catalogWithoutModeModels: ModelCatalogEntry[] = [catalogBase[0]!, catalogWithAlias[2]!];
 
   function ModeHarness({
     draft = '帮我写一段周报',
@@ -2131,6 +2164,8 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
   beforeEach(() => {
     vi.useRealTimers();
     document.body.innerHTML = '';
+    // 一次性提示的标记在 localStorage（按 taskId 隔离）—— 用例间必须清，否则互相吞提示。
+    window.localStorage.clear();
     mocks.send.mockClear();
     mocks.toastError.mockClear();
     mocks.toastInfo.mockClear();
@@ -2187,49 +2222,49 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     });
   }
 
-  it('快速 ⇒ 别名 + minimal（别名在目录里时）', async () => {
+  it('⭐ 快速 ⇒ glm-5.3-flash + low（旧别名在目录里也不误用）', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'fast' }];
     mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithAlias };
     const { container, unmount } = render(<ModeHarness />);
 
     await clickSend(container);
 
-    expect(sendOptions()?.presetModel).toBe(ALIAS_MODEL_ID);
-    expect(sendOptions()?.presetThinking).toBe('minimal');
+    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(sendOptions()?.presetThinking).toBe('low');
     unmount();
   });
 
-  it('⭐ 快速 ⇒ 别名缺席时优雅回退到 qwen3.7-flash（不是发一个目录里没有的模型）', async () => {
+  it('⭐ 目录里没有 glm ⇒ 不拦截、照发原模型（明确不再回退旧 Qwen 别名）', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'fast' }];
-    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogBase };
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutModeModels };
     const { container, unmount } = render(<ModeHarness />);
 
     await clickSend(container);
 
-    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
-    expect(sendOptions()?.presetThinking).toBe('minimal');
+    expect(mocks.send, '不拦：目录说话之前不替用户做决定').toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(LEGACY_MODEL_ID);
     unmount();
   });
 
-  it('智能（默认）⇒ qwen3.7-flash + medium', async () => {
+  it('智能（默认）⇒ glm-5.3-flash + high', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
     const { container, unmount } = render(<ModeHarness />);
 
     await clickSend(container);
 
     expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
-    expect(sendOptions()?.presetThinking).toBe('medium');
+    expect(sendOptions()?.presetThinking).toBe('high');
     unmount();
   });
 
-  it('深度 ⇒ qwen3.7-flash + high', async () => {
+  it('深度 ⇒ glm-5.3-flash + max', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'deep' }];
     const { container, unmount } = render(<ModeHarness />);
 
     await clickSend(container);
 
     expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
-    expect(sendOptions()?.presetThinking).toBe('high');
+    expect(sendOptions()?.presetThinking).toBe('max');
     unmount();
   });
 
@@ -2257,6 +2292,211 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     unmount();
   });
 
+  it('⭐ Cephalon 批：存量模式任务首次发送 ⇒ 一次性模型/价格提示（再发不重复）', async () => {
+    // baseTask.model = 'deepseek-v4-flash'（旧商业默认）—— 存量模式任务的真实形态：
+    // 用户什么都没点，下一轮就会换到新默认模型跑。
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+    expect(mocks.toastInfo, '存量任务换模型要告知一次').toHaveBeenCalledWith('chatInput.modePolicyUpdated');
+
+    container.querySelector('textarea')!.value = '再来一轮';
+    await clickSend(container);
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(mocks.toastInfo, '一次性：同一任务不再重复').toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('⭐ Cephalon 批：按当前策略创建的任务（记录 = 新默认 glm）⇒ 不提示', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: BASE_MODEL_ID }];
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(mocks.toastInfo, '没有变化可报 —— 不打扰').not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ Cephalon 批：目录里没有 glm（模式解析不出）⇒ 不提示（没有可说的变化）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'fast' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutModeModels };
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ BUG-066：获取 window.localStorage 抛 SecurityError ⇒ 普通发送照发、无错误提示（提示层静默降级）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    const { container, unmount } = render(<ModeHarness />);
+    const original = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('synthetic storage unavailable', 'SecurityError');
+      },
+    });
+    try {
+      await clickSend(container);
+    } finally {
+      if (original) Object.defineProperty(window, 'localStorage', original);
+    }
+
+    expect(mocks.send, '存储不可用绝不能阻断发送').toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    expect(mocks.toastInfo, '标记读不到 ⇒ 提示也不弹（静默降级）').not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('⭐ BUG-067：presetModel 钉选被拒（composer ok:false）⇒ 不报"已切换"、标记不消费；后续成功采用仍告知', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.send.mockResolvedValueOnce({ ok: false });
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.toastInfo, '未确认采用 —— 不许报"已切换"').not.toHaveBeenCalled();
+    expect(
+      window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1'),
+      '未采用不许消费一次性标记（否则下一次真正采用时告知被吞）',
+    ).toBeNull();
+
+    // 后续真正采用（默认 mock 会像真 composer 一样更新 task.model）⇒ 仍会如实告知一次，且这次才记标记。
+    container.querySelector('textarea')!.value = '再来一轮';
+    await clickSend(container);
+    expect(mocks.toastInfo).toHaveBeenCalledWith('chatInput.modePolicyUpdated');
+    expect(window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1')).not.toBeNull();
+    unmount();
+  });
+
+  it('⭐ BUG-067 矩阵：pin 成功＋派发返回失败（任务已采用）⇒ 仍告知一次并记标记，同时保留发送失败处理', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.send.mockImplementationOnce(async (taskId, options) => {
+      // 模拟真实 composer：模型 patch 成功 ⇒ 先更新 task.model；随后派发失败 ⇒ ok:false。
+      const presetModel = options?.presetModel as string;
+      mocks.taskState.tasks = mocks.taskState.tasks.map((item) =>
+        item.id === taskId ? { ...item, model: presetModel } : item,
+      );
+      return { ok: false, taskId };
+    });
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(mocks.toastInfo, '模型已实际采用 —— 不能因派发失败跳过告知').toHaveBeenCalledWith(
+      'chatInput.modePolicyUpdated',
+    );
+    expect(window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1')).not.toBeNull();
+    // 发送失败处理保留：ok:false 时草稿不清理（不是成功态）。
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).not.toBe('');
+    unmount();
+  });
+
+  it('⭐ BUG-067 矩阵：pin 成功＋派发抛异常（任务已采用）⇒ 仍告知一次并记标记；原始异常仍走原错误出口', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.send.mockImplementationOnce(async (taskId, options) => {
+      const presetModel = options?.presetModel as string;
+      mocks.taskState.tasks = mocks.taskState.tasks.map((item) =>
+        item.id === taskId ? { ...item, model: presetModel } : item,
+      );
+      throw new Error('dispatch boom');
+    });
+    const { container, unmount } = render(<ModeHarness />);
+
+    await clickSend(container);
+
+    expect(mocks.toastInfo, '模型已实际采用 —— 异常路径同样要告知').toHaveBeenCalledWith('chatInput.modePolicyUpdated');
+    expect(window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1')).not.toBeNull();
+    // 原始异常不被提示侧覆盖：仍走原错误出口（系统消息 + error toast）。
+    expect(mocks.messageState.addMessage).toHaveBeenCalledWith('task-1', 'system', 'dispatch boom');
+    expect(mocks.toastError).toHaveBeenCalledWith('dispatch boom', expect.anything());
+    unmount();
+  });
+
+  it('⭐ BUG-067 矩阵：ok=true 但未采用／任务已删除 ⇒ 不宣称"已切换"', async () => {
+    // ① ok=true 但任务模型未被更新（没走 pin 的旁路）⇒ 不提示。
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.send.mockResolvedValueOnce({ ok: true, taskId: 'task-1' });
+    const first = render(<ModeHarness />);
+    await clickSend(first.container);
+    expect(mocks.toastInfo, '没采用就不许报"已切换"').not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1')).toBeNull();
+    first.unmount();
+
+    // ② 发送期间任务被删除 ⇒ 找不到记录，不提示、不标记。
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
+    mocks.send.mockImplementationOnce(async () => {
+      mocks.taskState.tasks = [];
+      return { ok: true, taskId: 'task-1' };
+    });
+    const second = render(<ModeHarness />);
+    await clickSend(second.container);
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1')).toBeNull();
+    second.unmount();
+  });
+
+  /**
+   * ⭐ Cephalon 批（Task 4 验收缺口补验）：**三档 × 新旧任务的客户端最终请求捕获**。
+   *
+   * 计划要求"仅检查 UI 或白名单常量不够，须捕获最终出站请求"——这里在发送链的客户端
+   * 末段（composer.send 载荷 + 会话 patch + 任务元数据）做全量捕获，钉住：
+   * ①模型 = `glm-5.3-flash`；②有效思考档 low/high/max；③**全链不含 enable_search**。
+   * 网关参数合并后的**最终上游 HTTP body** 由同批
+   * `relay-mode-final-body.integration.test.ts`（实际交付运行时 + 本地 127.0.0.1 接收器）
+   * 捕获，含 Qwen `enable_search=true` 正对照；两层证据合起来才是完整出站链路。
+   */
+  it.each([
+    ['fast', 'low'],
+    ['smart', 'high'],
+    ['deep', 'max'],
+  ] as const)('⭐ Cephalon 批：%s 档最终请求钉 glm + %s；新旧任务全链不含 enable_search', async (mode, level) => {
+    for (const taskModel of [LEGACY_MODEL_ID, BASE_MODEL_ID]) {
+      mocks.send.mockClear();
+      mocks.taskState.updateTaskMetadata.mockClear();
+      mocks.taskState.tasks = [{ ...mocks.baseTask, mode, model: taskModel }];
+      const { container, unmount } = render(<ModeHarness />);
+
+      await clickSend(container);
+
+      expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+      expect(sendOptions()?.presetThinking).toBe(level);
+      const wire = JSON.stringify([
+        mocks.send.mock.calls,
+        mocks.taskState.updateTaskMetadata.mock.calls,
+        vi.mocked(window.clawwork.patchSession).mock.calls,
+      ]);
+      expect(wire, '最终请求不得携带 enable_search').not.toContain('enable_search');
+      unmount();
+    }
+  });
+
+  it('⭐ Cephalon 批：PPT 粘性任务最终请求钉新 Cephalon 渠道，且不含 enable_search', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', deckRouted: true }];
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [
+        ...catalogBase,
+        { id: 'deepseek-v4-flash-cephalon', name: 'DeepSeek V4 Flash · Cephalon', provider: 'clawrouter' },
+      ],
+    };
+    const { container, unmount } = render(<ModeHarness draft="把标题改一下" />);
+
+    await clickSend(container);
+
+    expect(sendOptions()?.presetModel).toBe('deepseek-v4-flash-cephalon');
+    const wire = JSON.stringify([
+      mocks.send.mock.calls,
+      mocks.taskState.updateTaskMetadata.mock.calls,
+      vi.mocked(window.clawwork.patchSession).mock.calls,
+    ]);
+    expect(wire).not.toContain('enable_search');
+    unmount();
+  });
+
   it('高级（custom）⇒ 用户选的模型与档位原样带出', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'custom', model: 'glm-4.7', thinkingLevel: 'xhigh' }];
     mocks.uiState.modelCatalogByGateway = {
@@ -2268,6 +2508,41 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
 
     expect(sendOptions()?.presetModel).toBe('glm-4.7');
     expect(sendOptions()?.presetThinking).toBe('xhigh');
+    unmount();
+  });
+
+  // ⚠️ 2026-10-12 真机反馈：修复思考档接线后，glm-5.3-flash 的真档位集=[low,high,max]（**不含 off**），
+  //    而任务默认/留痕档是 off —— 「换模型导致档位回落」这条提示开始**每次切模式都误触发**
+  //    （「已切换到 glm-5.3-flash，思考档位已重置为默认」：模型名不该露，语义也不对）。
+  //    修法：模式档不参与这段回落（发送时档位由 MODE_POLICY 现算，该字段只是留痕）。
+  const flashEntryWithRealLevels = {
+    ...catalogBase[1]!,
+    thinkingLevels: [{ id: 'low' }, { id: 'high' }, { id: 'max' }],
+  } as unknown as ModelCatalogEntry;
+
+  it('⭐ 模式档：真档位集不含 off 也不弹「已切换到模型」提示、不重置留痕档位', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', thinkingLevel: 'off' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': [flashEntryWithRealLevels] };
+    const { unmount } = render(<ModeHarness />);
+
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
+    expect(
+      mocks.t.mock.calls.some(([key]) => key === 'chatInput.thinkingResetByModel'),
+      '模式档不许出现「已切换到 <模型>」文案',
+    ).toBe(false);
+    expect(mocks.taskState.updateTaskMetadata).not.toHaveBeenCalledWith('task-1', {
+      thinkingLevel: expect.anything(),
+    });
+    unmount();
+  });
+
+  it('⭐ custom：换到不含 off 的模型 ⇒ 档位回落 + 告知（模型名是用户自选的，照常显示）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'custom', model: BASE_MODEL_ID, thinkingLevel: 'off' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': [flashEntryWithRealLevels] };
+    const { unmount } = render(<ModeHarness />);
+
+    expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-1', { thinkingLevel: 'low' });
+    expect(mocks.t).toHaveBeenCalledWith('chatInput.thinkingResetByModel', { model: 'GLM 5.3 Flash' });
     unmount();
   });
 
@@ -2304,7 +2579,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
       'gw-1': [
         { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
         // 模式基础模型**没**自述看图；另有别的模型自述看图 —— 路由不能把模式换掉
-        { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text'] },
+        { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text'] },
         { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter', input: ['text', 'image'] },
       ],
     };
@@ -2325,43 +2600,49 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     await clickSend(container);
 
     expect(window.clawwork.patchSession, '模式任务不切模型').not.toHaveBeenCalled();
-    expect(mocks.toastInfo).not.toHaveBeenCalled();
+    // 2026-10-10 Cephalon 批：这条钉的是「视觉路由的切换提示」不出现；
+    // 存量任务的一次性模型/价格提示（modePolicyUpdated）是另一回事，不在本断言范围。
+    expect(mocks.toastInfo).not.toHaveBeenCalledWith('chatInput.visionFallbackSwitched');
     expect(sendOptions()?.presetModel, '图片照发模式模型（递交给上游，按真实能力说话）').toBe(BASE_MODEL_ID);
     unmount();
   });
 });
 
 /**
- * Deck 意图路由（2026-10-08 拍板）：演示类任务统一钉 **DeepSeek** —— 模式任务的**内部路由**。
+ * Deck 意图路由（2026-10-08 拍板）：演示类任务统一钉 **DeepSeek 新 Cephalon 渠道**
+ * （`deepseek-v4-flash-cephalon`，2026-10-10 迁移）—— 模式任务的**内部路由**。
  *
  * 真机实证：PPT 生成/改稿链在 qwen 上 20 分钟不收敛，DeepSeek 2.6 分钟出 9 页合格成品；
  * 瓶颈是输出稳定性，与速度档无关 ⇒ 三档都路由。模式芯片仍显示用户选的那一档。
  *
  * 判据本身在 `lib/deck-intent.ts`（纯函数，单独钉 35 例）；这里只钉**接线**：
- *   · 三档命中 ⇒ 换成目录里的 deepseek（qwen 不再）；
+ *   · 三档命中 ⇒ 换成目录里的**新渠道** id（旧 deepseek-v4-flash 保持可选但不再被路由）；
  *   · 第一条命中 ⇒ 任务记 `deckRouted`（粘性：改稿那类不含名词的后续消息继续走）；
  *   · `custom`（用户显式选的模型）永不被覆盖；
- *   · 目录里没有 deepseek ⇒ 原样放行（不拦截、不报错）；
+ *   · 目录里没有新渠道 ⇒ 原样放行（不拦截、不报错）；
  *   · 只认**用户手打的字**，附件名/文件正文不算。
  */
-describe('Deck 意图路由：演示类任务钉 DeepSeek（模式任务的内部路由）', () => {
-  const BASE_MODEL_ID = 'qwen3.7-flash';
+describe('Deck 意图路由：演示类任务钉新 Cephalon 渠道 DeepSeek（模式任务的内部路由）', () => {
+  const BASE_MODEL_ID = 'glm-5.3-flash';
   const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
   const OTHER_MODEL_ID = 'qwen3.5-27b';
   /** 目录里的真实写法带命名空间 —— 钉"原样交给 composer"，不自己拼前缀。 */
-  const DECK_MODEL_ID = 'clawrouter/deepseek-v4-flash';
+  const DECK_MODEL_ID = 'clawrouter/deepseek-v4-flash-cephalon';
   const DECK_DRAFT = '帮我做一份 PPT，讲第三季度的数据';
 
   const catalogWithDeck: ModelCatalogEntry[] = [
-    { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter' },
+    { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter' },
     { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
     { id: OTHER_MODEL_ID, name: 'Qwen 3.5 27B', provider: 'clawrouter' },
-    { id: DECK_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
+    // 新旧两条 DeepSeek 渠道**并存**（旧渠道保持可选）—— 路由必须精确命中新渠道。
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
+    { id: DECK_MODEL_ID, name: 'DeepSeek V4 Flash · Cephalon', provider: 'clawrouter' },
   ];
-  /** 目录里没有 deepseek（还没拉到 / 下架）。 */
+  /** 目录里**只有旧渠道**、没有新 Cephalon 渠道（还没拉到 / 下架）——路由不得悄悄回退旧渠道。 */
   const catalogWithoutDeck: ModelCatalogEntry[] = [
-    { id: BASE_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter' },
+    { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter' },
     { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
   ];
 
   const sendOptions = (): Record<string, unknown> | undefined => mocks.send.mock.calls.at(-1)?.[1];
@@ -2381,6 +2662,8 @@ describe('Deck 意图路由：演示类任务钉 DeepSeek（模式任务的内�
   beforeEach(() => {
     vi.useRealTimers();
     document.body.innerHTML = '';
+    // 一次性提示的标记在 localStorage（按 taskId 隔离）—— 用例间必须清，否则互相吞提示。
+    window.localStorage.clear();
     mocks.send.mockClear();
     mocks.toastError.mockClear();
     mocks.toastInfo.mockClear();
@@ -2476,7 +2759,7 @@ describe('Deck 意图路由：演示类任务钉 DeepSeek（模式任务的内�
     unmount();
   });
 
-  it('⭐ 目录里没有 deepseek ⇒ 原样放行（照发模式模型、不拦截），但任务照记"这是 deck 任务"', async () => {
+  it('⭐ 目录里只有旧渠道（没有新 Cephalon ID）⇒ 原样放行（不拦截、不悄悄回退旧渠道），但任务照记"这是 deck 任务"', async () => {
     mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutDeck };
     const { container, unmount } = render(<Harness initialValue={DECK_DRAFT} />);
 

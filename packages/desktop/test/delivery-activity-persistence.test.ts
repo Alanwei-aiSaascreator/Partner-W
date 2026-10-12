@@ -136,6 +136,13 @@ beforeAll(async () => {
             // 2026-10-08：data-handlers 的 claim 链新增了这个导出（artifact/claim-guard），
             // 桩要跟着补一个名字，否则整份 bundle 起不来（默认空 = 没有拒收）。
             export const claimedFilesRejectedByIntegrity = () => [];
+            // BUG-064（2026-10-10）：交付入口接入了"这一轮在跑"软状态（artifact/turn-lifecycle），
+            // 桩跟着补三个名字（默认 no-op：不拦截、不结算）。
+            // 2026-10-11（复审 B1 整改）：data-handlers 再增 run 队列探针注册。
+            export const isLiveTurnSession = () => false;
+            export const registerTurnReleaseHandler = () => undefined;
+            export const registerTurnRunStateProbe = () => undefined;
+            export const settleLiveTurn = () => undefined;
           `;
         },
       },

@@ -72,22 +72,30 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
       )}
     >
       <div className="flex flex-col items-center justify-center gap-3 text-center">
+        {/* ⭐ 2026-10-12（用户真机反馈"白底不兼容"）：形象素材自带白底（16 型卡面/立绘同批），
+            直接贴在主题背景上像一块没做完的白纸。**不动素材**（卡面的标题/特质词就在白底上，
+            抠底会毁掉卡面）——给图加"装裱"：圆角裁白角 + 边框 + 卡片阴影，白底成为**卡面本身**。
+            两条链（16 型卡 / 六角色立绘）共用同一壳。 */}
         {shownMbtiArtwork ? (
-          <img
-            data-mbti-artwork
-            src={shownMbtiArtwork}
-            alt=""
-            onError={() => setMbtiArtworkFailed(true)}
-            className="mx-auto h-auto w-full max-w-xs"
-          />
+          <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-card-layered)]">
+            <img
+              data-mbti-artwork
+              src={shownMbtiArtwork}
+              alt=""
+              onError={() => setMbtiArtworkFailed(true)}
+              className="block h-auto w-full"
+            />
+          </div>
         ) : shownRoleArtwork ? (
-          <img
-            data-portrait-artwork
-            src={shownRoleArtwork}
-            alt=""
-            onError={() => setArtworkFailed(true)}
-            className="mx-auto h-auto w-full max-w-xs"
-          />
+          <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-card-layered)]">
+            <img
+              data-portrait-artwork
+              src={shownRoleArtwork}
+              alt=""
+              onError={() => setArtworkFailed(true)}
+              className="block h-auto w-full"
+            />
+          </div>
         ) : (
           <div data-portrait-fallback className="flex flex-col items-center gap-3">
             <UserRound size={72} className="text-[var(--text-muted)]" />

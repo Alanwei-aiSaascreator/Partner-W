@@ -10,6 +10,8 @@ import InlineNotice from '@/components/semantic/InlineNotice';
 import SegmentedControl from '../components/SegmentedControl';
 import { useUiStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useMessageStore } from '@/stores/messageStore';
+import { useDeliveryActivityStore } from '@/stores/deliveryActivityStore';
 import { describeUpdateErrorFromState, type UpdateOperation } from '@/features/internal-beta/update-errors';
 import { installAllowedForStatus, portablePhaseToUiStatus, updateStatusFromCheck } from '@/lib/update-status';
 import type { PortableUpdatePublicState } from '@clawwork/shared';
@@ -44,6 +46,56 @@ interface VersionInfo {
 const DEV_MODE_TAP_COUNT = 5;
 const DEV_MODE_TAP_WINDOW_MS = 3000;
 
+/** `ActiveTurn` 的**结构**视图（只需要这几个字段；不 import core 的类型，避免测试桩耦合）。 */
+interface ActiveTurnLike {
+  finalized?: boolean;
+  streamingText?: string;
+  streamingThinking?: string;
+  toolCalls?: unknown[];
+}
+
+/**
+ * 「应用现在忙吗」——**真实任务/run 活动状态**（2026-10-11 升级补齐）。
+ *
+ * 判据与 core 的 `deriveSessionActivity` 同一套，只是从全局视角看：
+ *   · 有会话在处理（`processingBySession`：网关已接单，还没落地）；
+ *   · 有会话正在流正文/思考，或还有工具调用没走完（未被 finalize 收口）；
+ *   · 有文件交付操作在途（登记/落位/重放那一串，见 deliveryActivityStore）。
+ *
+ * ⚠️ **不把 ready/downloaded 当空闲证明**：更新包准备好与否，和"现在能不能退出应用"
+ *    是两件事 —— 装好了包的同时用户完全可能正在生成 PPT。
+ * ⚠️ 这里**不**区分"是不是当前正看的那个任务"：后台调用（团队开会、技能审核）同样在途，
+ *    退出应用会把它们连同账目一起打断 —— 忙就是忙。
+ */
+export function isAppBusyFromActivity(input: {
+  processingBySession: ReadonlySet<string>;
+  activeTurnBySession: Readonly<Record<string, ActiveTurnLike | undefined>>;
+  activeDeliveryCount: number;
+}): boolean {
+  if (input.processingBySession.size > 0) return true;
+  if (input.activeDeliveryCount > 0) return true;
+  return Object.values(input.activeTurnBySession).some(
+    (turn) =>
+      Boolean(turn) &&
+      turn?.finalized !== true &&
+      Boolean(
+        turn?.streamingText || turn?.streamingThinking || (Array.isArray(turn?.toolCalls) && turn.toolCalls.length > 0),
+      ),
+  );
+}
+
+/**
+ * 「现在能不能真的去换目录/退出应用」。
+ *
+ * ⚠️ 单独抽成纯函数（同 `installAllowedForStatus` 的理由）：按钮灰掉只是**观感**，
+ *    真正的许可必须单独成立 —— 双击、快捷键、程序化触发都不该绕过它。
+ *    盘上形态还有两道同源的闸：主进程 IPC（`app:install-update`，读渲染层推来的
+ *    真实 run 状态）与便携服务的 `requestRestart` 边界（启动启动器/退出之前）。
+ */
+export function canStartInstallNow(status: UpdateState, busy: boolean): boolean {
+  return installAllowedForStatus(status) && !busy;
+}
+
 export default function AboutSection() {
   const { t } = useTranslation();
   const [updateState, setUpdateState] = useState<UpdateState>('idle');
@@ -66,6 +118,16 @@ export default function AboutSection() {
 
   const devMode = useUiStore((s) => s.devMode);
   const setDevMode = useUiStore((s) => s.setDevMode);
+  /**
+   * ⭐ 忙态（真实任务/run 活动）：生成/写文件期间**不许**退出应用或换目录。
+   *
+   * 只挡「安装」这一个动作 —— 检查更新、下载并准备**照常可用**（盘上那条链在后台
+   * 把包下好、验好、解压好，缓存成 ready 候选，等用户手头的事了了再重启）。
+   */
+  const processingBySession = useMessageStore((s) => s.processingBySession);
+  const activeTurnBySession = useMessageStore((s) => s.activeTurnBySession);
+  const activeDeliveryCount = useDeliveryActivityStore((s) => s.active.length);
+  const busy = isAppBusyFromActivity({ processingBySession, activeTurnBySession, activeDeliveryCount });
   const updateChannel = useSettingsStore((s) => (s.settings?.updateChannel ?? 'stable') as UpdateChannel);
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -80,6 +142,9 @@ export default function AboutSection() {
    *    双击、或被别处状态驱动着触到同一个 handler，都不该真的发出去。
    */
   const displayStateRef = useRef<UpdateState>('idle');
+  /** 同上：忙态也要在**命令许可**那一层读得到最新值（回调不是每帧重建）。 */
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   useEffect(() => {
     if (!settingsLoaded) loadSettings().catch(() => {});
@@ -247,15 +312,29 @@ export default function AboutSection() {
     // ⚠️ **只有"已经准备好"才允许换目录**：盘上形态要等 `ready`（下载、验签、解压、
     //    逐文件核对全过），装机版要等 `downloaded`。其余相位（含一切失败相位）
     //    一律**不发出**这条命令 —— 渲染条件不等于命令许可，双击/程序化触发都在这道闸下。
-    if (!installAllowedForStatus(displayStateRef.current)) return;
+    // ⚠️ 2026-10-11 升级补齐：**忙态是第二道判据**。生成/写文件期间"换目录 + 退出应用"
+    //    会打断真实任务（还会留下未结算的在途调用）—— 按钮灰掉只是观感，
+    //    命令许可必须在这里单独成立。
+    if (!canStartInstallNow(displayStateRef.current, busyRef.current)) {
+      if (installAllowedForStatus(displayStateRef.current) && busyRef.current) {
+        toast(t('settings.portableUpdate.busyHint'));
+      }
+      return;
+    }
     // 成功的话应用会直接退出并重启，走不到下一句；失败必须说出来 ——
     // 原来这里把返回值丢掉，点了没反应用户只会以为"按钮坏了"。
     const result = await window.clawwork.installUpdate();
     if (!result.ok) {
+      // 主进程在**边界上**又判了一次忙（渲染层这一刻看到的可能已经过期）：
+      // 保留 ready 候选、说清原因，**不落错误态** —— 任务结束后用户再点一次即可。
+      if (result.error === 'app-busy') {
+        toast(t('settings.portableUpdate.busyHint'));
+        return;
+      }
       setUpdateState('error');
       setErrorInfo({ raw: result.error ?? '', operation: 'install' });
     }
-  }, []);
+  }, [t]);
 
   const handleChannelChange = useCallback(
     async (next: UpdateChannel) => {
@@ -385,10 +464,13 @@ export default function AboutSection() {
                 <p className="type-label mb-2 text-[var(--text-primary)]">
                   {t('settings.newVersionAvailable', { version: versionInfo?.latestVersion })}
                 </p>
-                <Button variant="default" size="sm" onClick={handleInstall} className="gap-1.5">
+                <Button variant="default" size="sm" disabled={busy} onClick={handleInstall} className="gap-1.5">
                   <RotateCcw size={14} />
                   {t('settings.readyToInstall')}
                 </Button>
+                {busy ? (
+                  <p className="type-support mt-2 text-[var(--text-muted)]">{t('settings.portableUpdate.busyHint')}</p>
+                ) : null}
               </div>
             </InlineNotice>
           </div>
@@ -412,8 +494,12 @@ export default function AboutSection() {
             <p className="type-body text-[var(--text-secondary)]">
               {t('settings.portableUpdate.ready', { version: versionInfo?.latestVersion ?? '' })}
             </p>
+            {/* 忙态不是错误：候选已经备好，等手头的任务结束再重启即可（检查/下载不受影响） */}
+            {busy ? (
+              <p className="type-support text-[var(--text-muted)]">{t('settings.portableUpdate.busyHint')}</p>
+            ) : null}
             <div className="flex gap-2">
-              <Button size="sm" onClick={() => void handleInstall()}>
+              <Button size="sm" disabled={busy} onClick={() => void handleInstall()}>
                 {t('settings.portableUpdate.restartNow')}
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setPortablePhase(null)}>

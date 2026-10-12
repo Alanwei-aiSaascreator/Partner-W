@@ -5,11 +5,16 @@ import { getCommercialClient } from './client.js';
 import { ensureDeviceId, readConfig, updateConfig } from '../workspace/config.js';
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
-import { applyRelayConfig, fetchFirstRelayModel, fetchRelayMediaCapabilities } from './relay-config.js';
+import {
+  applyRelayConfig,
+  fetchFirstRelayModel,
+  fetchRelayCatalogModelEntries,
+  fetchRelayMediaCapabilities,
+} from './relay-config.js';
 import { COMMERCIAL_REQUEST_TIMEOUT_MS } from './request-timeout.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
-import { getActiveLocalGatewayDeploymentRoot } from '../runtime/index.js';
-import { hasBundledSearchProvider } from '../runtime/bundled-search.js';
+import { getActiveLocalGatewayStateDir } from '../runtime/index.js';
+import { hasInstalledSearchProvider } from '../runtime/bundled-search.js';
 import { advanceLicenseGeneration, getLicenseGeneration } from './license-generation.js';
 
 export interface LicenseStatus {
@@ -547,6 +552,7 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
         getConfig: tx.getConfig,
         patchConfig: tx.patchConfig,
         resolveDefaultModel: fetchFirstRelayModel,
+        resolveCatalogModels: fetchRelayCatalogModelEntries,
         resolveMediaCapabilities: fetchRelayMediaCapabilities,
         log: (event, data) => getDebugLogger().info({ domain: 'commercial', event, data }),
       },
@@ -555,7 +561,7 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
         deviceFingerprint: deviceFingerprint(),
         webSearch: readConfig()?.webSearch,
         bundledWebSearchAvailable:
-          gatewayId === LOCAL_GATEWAY_ID && hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot()),
+          gatewayId === LOCAL_GATEWAY_ID && hasInstalledSearchProvider(getActiveLocalGatewayStateDir()),
       },
     ),
   );

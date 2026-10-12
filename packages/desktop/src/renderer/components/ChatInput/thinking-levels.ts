@@ -41,9 +41,21 @@ function readRawLevels(entry?: ModelCatalogEntry): unknown {
 }
 
 /**
+ * 目录里**已知但我们刻意不露出**的档位（2026-10-12 用户拍板）。
+ *
+ * `ultra`：内核 clawrouter 扩展对"含 max 的模型"自动追加的**产品模式**——
+ * provider 侧折叠为 `max` 发上游（不会炸），但同一字段还会让内核开启
+ * **主动子代理编排**（`proactiveSubagentOrchestration`），那是我们**没有设计、
+ * 没有测过**的行为。按「未设计的模式不上桌」口径，界面过滤掉；
+ * 内核与目录侧原样保留（只过滤展示）。
+ */
+const PRODUCT_HIDDEN_THINKING_LEVELS: readonly string[] = ['ultra'];
+
+/**
  * 某个模型支持哪些档位。
  * 目录里可能出现我们没见过的 id（openclaw 还有 `xhigh`/`max`），**原样透传、不丢** ——
  * 丢掉会导致「档位存在但界面没有」，比多一个陌生选项更难查。
+ * （`PRODUCT_HIDDEN_THINKING_LEVELS` 是唯一的例外：刻意不露出的已知档。）
  */
 export function thinkingLevelsFor(entry?: ModelCatalogEntry): string[] {
   const raw = readRawLevels(entry);
@@ -57,7 +69,7 @@ export function thinkingLevelsFor(entry?: ModelCatalogEntry): string[] {
       }
       return '';
     })
-    .filter((id) => id.length > 0);
+    .filter((id) => id.length > 0 && !PRODUCT_HIDDEN_THINKING_LEVELS.includes(id));
   return ids.length > 0 ? ids : FALLBACK_THINKING_LEVELS;
 }
 

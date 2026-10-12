@@ -9,6 +9,16 @@ const mocks = vi.hoisted(() => ({
   packaged: true,
   updateChannel: 'stable' as 'stable' | 'beta',
   serviceFactory: null as null | ((deps: PortableUpdateServiceDeps) => PortableUpdateService),
+  /** 主进程忙态补位（2026-10-11）：②轮次软状态 ③交付在途 的可控替身。 */
+  artifactFlags: { liveTurns: false, deliveries: false },
+}));
+
+// 三源取或的 ②③（主进程真状态）——单测用替身隔离它们各自的状态机（各有专测）。
+vi.mock('../src/main/artifact/turn-lifecycle.js', () => ({
+  hasLiveTurnSessions: () => mocks.artifactFlags.liveTurns,
+}));
+vi.mock('../src/main/artifact/delivery-activity.js', () => ({
+  hasActiveDeliveryOperations: () => mocks.artifactFlags.deliveries,
 }));
 
 vi.mock('electron', () => ({
@@ -95,6 +105,8 @@ beforeEach(() => {
   mocks.packaged = true;
   mocks.updateChannel = 'stable';
   mocks.serviceFactory = null;
+  mocks.artifactFlags.liveTurns = false;
+  mocks.artifactFlags.deliveries = false;
 });
 
 afterEach(() => {
@@ -140,6 +152,7 @@ describe('portable update IPC', () => {
       prepare,
       cancel,
       requestRestart,
+      deps,
       setPhase: (next: typeof phase) => (phase = next),
     };
   }
@@ -156,7 +169,9 @@ describe('portable update IPC', () => {
       'app:get-version',
       'app:install-update',
     ]);
-    expect([...mocks.listeners.keys()]).toEqual(['app:portable-update-renderer-ready']);
+    // `tray:update-status` = 忙态信号（2026-10-11 升级补齐）：只**多挂一个监听**读渲染层
+    // 推来的真实任务/run 状态，不新增通道。
+    expect([...mocks.listeners.keys()].sort()).toEqual(['app:portable-update-renderer-ready', 'tray:update-status']);
   });
 
   it('reports no portable state while the app is not running from a drive', async () => {
@@ -296,6 +311,91 @@ describe('portable update IPC', () => {
     const state = (await check?.()) as { state: string; latestVersion: string };
     expect(state).toMatchObject({ state: 'ready', latestVersion: '0.0.22' });
     expect(created, 'ready 事务是可安装资产，切频道不能把它从路由上摘掉').toHaveLength(1);
+    await expect(install?.()).resolves.toEqual({ ok: true });
+    expect(created[0]?.requestRestart).toHaveBeenCalledTimes(1);
+  });
+
+  // ⭐ 2026-10-11 升级补齐：忙态（生成/写文件期间）绝不退出应用、绝不启动替换。
+  //    渲染层那条真实 run 状态经**既有** `tray:update-status` 通道上来，这里只多挂监听。
+  it('任务进行中：安装被拒（不调 requestRestart、不退出），检查/下载照常；任务结束后可装', async () => {
+    mocks.portableRoot = 'F:\\';
+    const created: ReturnType<typeof controlledService>[] = [];
+    mocks.serviceFactory = (deps) => {
+      const entry = controlledService(deps);
+      created.push(entry);
+      return entry.service;
+    };
+    const { registerUpdateHandlers } = await loadHandlers();
+    registerUpdateHandlers();
+    const check = mocks.handlers.get('app:check-for-updates');
+    const download = mocks.handlers.get('app:download-update');
+    const cancel = mocks.handlers.get('app:cancel-update-download');
+    const install = mocks.handlers.get('app:install-update');
+    const tray = mocks.listeners.get('tray:update-status');
+
+    await check?.();
+    created[0]?.setPhase('ready');
+    expect(created[0]?.deps.isBusy?.(), '默认（还没收到推送）= 不忙').toBe(false);
+
+    tray?.({}, { status: 'running', tasks: [{ taskId: 't1' }] });
+    expect(created[0]?.deps.isBusy?.(), '忙态信号要一路传到便携服务的边界上').toBe(true);
+
+    await expect(install?.()).resolves.toEqual({ ok: false, error: 'app-busy' });
+    expect(created[0]?.requestRestart, '忙态不许走到换目录那一步').not.toHaveBeenCalled();
+    expect(mocks.quit, '更不许退出应用').not.toHaveBeenCalled();
+
+    // 运行中仍允许检查/下载（ready 候选留在原地，等用户稍后安装）
+    await expect(check?.()).resolves.toMatchObject({ state: 'ready' });
+    const downloading = Promise.resolve(download?.());
+    await expect(cancel?.()).resolves.toEqual({ ok: true });
+    await expect(downloading).resolves.toEqual({ ok: false, error: 'unknown' });
+    expect(created[0]?.prepare, '忙不挡下载/准备').toHaveBeenCalledTimes(1);
+
+    // 任务结束（或只剩未读）⇒ 安装恢复可用
+    tray?.({}, { status: 'idle', tasks: [] });
+    expect(created[0]?.deps.isBusy?.()).toBe(false);
+    await expect(install?.()).resolves.toEqual({ ok: true });
+    expect(created[0]?.requestRestart).toHaveBeenCalledTimes(1);
+  });
+
+  // ⭐ 2026-10-11 主进程补位（评审要点：不能只靠按钮灰掉）：
+  //    渲染层推送尚未到达/已落后（②轮次软状态）、或 turn 已结束但交付在途（③）——
+  //    这两段窗口只靠 tray 信号会漏；isAppBusy 三源取或后，IPC 与便携服务边界都挡。
+  it('⭐ 主进程补位：轮次软状态未落 / 交付在途 ⇒ 渲染层说空闲也不许装；收敛后恢复', async () => {
+    mocks.portableRoot = 'F:\\';
+    const created: ReturnType<typeof controlledService>[] = [];
+    mocks.serviceFactory = (deps) => {
+      const entry = controlledService(deps);
+      created.push(entry);
+      return entry.service;
+    };
+    const { registerUpdateHandlers } = await loadHandlers();
+    registerUpdateHandlers();
+    const check = mocks.handlers.get('app:check-for-updates');
+    const install = mocks.handlers.get('app:install-update');
+    const tray = mocks.listeners.get('tray:update-status');
+
+    await check?.();
+    created[0]?.setPhase('ready');
+    tray?.({}, { status: 'idle', tasks: [] });
+    expect(created[0]?.deps.isBusy?.(), '渲染层说空闲').toBe(false);
+
+    // ② 主进程轮次软状态未落（网关 start 已到、end 未到 / 渲染层推送滞后）
+    mocks.artifactFlags.liveTurns = true;
+    expect(created[0]?.deps.isBusy?.(), '主进程在跑 = 忙（服务边界同源）').toBe(true);
+    await expect(install?.()).resolves.toEqual({ ok: false, error: 'app-busy' });
+    expect(created[0]?.requestRestart, '忙态不许走到换目录那一步').not.toHaveBeenCalled();
+    expect(mocks.quit, '更不许退出应用').not.toHaveBeenCalled();
+
+    // ③ turn 已结束、交付（写盘/登记）仍在途——正是只靠渲染层会漏的窗口
+    mocks.artifactFlags.liveTurns = false;
+    mocks.artifactFlags.deliveries = true;
+    expect(created[0]?.deps.isBusy?.()).toBe(true);
+    await expect(install?.()).resolves.toEqual({ ok: false, error: 'app-busy' });
+    expect(mocks.quit).not.toHaveBeenCalled();
+
+    // 真实事件收敛（交付终态）⇒ 恢复可装
+    mocks.artifactFlags.deliveries = false;
     await expect(install?.()).resolves.toEqual({ ok: true });
     expect(created[0]?.requestRestart).toHaveBeenCalledTimes(1);
   });

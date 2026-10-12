@@ -110,6 +110,46 @@ export const CAPABILITY_VERIFICATION_LEDGER: readonly CapabilityLedgerRecord[] =
       verifiedCase: '探针 A4：enable_search 真实触发（同问句输入 15 → 5974 token，网页内容拼进 prompt）',
     },
   },
+  // ── 模型 · Cephalon 渠道（Task 1 接口探针，2026-10-10；预算授权 ≤10 元）──────
+  //    provider 记桌面侧 `clawrouter`（对外口径）；渠道（Cephalon）/上游 ID 写在证据正文，
+  //    不把后端 provider 名当成桌面 provider。以下三行均为**接口探针**级证据——
+  //    真实任务链/交付证据在 Task 5 补入（不得据此宣称 FEAT-01 默认任务闭环）。
+  {
+    kind: 'model',
+    id: 'glm-5.3-flash',
+    capability: 'chat',
+    availability: 'available',
+    provider: 'clawrouter',
+    evidence: {
+      verifiedAt: '2026-10-10',
+      verifiedCase:
+        'Cephalon 接口探针（Task 1）：三档 low/high/max 短请求全 200、SSE 终止/usage 正常、工具两轮往返成功；渠道=Cephalon（上游 glm-5.3-flash）。记录 reviews/2026-10-10-cephalon-contract-check.md；夹具 D:/backup/cephalon-probes-20261010/results/',
+    },
+  },
+  {
+    kind: 'model',
+    id: 'glm-5.3-flash',
+    capability: 'vision',
+    availability: 'available',
+    provider: 'clawrouter',
+    evidence: {
+      verifiedAt: '2026-10-10',
+      verifiedCase:
+        'Cephalon 接口探针（Task 1）：探针图精确读出「7441」（image_url data-url 输入，prompt 210 tok 含图像）；范围=接口探针——目录 llm.vision 声明与客户端图片注入路径待 Task 2 / Task 5 落地后对用户生效。证据同上',
+    },
+  },
+  {
+    kind: 'model',
+    id: 'deepseek-v4-flash-cephalon',
+    capability: 'chat',
+    availability: 'available',
+    provider: 'clawrouter',
+    evidence: {
+      verifiedAt: '2026-10-10',
+      verifiedCase:
+        'Cephalon 接口探针（Task 1）：平台计费 ID，出站上游=deepseek-v4-flash；短请求+工具两轮 200/stop，思考档 reasoning 流实测（max/4096 预算 26s 收尾）。旧渠道 deepseek-v4-flash 证据未复制；账单口径待对账。证据同上',
+    },
+  },
   // ⚠️ 白名单里的 `qwen-turbo` / `qwen-plus` **刻意不写在这里**：它们没有实测记录，
   //    正确的状态是推导出来的 `unverified`（账本只收两端，见类型注释）。
   // ── 工具 · 读网页（用户实测 + 日志，2026-10-08）─────────────────────────────
@@ -389,7 +429,12 @@ export function findCapabilityEntry(
   );
 }
 
-/** 模型 id 列表 → 只留对话能力 `available` 的那些（能力边界提示词要用它列"可用模型"）。 */
+/**
+ * 模型 id 列表 → 留「chat 能力非 unavailable」的条目（= 目录里可选的那些）。
+ * ⚠️ 名字里的 available 指"不是 unavailable"，**含 unverified**（目录有、无实测记录）——
+ * 消费方（能力边界提示词）必须自行区分「已实测可用」与「目录可选、尚未逐一实测」两档
+ * （2026-10-10 Task 2 复核校正），不得把两者合成一句"可用"。
+ */
 export function availableChatModelIds(registry: readonly CapabilityEntry[]): string[] {
   return registry
     .filter((entry) => entry.kind === 'model' && entry.capability === 'chat' && entry.availability !== 'unavailable')

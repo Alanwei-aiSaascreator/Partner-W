@@ -87,7 +87,9 @@ describe('⭐ 2026-10-09 复审反例：新任务首次改稿必须命中', () =
  *（网页/Word/Excel 都能"美化"），不是"要一份演示文稿"的证据。
  */
 describe('⭐ H2：非 PPT 改稿误路由（只读探针三条负例 ⇒ 无上下文不命中）', () => {
-  const CATALOG = ['qwen3.7-flash', 'deepseek-v4-flash'];
+  // 2026-10-10 Cephalon 批：目录里**新旧两条 DeepSeek 渠道并存**（旧 deepseek-v4-flash
+  // 保留可选、新 deepseek-v4-flash-cephalon 是默认路由目标）—— 路由必须精确命中新 ID。
+  const CATALOG = ['glm-5.3-flash', 'deepseek-v4-flash-cephalon', 'deepseek-v4-flash'];
 
   it.each(['美化这个网页', '帮我重新排版这份 Word 文档', '调整 Excel 的字号'])('不命中、不标记、不路由：%s', (text) => {
     expect(looksLikeDeckRequest(text)).toBe(false);
@@ -106,33 +108,38 @@ describe('⭐ H2：非 PPT 改稿误路由（只读探针三条负例 ⇒ 无上
         text: '第一版不好看，重新排版',
         catalogModelIds: CATALOG,
       }),
-    ).toEqual({ route: true, modelId: 'deepseek-v4-flash', markTask: false });
+    ).toEqual({ route: true, modelId: 'deepseek-v4-flash-cephalon', markTask: false });
   });
 
   it('对照面：带演示名词的改稿不受影响（「美化这个 PPT」首条即命中）', () => {
     expect(looksLikeDeckRequest('美化这个 PPT', false)).toBe(true);
     expect(planDeckRouting({ sendMode: 'smart', task: {}, text: '美化这个 PPT', catalogModelIds: CATALOG })).toEqual({
       route: true,
-      modelId: 'deepseek-v4-flash',
+      modelId: 'deepseek-v4-flash-cephalon',
       markTask: true,
     });
   });
 });
 
 describe('resolveDeckModelId —— 对着目录解析真实 id', () => {
-  it('默认目标就是 deepseek-v4-flash', () => {
-    expect(DECK_ROUTE_MODEL_ID).toBe('deepseek-v4-flash');
-    expect(resolveDeckModelId(['deepseek-v4-flash'])).toBe('deepseek-v4-flash');
+  it('默认目标就是新 Cephalon 平台 ID（deepseek-v4-flash-cephalon）', () => {
+    expect(DECK_ROUTE_MODEL_ID).toBe('deepseek-v4-flash-cephalon');
+    expect(resolveDeckModelId(['deepseek-v4-flash-cephalon'])).toBe('deepseek-v4-flash-cephalon');
+  });
+
+  it('⭐ 新旧两条 DeepSeek 渠道并存 ⇒ 精确命中新渠道，不误选旧同名渠道（目录顺序无关）', () => {
+    expect(resolveDeckModelId(['deepseek-v4-flash', 'deepseek-v4-flash-cephalon'])).toBe('deepseek-v4-flash-cephalon');
+    expect(resolveDeckModelId(['deepseek-v4-flash-cephalon', 'deepseek-v4-flash'])).toBe('deepseek-v4-flash-cephalon');
   });
 
   it('按末段比对：目录里带命名空间的写法命中，且返回**目录里的原样 id**（与 resolveModeModelId 同一把尺）', () => {
-    expect(resolveDeckModelId(['clawrouter/qwen3.7-flash', 'clawrouter/deepseek-v4-flash'])).toBe(
-      'clawrouter/deepseek-v4-flash',
+    expect(resolveDeckModelId(['clawrouter/glm-5.3-flash', 'clawrouter/deepseek-v4-flash-cephalon'])).toBe(
+      'clawrouter/deepseek-v4-flash-cephalon',
     );
   });
 
-  it('目录里没有它 ⇒ undefined（调用方原样放行、不拦截）', () => {
-    expect(resolveDeckModelId(['qwen3.7-flash'])).toBeUndefined();
+  it('只有旧渠道（deepseek-v4-flash）⇒ 不命中、原样放行（默认路由已迁到新 ID，不悄悄回退旧渠道）', () => {
+    expect(resolveDeckModelId(['glm-5.3-flash', 'deepseek-v4-flash'])).toBeUndefined();
     expect(resolveDeckModelId([])).toBeUndefined();
   });
 
@@ -142,17 +149,17 @@ describe('resolveDeckModelId —— 对着目录解析真实 id', () => {
 });
 
 describe('planDeckRouting —— 粘性标记与 custom 豁免', () => {
-  const CATALOG = ['qwen3.7-flash', 'deepseek-v4-flash'];
+  const CATALOG = ['glm-5.3-flash', 'deepseek-v4-flash-cephalon', 'deepseek-v4-flash'];
 
   it('模式任务 + 本条首次命中 ⇒ 路由 + 标记任务', () => {
     expect(planDeckRouting({ sendMode: 'smart', task: {}, text: '帮我做一份PPT', catalogModelIds: CATALOG })).toEqual({
       route: true,
-      modelId: 'deepseek-v4-flash',
+      modelId: 'deepseek-v4-flash-cephalon',
       markTask: true,
     });
   });
 
-  it('⭐ 粘性：已标记的任务 + 不含演示名词的后续消息（改稿"把标题改一下"）⇒ 仍走 deepseek、不重复标记', () => {
+  it('⭐ 粘性：已标记的任务 + 不含演示名词的后续消息（改稿"把标题改一下"）⇒ 仍走新渠道、不重复标记', () => {
     expect(
       planDeckRouting({
         sendMode: 'smart',
@@ -160,7 +167,7 @@ describe('planDeckRouting —— 粘性标记与 custom 豁免', () => {
         text: '把标题改一下',
         catalogModelIds: CATALOG,
       }),
-    ).toEqual({ route: true, modelId: 'deepseek-v4-flash', markTask: false });
+    ).toEqual({ route: true, modelId: 'deepseek-v4-flash-cephalon', markTask: false });
   });
 
   it('未标记 + 普通聊天 ⇒ 完全不介入（一个字段都不写）', () => {
@@ -170,7 +177,7 @@ describe('planDeckRouting —— 粘性标记与 custom 豁免', () => {
     });
   });
 
-  it('⭐ custom（用户显式选过模型）⇒ 永不覆盖、也不标记（哪怕任务已标记过）', () => {
+  it('⭐ custom（用户显式选过模型）⇒ 永不覆盖、也不标记（哪怕任务已标记过；含显式选旧 DeepSeek）', () => {
     expect(
       planDeckRouting({
         sendMode: 'custom',
@@ -181,9 +188,9 @@ describe('planDeckRouting —— 粘性标记与 custom 豁免', () => {
     ).toEqual({ route: false, markTask: false });
   });
 
-  it('目录缺 deepseek ⇒ 不路由（原样放行），但任务照记"这是 deck 任务"——目录回来后的后续消息仍能粘上', () => {
+  it('目录缺新渠道 ⇒ 不路由（原样放行），但任务照记"这是 deck 任务"——目录回来后的后续消息仍能粘上', () => {
     expect(
-      planDeckRouting({ sendMode: 'smart', task: {}, text: '帮我做一份PPT', catalogModelIds: ['qwen3.7-flash'] }),
+      planDeckRouting({ sendMode: 'smart', task: {}, text: '帮我做一份PPT', catalogModelIds: ['glm-5.3-flash'] }),
     ).toEqual({ route: false, markTask: true });
   });
 });

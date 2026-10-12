@@ -368,6 +368,13 @@ export interface MessageStoreDeps {
     thinkingContent?: string;
     /** 实际生成这条回复的模型 id（逐条来自网关）。 */
     model?: string;
+    /**
+     * ⚠️ DOCX-205 合同（2026-10-10）：同步链路标记。经消息 store 的 upsert 落库的
+     * 消息一律带 `sync: true`（**绝不带终态证据** —— 这里只有正文/工具快照，没有
+     * 整轮终态信息）；主进程交付入口对带标记的消息只认终态证据，中间快照不消费
+     * ArtifactRun。
+     */
+    sync?: true;
   }) => Promise<IpcResult>;
 }
 
@@ -496,6 +503,8 @@ function persistMessageUpdate(deps: MessageStoreDeps, msg: Message): void {
       thinkingContent: msg.thinkingContent,
       // 中途 upsert（工具调用/推理）拿不到它 ⇒ undefined ⇒ 主进程那边条件覆盖，不会抹掉已有值。
       model: msg.model,
+      // ⚠️ DOCX-205 合同：同步链路标记（本路径只有正文/工具快照，永远不带终态证据）。
+      sync: true,
     })
     .catch((err) => {
       console.error('[persist:message]', err);

@@ -185,6 +185,11 @@ const CLAIM_MARKERS = [
   '写好',
   '已写',
   '写完',
+  // ⚠️ DOCX-205 合同 §5.C（2026-10-10）：**具名交付语境**——"内容已提交/请查收"
+  //    是不带扩展名的完成声称，与文件名同现时必须能被行级判据抓到
+  //    （现场句：「内容已提交，稍后会在右侧「产物」面板中出现 验收文档-205.docx」）。
+  '已提交',
+  '请查收',
   '生成',
   '做好',
   '做完',
@@ -350,11 +355,35 @@ function lineExplainsAbsence(content: string, offset: number, name: string): boo
  * 判据放在**行**上而不是整篇：markdown 回复里一行就是一句话，
  * 一行里出现"已生成"就说明这句话在交付，不会误伤别的段落里的列举。
  */
+/**
+ * ⚠️ DOCX-205 合同 §5.C（2026-10-10）：**否定句 / 待生成句不算声称**。
+ *
+ * 真机形状（同一行内）：
+ *  - 否定：「尚未提交 验收文档-205.docx，我还在整理。」—— 旧判据因行内出现"提交"
+ *    而把它当声称 ⇒ missing ⇒ 冤枉模型（界面弹"说好的文件不在"）。
+ *  - 待生成：「稍后提交 验收文档-205.docx。」—— 还没发生的动作同样不是完成声称。
+ *
+ * 判据收窄在**标记词前的小窗口**：紧邻（≤2 字填充）出现否定词，或 ≤8 字内出现
+ * 延迟词 ⇒ 这一次出现不算数；同一行**还有别的干净出现**就算数（不影响既有真声称）。
+ */
+const CLAIM_NEGATION_BEFORE_RE = /(没|没有|未|尚未|还未|还没|并未|别|不要|不会|不想|无需|不必)[^\n]{0,2}$/;
+const CLAIM_DEFERRAL_BEFORE_RE = /(稍后|稍候|随后|之后|等下|等会|过会儿|待|即将|将要|将会|马上|回头)[^\n]{0,8}$/;
+
+function markerOccurrenceClaims(line: string, marker: string): boolean {
+  let idx = line.indexOf(marker);
+  while (idx >= 0) {
+    const before = line.slice(Math.max(0, idx - 14), idx);
+    if (!CLAIM_NEGATION_BEFORE_RE.test(before) && !CLAIM_DEFERRAL_BEFORE_RE.test(before)) return true;
+    idx = line.indexOf(marker, idx + 1);
+  }
+  return false;
+}
+
 function lineClaimsFile(content: string, offset: number): boolean {
   const start = content.lastIndexOf('\n', offset - 1) + 1;
   const endIdx = content.indexOf('\n', offset);
   const line = content.slice(start, endIdx === -1 ? content.length : endIdx).toLowerCase();
-  return CLAIM_MARKERS.some((marker) => line.includes(marker));
+  return CLAIM_MARKERS.some((marker) => markerOccurrenceClaims(line, marker));
 }
 
 /** 回扫的止步字符：行尾、句读标点、路径分隔符、代码/引号边界。 */

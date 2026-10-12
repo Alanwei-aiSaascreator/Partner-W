@@ -26,10 +26,17 @@
  * **「当前暂不支持该模型或能力」**同时写进提示词 —— 模型用用户界面语言等价表达。
  */
 
-import { availableChatModelIds, type CapabilityEntry } from './capability-registry.js';
+import { type CapabilityEntry } from './capability-registry.js';
 
-/** 区块版本：提示词内容变化时 +1，写端据此升级（与 preset 提示词同一套"带版本标记"纪律）。 */
-export const CAPABILITY_BOUNDARY_PROMPT_VERSION = 1;
+/**
+ * 区块版本：提示词内容变化时 +1，写端据此升级（与 preset 提示词同一套"带版本标记"纪律）。
+ * v2（2026-10-10 · Task 2 复核校正）：对话模型改为**两档如实列** ——
+ * 「已实测可用 / 目录中可选、尚未逐一实测」；旧版把未验证模型也写成"可用的对话模型"。
+ * v3（2026-10-12 · 视频接入）：视频生成**已接入**（videogen 围栏，客户端执行、按秒计费）——
+ * 从"暂不支持"清单移除、改为可用能力行。修复现场矛盾：主罗盘被告知"视频不支持"
+ * 而其它助手能看到视频技能照常生成（用户实测"有的助手可以、有的直接说不可以"）。
+ */
+export const CAPABILITY_BOUNDARY_PROMPT_VERSION = 3;
 
 /** 用户点名了不存在的**模型**时，界面要说的话（i18n 键）。 */
 export const UNSUPPORTED_MODEL_COPY_KEY = 'chatInput.unsupportedModel';
@@ -56,19 +63,37 @@ const UNAVAILABLE_MODEL_FAMILIES = 'GPT / ChatGPT / Claude / Gemini / Grok / Lla
 /**
  * 能力边界提示词（注入给 main 助手）。
  *
- * 只陈述**注册表里的事实**：可用模型来自目录（`chat` 能力非 `unavailable` 的条目），
- * 实测能力只列 `available` 的那些。目录没拉到时（空注册表）不伪造模型名。
+ * 只陈述**注册表里的事实**，且**分档如实**（2026-10-10 Task 2 复核校正）：
+ *   · 对话模型两档 —— 「已实测可用」（available）/「目录中可选、尚未逐一实测」（unverified），
+ *     不把两者合成一句"可用的对话模型"（那是对未验证模型的过度声明）；
+ *   · 实测能力（图片理解/联网）只列 `available` 的那些；
+ *   · 目录没拉到时（空注册表）不伪造模型名。
  */
 export function buildCapabilityBoundaryPrompt(registry: readonly CapabilityEntry[]): string {
-  const chatModels = availableChatModelIds(registry);
+  const chatEntries = registry.filter(
+    (entry) => entry.kind === 'model' && entry.capability === 'chat' && entry.availability !== 'unavailable',
+  );
+  const verifiedChatModelIds = chatEntries
+    .filter((entry) => entry.availability === 'available')
+    .map((entry) => entry.id);
+  const unverifiedChatModelIds = chatEntries
+    .filter((entry) => entry.availability === 'unverified')
+    .map((entry) => entry.id);
+
+  const modelLines: string[] = [];
+  if (verifiedChatModelIds.length > 0) {
+    modelLines.push(`本机已实测可用的对话模型（以工作台模型选择器为准）：${verifiedChatModelIds.join('、')}`);
+  }
+  if (unverifiedChatModelIds.length > 0) {
+    modelLines.push(`目录中可选、尚未逐一实测的对话模型：${unverifiedChatModelIds.join('、')}`);
+  }
+  if (modelLines.length === 0) {
+    modelLines.push('本机可用的对话模型：以工作台模型选择器为准（此刻目录尚未取到）。');
+  }
+
   const verified = registry.filter((entry) => entry.availability === 'available');
   const verifiedModels = verified.filter((entry) => entry.kind === 'model');
   const verifiedTools = verified.filter((entry) => entry.kind === 'tool');
-
-  const modelLine =
-    chatModels.length > 0
-      ? `本机可用的对话模型（以工作台模型选择器为准）：${chatModels.join('、')}`
-      : '本机可用的对话模型：以工作台模型选择器为准（此刻目录尚未取到）。';
 
   const capabilityLines: string[] = [];
   for (const entry of verifiedModels) {
@@ -79,16 +104,20 @@ export function buildCapabilityBoundaryPrompt(registry: readonly CapabilityEntry
   for (const entry of verifiedTools) {
     capabilityLines.push(`- ${entry.capability}：${entry.id}（${entry.evidence?.verifiedAt ?? '已实测'} 实测可用）`);
   }
+  // v3：视频生成为已接入能力（videogen 围栏，技能随包；由客户端执行生成）。
+  // 不写进注册表 —— 避免模型把 `videogen` 当成可调用的工具名去 tool-call（BUG-060 教训），
+  // 此处只作能力陈述，具体规范由随包《视频生成》技能承载。
+  capabilityLines.push('- 视频生成：按随包《视频生成》技能规范输出 videogen 围栏块（客户端执行生成，按输出秒数计费）');
 
   return [
     '## 能力边界（自动维护区块，请勿手改本区块；用户如需自定义请写在本区块之外）',
     '',
-    modelLine,
+    ...modelLines,
     '',
     ...(capabilityLines.length > 0 ? ['已实测可用的能力：', ...capabilityLines, ''] : []),
     '当前暂不支持（直接如实说明，不要调用工具试错、不要假装可以）：',
     `- 其它厂商模型：${UNAVAILABLE_MODEL_FAMILIES}`,
-    '- 图片生成、视频生成（本轮未接入）',
+    '- 图片生成（本轮未接入）',
     '- 语音合成 / 声音克隆（Windows 桌面版未接入）',
     '',
     '用户请求以上内容时：明确回答「当前暂不支持该模型或能力」，并给出替代方案',

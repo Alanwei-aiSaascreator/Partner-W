@@ -66,6 +66,7 @@ import type {
   TeamHubRegistry,
   TeamPosition,
   TeamMeetingRecord,
+  VideogenFailure,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
@@ -601,6 +602,14 @@ export interface ClawWorkAPI {
    */
   onHtmlgenFailed: (callback: (failures: HtmlgenFailure[]) => void) => () => void;
   /**
+   * 助手在回复里给了 ```` ```videogen ```` 块，但视频没能生成出来。
+   *
+   * 形状与 shared 的 `VideogenFailure` **必须一致**（IPC 是运行时边界，两边各写一份类型）。
+   * ⚠️ 与其它三条通道的**时序差别**：视频是远端异步任务，这条推送可能在消息完成后
+   * **几分钟**才到（后台作业广播，见 `main/videogen/start.ts`）。
+   */
+  onVideogenFailed: (callback: (failures: VideogenFailure[]) => void) => () => void;
+  /**
    * 幻灯片那条通道的**两档**结果。
    *
    * ⚠️ 分开是刻意的：`onSlidegenWarned` 表示**文件已经在产物里了**，
@@ -767,6 +776,10 @@ export interface ClawWorkAPI {
     thinkingContent?: string;
     /** 实际生成这条回复的模型 id（逐条来自网关）。 */
     model?: string;
+    /** ⚠️ DOCX-205 合同：整轮终态证据（见 core session-sync 的可信历史终态校验）。 */
+    terminal?: { kind: 'final'; runId: string; stopReason?: string; source?: string };
+    /** ⚠️ DOCX-205 合同：同步链路标记（带标记的消息在主进程只认终态证据）。 */
+    sync?: boolean;
   }) => Promise<IpcResult>;
 
   deleteTask: (taskId: string) => Promise<IpcResult>;

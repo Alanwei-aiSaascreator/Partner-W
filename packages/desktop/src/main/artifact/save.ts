@@ -130,6 +130,25 @@ function rowForReplay(sqlite: RawSqlite, messageId: string, sourceKey: string): 
   );
 }
 
+/**
+ * 重放探测（2026-10-12 视频接入）：同 message + sourceKey 已有行、且文件还在盘上 ⇒ 返回既有产物。
+ *
+ * 为什么单独开这个出口：视频的"生成"是**远端付费任务**。`saveArtifactFromBuffer` 自己的
+ * 重放结算发生在**已经花完钱之后**——对 docgen 无所谓（本机渲染），对视频意味着
+ * "同一份请求被处理两次 = 付两次费"。调用方（`main/videogen/generate.ts`）必须在
+ * **创建远端任务之前**先调这里探测：非空 ⇒ 直接算已交付，一个请求都不发。
+ *
+ * 判据与 `settleExistingRows` 的 ① 逐字同款（同 message + 同 sourceKey + 文件在盘），
+ * 不复用那个函数是因为它同时会**删陈旧行**——那是登记路径的事务动作，探测必须只读。
+ */
+export function findReplayArtifact(messageId: string, sourceKey: string): Artifact | null {
+  const sqlite = getSqlite();
+  if (!sqlite || !messageId || !sourceKey) return null;
+  const row = rowForReplay(sqlite, messageId, sourceKey);
+  if (!row) return null;
+  return rowFileExists(row, '') ? artifactFromRow(row) : null;
+}
+
 /** 同一 (task_id, root, local_path) 的既有行：`artifacts_task_local_path` 的语义。 */
 function rowForLocalPath(sqlite: RawSqlite, taskId: string, localPath: string): ArtifactRow | undefined {
   return rawRow(

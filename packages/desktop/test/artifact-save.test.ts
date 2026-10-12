@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { makeMp4Buffer } from './helpers/make-mp4.js';
 import { resolve } from 'node:path';
 
 vi.mock('fs', () => ({
@@ -147,7 +148,9 @@ describe('saveArtifactFromBuffer', () => {
       taskId: 'task-1',
       messageId: 'msg-1',
       fileName: `clip.${extension}`,
-      buffer: Buffer.from('video'),
+      // ⚠️ .mp4 进了登记前置门（2026-10-12 视频接入）——假字节 'video' 会被拒；
+      //    .webm 不在受检名单，垃圾字节照旧放行（本用例顺带钉住这个边界）。
+      buffer: extension === 'mp4' ? makeMp4Buffer() : Buffer.from('video'),
       artifactType: 'file',
     });
     expect(result).toMatchObject({ type: 'file', mimeType: `video/${extension}` });

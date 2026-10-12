@@ -30,6 +30,13 @@ import {
   type DeviceIdentity,
 } from './device-identity.js';
 import { getDebugLogger } from '../debug/index.js';
+import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
+import {
+  noteGatewayTurnLifecycle,
+  reconcileGatewayTurnSessions,
+  releaseGatewayTurnSessions,
+  retryPendingGatewayTurnStops,
+} from '../artifact/turn-lifecycle.js';
 import { ensureGatewayWindowsSystemTrust } from './tls-trust.js';
 import { convergeLateLocalRuntimeReady, getRuntimeBootstrapStatus } from '../runtime/bootstrap-status.js';
 import { probeStartupz } from '../runtime/gateway-process.js';
@@ -309,6 +316,8 @@ export class GatewayClient {
   private ws: WebSocket | null = null;
   private authenticated = false;
   private reconnectAttempts = 0;
+  /** BUG-064 D：本机运行时已判定失败 ⇒ 自动重连被抑制（显式 reconnect 不受影响）。 */
+  private runtimeDownSuppressed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private challengeTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -590,6 +599,29 @@ export class GatewayClient {
       data: { payload: summarizePayload(frame.payload) },
     });
 
+    // ⚠️ DOCX-205 合同（2026-10-10）B 块：主进程侧记录「一轮在跑」的真实生命周期
+    //    （`agent` 流的 lifecycle 相位 + `chat` 的终态，与渲染层 processingBySession 同源；
+    //    消费方 = `data-handlers.isArtifactTurnInFlight` 的普通发送单飞门）。
+    //    - lifecycle.start → 这一轮在跑；
+    //    - chat final / lifecycle.end → 有界宽限（终态消息几十毫秒内会 claim，
+    //      bare final 这类无人 claim 的僵尸到点释放）；
+    //    - chat error / aborted、lifecycle.error → 立即释放（这一轮不会再交付；
+    //      自动重发只等 ~1.5 秒，宽限来不及）。
+    //    审批连接只转发审批事件，不参与这个软状态（避免双份 start/end）。
+    if (!this.approvalChannel && sessionKey) {
+      if (frame.event === 'agent' && frame.payload.stream === 'lifecycle') {
+        const phase = (frame.payload.data as { phase?: unknown } | undefined)?.phase;
+        if (phase === 'start' || phase === 'end' || phase === 'error') {
+          // ⭐ B1：随帧带上归属网关 —— 这个网关被永久移除/失败终结时只释放**自己**的记录。
+          noteGatewayTurnLifecycle(phase, sessionKey, this.gatewayId);
+        }
+      } else if (frame.event === 'chat') {
+        const state = frame.payload.state;
+        if (state === 'error' || state === 'aborted') noteGatewayTurnLifecycle('error', sessionKey, this.gatewayId);
+        else if (state === 'final') noteGatewayTurnLifecycle('end', sessionKey, this.gatewayId);
+      }
+    }
+
     // ⚠️ 审批连接**只**转发审批事件：其余多是广播事件（tick/health/presence/node.*），
     //    主连接也在收 —— 转发它们等于让渲染器把每条都处理两遍。
     if (this.approvalChannel && !APPROVAL_CHANNEL_EVENTS.has(frame.event)) return;
@@ -750,6 +782,16 @@ export class GatewayClient {
           }
           this.storeDeviceTokenFromPayload(payload);
           this.subscribeSessionEvents();
+          // ⭐ B1（2026-10-11 整改）：重连成功后与**真实仍在跑的任务**核对软状态 ——
+          //    断连期间丢失的"这一轮已结束"事件不会让应用永久判忙；仍在跑/未知的
+          //    一律保留（判据与保守口径见 `reconcileGatewayTurnSessions`）。
+          //    首次连接时该网关没有记录，天然 no-op。
+          reconcileGatewayTurnSessions(this.gatewayId);
+          // ⭐ B1（复审二轮）：恢复出口 —— 对"停止过但 abort 没送达/没应答"的轮次补发一次
+          //    abort（现在可达了）。网关真的应答了 = 确认的生命周期证据 ⇒ 软状态落地；
+          //    仍失败则保留，等下一次重连/连接终结有界收口（见 retryPendingGatewayTurnStops）。
+          //    不 await：重连流程不被它拖住；函数内部逐会话吞错，不会产生未处理拒绝。
+          void retryPendingGatewayTurnStops(this.gatewayId, (sessionKey) => this.abortChat(sessionKey));
           this.startHeartbeat();
           sendToWindow(getMainWindow(), 'gateway-status', {
             gatewayId: this.gatewayId,
@@ -1543,6 +1585,39 @@ export class GatewayClient {
 
   private scheduleReconnect(): void {
     if (this.destroyed || this.noReconnect) return;
+    // ⚠️ BUG-064 D（2026-10-10）：本机运行时**已被判定起不来**（bootstrap 快照 ok:false，
+    //    例如随盘 Node 探测失败）时，对该本地网关的持续重连只是在打一场不会赢的仗
+    //    （现场：20 次 1006 重连风暴，用户看到的却是"一直在准备"）。
+    //    抑制**自动**重连，等用户「重新准备」成功（IPC runtime:bootstrap-retry 的
+    //    成功分支会显式 `reconnectGateway`）把它唤醒。
+    //    ⚠️ 只影响**本机运行时**这一个网关：远端/其它网关照旧重连，不做全局暂停；
+    //    显式 `reconnect()`（手动重试路径）不经过这里，天然不受抑制。
+    if (this.gatewayId === LOCAL_GATEWAY_ID) {
+      const snapshot = getRuntimeBootstrapStatus();
+      // ⚠️ BUG-064 K2（终审）：**ready-timeout 必须除外** —— 它只说明"那一轮等待超时"，
+      //    晚到的主连接 hello-ok + /startupz started 会把快照收敛成功（见
+      //    `convergeLateLocalRuntimeReady`）；把它的重连也停了，慢机就失去取得这份
+      //    证据的唯一路径。其它失败类（端口被占/迁移被挡/Node 探测失败等）才是
+      //    "再连也赢不了"，继续抑制。
+      if (snapshot && snapshot.ok === false && snapshot.reason !== 'ready-timeout') {
+        if (!this.runtimeDownSuppressed) {
+          this.runtimeDownSuppressed = true;
+          getDebugLogger().warn({
+            domain: 'gateway',
+            event: 'gateway.reconnect.suppressed-runtime-down',
+            gatewayId: this.gatewayId,
+            data: { reason: snapshot.reason },
+          });
+          // ⭐ B1：本机运行时被判定**起不来** = 失败终结 —— 这个网关上的轮次不可能再
+          //    交付（它就死在这台运行时的进程里）。软状态必须落地，否则升级被永久判忙。
+          //    只释放本网关的记录；run 自己的真实释放路径照旧（软状态释放不放行单飞门）。
+          //    ⚠️ 复审二轮：只有**记录主轮次**的连接有资格释放（见 releaseOwnTurnSessions）。
+          this.releaseOwnTurnSessions('runtime-down');
+        }
+        return;
+      }
+    }
+    this.runtimeDownSuppressed = false;
     if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       getDebugLogger().error({
         domain: 'gateway',
@@ -1559,6 +1634,12 @@ export class GatewayClient {
         maxAttempts: MAX_RECONNECT_ATTEMPTS,
         gaveUp: true,
       });
+      // ⭐ B1：重连次数耗尽 = 失败终结 —— 这个网关上的轮次在本连接生命周期里不可能
+      //    再拿到终态事件；软状态落地（只释放本网关的记录），否则升级被永久判忙。
+      //    ⚠️ **只清软状态**：不取消 run（用户手动重连后那一轮仍可能把终态送进来；
+      //    run 有自己 15 分钟 TTL 兜底），单飞门因此不会被提前放行。
+      //    ⚠️ 复审二轮：只有**记录主轮次**的连接有资格释放（见 releaseOwnTurnSessions）。
+      this.releaseOwnTurnSessions('reconnect-gave-up');
       return;
     }
 
@@ -1626,8 +1707,29 @@ export class GatewayClient {
     this.connect();
   }
 
+  /**
+   * ⭐ B1（复审二轮）：**只有记录主轮次的连接**有资格释放软状态。
+   *
+   * 审批副连接（`approvalChannel`）与主连接**共用同一个 gatewayId**，但它从不记
+   * start/end（见 handleEvent 的 `!this.approvalChannel` 门）——它的 destroy /
+   * gave-up / runtime-down 只说明"审批通道断了"，主会话这一轮可能还在跑。
+   * 复审实测反例：主连接 start 之后，审批副连接 destroy ⇒ busy true→false。
+   * 主/副两条连接是**各自独立**的实例，所以这个门放在连接自己身上。
+   */
+  private releaseOwnTurnSessions(reason: string): void {
+    if (this.approvalChannel) return;
+    releaseGatewayTurnSessions(this.gatewayId, reason);
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.cleanup();
+    // ⭐ B1（2026-10-11 整改）：连接被**永久移除**（removeGateway / 退出清理 / 被新连接
+    //    替换）—— 这个网关上的轮次再也拿不到终态事件了，软状态必须释放，否则
+    //    `hasLiveTurnSessions()` 永远是 true、升级被永久判忙（评审 P2 的真身）。
+    //    ⚠️ 只释放**归属这个网关**的记录；短暂断连只走 `close` 处理器里的 `cleanup()`
+    //    （照常重连），**不经过 destroy**，真实仍在跑的轮次不会被误放行。
+    //    ⚠️ 复审二轮：审批副连接没有资格释放（见 releaseOwnTurnSessions）。
+    this.releaseOwnTurnSessions('destroyed');
   }
 }

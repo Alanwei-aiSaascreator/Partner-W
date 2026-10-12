@@ -543,6 +543,12 @@
   .glow-running {
     animation: glow-pulse 2s ease-in-out infinite;
   }
+
+  /* 「我的 AI 团队」圆桌舞台（2026-10-12 视觉重做）：中心径向品牌光晕 + 极强的
+     舞台焦点感。只垫底不抢前景；暗/亮主题都走 accent-soft（浅色主题同样成立）。 */
+  .roundtable-stage {
+    background: radial-gradient(circle at 50% 50%, var(--accent-soft) 0%, transparent 62%);
+  }
 }
 
 @layer base {

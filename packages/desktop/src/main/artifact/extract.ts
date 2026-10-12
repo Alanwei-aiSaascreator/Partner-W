@@ -80,10 +80,11 @@ function namesBinaryDocument(lang: string): boolean {
 }
 
 /**
- * **不是代码**的围栏语言：它们是"生成文件"的请求（`docgen` → Office 文件、`htmlgen` → 网页），
- * 由各自的渲染器变成真文件后单独落盘。列在一处是为了"加第三条通道时只改一行"。
+ * **不是代码**的围栏语言：它们是"生成文件"的请求（`docgen` → Office 文件、`htmlgen` → 网页、
+ * `videogen` → 视频），由各自的渲染器/生成器变成真文件后单独落盘。
+ * 列在一处是为了"加第四条通道时只改一行"。
  */
-const GENERATOR_FENCES = new Set(['docgen', 'htmlgen', 'slidegen']);
+const GENERATOR_FENCES = new Set(['docgen', 'htmlgen', 'slidegen', 'videogen']);
 
 export function extractImagesFromMarkdown(content: string): ExtractedImage[] {
   return [...content.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)].map(([, alt, src]) => ({
@@ -96,10 +97,10 @@ export function extractImagesFromMarkdown(content: string): ExtractedImage[] {
 export function extractCodeBlocksFromMarkdown(content: string): ExtractedCodeBlock[] {
   return (
     [...content.matchAll(/^```(\S*)\n([\s\S]*?)\n```/gm)]
-      // ⚠️ `docgen` / `htmlgen` / `slidegen` 块**不是**代码产物：它们是生成文件的请求，
-      //    由 `main/docgen/`、`main/htmlgen/` 渲染成真文件后**单独**走 `saveArtifactFromBuffer` 存。
-      //    不排除的话，用户在产物里会同时看到那份文件**和**一段 JSON 噪音。
-      //    ⚠️ 这三个名字要与各生成器 `blocks.ts` 的围栏正则**一致** ——
+      // ⚠️ `docgen` / `htmlgen` / `slidegen` / `videogen` 块**不是**代码产物：它们是生成文件的
+      //    请求，由 `main/docgen/`、`main/htmlgen/`、`main/videogen/` 生成真文件后**单独**走
+      //    `saveArtifactFromBuffer` 存。不排除的话，用户在产物里会同时看到那份文件**和**一段 JSON 噪音。
+      //    ⚠️ 这几个名字要与各生成器 `blocks.ts` 的围栏正则**一致** ——
       //    漏一个的症状是"网页生成出来了，旁边还多一份它的 JSON 源码"。
       .filter(([, lang]) => !GENERATOR_FENCES.has(lang.trim().toLowerCase()))
       .map(([, lang, body]) => {

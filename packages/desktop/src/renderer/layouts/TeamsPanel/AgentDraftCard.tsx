@@ -12,7 +12,7 @@ import { TEAM_POSITIONS, type TeamPosition } from '@clawwork/shared';
 import { parseIdentityMd, resolveCatalogAgentId } from '@clawwork/core';
 import { normalizePosition } from '@/lib/team-roundtable';
 import { userMdContentFromReadResult } from '@/lib/identity-persona';
-import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -88,7 +88,7 @@ export default function AgentDraftCard({
         ? loadedSkillsStatus.report
         : undefined;
   const catalog = (gatewayId ? modelCatalogByGateway[gatewayId] : null) ?? EMPTY_MODELS;
-  const models = useMemo(() => relayModelsFrom(catalog).filter((model) => model.available !== false), [catalog]);
+  const models = useMemo(() => selectableModelsFrom(catalog), [catalog]);
   const isExisting = !!agent.existingAgentId;
   const canSwitchMode = !lockExisting;
 

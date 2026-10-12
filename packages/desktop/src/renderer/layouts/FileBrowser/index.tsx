@@ -8,6 +8,7 @@ import { useMessageStore } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import { getArtifactDisplayName, getArtifactKindFilter, type ArtifactKindFilter } from '@/lib/artifact-labels';
+import { collapseArtifactCopies } from '@/lib/artifact-versions';
 import { fileExtensionOf, openFailureKind, openFailureMessageKey } from '@/lib/open-failure';
 import { motionDuration, motionEase } from '@/styles/design-tokens';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -168,7 +169,9 @@ export default function FileBrowser() {
             return;
           }
           if (res.ok && res.result) {
-            setArtifacts(res.result as unknown as Artifact[]);
+            // 2026-10-12：同一文件的双位置副本（根层 + 任务子目录）各登记一条 ⇒ 收敛展示，
+            // 别让"每个文件两张卡"的观感砸在脸上（只收敛展示，不删登记/文件）。见函数注释。
+            setArtifacts(collapseArtifactCopies(res.result as unknown as Artifact[]));
           } else {
             setListError(workspaceEpoch);
           }

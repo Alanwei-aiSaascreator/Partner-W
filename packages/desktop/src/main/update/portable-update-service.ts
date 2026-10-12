@@ -96,6 +96,18 @@ export interface PortableUpdateServiceDeps {
   createTransactionId: () => string;
   startLauncher: (stateFilePath: string) => Promise<void>;
   quit: () => void;
+  /**
+   * 忙态判据（**真实任务/run 活动状态**，2026-10-11 升级补齐）。
+   *
+   * `true` ⇒ 生成/写文件正在进行：**不许**启动换目录的启动器，也**不许**退出应用
+   * —— 退出会打断真实任务，还会留下未结算的在途调用。
+   *
+   * ⚠️ 检查发生在 `requestRestart` 的**最后边界**（`startLauncher`/`quit` 之前），
+   *    但它是最后一道闸，不是唯一一道：界面（设置 → 关于）与主进程 IPC
+   *    （`app:install-update`）各自还有自己的门。三层读的是同一个真实活动信号。
+   * ⚠️ 缺省（未注入）视为不忙 —— 这是**旧的测试/替身**兼容口径，生产装配必须给。
+   */
+  isBusy?: () => boolean;
 }
 
 interface StatePatch {
@@ -370,6 +382,17 @@ export function createPortableUpdateService(deps: PortableUpdateServiceDeps): Po
     },
     async requestRestart() {
       if (readyTransaction === null) return { ok: false, errorCode: 'manifest-invalid' };
+      // ⭐ 忙态边界（2026-10-11 升级补齐）：**这是"退出应用/启动替换"的最后一刻**。
+      //    生成/写文件期间放行 = 打断真实任务 + 在途调用永不结算（账目卡死）。
+      //    ⚠️ 拒绝时**不换相位**：ready 事务与暂存目录原样保留，任务结束后用户
+      //    直接再点一次「立即重启更新」即可（候选**不丢**）。
+      //    ⚠️ 错误码沿用既有的 `file-in-use`（"有东西正被占用，暂时换不了目录"）：
+      //    不新增公布码 = 不改共享契约、不给界面造第二种说法。
+      if (deps.isBusy?.() === true) {
+        getDebugLogger().info({ domain: 'updater', event: 'portable.restart.refused-busy' });
+        publish('ready', { targetVersion: readyTransaction.targetVersion, errorCode: 'file-in-use' });
+        return { ok: false, errorCode: 'file-in-use' };
+      }
       try {
         await deps.startLauncher(deps.stateStore.stateFilePath);
       } catch (error) {

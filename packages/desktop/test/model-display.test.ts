@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelCatalogEntry } from '@clawwork/shared';
-import { resolveModelLabel } from '../src/renderer/lib/model-display.js';
+import { resolveModelLabel, shouldShowModelBadge } from '../src/renderer/lib/model-display.js';
 
 // 消息级模型的展示名。语义只有一条：**入参没有 modelId 就返回 undefined**，
 // 调用方据此不渲染徽章 —— 绝不拿会话级模型 / picker 兜底（那是"选中的"，不是"生成它的"）。
@@ -39,5 +39,26 @@ describe('resolveModelLabel', () => {
     const catalog: ModelCatalogEntry[] = [{ id: 'glm-4.7', provider: 'clawrouter' }];
 
     expect(resolveModelLabel('glm-4.7', catalog)).toBe('glm-4.7');
+  });
+});
+
+// 2026-10-11（用户拍板）：三档模式（快速/智能/深度）背后跑哪个模型是**内部实现**，不上屏；
+// 仅 `custom`（高级：用户显式选过模型）才渲染消息级模型徽章。与 ChatInput chip 的两级口径同规则。
+describe('shouldShowModelBadge', () => {
+  it('仅 custom 显示消息级模型徽章', () => {
+    expect(shouldShowModelBadge('custom')).toBe(true);
+  });
+
+  it('三档模式一律不显示（模型路由属内部实现）', () => {
+    expect(shouldShowModelBadge('fast')).toBe(false);
+    expect(shouldShowModelBadge('smart')).toBe(false);
+    expect(shouldShowModelBadge('deep')).toBe(false);
+  });
+
+  it('未知 / 缺省读取失败按"不显示"处理（fail-closed：宁可少渲染，不泄露内部路由）', () => {
+    expect(shouldShowModelBadge(undefined)).toBe(false);
+    expect(shouldShowModelBadge(null)).toBe(false);
+    expect(shouldShowModelBadge('')).toBe(false);
+    expect(shouldShowModelBadge('bogus')).toBe(false);
   });
 });

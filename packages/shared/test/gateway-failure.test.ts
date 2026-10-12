@@ -28,6 +28,20 @@ describe('gatewayFailureReasonFrom', () => {
     expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.deploy-failed' })).toBe('deploy-failed');
   });
 
+  it.each([
+    ['runtime.node-missing', 'node-missing'],
+    ['runtime.node-permission-denied', 'node-permission-denied'],
+    ['runtime.node-probe-timeout', 'node-probe-timeout'],
+    ['runtime.node-exec-failed', 'node-exec-failed'],
+    ['runtime.node-version-unsupported', 'node-version-unsupported'],
+  ] as const)('⭐ BUG-064：随盘 Node 失败码 %s ⇒ %s（各有各自界面话术）', (code, reason) => {
+    expect(gatewayFailureReasonFrom({ bootstrapCode: code })).toBe(reason);
+  });
+
+  it('⭐ BUG-064：通用 no-usable-node（无候选等边缘兜底）刻意不映射 ⇒ unknown（不猜）', () => {
+    expect(gatewayFailureReasonFrom({ bootstrapCode: 'runtime.no-usable-node' })).toBe('unknown');
+  });
+
   it('认证被拒（关闭码 1008）⇒ auth-rejected', () => {
     expect(gatewayFailureReasonFrom({ closeCode: 1008 })).toBe('auth-rejected');
   });
@@ -64,7 +78,7 @@ describe('gatewayFailureReasonFrom', () => {
     }
   });
 
-  it('闭集本身只有 7 个值（多一个都要先想清楚界面上说什么）', () => {
+  it('闭集本身只有这 12 个值（多一个都要先想清楚界面上说什么）', () => {
     expect([...GATEWAY_FAILURE_REASONS].sort()).toEqual(
       [
         'auth-rejected',
@@ -73,6 +87,12 @@ describe('gatewayFailureReasonFrom', () => {
         'process-exited',
         'ready-timeout',
         'state-migration-blocked',
+        // BUG-064：随盘 Node 的五个分档（界面上各有一句话与各自出口）
+        'node-missing',
+        'node-permission-denied',
+        'node-probe-timeout',
+        'node-exec-failed',
+        'node-version-unsupported',
         'unknown',
       ].sort(),
     );

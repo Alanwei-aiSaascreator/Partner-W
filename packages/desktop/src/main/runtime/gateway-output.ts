@@ -50,7 +50,12 @@ const DEFAULT_TAIL_BYTES = 64 * 1024;
 const DEFAULT_MAX_LINES_PER_SECOND = 20;
 const MIN_SECRET_LENGTH = 8;
 
-function redactGatewayOutput(text: string, secrets: readonly string[]): string {
+/**
+ * ⚠️ BUG-064 K3（2026-10-10）：**命名导出**——Node 探测诊断的"限长脱敏"要复用这组
+ * 已知模式规则（Bearer/token/apiKey/password/URL 凭据），不再只做"限长"。
+ * 只取规则，不复制实现（改这里，两处同变）。
+ */
+export function redactGatewayOutput(text: string, secrets: readonly string[]): string {
   let redacted = text
     .replace(/(\bAuthorization\s*:\s*Bearer\s+)[^\s]+/gi, `$1${REDACTED}`)
     .replace(/\b((?:wss?|https?):\/\/)[^/\s@]+@/gi, `$1${REDACTED}@`)

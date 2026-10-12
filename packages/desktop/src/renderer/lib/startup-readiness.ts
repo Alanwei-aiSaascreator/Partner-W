@@ -122,6 +122,14 @@ export function gatewayFailureText(readiness: StartupReadiness, t: (key: string)
   // 去查激活"完全不同。原来这一类落 `unknown`，界面上只剩一句笼统的"准备遇到了问题"，
   // 而**最有用的那句话只在日志里**。
   if (reason === 'deploy-failed') return t('startupReadiness.gatewayDeployFailed');
+  // ⭐ BUG-064（2026-10-10，换电脑卡 17% 现场）：随盘运行环境（Node）起不来的五档 ——
+  //    每档一句**具体**的话 + 各自可执行的下一步（补盘 / 加白名单 / 稍候重试 / 换盘）。
+  //    「重新准备」按钮由面板既有规则提供（hasError ⇒ retry），这里只管把话说清楚。
+  if (reason === 'node-missing') return t('startupReadiness.gatewayNodeMissing');
+  if (reason === 'node-permission-denied') return t('startupReadiness.gatewayNodePermissionDenied');
+  if (reason === 'node-probe-timeout') return t('startupReadiness.gatewayNodeProbeTimeout');
+  if (reason === 'node-exec-failed') return t('startupReadiness.gatewayNodeExecFailed');
+  if (reason === 'node-version-unsupported') return t('startupReadiness.gatewayNodeVersionUnsupported');
   return null;
 }
 

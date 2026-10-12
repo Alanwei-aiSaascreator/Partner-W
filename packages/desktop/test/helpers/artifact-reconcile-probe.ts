@@ -16,6 +16,7 @@ import { captureTaskArtifactBaseline, reconcileTaskArtifacts } from '../../src/m
 import Database from 'better-sqlite3';
 import JSZip from 'jszip';
 import { DB_FILE_NAME } from '@clawwork/shared';
+import { makeMp4Buffer } from './make-mp4.js';
 import type { ArtifactRootKind } from '@clawwork/shared';
 
 const [, , workspacePath, scenario] = process.argv;
@@ -369,7 +370,9 @@ async function main(): Promise<Record<string, unknown>> {
 
   if (scenario === 'videos') {
     const baseline = await captureTaskArtifactBaseline({ workspacePath, taskId: 'task-1' });
-    writeFileSync(join(workspacePath, 'task-1', 'clip.mp4'), 'video');
+    // ⚠️ .mp4 要**结构性合法**（登记前置门的 box 链判据，2026-10-12 视频接入）；
+    //    .webm 不在受检名单，垃圾字节照旧（顺带钉住"未受检格式不受影响"）。
+    writeFileSync(join(workspacePath, 'task-1', 'clip.mp4'), makeMp4Buffer());
     writeFileSync(join(workspacePath, 'task-1', 'clip.webm'), 'video');
     const first = await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline });
     const second = await reconcileTaskArtifacts({ workspacePath, taskId: 'task-1', messageId: 'msg-1', baseline });

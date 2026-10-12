@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, CheckCircle2, KeyRound, Loader2 } from 'lucide-react';
+import { AlertCircle, ArrowRight, CheckCircle2, KeyRound, Loader2 } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import OpeningMedia from '@/components/OpeningMedia';
 import WorkspaceRecreatedNotice from '@/components/WorkspaceRecreatedNotice';
@@ -166,14 +166,16 @@ export default function EntryPreparation({
    *    "看不出是否还在动"的东西（那正是这一整轮要消灭的形状）。
    */
   const deployActive = state.stage === 'runtime' && !failure && !state.canContinue;
+  // 依赖用 `startedAt`（而不是整个快照）：每条部署事件都会换一个对象，
+  // 挂整个对象等于每 250ms 重建一次定时器。抽出原始值进 effect 与依赖表，
+  // 既满足 exhaustive-deps、又不改变这个"按原始值依赖"的意图。
+  const deployStartedAt = progress?.startedAt;
   useEffect(() => {
-    if (!deployActive || !progress) return;
+    if (!deployActive || deployStartedAt === undefined) return;
     setProgressNow(Date.now());
     const timer = window.setInterval(() => setProgressNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-    // 依赖用 `startedAt`（而不是整个快照）：每条部署事件都会换一个对象，
-    // 挂整个对象等于每 250ms 重建一次定时器。
-  }, [deployActive, progress?.startedAt]);
+  }, [deployActive, deployStartedAt]);
   // 只有解压那一段量得出来（done/total 是条目数）；校验/装 Node/换入都是定性阶段。
   const deployPercent =
     progress && progress.phase === 'extract' && progress.total > 0
@@ -281,6 +283,11 @@ export default function EntryPreparation({
                 <span className="flex min-w-0 items-center gap-1.5">
                   {state.canContinue ? (
                     <CheckCircle2 size={13} className="shrink-0 text-[var(--accent)]" />
+                  ) : state.hasError ? (
+                    // ⭐ BUG-064（合同 #4）：**终态失败停止等待动画** —— 已出结论（失败）时
+                    //    还在转圈就是在承诺"再等等会好"（现场"卡 17%"那一格的观感）。
+                    //    换成静态警示图标；失败原因与下一步在上方卡片里说。
+                    <AlertCircle size={13} className="shrink-0 text-[var(--danger)]" />
                   ) : (
                     <Loader2
                       size={13}

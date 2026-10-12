@@ -23,6 +23,7 @@ const phases = new Set([
   'generating-presentation',
   'generating-document',
   'generating-html',
+  'generating-video',
   'saving-artifacts',
   'reconciling-artifacts',
 ]);

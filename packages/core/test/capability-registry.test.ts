@@ -21,6 +21,9 @@ const MODELS = [
   { id: 'qwen3.5-27b', provider: 'clawrouter', input: ['text', 'image'] },
   { id: 'deepseek-v4-flash', provider: 'clawrouter', input: ['text'] },
   { id: 'qwen-turbo', provider: 'clawrouter', input: ['text'] },
+  // Cephalon 批（2026-10-10）：新默认 GLM 与新 DeepSeek 渠道在目录里的形态。
+  { id: 'glm-5.3-flash', provider: 'clawrouter', input: ['text', 'image'] },
+  { id: 'deepseek-v4-flash-cephalon', provider: 'clawrouter', input: ['text'] },
 ];
 
 describe('验证账本（种子）', () => {
@@ -53,6 +56,50 @@ describe('验证账本（种子）', () => {
       (record) => record.availability === 'available' && !record.evidence,
     );
     expect(unbacked).toEqual([]);
+  });
+});
+
+describe('Cephalon 渠道账本（Task 1 接口探针，2026-10-10）', () => {
+  it('glm-5.3-flash 的 chat / vision 均为带真实探针证据的 available', () => {
+    const chat = CAPABILITY_VERIFICATION_LEDGER.find(
+      (record) => record.kind === 'model' && record.id === 'glm-5.3-flash' && record.capability === 'chat',
+    );
+    expect(chat?.availability).toBe('available');
+    expect(chat?.evidence?.verifiedAt).toBe('2026-10-10');
+    expect(chat?.evidence?.verifiedCase).toContain('接口探针');
+    const vision = CAPABILITY_VERIFICATION_LEDGER.find(
+      (record) => record.kind === 'model' && record.id === 'glm-5.3-flash' && record.capability === 'vision',
+    );
+    expect(vision?.availability).toBe('available');
+    expect(vision?.evidence?.verifiedCase).toContain('7441');
+  });
+
+  it('deepseek-v4-flash-cephalon 证据独立于旧渠道（旧 ID 证据行原样保留、未复制）', () => {
+    const cephalon = CAPABILITY_VERIFICATION_LEDGER.find(
+      (record) => record.kind === 'model' && record.id === 'deepseek-v4-flash-cephalon' && record.capability === 'chat',
+    );
+    expect(cephalon?.availability).toBe('available');
+    expect(cephalon?.evidence?.verifiedAt).toBe('2026-10-10');
+    expect(cephalon?.evidence?.verifiedCase).toContain('Cephalon');
+    const oldChannel = CAPABILITY_VERIFICATION_LEDGER.find(
+      (record) => record.kind === 'model' && record.id === 'deepseek-v4-flash' && record.capability === 'chat',
+    );
+    expect(oldChannel?.evidence?.verifiedAt).toBe('2026-10-05');
+  });
+
+  it('推导成对：目录声明 image 时 glm 视觉=available；未声明时绝不冒头', () => {
+    const declared = buildCapabilityRegistry({
+      models: [{ id: 'glm-5.3-flash', provider: 'clawrouter', input: ['text', 'image'] }],
+    });
+    expect(
+      findCapabilityEntry(declared, { kind: 'model', id: 'glm-5.3-flash', capability: 'vision' })?.availability,
+    ).toBe('available');
+    const notDeclared = buildCapabilityRegistry({
+      models: [{ id: 'glm-5.3-flash', provider: 'clawrouter', input: ['text'] }],
+    });
+    expect(
+      findCapabilityEntry(notDeclared, { kind: 'model', id: 'glm-5.3-flash', capability: 'vision' })?.availability,
+    ).toBe('unavailable');
   });
 });
 
@@ -97,6 +144,15 @@ describe('可用性三态', () => {
     );
     expect(
       findCapabilityEntry(registry, { kind: 'model', id: 'deepseek-v4-flash', capability: 'search' })?.availability,
+    ).toBe('unavailable');
+    // ⭐ Cephalon 批：GLM 不在 relay 搜索白名单 ⇒ 模型内置搜索 unavailable
+    //（联网需求走 browser 工具，是另一条能力线；白名单两侧同步见 relay-config.test.ts）。
+    expect(
+      findCapabilityEntry(registry, { kind: 'model', id: 'glm-5.3-flash', capability: 'search' })?.availability,
+    ).toBe('unavailable');
+    expect(
+      findCapabilityEntry(registry, { kind: 'model', id: 'deepseek-v4-flash-cephalon', capability: 'search' })
+        ?.availability,
     ).toBe('unavailable');
   });
 });

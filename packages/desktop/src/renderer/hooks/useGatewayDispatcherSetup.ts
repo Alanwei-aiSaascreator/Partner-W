@@ -9,6 +9,7 @@ import { useApprovalStore } from '../stores/approvalStore';
 import { useQuestionStore } from '../stores/questionStore';
 import { compareStore } from '../features/compare/compare-store-instance';
 import { teamMeetingController } from '../features/team-meeting/instance';
+import { sanitizedCatalogModels } from '../components/ChatInput/model-families';
 
 export type GatewayDispatcher = ReturnType<typeof createGatewayDispatcher>;
 
@@ -103,8 +104,12 @@ function getDispatcher(): GatewayDispatcher {
       setGatewaysLoaded: (loaded) => useUiStore.getState().setGatewaysLoaded(loaded),
       getGatewayInfoMap: () => useUiStore.getState().gatewayInfoMap,
 
+      // 2026-10-12：目录入 store 前统一净化展示名（剥供应链渠道字样，见
+      // `sanitizedCatalogModels`）——一处挂、所有消费点（下拉/标签/系统消息）自动干净。
       setModelCatalogForGateway: (gatewayId, models) =>
-        useUiStore.getState().setModelCatalogForGateway(gatewayId, models as ModelCatalogEntry[]),
+        useUiStore
+          .getState()
+          .setModelCatalogForGateway(gatewayId, sanitizedCatalogModels(models as ModelCatalogEntry[])),
       setModelCatalogFailureForGateway: (gatewayId, failed) =>
         useUiStore.getState().setModelCatalogFailureForGateway(gatewayId, failed),
       setAgentCatalogForGateway: (gatewayId, agents, defaultId) =>

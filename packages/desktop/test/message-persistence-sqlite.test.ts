@@ -99,6 +99,14 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 export const readWorkspaceBytes = () => Buffer.from('');
                 export const reviewNativePpt = async () => undefined;
                 export const nativeReviewPorts = () => undefined;
+                // DOCX-205 A 块（2026-10-10）：data-handlers 接入了"整轮在跑"软状态
+                // （artifact/turn-lifecycle）——桩必须跟着长，缺一个 export
+                // 整个 probe 构建就 RollupError（同上方"桩必须跟着长"的纪律）。
+                // 2026-10-11（复审 B1 整改）：data-handlers 再增 run 队列探针注册。
+                export const isLiveTurnSession = () => false;
+                export const registerTurnReleaseHandler = () => undefined;
+                export const registerTurnRunStateProbe = () => undefined;
+                export const settleLiveTurn = () => undefined;
               `;
           },
         },

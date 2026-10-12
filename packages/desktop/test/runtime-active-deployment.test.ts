@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { hasBundledSearchProvider } from '../src/main/runtime/bundled-search.js';
+import { hasInstalledSearchProvider } from '../src/main/runtime/bundled-search.js';
+import { ensureRelaySearchPlugin } from '../src/main/runtime/relay-search-plugin.js';
 import type { GatewayChildProcess } from '../src/main/runtime/gateway-process.js';
 import type { RuntimeBootstrapDeps } from '../src/main/runtime/index.js';
 
@@ -17,23 +18,10 @@ function deployment(withSearch = true): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-active-deployment-'));
   roots.push(root);
   if (withSearch) {
-    const host = path.join(root, 'node_modules/openclaw');
-    const plugin = path.join(host, 'dist/extensions/duckduckgo');
-    fs.mkdirSync(path.join(plugin, 'dist'), { recursive: true });
-    fs.writeFileSync(path.join(host, 'package.json'), JSON.stringify({ name: 'openclaw', version: '2026.9.3' }));
-    fs.writeFileSync(
-      path.join(plugin, 'package.json'),
-      JSON.stringify({
-        name: '@openclaw/duckduckgo-plugin',
-        version: '2026.9.3',
-        openclaw: { runtimeExtensions: ['./dist/index.js'] },
-      }),
-    );
-    fs.writeFileSync(
-      path.join(plugin, 'openclaw.plugin.json'),
-      JSON.stringify({ id: 'duckduckgo', contracts: { webSearchProviders: ['duckduckgo'] } }),
-    );
-    fs.writeFileSync(path.join(plugin, 'dist/index.js'), 'export default {};');
+    // 可用性探针的样本写在**状态目录**里（= dependencies().alignClientConfig 返回的那个
+    // `path.join(root, 'state')`）：2026-10-12 起搜索可用面是随盘落盘的 relay 搜索插件，
+    // 探针入参随之从 deployedRoot 换成 stateDir。
+    ensureRelaySearchPlugin(path.join(root, 'state'));
   }
   return root;
 }
@@ -120,19 +108,19 @@ describe('active local gateway deployment evidence', () => {
   });
   it('does not advertise a candidate plugin for an initially reused gateway', async () => {
     const root = deployment();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     const result = await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'reused') });
 
     expect(result).toMatchObject({ ok: true, ownership: 'reused' });
     expect(getActiveLocalGatewayDeploymentRoot()).toBeNull();
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(false);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(false);
   });
 
   it('invalidates the owned deployment after its child exits without stopping any gateway', async () => {
     const root = deployment();
     const owned = ownedChild();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'spawned', owned.child) });
     expect(getActiveLocalGatewayDeploymentRoot()).toBe(root);
@@ -140,30 +128,30 @@ describe('active local gateway deployment evidence', () => {
     owned.exit();
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBeNull();
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(false);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(false);
     expect(owned.child.kill).not.toHaveBeenCalled();
   });
 
   it('advertises the official plugin in a deployment whose child was spawned here', async () => {
     const root = deployment();
     const owned = ownedChild();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'spawned', owned.child) });
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBe(root);
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(true);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(true);
     expect(owned.child.kill).not.toHaveBeenCalled();
   });
 
   it('does not advertise a spawned result without a child process handle', async () => {
     const root = deployment();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'spawned') });
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBeNull();
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(false);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(false);
   });
 
   it.each([false, true])(
@@ -172,7 +160,7 @@ describe('active local gateway deployment evidence', () => {
       const ownedRoot = deployment(withSearch);
       const candidateRoot = deployment(!withSearch);
       const owned = ownedChild();
-      const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+      const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
         await import('../src/main/runtime/index.js');
       await bootstrapLocalGatewayRuntime({
         userDataDir: ownedRoot,
@@ -185,7 +173,7 @@ describe('active local gateway deployment evidence', () => {
 
       expect(reused).toMatchObject({ ok: true, ownership: 'reused' });
       expect(getActiveLocalGatewayDeploymentRoot()).toBe(ownedRoot);
-      expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(withSearch);
+      expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(withSearch);
       expect(owned.child.kill).not.toHaveBeenCalled();
     },
   );
@@ -194,7 +182,7 @@ describe('active local gateway deployment evidence', () => {
     const ownedRoot = deployment();
     const candidateRoot = deployment();
     const owned = ownedChild();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({
       userDataDir: ownedRoot,
@@ -204,7 +192,7 @@ describe('active local gateway deployment evidence', () => {
     await bootstrapLocalGatewayRuntime({ userDataDir: candidateRoot, deps: dependencies(candidateRoot, 'reused') });
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBeNull();
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(false);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(false);
     expect(owned.child.kill).not.toHaveBeenCalled();
   });
 
@@ -213,7 +201,7 @@ describe('active local gateway deployment evidence', () => {
     const currentRoot = deployment();
     const previous = ownedChild();
     const current = ownedChild();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({
       userDataDir: previousRoot,
@@ -226,7 +214,7 @@ describe('active local gateway deployment evidence', () => {
     previous.exit();
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBe(currentRoot);
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(true);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(true);
     expect(previous.child.kill).not.toHaveBeenCalled();
     expect(current.child.kill).not.toHaveBeenCalled();
   });
@@ -235,7 +223,7 @@ describe('active local gateway deployment evidence', () => {
     const candidateRoot = deployment(false);
     const ownedRoot = deployment();
     const owned = ownedChild();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({ userDataDir: candidateRoot, deps: dependencies(candidateRoot, 'reused') });
     await bootstrapLocalGatewayRuntime({
@@ -244,7 +232,7 @@ describe('active local gateway deployment evidence', () => {
     });
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBe(ownedRoot);
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(true);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(true);
     expect(owned.child.kill).not.toHaveBeenCalled();
   });
 
@@ -252,12 +240,12 @@ describe('active local gateway deployment evidence', () => {
     const root = deployment();
     const owned = ownedChild();
     owned.child.onExit = (listener) => listener();
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     await bootstrapLocalGatewayRuntime({ userDataDir: root, deps: dependencies(root, 'spawned', owned.child) });
 
     expect(getActiveLocalGatewayDeploymentRoot()).toBeNull();
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(false);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(false);
     expect(owned.child.kill).not.toHaveBeenCalled();
   });
 
@@ -267,12 +255,12 @@ describe('active local gateway deployment evidence', () => {
     deps.startGateway = async () => {
       throw new Error('fixture startup failure');
     };
-    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot } =
+    const { bootstrapLocalGatewayRuntime, getActiveLocalGatewayDeploymentRoot, getActiveLocalGatewayStateDir } =
       await import('../src/main/runtime/index.js');
     const result = await bootstrapLocalGatewayRuntime({ userDataDir: root, deps });
 
     expect(result.ok).toBe(false);
     expect(getActiveLocalGatewayDeploymentRoot()).toBeNull();
-    expect(hasBundledSearchProvider(getActiveLocalGatewayDeploymentRoot())).toBe(false);
+    expect(hasInstalledSearchProvider(getActiveLocalGatewayStateDir())).toBe(false);
   });
 });

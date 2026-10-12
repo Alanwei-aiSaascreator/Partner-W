@@ -26,6 +26,17 @@ export type GatewayFailureReason =
    *    闭集里单独一档，界面才说得出"是盘的问题"而不是笼统的 `unknown`。
    */
   | 'deploy-failed'
+  /**
+   * ⚠️ BUG-064（2026-10-10）：**随盘运行环境（Node）起不来**的五个分档。
+   *    现场（换电脑卡 17%）暴露：探测失败原来只有一句"找不到可用的 Node"进日志、
+   *    界面落 `unknown`。这几档让界面说得出"是缺文件 / 被拦 / 超时 / 执行失败 /
+   *    版本不对"，以及各自的下一步（补盘 / 加白名单 / 稍候重试 / 换盘）。
+   */
+  | 'node-missing'
+  | 'node-permission-denied'
+  | 'node-probe-timeout'
+  | 'node-exec-failed'
+  | 'node-version-unsupported'
   /** 说不清就是说不清 —— **不猜**。 */
   | 'unknown';
 
@@ -47,6 +58,11 @@ export const GATEWAY_FAILURE_REASONS = [
   'ready-timeout',
   'state-migration-blocked',
   'deploy-failed',
+  'node-missing',
+  'node-permission-denied',
+  'node-probe-timeout',
+  'node-exec-failed',
+  'node-version-unsupported',
   'unknown',
 ] as const satisfies readonly GatewayFailureReason[];
 
@@ -57,6 +73,14 @@ const FROM_BOOTSTRAP_CODE: Readonly<Record<string, GatewayFailureReason>> = {
   'runtime.gateway-ready-timeout': 'ready-timeout',
   'runtime.portable-state-migration-blocked': 'state-migration-blocked',
   'runtime.deploy-failed': 'deploy-failed',
+  // ⚠️ BUG-064：随盘 Node 的五个分档（码在 `main/runtime/node-runtime.ts` 的
+  //    `nodeFailureCodeOf` 处定义；`runtime.no-usable-node` 是"无候选"等边缘兜底，
+  //    刻意**不映射** —— 说不清就说不知道）。
+  'runtime.node-missing': 'node-missing',
+  'runtime.node-permission-denied': 'node-permission-denied',
+  'runtime.node-probe-timeout': 'node-probe-timeout',
+  'runtime.node-exec-failed': 'node-exec-failed',
+  'runtime.node-version-unsupported': 'node-version-unsupported',
 };
 
 /**

@@ -44,9 +44,8 @@ import { createAgentWithRollback } from '@/lib/agent-builder';
 import { isWorkspaceInputResolvable } from '@/lib/install-workspace';
 import { AVATAR_ACCEPT, readFileAsDataUrl, validateAvatarFile } from '@/lib/avatar-utils';
 import AgentIcon from '@/components/AgentIcon';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import { listLocalAvatarIds } from '@/lib/local-avatar';
-
-const EMPTY_MODELS: ModelCatalogEntry[] = [];
 
 type AgentDetailSection = 'files' | 'skills';
 
@@ -682,7 +681,9 @@ export default function AgentsSection() {
   const catalog = selectedGatewayId ? agentCatalogByGateway[selectedGatewayId] : null;
   const agents = useMemo(() => catalog?.agents ?? [], [catalog]);
   const defaultAgentId = catalog?.defaultId ?? 'main';
-  const models = (selectedGatewayId ? modelCatalogByGateway[selectedGatewayId] : null) ?? EMPTY_MODELS;
+  // 2026-10-12（用户口径：所有模型选择只列"目前能用的"）：与发送路径同一把尺。
+  // 此前这里是 raw 目录 —— 下拉里能看到内核内置示例（GPT-6/GPT-5.x）和模式别名（qwen3.7-flash-fast）。
+  const models = selectableModelsFrom(selectedGatewayId ? modelCatalogByGateway[selectedGatewayId] : null);
   const gatewaySkillStatus = selectedGatewayId ? skillsStatusByGateway[selectedGatewayId] : undefined;
 
   const refreshAgents = useCallback(async () => {

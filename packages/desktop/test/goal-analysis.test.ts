@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OnboardingProfile } from '../src/renderer/lib/user-onboarding';
 import {
+  buildGoalAnalysisPrompt,
   goalAnalysisStorageKey,
   loadGoalAnalysis,
   parseGoalAnalysis,
@@ -76,5 +77,34 @@ describe('goal analysis', () => {
     expect(loadGoalAnalysis(profile, storage)).toEqual(result);
     expect(goalAnalysisStorageKey(profile)).toContain('user-1');
     expect(loadGoalAnalysis({ ...profile, customGoal: '另一个目标' }, storage)).toBeNull();
+  });
+});
+
+/**
+ * 目标分析**提示词**（2026-10-10 Cephalon 批）——三处旧的 `deepseek-v4-flash`
+ * 硬编码改为"目录现状"：优先智能档默认（glm-5.3-flash）；目录没有它时只选
+ * 实际存在的首个目录项；目录未取得时**明确未取得**，不许拿格式示例当可用能力证明。
+ * ⚠️ 只改提示串；解析器对旧模型 ID 的兼容、用户已保存的旧推荐/选择/历史缓存一律不动。
+ */
+describe('goal analysis — 提示词里的模型字段（复用目录现状，不硬编码旧 DeepSeek）', () => {
+  it('⭐ 优先使用目录里的 glm-5.3-flash；格式示例引用它而不是旧 DeepSeek', () => {
+    const prompt = buildGoalAnalysisPrompt(profile, ['deepseek-v4-flash', 'glm-5.3-flash']);
+    expect(prompt).toContain('可用模型：deepseek-v4-flash、glm-5.3-flash');
+    expect(prompt).toContain('"model":"glm-5.3-flash"');
+    expect(prompt).not.toContain('"model":"deepseek-v4-flash"');
+  });
+
+  it('目录里没有 glm ⇒ 只选实际存在的目录项，绝不虚构', () => {
+    const prompt = buildGoalAnalysisPrompt(profile, ['deepseek-v4-flash']);
+    expect(prompt).toContain('可用模型：deepseek-v4-flash');
+    expect(prompt).toContain('"model":"deepseek-v4-flash"');
+  });
+
+  it('⭐ 目录未取得 ⇒ 明确未取得、不许编造模型名，并要求不要输出代码块', () => {
+    const prompt = buildGoalAnalysisPrompt(profile, []);
+    expect(prompt).toContain('（目录尚未取到）');
+    expect(prompt).not.toContain('glm-5.3-flash');
+    expect(prompt).not.toContain('deepseek-v4-flash');
+    expect(prompt).toContain('不要输出 goal-analysis 代码块');
   });
 });

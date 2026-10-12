@@ -116,6 +116,63 @@ describe('GatewayClient connection lifecycle', () => {
     expect(calculateReconnectDelay(MAX_RECONNECT_ATTEMPTS)).toBe(RECONNECT_DELAY_MS * 32);
   });
 
+  it('⭐ BUG-064 D：本机运行时已判定失败 ⇒ 抑制自动重连；显式 reconnect 仍可唤醒', async () => {
+    // ⚠️ 只在**本机运行时**这一个网关上抑制（快照 ok:false 时自动重连=打不会赢的仗）；
+    //    手动「重新准备」成功后主进程会显式 reconnectGateway 唤醒（那条路不受抑制）。
+    resetRuntimeBootstrapStatus();
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.node-probe-timeout' });
+    try {
+      const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+      const client = new GatewayClient({
+        id: 'local-runtime',
+        name: 'Local',
+        url: 'ws://127.0.0.1:18789',
+        auth: { token: 'token' },
+      });
+      clients.push(client);
+      client.connect();
+      const created = websocketMock.constructor.mock.calls.length;
+      expect(websocketMock.instances.length).toBeGreaterThanOrEqual(1);
+
+      const socket = websocketMock.instances[websocketMock.instances.length - 1]!;
+      socket.emit('close', 1006, Buffer.from('runtime down'));
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      // 走了 5 分钟的时钟，**没有再调度任何新连接**（自动重连被抑制）。
+      expect(websocketMock.constructor.mock.calls.length).toBe(created);
+
+      // 快照收敛成功 + 显式唤醒（=「重新准备」成功那条路）⇒ 立即允许重连。
+      publishRuntimeBootstrapStatus({ ok: true });
+      client.reconnect();
+      expect(websocketMock.constructor.mock.calls.length).toBe(created + 1);
+    } finally {
+      resetRuntimeBootstrapStatus();
+    }
+  });
+
+  it('⭐ BUG-064 K2：ready-timeout **不**被抑制 —— 慢机的重连路径必须留着', async () => {
+    resetRuntimeBootstrapStatus();
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    try {
+      const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+      const client = new GatewayClient({
+        id: 'local-runtime',
+        name: 'Local',
+        url: 'ws://127.0.0.1:18789',
+        auth: { token: 'token' },
+      });
+      clients.push(client);
+      client.connect();
+      const created = websocketMock.constructor.mock.calls.length;
+      const socket = websocketMock.instances.at(-1)!;
+      socket.emit('close', 1006, Buffer.from('slow start'));
+      await vi.advanceTimersByTimeAsync(15_000);
+      // 定时重连照常发生（与终审独立复现的 candidate 口径一致：scheduled=1）。
+      expect(websocketMock.constructor.mock.calls.length).toBe(created + 1);
+    } finally {
+      resetRuntimeBootstrapStatus();
+    }
+  });
+
   it('keeps created-agent configuration work inside the same mutation tail', async () => {
     const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
     const client = new GatewayClient({
@@ -1655,6 +1712,45 @@ describe('主连接 hello-ok 的晚就绪收敛', () => {
       .mock.calls.filter((call) => call[1] === 'runtime-status')
       .map((call) => call[2]);
   }
+
+  it('⭐⭐ BUG-064 K2：ready-timeout + 首连失败 ⇒ 下一次连接完成握手即收敛（重连不被误杀）', async () => {
+    publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });
+    probeMock.mockResolvedValue({ reachable: true, status: 'started' });
+    // local-runtime 网关 id + 本机 URL（重连抑制只认这个 id；收敛只认本机 URL）。
+    const { GatewayClient } = await import('../src/main/ws/gateway-client.js');
+    const client = new GatewayClient({
+      id: 'local-runtime',
+      name: 'Local',
+      url: 'ws://127.0.0.1:18789',
+      auth: { token: 'token' },
+    });
+    clients.push(client);
+    client.connect();
+    const first = websocketMock.instances.at(-1)!;
+    // 首次连接失败（握手都没到）⇒ 走定时重连（若被误杀，这里就断了慢机唯一的救路）。
+    first.emit('close', 1006, Buffer.from('down'));
+    await vi.advanceTimersByTimeAsync(15_000);
+    const second = websocketMock.instances.at(-1)!;
+    expect(second).not.toBe(first);
+    // 下一次连接完成主连接 hello-ok（认证证据=这次握手）。
+    second.readyState = 1;
+    second.emit('message', JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'n1' } }));
+    const frames = second.send.mock.calls.map((call) => JSON.parse(String(call[0])) as { id: string; method: string });
+    const connect = frames.find((frame) => frame.method === 'connect');
+    if (!connect) throw new Error('没有发出 connect 帧');
+    second.emit(
+      'message',
+      JSON.stringify({
+        type: 'res',
+        id: connect.id,
+        ok: true,
+        payload: { type: 'hello-ok', server: { version: '2026.9.3' } },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getRuntimeBootstrapStatus()).toEqual({ ok: true });
+    expect(runtimeStatuses()).toEqual([{ ok: true }]);
+  });
 
   it('⭐ ready-timeout 快照 + 主 hello-ok + /startupz started ⇒ 收敛并推 runtime-status', async () => {
     publishRuntimeBootstrapStatus({ ok: false, code: 'runtime.gateway-ready-timeout' });

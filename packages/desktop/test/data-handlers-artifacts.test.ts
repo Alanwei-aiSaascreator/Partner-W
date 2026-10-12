@@ -729,26 +729,50 @@ describe('assistant artifact reconciliation boundary', () => {
     expect(reconcileTaskArtifactsMock).not.toHaveBeenCalled();
   });
 
-  it('finalizes a tool-only assistant message and clears the completed run', async () => {
-    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+  it('does not let a tool-only snapshot consume the run; the following terminal finalizes and clears it', async () => {
+    // ⚠️ DOCX-205 合同（2026-10-10）：本用例原先钉的是"工具消息直接消耗 run"——那正是
+    //    交付链被中间快照抢先取走的缺陷形态（见合同 §3）。修正后的合同：工具全 done
+    //    而无正文/附件的快照**不消费** run；真正的整轮终态（同 run 的最终正文）
+    //    照常交付并把 run 清掉。
+    const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+      await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();
-    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
-    selectGetMock.mockReturnValueOnce({ id: 'tool-only-final' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    const token = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    bindArtifactRun('task-1', 'session-task-1', token, 'run-1');
+    selectGetMock.mockReturnValueOnce({ id: 'tool-only-snapshot' });
 
     expect(
       handleMap.get('data:create-message')!(
         {},
         {
-          id: 'tool-only-final',
+          id: 'tool-only-snapshot',
           taskId: 'task-1',
           role: 'assistant',
           content: '',
           timestamp: '2026-09-16T00:00:02.000Z',
           sessionKey: 'session-task-1',
+          runId: 'run-1',
           toolCalls: [{ id: 'tool-1', status: 'done' }],
         },
       ),
     ).toEqual({ ok: true });
+    await flushJobs();
+    expect(autoExtractArtifactsMock).not.toHaveBeenCalled();
+    expect(reconcileCalls()).toHaveLength(0);
+
+    selectGetMock.mockReturnValueOnce({ id: 'tool-only-final' }).mockReturnValueOnce({ gid: 'gateway-1' });
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'tool-only-final',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '交付完成',
+        timestamp: '2026-09-16T00:00:03.000Z',
+        sessionKey: 'session-task-1',
+        runId: 'run-1',
+      },
+    );
     await flushJobs();
     expect(autoExtractArtifactsMock).toHaveBeenCalledTimes(1);
     expect(reconcileCalls()).toHaveLength(1);
@@ -760,10 +784,10 @@ describe('assistant artifact reconciliation boundary', () => {
         id: 'tool-only-replay',
         taskId: 'task-1',
         role: 'assistant',
-        content: '',
-        timestamp: '2026-09-16T00:00:03.000Z',
+        content: '交付完成',
+        timestamp: '2026-09-16T00:00:04.000Z',
         sessionKey: 'session-task-1',
-        toolCalls: [{ id: 'tool-2', status: 'done' }],
+        runId: 'run-1',
       },
     );
     await flushJobs();

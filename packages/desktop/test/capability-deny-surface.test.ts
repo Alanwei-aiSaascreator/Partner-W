@@ -58,7 +58,10 @@ function tempUserData(): string {
 
 it('mergeToolsDefaults：默认 deny = 旧名单 + deny v2 六族 + 能力注册表，且在役正路一名不伤', () => {
   const deny = mergeToolsDefaults(null).deny as string[];
-  expect(deny).toEqual(expect.arrayContaining(['memory_search', 'memory_get', 'canvas', 'web_search', 'web_fetch']));
+  expect(deny).toEqual(expect.arrayContaining(['memory_search', 'memory_get', 'canvas', 'web_fetch']));
+  // 2026-10-12 联网搜索接入：web_search 从 deny 恢复（博查经 relay 接线，且内核补丁
+  // 在 provider 未就绪时让工具根本不出现——fail-closed，不再有"重复搜索失败"）。
+  expect(deny).not.toContain('web_search');
   expect(deny).toEqual(expect.arrayContaining([...plannerDeniedToolIds()]));
   expect(deny).toContain('image_generate');
   expect(deny).toContain('video_generate');
@@ -127,6 +130,16 @@ it('自愈判据认识新名字：上一版（deny v2 之前）的完整 deny �
   expect(hasMemoryToolsDenied({ tools: mergeToolsDefaults(null) })).toBe(true);
 });
 
+it('退休名单驱动自愈：连"当前全量 deny + 退休名 web_search"也判「未就绪」并会在合并中被清掉', () => {
+  const withRetired = { tools: { deny: [...defaultDeniedToolNames(), 'web_search'] } };
+  // 判据必须否 —— 否则存量盘（名单全 + 历史 web_search）会被提前返回永远锁着。
+  expect(hasMemoryToolsDenied(withRetired)).toBe(false);
+  const cleaned = mergeToolsDefaults(withRetired).deny as string[];
+  expect(cleaned).not.toContain('web_search');
+  // 清完之后判据转真（不会每次启动都白写一遍）。
+  expect(hasMemoryToolsDenied({ tools: { deny: cleaned } })).toBe(true);
+});
+
 it('⭐ 存量用户（token/memory/deny 都早就对了）启动一次就自动补上新 deny', () => {
   const userDataDir = tempUserData();
   const stateDir = stateDirFor(userDataDir);
@@ -160,7 +173,10 @@ it('⭐ 存量用户（token/memory/deny 都早就对了）启动一次就自动
 
   const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
   expect(raw.tools.deny).toEqual(expect.arrayContaining(['image_generate', 'video_generate']));
-  expect(raw.tools.deny).toEqual(expect.arrayContaining(['memory_search', 'web_search']));
+  expect(raw.tools.deny).toEqual(expect.arrayContaining(['memory_search', 'web_fetch']));
+  // ⭐ 退休名单清除（2026-10-12）：老盘 deny 里的 web_search 必须被清掉——
+  //    只并集不清除的话，搜索只对新用户恢复、对存量用户永远被挡（本测试就是那根钉子）。
+  expect(raw.tools.deny).not.toContain('web_search');
   // deny v2：六族名字在同一次启动内补齐（存量盘自愈）
   expect(raw.tools.deny).toEqual(
     expect.arrayContaining(['automations', 'nodes', 'computer', 'skill_workshop', 'sessions_list']),

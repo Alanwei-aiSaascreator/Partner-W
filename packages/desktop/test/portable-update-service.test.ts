@@ -99,6 +99,8 @@ async function makeHarness(
       manifest: { version: string };
       fileManifest: unknown;
     }) => Promise<void>;
+    /** 忙态判据（真实任务/run 活动）；缺省 = 不忙（旧替身兼容口径）。 */
+    isBusy?: () => boolean;
   } = {},
 ): Promise<Harness> {
   const root = await makeRoot();
@@ -157,6 +159,7 @@ async function makeHarness(
     createTransactionId: () => 'txn-fixed',
     startLauncher: startLauncher as never,
     quit,
+    ...(overrides.isBusy ? { isBusy: overrides.isBusy } : {}),
   });
   service.subscribe((state) => phases.push(state));
   return { root, service, phases, calls, downloadPackage, extractPackage, verifyTree, startLauncher, quit };
@@ -367,6 +370,30 @@ describe('portable update service cancel and restart', () => {
       errorCode: 'launcher-start-failed',
     });
     expect(harness.quit).not.toHaveBeenCalled();
+  });
+
+  // ⭐ 2026-10-11 升级补齐：忙态（生成/写文件期间）绝不换目录、绝不退出。
+  //    这是"退出应用/启动替换"的**最后一刻**：放行 = 打断真实任务 + 在途调用不结算。
+  it('任务进行中：不启动启动器、不退出，ready 候选原样保留给用户稍后安装', async () => {
+    let busy = true;
+    const harness = await makeHarness({ isBusy: () => busy });
+    await harness.service.check();
+    await harness.service.prepare();
+
+    await expect(harness.service.requestRestart()).resolves.toEqual({ ok: false, errorCode: 'file-in-use' });
+    expect(harness.startLauncher).not.toHaveBeenCalled();
+    expect(harness.quit).not.toHaveBeenCalled();
+    // 候选不丢：还是 ready（错误码只说明"这次为什么没换成"）
+    expect(harness.service.getState()).toMatchObject({
+      phase: 'ready',
+      targetVersion: '0.0.26',
+      errorCode: 'file-in-use',
+    });
+
+    // 任务结束以后用户再点一次：正常换目录
+    busy = false;
+    await expect(harness.service.requestRestart()).resolves.toEqual({ ok: true });
+    expect(harness.calls).toEqual(['download', 'extract', 'verify-tree', 'launcher', 'quit']);
   });
 });
 

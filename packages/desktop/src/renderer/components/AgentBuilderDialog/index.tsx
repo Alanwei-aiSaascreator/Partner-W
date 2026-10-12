@@ -14,7 +14,7 @@ import { serializeIdentityMd } from '@clawwork/core';
 import { createAgentWithRollback, deriveAgentCreationId } from '@/lib/agent-builder';
 import { checkInstallWorkspace } from '@/lib/install-workspace';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
-import { relayModelsFrom } from '@/components/ChatInput/model-families';
+import { selectableModelsFrom } from '@/components/ChatInput/model-families';
 import { canonicalModelRef, resolveTeamModelRef } from '@/lib/team-model-ref';
 
 /**
@@ -104,7 +104,7 @@ export default function AgentBuilderDialog({ open, onOpenChange, gatewayId, onCr
   const modelCatalogByGateway = useUiStore((s) => s.modelCatalogByGateway);
   const agentCatalogByGateway = useUiStore((s) => s.agentCatalogByGateway);
   const catalog = modelCatalogByGateway[gatewayId] ?? EMPTY_MODELS;
-  const models = useMemo(() => relayModelsFrom(catalog).filter((model) => model.available !== false), [catalog]);
+  const models = useMemo(() => selectableModelsFrom(catalog), [catalog]);
   const defaultAgentId = agentCatalogByGateway[gatewayId]?.defaultId ?? 'main';
 
   const [config, setConfig] = useState<AgentConfig>(EMPTY_CONFIG);

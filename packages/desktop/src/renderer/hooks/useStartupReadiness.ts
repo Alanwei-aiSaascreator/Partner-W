@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RelayBootstrapPublicState, RuntimeBootstrapStatus, WorkspaceFsIdentity } from '@clawwork/shared';
 import i18n from '@/i18n';
+import { toast } from '@/lib/toast';
 import { relayModelsFrom } from '@/components/ChatInput/model-families';
 import {
   fetchAgentsForGateway,
@@ -15,7 +16,15 @@ import {
 import { PRESET_AGENT_DEFINITIONS } from '@/lib/preset-agents';
 import { installPresetAgentPack } from '@/lib/preset-agent-installer';
 import { deriveStartupReadiness } from '@/lib/startup-readiness';
-import { ensureBundledSkillsWithRetry } from '@/lib/ensure-bundled-skills';
+import {
+  captureBundledSkillsOperationScope,
+  claimBundledSkillConflictNotification,
+  clearBundledSkillsReport,
+  ensureBundledSkillsWithRetry,
+  formatBundledSkillNames,
+  mergeBundledSkillsSuccessfulOperations,
+  publishBundledSkillsReport,
+} from '@/lib/ensure-bundled-skills';
 import { ensureMainAgentContract, ensureMainAgentContractWithRetry } from '@/lib/main-agent-contract';
 import { runWorkspaceGatedBootstrap } from '@/lib/startup-workspace-gate';
 import { useUiStore } from '@/stores/uiStore';
@@ -32,6 +41,33 @@ function emptyAssistantSnapshot(): PresetAgentBootstrapSnapshot {
 
 function agentIdsFor(gatewayId: string): string[] {
   return useUiStore.getState().agentCatalogByGateway[gatewayId]?.agents.map((agent) => agent.id) ?? [];
+}
+
+/**
+ * slug → 人类可读名（`SKILL.md` frontmatter 的 `name`，与技能市场同一口径）。
+ *
+ * ⚠️ **纯尽力而为**：读不到（网关没连上/这条通道不存在/老 preload）就退回 slug ——
+ *    冲突提示里宁可显示 `deck-layout` 这样的目录名，也不能因为解析失败把提示吞掉。
+ */
+async function resolveBundledSkillNames(gatewayId: string, slugs: readonly string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(slugs)];
+  if (unique.length === 0) return {};
+  const api = window.clawwork as { listOurSkills?: (id: string) => Promise<unknown> } | undefined;
+  if (typeof api?.listOurSkills !== 'function') return {};
+  try {
+    const result = (await api.listOurSkills(gatewayId)) as
+      | { ok?: boolean; result?: { skills?: Array<{ slug?: unknown; name?: unknown }> } }
+      | undefined;
+    if (!result?.ok || !result.result?.skills) return {};
+    const names: Record<string, string> = {};
+    for (const skill of result.result.skills) {
+      if (typeof skill.slug === 'string' && typeof skill.name === 'string' && skill.name)
+        names[skill.slug] = skill.name;
+    }
+    return names;
+  } catch {
+    return {};
+  }
 }
 
 export function createBootstrapDeps(gatewayId: string): PresetAgentBootstrapDeps {
@@ -236,13 +272,104 @@ export function useStartupReadiness(enabled: boolean) {
    */
   const ensureOurSkills = useCallback(async () => {
     if (!gatewayId) return;
-    const ready = await ensureBundledSkillsWithRetry(gatewayId, {
+    /**
+     * ⭐ B3(b)（2026-10-11 整改）：**发布校验** —— 报告按 (网关, 工作区代次, 引导轮次,
+     * 默认网关) 归属，一次 ensure 的结论只在**它的作用域仍是当前作用域**时才有资格写报告。
+     *
+     * 为什么必要：ensure 是异步的（重试 + 名称解析），完成时用户可能已经切到另一个网关、
+     * 换了工作区、或已经点了重试开了新一轮 —— 晚到的旧结论既不许**覆盖**新网关刚发布的
+     * 报告，也不许把它**清掉**（旧网关"全生效"就 `clearBundledSkillsReport()` 是这里
+     * 以前的形状）。`runGatedBootstrap` 在调本函数**之前**已经 ++ 本轮次，所以这里读到的
+     * 就是"这次 ensure 属于哪一轮引导"。
+     */
+    const round = bootstrapAttempt.current;
+    /**
+     * ⭐ B3 四轮（2026-10-11）：**作用域捕获**（网关 + 工作区代次 + 成功序号）——
+     * 发布前的复核与"在飞期间已修成功"的合并都用它（见
+     * {@link mergeBundledSkillsSuccessfulOperations}）。
+     *
+     * 为什么撤掉"报告轮次"整表判据：报告发布只代表一份新快照，不代表这次 ensure 的结论
+     * 作废。用户在技能市场修复/安装成功会当场收敛报告（成功账本）—— 旧实现一见到
+     * "报告被写过"就把**整份结论**丢掉，反而连未解决项一起丢（复审 P2 #2）。已修 slug
+     * 的滤除在下面的 merge 里按**成功序号**做（只滤本次开始之后的新成功）。
+     */
+    const reportScope = captureBundledSkillsOperationScope(gatewayId, workspaceEpoch);
+    const ownsReportScope = () =>
+      active.current &&
+      currentScope.current.enabled &&
+      currentScope.current.gatewayId === gatewayId &&
+      currentScope.current.workspaceEpoch === workspaceEpoch &&
+      bootstrapAttempt.current === round &&
+      useUiStore.getState().defaultGatewayId === gatewayId;
+    let outcome = await ensureBundledSkillsWithRetry(gatewayId, {
       ensure: (id) => window.clawwork.ensureOurSkills(id),
       sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
       delaysMs: [500, 1_500],
     });
-    if (!ready) console.warn('[skills] 随包技能自装重试后仍失败');
-  }, [gatewayId]);
+    if (!ownsReportScope()) {
+      // 旧作用域的结论：不进报告、不弹提示、不消费"每生命周期一次"的提示额度。
+      console.warn('[skills] 随包技能自装结论已过期（网关/工作区已切换），丢弃');
+      return;
+    }
+    let names: Record<string, string> = {};
+    if (outcome.completed && outcome.allEffective) {
+      // 这一次全生效了（含用户修完之后的再次 ensure）：把上一次的提示收掉。
+      clearBundledSkillsReport();
+    } else {
+      names = await resolveBundledSkillNames(gatewayId, [
+        ...outcome.conflicts.map((item) => item.slug),
+        ...outcome.failed.map((item) => item.slug),
+      ]);
+      // 名称解析也是异步的：期间又切了网关/工作区 ⇒ 丢弃（发布前复核作用域，防旧请求晚到）。
+      if (!ownsReportScope()) {
+        console.warn('[skills] 随包技能自装结论已在名称解析期间过期，丢弃');
+        return;
+      }
+      // ⭐ 四轮：本次 ensure 开始之后已确认成功的 slug 不再贴回（两个时序都正确，
+      //    此前报告可以是 `null`）；其余未解决项照常发布。
+      outcome = mergeBundledSkillsSuccessfulOperations(reportScope, outcome);
+      if (outcome.allEffective) {
+        clearBundledSkillsReport();
+        return;
+      }
+      publishBundledSkillsReport({
+        gatewayId,
+        conflicts: outcome.conflicts,
+        failed: outcome.failed,
+        names,
+        updatedAt: Date.now(),
+        // ⭐ B3：带上工作区代次 —— 手动操作成功后的报告收敛按它复核作用域
+        //（见 reconcileBundledSkillsAfterResolvedSkill）。
+        workspaceEpoch,
+      });
+    }
+    if (!outcome.completed) {
+      console.warn('[skills] 随包技能自装重试后仍失败');
+      return;
+    }
+    // ⭐ 冲突**不是失败**：用户改过的技能没有被自动升级（我们保留了他的文件原样）。
+    //    如实告诉他"哪些没生效"，并把**既有**修复入口指给他（技能市场「修复随包版本」）。
+    //    ⚠️ 每次应用生命周期只弹一次：冲突不会自己消失，反复弹只是噪音；
+    //       设置 → 技能 里那份常驻提示会一直在（报告是同一份数据）。
+    if (outcome.conflicts.length > 0 && claimBundledSkillConflictNotification()) {
+      toast(
+        i18n.t('settings.bundledSkillsConflicts', {
+          count: outcome.conflicts.length,
+          skills: formatBundledSkillNames(outcome.conflicts, names),
+        }),
+        {
+          action: {
+            label: i18n.t('settings.bundledSkillsFix'),
+            onClick: () => useUiStore.getState().setMainView('skills'),
+          },
+        },
+      );
+    }
+    if (outcome.failed.length > 0) {
+      // 失败已重试过且封顶：只记日志 —— 界面那份报告会如实显示"未完成"的明细。
+      console.warn('[skills] 随包技能自装部分失败', outcome.failed);
+    }
+  }, [gatewayId, workspaceEpoch]);
 
   /**
    * 主罗盘（`main`）的**交付合同**自装（2026-10-07）：六个预置助手各有一份

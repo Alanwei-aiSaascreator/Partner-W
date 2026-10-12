@@ -35,8 +35,45 @@ import {
   portableUpdateStateFilePath,
 } from '../update/portable-state.js';
 import { createPortableUpdateService } from '../update/portable-update-service.js';
+import { hasLiveTurnSessions } from '../artifact/turn-lifecycle.js';
+import { hasActiveDeliveryOperations } from '../artifact/delivery-activity.js';
 
 const LAUNCHER_FILE_NAME = '\u8363\u76c8\u9b54\u65b9\u542f\u52a8\u5668.exe';
+
+/**
+ * ⭐ 忙态信号（2026-10-11 升级补齐）：**渲染层推来的真实任务/run 活动状态**。
+ *
+ * 来源是**既有**的 `tray:update-status` 通道（`useTraySync`，App 挂载即生效）：
+ * 它在渲染层用 `deriveSessionActivity`（`activeTurnBySession` + `processingBySession`）
+ * 算"有没有任务在跑"，每次变化都推一次。这里**只多挂一个监听**，不新增通道、
+ * 不新增第二套运行状态（更新模块不该自己发明一套"忙"的判据）。
+ *
+ * 用途只有一处：`app:install-update` 在真正调 `installUpdate()`（盘上形态 = 启动启动器
+ * + 退出应用；装机版 = quitAndInstall）**之前**再挡一次。盘上形态还有第二道同源闸：
+ * 便携服务的 `requestRestart` 边界（见 `portable-update-service.ts` 的 `isBusy`）。
+ *
+ * ⚠️ 保守口径（仅针对渲染层推送）：**读不到推送就说"不忙"**（渲染层还没挂上、老 preload、
+ *    测试替身）。"不知道"永远不该变成"永远不让更新" —— 界面那一层（设置 → 关于）本来就是
+ *    第一道门，这里的职责是堵住竞态/程序化路径。
+ * ⚠️ 只把 `running` 当忙：`unread`（有结果没看）和 `idle` 都不是在跑。
+ */
+let rendererTaskActivity: 'idle' | 'running' | 'unread' = 'idle';
+
+function noteRendererTaskActivity(status: unknown): void {
+  if (status === 'running' || status === 'unread' || status === 'idle') rendererTaskActivity = status;
+}
+
+function isAppBusy(): boolean {
+  // **三源取或**（评审要点：生成/写文件期间不得退出应用或启动替换，不能只靠按钮灰掉）：
+  //   ① 渲染层推来的任务活动（本文件上方，tray 同源）；
+  //   ② 主进程「这一轮在跑」软状态（artifact/turn-lifecycle，网关 lifecycle 同源）——
+  //      堵住"渲染层推送尚未到达 / 已落后"的竞态窗；
+  //   ③ 交付操作在途（artifact/delivery-activity 的 active 集）——
+  //      堵住"turn 已结束、但写盘/登记还在途"的窗口（这正是仅靠渲染层判据会漏的那段）。
+  // ②③ 是主进程自己的真状态：集合非空即忙，等真实事件（lifecycle end/settle、交付终态）
+  // 收敛后自动解除——不是固定等待，也不会因一次 UI 渲染滞后而误放行。
+  return rendererTaskActivity === 'running' || hasLiveTurnSessions() || hasActiveDeliveryOperations();
+}
 
 interface UpdateCheckResult {
   currentVersion: string;
@@ -46,6 +83,16 @@ interface UpdateCheckResult {
   releaseNotes?: string | null;
   state: string;
   portable: boolean;
+  /**
+   * ⭐ B2（2026-10-11 整改）：这次结果**实际归属**的频道（渲染层按它记通知去重键）。
+   *
+   * ⚠️ 刻意与"当前设置里的频道"分开：盘上形态的**已就绪候选/在途事务属于创建它的
+   *    那个频道**（`ensurePortableUpdateService` 在事务活跃时**不换血**），用户切了
+   *    频道之后这次检查回报的仍是旧频道的事务 —— 归属必须如实是这个事务的频道。
+   * ⚠️ 复审二轮：频道由 `checkForUpdatesViaUpdater` 在**创建检查的那一刻**锁定，
+   *    本文件不再按调用者时刻重标（加入在飞检查的调用拿到创建者的频道）。
+   */
+  channel: 'stable' | 'beta';
 }
 
 function buildTimePublicKey(): string {
@@ -54,6 +101,15 @@ function buildTimePublicKey(): string {
 
 function portableChannel(): PortableUpdateChannel {
   return getUpdateChannel() === 'beta' ? 'internal' : 'stable';
+}
+
+/**
+ * ⭐ B2：盘上频道（渲染层词汇）—— 装配服务时随 `attachPortableUpdateService` 一起交给
+ * auto-updater，由它在**创建检查的那一刻**绑定进结果（复审二轮：归属必须跟着创建者，
+ * 加入在飞检查的调用不许按自己的时刻重标）。
+ */
+function portableChannelLabel(channel: PortableUpdateChannel): 'stable' | 'beta' {
+  return channel === 'internal' ? 'beta' : 'stable';
 }
 
 function isPortableUpdateNow(): boolean {
@@ -69,6 +125,7 @@ function devCheckResult(): UpdateCheckResult {
     releaseUrl: '',
     state: 'idle',
     portable: false,
+    channel: getUpdateChannel(),
   };
 }
 
@@ -151,8 +208,15 @@ async function initializePortableUpdateService(
         });
       }),
     quit: () => app.quit(),
+    // 忙态判据（真实任务/run 活动）——见文件上方 `rendererTaskActivity` 的注释。
+    // 服务在 `requestRestart` 的**最后边界**（启动启动器/退出之前）再查一次。
+    isBusy: () => isAppBusy(),
   });
-  if (generation === portableInitializationGeneration) attachPortableUpdateService(service);
+  if (generation === portableInitializationGeneration) {
+    // ⭐ B2（复审二轮）：频道随服务一起交给 auto-updater —— 检查结果在**创建那一刻**
+    //    绑定的频道就是这里给出的（在飞/就绪事务所属服务的频道；服务不换血就不变）。
+    attachPortableUpdateService(service, portableChannelLabel(channel));
+  }
 }
 
 /**
@@ -203,6 +267,13 @@ export function registerUpdateHandlers(options: { onRendererReady?: () => void }
     options.onRendererReady?.();
   });
 
+  // ⭐ 忙态信号：**既有**通道再加一个监听（`tray-handlers` 那边照旧，互不影响）。
+  //    只读 `status`：`useTraySync` 用 `deriveSessionActivity`（真实 run 状态）算出来的
+  //    'running'/'unread'/'idle'。不新增通道、不新增第二套运行状态。
+  ipcMain.on('tray:update-status', (_event, payload: { status?: unknown }) => {
+    noteRendererTaskActivity(payload?.status);
+  });
+
   ipcMain.handle('app:get-version', (): string => app.getVersion());
 
   ipcMain.handle('app:get-update-state', () => getPortableUpdateState());
@@ -213,6 +284,10 @@ export function registerUpdateHandlers(options: { onRendererReady?: () => void }
     // electron-updater 那条在盘上没有立足点的分支。
     await ensurePortableUpdateService();
     if (isPortableUpdateNow() || isAutoUpdaterAvailable()) {
+      // ⭐ B2（复审二轮）：频道归属**随创建检查的那一刻**锁定（见 auto-updater 的
+      //    `checkForUpdatesViaUpdater`）—— 这里不再按调用者时刻重标：后到的调用
+      //    （含"检查在飞时用户切了频道"）复用同一份在飞结果，如实拿到**创建者**的
+      //    频道；需要新频道的检查按现有流程排下一次（下一次调用自然用新频道创建）。
       return checkForUpdatesViaUpdater();
     }
     return devCheckResult();
@@ -229,6 +304,14 @@ export function registerUpdateHandlers(options: { onRendererReady?: () => void }
   ipcMain.handle('app:install-update', async (): Promise<{ ok: boolean; error?: string }> => {
     if (!isPortableUpdateNow() && !isAutoUpdaterAvailable()) {
       return { ok: false, error: 'dev-not-supported' };
+    }
+    // ⭐ 忙态边界（2026-10-11 升级补齐）：生成/写文件期间**不得**退出应用或启动替换。
+    //    检查/下载不受这条影响（运行中仍允许，ready 候选留给用户稍后安装）。
+    //    ⚠️ 界面按钮灰掉只是观感；这里堵的是双击、竞态与程序化触发那条路。
+    //    盘上形态在便携服务的 `requestRestart` 边界还有一次同源复查（见 deps.isBusy）。
+    if (isAppBusy()) {
+      getDebugLogger().info({ domain: 'updater', event: 'updater.install.refused-busy' });
+      return { ok: false, error: 'app-busy' };
     }
     await ensurePortableUpdateService();
     return installUpdate();

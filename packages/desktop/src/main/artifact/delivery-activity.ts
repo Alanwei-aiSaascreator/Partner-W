@@ -56,6 +56,15 @@ function currentOwner(): DeliveryActivityOwner {
   return memoryOwner;
 }
 
+/**
+ * ⭐ 升级忙态（2026-10-11）：还有交付操作在途（写盘/登记未走完）。
+ * 消费方 = `update-handlers.isAppBusy` 的边界复查——堵住"turn 已结束但交付仍在途"的窗口：
+ * 生成/文件写入期间不得退出应用、不得启动替换（评审要点：不能只靠按钮灰掉）。
+ */
+export function hasActiveDeliveryOperations(): boolean {
+  return active.size > 0;
+}
+
 /** Called only after task deletion commits, before the same ID can be re-adopted. */
 export function forgetTaskDeliveryActivities(taskId: string): void {
   currentOwner();

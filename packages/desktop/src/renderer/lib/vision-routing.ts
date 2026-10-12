@@ -124,8 +124,9 @@ export function planVisionRouting(params: {
  *
  * 2. **打开网址读内容** = 运行时内置工具 **`browser`**（随包 runtime 工具注册表里存在；
  *    2026-10-07 语料审计：包内存在、0 调用）。它与 `web_search` / `web_fetch` 不是一回事：
- *    后两者是"搜索 / 抓取"（`web_search` 已因 DuckDuckGo 反爬在用户网络不可用而降级禁用，
- *    见 `state-config.ts` 的 `WEB_TOOLS_DENIED`），`browser` 是"打开指定网址读内容"。
+ *    后两者是"搜索 / 抓取"（`web_fetch` 仍降级禁用；`web_search` 自 2026-10-12 起经
+ *    博查 + relay 接线恢复，见 `main/runtime/relay-search-plugin.ts` 与
+ *    `state-config.ts` 的 `WEB_TOOLS_DENIED`），`browser` 是"打开指定网址读内容"。
  */
 export const WEB_ROUTING_FACTS = {
   search: {

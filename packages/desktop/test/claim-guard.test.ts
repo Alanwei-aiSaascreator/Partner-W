@@ -138,6 +138,38 @@ describe('extractClaimedFileNames：从回复里抠产物文件名', () => {
     expect(names2).toContain('report.pptx');
   });
 
+  /**
+   * ⚠️ DOCX-205 合同 §5.C（2026-10-10）：**具名交付语境**（已提交/请查收）+
+   * 否定句 / 待生成句控制组。最终成功判据仍以 expected kind/真实登记为主 ——
+   * 这一组只管"行级声称"的判据不准，不替代收据。
+   */
+  it('⭐ DOCX-205：真机原句（内容已提交…会出现 验收文档-205.docx）⇒ 抓到该名字', () => {
+    const names = extractClaimedFileNames('内容已提交，稍后会在右侧「产物」面板中出现 **验收文档-205.docx**。').map(
+      (n) => n.name,
+    );
+    expect(names).toContain('验收文档-205.docx');
+  });
+
+  it('⭐ DOCX-205：否定句不算声称（尚未提交 / 还没有保存）', () => {
+    expect(extractClaimedFileNames('尚未提交 验收文档-205.docx，我还在整理。')).toHaveLength(0);
+    expect(extractClaimedFileNames('还没有保存 验收文档-205.docx。')).toHaveLength(0);
+  });
+
+  it('⭐ DOCX-205：待生成句不算声称（稍后提交 / 等会儿生成）', () => {
+    expect(extractClaimedFileNames('稍后提交 验收文档-205.docx。')).toHaveLength(0);
+    expect(extractClaimedFileNames('等会儿生成 验收文档-205.docx。')).toHaveLength(0);
+  });
+
+  it('负对照：干净交付语境仍要抓到（已提交 / 已保存 / 请查收）', () => {
+    expect(extractClaimedFileNames('已提交 验收文档-205.docx。').map((n) => n.name)).toContain('验收文档-205.docx');
+    expect(extractClaimedFileNames('已保存 季度报告.docx。').map((n) => n.name)).toContain('季度报告.docx');
+    expect(extractClaimedFileNames('请查收 月度总结.xlsx。').map((n) => n.name)).toContain('月度总结.xlsx');
+  });
+
+  it('负对照：否定词离得远（在说别的事）不误伤真声称', () => {
+    expect(extractClaimedFileNames('没有问题的版本已生成 报告.docx。').map((n) => n.name)).toContain('报告.docx');
+  });
+
   it('负对照：名字恰好以动词结尾但仍是真文件名 ⇒ 不误杀', () => {
     // 剥掉「生成」后还剩「学习总结」——是真名字。
     const names = extractClaimedFileNames('已写好 学习总结生成.pptx').map((n) => n.name);

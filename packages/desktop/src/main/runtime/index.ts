@@ -26,8 +26,16 @@ import {
   type EnsureGatewayRunningResult,
   type GatewayChildProcess,
 } from './gateway-process.js';
-import { loadNodeVersionContract, nodeCandidates, pickNode, probeNodeVersion } from './node-runtime.js';
-import type { PickNodeResult } from './node-runtime.js';
+import {
+  deployedNodePathFor,
+  loadNodeVersionContract,
+  nodeCandidates,
+  nodeFailureCodeOf,
+  pickNode,
+  probeNodeWithBoundedRetry,
+  NODE_PROBE_RETRY_BUDGET_MS,
+} from './node-runtime.js';
+import type { PickNodeResult, ProbeRetryRecord } from './node-runtime.js';
 import {
   describeRuntimeSearch,
   fallbackDriveCandidates,
@@ -259,20 +267,36 @@ function makeDefaultDeps(): RuntimeBootstrapDeps {
       return plan.deploy({ userDataDir, ...(onProgress ? { onProgress } : {}) });
     },
     resolveNode: async ({ deployedRoot }) => {
-      const deployedNode = path.join(deployedRoot, 'node', 'node.exe');
+      // ⚠️ BUG-064（2026-10-10）：路径由**传入的 deployedRoot** 决定（换盘符 F→G 后
+      //    探测的就是新盘符下的同一位置）；不再按 existsSync 决定要不要给候选 ——
+      //    "文件不存在"本身是有信息量的失败分档（missing），要走到界面上。
+      const deployedNode = deployedNodePathFor(deployedRoot);
 
-      // 版本区间来自**部署后的** openclaw 包 —— 不硬编码
+      // 版本区间来自**部署后的** openclaw 包 —— 不硬编码。
+      // 合同 #1：**版本契约加载**与**Node 执行**的耗时分开记。
+      const contractStartedAt = Date.now();
       const contract = await loadNodeVersionContract(path.join(deployedRoot, 'node_modules', 'openclaw'));
+      const contractMs = Math.max(0, Date.now() - contractStartedAt);
 
-      return pickNode({
+      // 合同 A：**所有候选共享同一个 deadline**（同一单调时钟）——候选切换不重新
+      // 获得整段预算；版本契约加载的耗时已经单独记完，不混进探测预算。
+      const deadlineMs = performance.now() + NODE_PROBE_RETRY_BUDGET_MS;
+      const probeRecords: ProbeRetryRecord[] = [];
+      const res = await pickNode({
         candidates: nodeCandidates({
           envNode: process.env.CLAWWORK_NODE,
-          deployedNodePath: fs.existsSync(deployedNode) ? deployedNode : undefined,
+          deployedNodePath: deployedNode,
         }),
-        probe: probeNodeVersion,
+        // 合同 #2/#3：异步探测 + 只对 timeout 的有界重试（最多 2 次、剩余预算内）。
+        probe: (exe) =>
+          probeNodeWithBoundedRetry(exe, {
+            deadlineMs,
+            onAttempt: (record) => probeRecords.push(record),
+          }).then((w) => w.result),
         isSupported: contract.isSupported,
         supportedRange: contract.supportedRange,
       });
+      return { ...res, probeRecords, contractMs };
     },
     startGateway: async ({ nodeExe, cliPath, deployedRoot, stateDir, identityPath, token, beforeSpawn }) =>
       ensureGatewayRunning({
@@ -438,14 +462,28 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     }
 
     // ⑤ 解析一个能跑 openclaw 的 Node（**必须先探版本**）
+    //
+    // ⚠️ BUG-064（2026-10-10）：**结构化诊断全部落日志**（合同 #1）——
+    //    版本契约加载耗时与每次探测（含自动重试）的耗时/分档/限长 detail 分开记；
+    //    失败码按归因分档（missing/permission/timeout/exec-failed/version-unsupported），
+    //    UI 依据闭集原因说各自的话（`@clawwork/shared` 的 GatewayFailureReason）。
+    //    原始 message（含盘符路径等）**只进日志与本地 reason**，不上界面。
     const nodeStartedAt = deps.now();
     const nodeRes = await deps.resolveNode({
       userDataDir: runtimeCacheUserDataDir,
       deploymentKey: deployed.deploymentKey,
       deployedRoot: deployed.deployedRoot,
     });
-    deps.log('runtime.node.resolve.done', { durationMs: Math.max(0, deps.now() - nodeStartedAt), ok: nodeRes.ok });
-    if (!nodeRes.ok) return fail('runtime.no-usable-node', nodeRes.message, { deploymentKey: deployed.deploymentKey });
+    deps.log('runtime.node.resolve.done', {
+      durationMs: Math.max(0, deps.now() - nodeStartedAt),
+      ok: nodeRes.ok,
+      contractMs: nodeRes.contractMs,
+      attempts: nodeRes.attempts,
+      probeRecords: nodeRes.probeRecords,
+    });
+    if (!nodeRes.ok) {
+      return fail(nodeFailureCodeOf(nodeRes.failureClass), nodeRes.message, { deploymentKey: deployed.deploymentKey });
+    }
 
     /**
      * BUG-040 ④ + BUG-059 附 F4：熔断期间**不去撞墙** —— 预检挂在**真 spawn 的分支**上。
@@ -573,6 +611,17 @@ let activeGateway: {
 
 export function getActiveLocalGatewayDeploymentRoot(): string | null {
   return activeGateway?.ownership === 'spawned' && activeGateway.child ? activeGateway.deployedRoot : null;
+}
+
+/**
+ * 活动网关的**状态目录**（我们自己 spawn 的才有）。
+ *
+ * 与 deploymentRoot 同一套"活动权"判据（`spawned && child`）：复用别人的网关时返回 null，
+ * 免得误报"我们捏着一个可用的运行时"。2026-10-12 起被联网搜索可用性探针用
+ *（搜索 provider 插件装在状态目录里，不在 runtime 包里）。
+ */
+export function getActiveLocalGatewayStateDir(): string | null {
+  return activeGateway?.ownership === 'spawned' && activeGateway.child ? activeGateway.stateDir : null;
 }
 
 export function captureOwnedLocalGatewayRuntime(): { deployedRoot: string; current: () => boolean } | null {

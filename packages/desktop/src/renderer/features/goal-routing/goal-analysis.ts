@@ -1,3 +1,4 @@
+import { resolveModeModelId } from '@clawwork/shared';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 import { goalAnalysisVersion } from '@/lib/user-onboarding';
 import { PRESET_AGENT_IDS, type PresetAgentId } from '@/lib/preset-agents';
@@ -104,17 +105,31 @@ export function parseGoalAnalysis(content: string): GoalAnalysisResult | null {
 }
 
 export function buildGoalAnalysisPrompt(profile: OnboardingProfile, modelIds: readonly string[]): string {
-  return `你是荣盈魔方的目标分析器。只分析用户主动填写的目标，不要声称已经查看电脑、文件或外部数据。
+  const header = `你是荣盈魔方的目标分析器。只分析用户主动填写的目标，不要声称已经查看电脑、文件或外部数据。
 
 用户常用场景：${profile.useCases.join('、') || '未选择'}
 用户目标：${profile.customGoal.trim()}
 可用预置助手：${PRESET_AGENT_IDS.join('、')}
-可用模型：${modelIds.join('、') || 'deepseek-v4-flash'}
+可用模型：${modelIds.join('、') || '（目录尚未取到）'}`;
+
+  // 格式示例里的 model 字段**复用目录现状**（2026-10-10 Cephalon 批）：优先智能档
+  // 默认（glm-5.3-flash），目录没有它时取实际存在的首个目录项 —— 不再硬编码旧 DeepSeek。
+  const exampleModel = resolveModeModelId('smart', modelIds) ?? modelIds[0];
+
+  // 目录未取得：没有可信的模型 ID 可引用 —— 明确告知未取得，并要求本轮不输出代码块
+  //（拿编造的模型名或裸格式示例当"可用能力证明"是更坏的失败）。
+  if (!exampleModel) {
+    return `${header}
+
+当前没有取到可用的模型目录，本轮**不要输出 goal-analysis 代码块** —— 只在正文里给出目标摘要、推荐助手与三个起始任务；不要编造模型名，模型字段留待目录就绪后由界面补全。`;
+  }
+
+  return `${header}
 
 优先匹配预置助手。只有六个助手都不适合时才返回 custom。输出必须以一个 \`\`\`goal-analysis JSON 代码块结束，不要增加其他字段。
 
-preset 格式：{"kind":"preset","assistantId":"rongying-content","summary":"目标摘要","reason":"推荐理由","model":"deepseek-v4-flash","starters":["任务1","任务2","任务3"]}
-custom 格式：{"kind":"custom","summary":"目标摘要","reason":"为什么需要专属助手","model":"deepseek-v4-flash","starters":["任务1","任务2","任务3"],"draft":{"name":"ASCII Name","description":"一句职责","identity":"简洁系统角色提示","boundaries":"不能做或需要确认的边界"}}`;
+preset 格式：{"kind":"preset","assistantId":"rongying-content","summary":"目标摘要","reason":"推荐理由","model":"${exampleModel}","starters":["任务1","任务2","任务3"]}
+custom 格式：{"kind":"custom","summary":"目标摘要","reason":"为什么需要专属助手","model":"${exampleModel}","starters":["任务1","任务2","任务3"],"draft":{"name":"ASCII Name","description":"一句职责","identity":"简洁系统角色提示","boundaries":"不能做或需要确认的边界"}}`;
 }
 
 export function goalAnalysisStorageKey(profile: OnboardingProfile): string {

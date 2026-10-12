@@ -45,7 +45,8 @@ describe('MarkdownContent 对 docgen 块的处理', () => {
     const { container, unmount } = render(<MarkdownContent content={['```docgen', DECK_JSON, '```'].join('\n')} />);
 
     expect(container.querySelector('[data-testid="docgen-block"]')).not.toBeNull();
-    expect(container.textContent, '卡片文案').toContain('chatMessage.docgenBlock');
+    // ⚠️ DOCX-205 §5.C：静态承诺换成**状态文案**；无 task/message（未挂到具体轮次）⇒ 待处理。
+    expect(container.textContent, '卡片文案').toContain('chatMessage.docgenPending');
     expect(container.textContent, '不该把 JSON 摊出来').not.toContain('"kind"');
     expect(container.textContent).not.toContain('内测汇报');
     unmount();
@@ -102,7 +103,8 @@ describe('MarkdownContent 对 htmlgen 块的处理', () => {
     const { container, unmount } = render(<MarkdownContent content={['```htmlgen', PAGE_JSON, '```'].join('\n')} />);
 
     expect(container.querySelector('[data-testid="htmlgen-block"]')).not.toBeNull();
-    expect(container.textContent, '卡片文案').toContain('chatMessage.htmlgenBlock');
+    // ⚠️ DOCX-205 §5.C：同上 —— 状态文案（无轮次上下文 ⇒ 待处理）。
+    expect(container.textContent, '卡片文案').toContain('chatMessage.htmlgenPending');
     expect(container.textContent, '不该把 JSON 摊出来').not.toContain('"kind"');
     expect(container.textContent).not.toContain('九月简报');
     unmount();

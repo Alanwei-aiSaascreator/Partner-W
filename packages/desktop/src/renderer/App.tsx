@@ -31,6 +31,7 @@ import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
 import { useStartupReadiness } from './hooks/useStartupReadiness';
 import { useDocgenFailureToast } from './hooks/useDocgenFailureToast';
 import { useHtmlgenFailureToast } from './hooks/useHtmlgenFailureToast';
+import { useVideogenFailureToast } from './hooks/useVideogenFailureToast';
 import { useSlidegenToast } from './hooks/useSlidegenToast';
 import { useArtifactPanelReveal } from './hooks/useArtifactPanelReveal';
 import { useClaimGuardToast } from './hooks/useClaimGuardToast';
@@ -239,6 +240,7 @@ export default function App() {
   // 而"漏掉一条失败提示"的表现恰好和"什么都没发生"一模一样。
   useDocgenFailureToast();
   useHtmlgenFailureToast();
+  useVideogenFailureToast();
   useSlidegenToast();
   // 产物一落盘就把右侧「产物」面板展开 —— 用户反馈 #2：以前要手动点「切换上下文面板」才看得到。
   useArtifactPanelReveal();

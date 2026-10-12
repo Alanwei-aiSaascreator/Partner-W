@@ -1,9 +1,12 @@
-import { test, expect } from 'vitest';
+import { describe, it, test, expect } from 'vitest';
 import {
   isModelSelectable,
   modelFamilyKey,
   modelFamilyLabel,
   relayModelsFrom,
+  sanitizeModelDisplayName,
+  sanitizedCatalogModels,
+  selectableModelsFrom,
   RELAY_PROVIDER_ID,
 } from '../src/renderer/components/ChatInput/model-families.js';
 
@@ -100,6 +103,15 @@ test('⚠️ 目录为空 → 放行，不能拦', () => {
   expect(isModelSelectable([], 'deepseek-r1')).toBe(true);
 });
 
+test('⭐ Cephalon 批：新渠道 deepseek-v4-flash-cephalon 与旧渠道**同家族**（一个组、不分家）', () => {
+  expect(modelFamilyKey('deepseek-v4-flash-cephalon')).toBe('deepseek');
+  expect(modelFamilyLabel('deepseek-v4-flash-cephalon')).toBe('DeepSeek');
+  const group = new Set(['deepseek-v4-flash', 'deepseek-v4-flash-cephalon'].map(modelFamilyKey));
+  expect([...group]).toEqual(['deepseek']);
+  // GLM 是另一家族（下拉里与 DeepSeek 分组并列）
+  expect(modelFamilyKey('glm-5.3-flash')).toBe('glm');
+});
+
 test('全量目录里非中转的模型不算「在目录里」（传进来之前应已过滤）', () => {
   // 这个函数假定收到的已经是 relayModelsFrom 的结果。防误用的文档性断言：
   const raw = [entry('claude-cli', 'claude-opus-5')];
@@ -107,4 +119,78 @@ test('全量目录里非中转的模型不算「在目录里」（传进来之�
   expect(isModelSelectable(relayModelsFrom(raw), 'claude-opus-5')).toBe(true); // 空目录 → 放行
   // ⇒ 所以调用方**必须**传过滤后的目录，否则拦不住。
   // 真实的调用点（useChatSend）传的就是过滤后的 modelCatalog。
+});
+
+/**
+ * ⭐ 2026-10-12（用户口径："所有模型选择只可以按照我们目前可以用的来，
+ * 不然显示不能用就是视觉欺骗"）：用户可选列表的唯一一把尺。
+ * 真机残留实锤：设置-智能体「覆盖模型」下拉里出现过 `GPT-6 Astra (openai)`
+ * （内核内置示例，无 openai 渠道）与 `qwen3.7-flash-fast (clawrouter)`（模式内部别名）。
+ */
+describe('selectableModelsFrom —— 用户能选的模型（三层收敛）', () => {
+  const entry = (id: string, provider: string, extra: Record<string, unknown> = {}) =>
+    ({ id, name: id, provider, ...extra }) as never;
+
+  it('只留 clawrouter（挡掉内核内置示例：GPT-6/GPT-5.x 那些）', () => {
+    const out = selectableModelsFrom([
+      entry('gpt-6-astra', 'openai'),
+      entry('glm-5.3-flash', 'clawrouter'),
+      entry('some-local', 'ollama'),
+    ]);
+    expect(out.map((m) => m.id)).toEqual(['glm-5.3-flash']);
+  });
+
+  it('available=false 的不列（目录说不可用 = 显示它就是视觉欺骗）', () => {
+    const out = selectableModelsFrom([
+      entry('glm-5.3-flash', 'clawrouter', { available: true }),
+      entry('kimi-k3', 'clawrouter', { available: false }),
+      entry('glm-5.2', 'clawrouter'), // available 缺省 = 可用
+    ]);
+    expect(out.map((m) => m.id)).toEqual(['glm-5.3-flash', 'glm-5.2']);
+  });
+
+  it('模式内部别名（qwen3.7-flash-fast）不列 —— 它不是"某个可选模型"', () => {
+    const out = selectableModelsFrom([entry('qwen3.7-flash-fast', 'clawrouter'), entry('qwen3.7-flash', 'clawrouter')]);
+    expect(out.map((m) => m.id)).toEqual(['qwen3.7-flash']);
+  });
+
+  it('空 / undefined / null 一律空数组（调用方按空目录处理，不许回退全量）', () => {
+    expect(selectableModelsFrom(undefined)).toEqual([]);
+    expect(selectableModelsFrom(null)).toEqual([]);
+    expect(selectableModelsFrom([])).toEqual([]);
+  });
+});
+
+/**
+ * ⭐ 2026-10-12（用户口径："模型不要显示是端脑 cephalon 这个，不然用户会去找这个平台"）：
+ * 渠道字样不上用户可见面——源头（relay 展示名）已改中性；这里是**入 store 前的兜底净化**。
+ */
+describe('sanitizeModelDisplayName / sanitizedCatalogModels —— 剥渠道字样', () => {
+  const entry = (id: string, name: string, provider = 'clawrouter') => ({ id, name, provider }) as never;
+
+  it('" · Cephalon" 后缀 / 平台 ID 的 -cephalon 痕迹 / 端脑字样全部剥掉', () => {
+    expect(sanitizeModelDisplayName('DeepSeek V4 Flash · Cephalon')).toBe('DeepSeek V4 Flash');
+    expect(sanitizeModelDisplayName('deepseek-v4-flash-cephalon')).toBe('deepseek-v4-flash');
+    expect(sanitizeModelDisplayName('端脑渠道模型')).toBe('渠道模型');
+  });
+
+  it('纯渠道名洗成空 ⇒ 回落净化后的 id（展示名永不空着也不带渠道）', () => {
+    const out = sanitizedCatalogModels([entry('deepseek-v4-flash-cephalon', 'Cephalon')]);
+    expect(out[0]!.name).toBe('deepseek-v4-flash');
+  });
+
+  it('正常名原样不动；只动 name，id/provider 逐字保留', () => {
+    const original = entry('glm-5.3-flash', 'GLM 5.3 Flash');
+    const out = sanitizedCatalogModels([original]);
+    expect(out[0]!.name).toBe('GLM 5.3 Flash');
+    expect(out[0]).toBe(original); // 无变化不复制
+    const dirty = entry('deepseek-v4-flash-cephalon', 'DeepSeek V4 Flash · Cephalon');
+    const out2 = sanitizedCatalogModels([dirty]);
+    expect(out2[0]!.id).toBe('deepseek-v4-flash-cephalon'); // 计费身份原样
+    expect(out2[0]!.provider).toBe('clawrouter');
+  });
+
+  it('不误伤含 "cephalon" 字母图案的正常词（\b 边界）', () => {
+    expect(sanitizeModelDisplayName('xCEPHALONy')).toBe('xCEPHALONy');
+  });
 });

@@ -298,22 +298,28 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
                   className="grid gap-5 sm:grid-cols-3"
                 >
                   <div className="flex items-center justify-center">
+                    {/* ⭐ 2026-10-12：与 `PortraitCard` 同一套"装裱"（素材白底=卡面本身；
+                        不动素材，见 PortraitCard 的注释）。两处必须同步改。 */}
                     {mbtiArtwork ? (
-                      <img
-                        data-mbti-artwork
-                        src={mbtiArtwork}
-                        alt=""
-                        onError={() => setMbtiArtworkFailed(true)}
-                        className="mx-auto h-auto w-full max-w-xs"
-                      />
+                      <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-card-layered)]">
+                        <img
+                          data-mbti-artwork
+                          src={mbtiArtwork}
+                          alt=""
+                          onError={() => setMbtiArtworkFailed(true)}
+                          className="block h-auto w-full"
+                        />
+                      </div>
                     ) : artwork ? (
-                      <img
-                        data-portrait-artwork
-                        src={artwork}
-                        alt=""
-                        onError={() => setArtworkFailed(true)}
-                        className="mx-auto h-auto w-full max-w-xs"
-                      />
+                      <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow-card-layered)]">
+                        <img
+                          data-portrait-artwork
+                          src={artwork}
+                          alt=""
+                          onError={() => setArtworkFailed(true)}
+                          className="block h-auto w-full"
+                        />
+                      </div>
                     ) : (
                       <div data-portrait-fallback className="flex flex-col items-center gap-3">
                         <UserRound size={64} className="text-[var(--text-muted)]" />

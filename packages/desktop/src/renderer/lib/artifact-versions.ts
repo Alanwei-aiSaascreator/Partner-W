@@ -100,3 +100,33 @@ export function groupArtifactVersions(items: readonly Artifact[]): ArtifactVersi
   archived.sort(byOriginalOrder);
   return { current, archived };
 }
+
+/**
+ * 「同一文件的双位置副本」收敛（2026-10-12，用户真机反馈：文件管理页一半卡片是重复的）。
+ *
+ * ## 背景（与上面的版本归并是**两件事**）
+ *
+ * PPT 落位机制会让**同一份文件**在工作区里存在两个路径：根层生成一份、复制进任务子目录
+ * 一份 —— 登记表里就是**两行**（同名、同大小、同任务、登记时间差毫秒、只有路径不同）。
+ * 文件管理页全量直列 ⇒ 每份文件显示两张卡（真机截图实锤：22 行 = 14 个物理文件）。
+ *
+ * ## 规则
+ *
+ * 收敛判据 = **`taskId + name + size` 全同**：
+ *   - 不同 `size` ⇒ 不同内容（真版本）——不并；
+ *   - 不同 `taskId` ⇒ 两份成果各自可见（会议模式多任务合并场景）——不并；
+ *   - 名字里带不带版本后缀都会各算各的（`-<8hex>` 不同的文件 name 不同）——不并。
+ * 保留**先出现**的那条（两条内容相同，任一都能打开/预览；列表顺序稳定）。
+ * ⚠️ 只做展示收敛，**不删登记、不删文件**——两份副本物理上原样保留。
+ */
+export function collapseArtifactCopies(artifacts: readonly Artifact[]): Artifact[] {
+  const seen = new Set<string>();
+  const out: Artifact[] = [];
+  for (const artifact of artifacts) {
+    const key = `${artifact.taskId}\u0000${artifact.name}\u0000${artifact.size}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(artifact);
+  }
+  return out;
+}

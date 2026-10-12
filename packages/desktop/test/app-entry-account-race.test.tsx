@@ -152,6 +152,7 @@ vi.mock('../src/renderer/hooks/useSettingsBootstrap', () => ({ useSettingsBootst
 vi.mock('../src/renderer/hooks/useStartupReadiness', () => ({ useStartupReadiness: () => entryFactsFixture.startup }));
 vi.mock('../src/renderer/hooks/useDocgenFailureToast', () => ({ useDocgenFailureToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useHtmlgenFailureToast', () => ({ useHtmlgenFailureToast: vi.fn() }));
+vi.mock('../src/renderer/hooks/useVideogenFailureToast', () => ({ useVideogenFailureToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useSlidegenToast', () => ({ useSlidegenToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useClaimGuardToast', () => ({ useClaimGuardToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useDeliveryActivitySubscription', () => ({ useDeliveryActivitySubscription: vi.fn() }));

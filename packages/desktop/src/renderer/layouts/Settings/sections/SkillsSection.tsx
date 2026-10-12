@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
@@ -22,8 +22,14 @@ import { cn } from '@/lib/utils';
 import { motion as motionPresets, motionDuration } from '@/styles/design-tokens';
 import { useUiStore } from '@/stores/uiStore';
 import type { SkillStatusEntry, SkillStatusReport, SkillSearchResultEntry, SkillDetailResult } from '@clawwork/shared';
+import {
+  formatBundledSkillNames,
+  getBundledSkillsReport,
+  subscribeBundledSkillsReport,
+} from '@/lib/ensure-bundled-skills';
 import { summarizeSkillMissing, getSkillReason } from '@/lib/skill-utils';
 import { gatewaySkillLabel } from '@/lib/gateway-skill-label';
+import InlineNotice from '@/components/semantic/InlineNotice';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -713,6 +719,37 @@ export default function SkillsSection() {
   const skillOwner = resolveCatalogAgentId(agentCatalog);
   const cachedReport = selectedGatewayId ? skillsStatusByGateway[selectedGatewayId] : undefined;
   const scopedReport = skillOwner && cachedReport?.agentId === skillOwner ? cachedReport : undefined;
+  const setMainView = useUiStore((s) => s.setMainView);
+  /**
+   * ⭐ 开机自装的**未全生效**报告（冲突/失败）。
+   *
+   * 为什么放在这一页：冲突（用户改过的技能没被自动升级）不能挡启动，也不能被静默吞掉。
+   * 这里如实列出**受影响的技能名**，并把用户送到**既有**的修复入口 ——
+   * 技能市场里已装行的「修复随包版本」（`skills:our-install` 的 confirmed-repair，
+   * 会先给用户留一份可恢复备份）。设置页里**不重复实现**修复流程。
+   */
+  const bundledSkillsReport = useSyncExternalStore(
+    subscribeBundledSkillsReport,
+    getBundledSkillsReport,
+    getBundledSkillsReport,
+  );
+  /**
+   * ⭐ B3(b)（2026-10-11 整改）：报告必须**按网关归属**显示 —— 与修复入口同一条归属。
+   *
+   * 报告是单槽状态、带 `gatewayId`（开机 ensure 是给**默认网关**跑的）。两个条件缺一不可：
+   *  ① `gatewayId === storeDefaultGatewayId` —— 「前往技能市场修复」落到的正是技能市场，
+   *     而技能市场只操作**默认网关**；报告的网关不是它 ⇒ 按钮会把人带到错的网关上；
+   *  ② `gatewayId === (selectedGatewayId ?? storeDefaultGatewayId)` —— 这一页当前在看
+   *     哪个网关就只显示哪个的报告（选了 gw-2 时不许把 gw-1 的旧报告挂过来）。
+   * 两个条件都满足 ⇒ 显示与导航用的是**同一个网关**；其余情况不显示（旧报告不是这一页的事）。
+   */
+  const bundledSkillsNotice =
+    bundledSkillsReport &&
+    bundledSkillsReport.gatewayId === storeDefaultGatewayId &&
+    bundledSkillsReport.gatewayId === (selectedGatewayId ?? storeDefaultGatewayId) &&
+    (bundledSkillsReport.conflicts.length > 0 || bundledSkillsReport.failed.length > 0)
+      ? bundledSkillsReport
+      : null;
 
   useEffect(() => {
     if (!selectedGatewayId) return;
@@ -904,6 +941,34 @@ export default function SkillsSection() {
         ⚠️ 面向用户的技能入口现在在**左边的「技能市场」主页面**（列我们随包的技能）。
         这一页留给要自己调网关技能的高级用户。
       */}
+      {bundledSkillsNotice ? (
+        <div className="mb-3 space-y-2">
+          {bundledSkillsNotice.conflicts.length > 0 ? (
+            <InlineNotice
+              tone="warning"
+              action={
+                <Button variant="outline" size="sm" onClick={() => setMainView('skills')}>
+                  {t('settings.bundledSkillsFix')}
+                </Button>
+              }
+            >
+              {t('settings.bundledSkillsConflicts', {
+                count: bundledSkillsNotice.conflicts.length,
+                skills: formatBundledSkillNames(bundledSkillsNotice.conflicts, bundledSkillsNotice.names),
+              })}
+            </InlineNotice>
+          ) : null}
+          {bundledSkillsNotice.failed.length > 0 ? (
+            <InlineNotice tone="info">
+              {t('settings.bundledSkillsFailed', {
+                count: bundledSkillsNotice.failed.length,
+                skills: formatBundledSkillNames(bundledSkillsNotice.failed, bundledSkillsNotice.names),
+              })}
+            </InlineNotice>
+          ) : null}
+        </div>
+      ) : null}
+
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SkillsTab)} className="mb-3">
         <TabsList>
           <TabsTrigger value="installed">{t('settings.skillTabInstalled')}</TabsTrigger>

@@ -338,10 +338,13 @@ export const NON_RETRYABLE_ERROR_CODES = new Set([
  * 2026-09-17 实机就是因为两边各定义一次（main 取"中转目录第一条"= qwen3.5-27b，
  * 渲染层写死 deepseek-v4-flash），用户看到的模型和实际生成消息的模型对不上。
  *
+ * 2026-10-10 Cephalon 批：默认 = `glm-5.3-flash`（与智能档同一模型 —— 三档映射
+ * 见 `task-modes.ts`，此处是"新任务默认"的唯一来源）。
+ *
  * ⚠️ 只写**model id 本体**（不带 `clawrouter/` 前缀）：网关里的 ref 是两段，
  *    前缀由调用方按自己的上下文拼（见 relay-config.ts 的说明）。
  */
-export const COMMERCIAL_DEFAULT_MODEL_ID = 'deepseek-v4-flash';
+export const COMMERCIAL_DEFAULT_MODEL_ID = 'glm-5.3-flash';
 
 /**
  * 冷启动开场片（1 分钟，含内嵌音轨）。

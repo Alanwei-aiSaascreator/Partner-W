@@ -40,6 +40,9 @@ export type ArtifactIntegrityFailure =
   | 'missing-workbook'
   | 'not-a-pdf'
   | 'truncated-pdf'
+  | 'not-an-mp4'
+  | 'truncated-mp4'
+  | 'no-media-data'
   | 'part-unreadable';
 
 export type ArtifactIntegrityResult = { ok: true } | { ok: false; reason: ArtifactIntegrityFailure };
@@ -70,7 +73,7 @@ export class ArtifactIntegrityError extends Error {
  */
 export function isVerifiedFileName(fileName: string): boolean {
   const ext = extname(fileName).toLowerCase();
-  return ext === '.pptx' || ext === '.docx' || ext === '.xlsx' || ext === '.pdf';
+  return ext === '.pptx' || ext === '.docx' || ext === '.xlsx' || ext === '.pdf' || ext === '.mp4';
 }
 
 export function verifyPptxBuffer(buffer: Buffer): ArtifactIntegrityResult {
@@ -143,6 +146,59 @@ export function verifyPdfBuffer(buffer: Buffer): ArtifactIntegrityResult {
 }
 
 /**
+ * `.mp4` 的完整性判据：**顶层 box 链恰好铺满整个文件**（ISO-BMFF 盒遍历）。
+ *
+ * 为什么不是只查 `ftyp` 魔术字节：视频走的是"远端生成 → 下载"这条链，最常见的坏法是
+ * **下载被截断**（网络中断/上游存储过期字节数不足）。截断文件的头几个字节照样是
+ * `ftyp`——只有把顶层 box 的 size 链一路走到底、要求**恰好落在文件末尾**，
+ * 截断才会现形（最后一个 box 的 size 会越过或欠于实际长度）。
+ *
+ * 硬判据（三条）：
+ *   ① 存在 `ftyp`（ISO-BMFF 的门面）；② 存在 `moov`（播放器要的元数据）；
+ *   ③ 存在 `mdat`（真实媒体数据——防"只有元数据没有画面"的空壳）；
+ *   ④ size 链从 0 走到 length **恰好相等**，否则 `truncated-mp4`。
+ *
+ * 兼容 ISO-BMFF 的两种 size 写法：32 位 size；`size==1` 时读 64 位 largesize；
+ * `size==0` 表示"到文件尾"（合法的最后一个 box）。size<8 的普通 box 是非法长度，判截断。
+ *
+ * ⚠️ 这是"能不能打开"的必要条件，不是深度解码（不做逐样本校验）。
+ */
+export function verifyMp4Buffer(buffer: Buffer): ArtifactIntegrityResult {
+  if (buffer.length < 16) return { ok: false, reason: 'not-an-mp4' };
+
+  let offset = 0;
+  let sawFtyp = false;
+  let sawMoov = false;
+  let sawMdat = false;
+  while (offset < buffer.length) {
+    if (offset + 8 > buffer.length) return { ok: false, reason: 'truncated-mp4' };
+    let size = buffer.readUInt32BE(offset);
+    const type = buffer.toString('latin1', offset + 4, offset + 8);
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > buffer.length) return { ok: false, reason: 'truncated-mp4' };
+      const large = buffer.readBigUInt64BE(offset + 8);
+      if (large > BigInt(Number.MAX_SAFE_INTEGER)) return { ok: false, reason: 'truncated-mp4' };
+      size = Number(large);
+      headerSize = 16;
+    } else if (size === 0) {
+      size = buffer.length - offset; // "到文件尾"：必须是铺满语义才能通过下面的等值判据。
+    }
+    if (size < headerSize) return { ok: false, reason: 'truncated-mp4' };
+    if (offset === 0 && type !== 'ftyp') return { ok: false, reason: 'not-an-mp4' };
+    if (type === 'ftyp') sawFtyp = true;
+    if (type === 'moov') sawMoov = true;
+    if (type === 'mdat') sawMdat = true;
+    offset += size;
+  }
+  if (offset !== buffer.length) return { ok: false, reason: 'truncated-mp4' };
+  if (!sawFtyp) return { ok: false, reason: 'not-an-mp4' };
+  if (!sawMoov) return { ok: false, reason: 'truncated-mp4' };
+  if (!sawMdat) return { ok: false, reason: 'no-media-data' };
+  return { ok: true };
+}
+
+/**
  * 登记门的**单一派发入口**：调用方（save/reconcile/open-file 复核）只管"名字是受检格式吗"，
  * 具体判据按扩展名在这里选。非受检格式直接放行（调用点先过 `isVerifiedFileName`，
  * 正常到不了这里；这里放行而不是报错，避免把"不该校验"变成"登记失败"）。
@@ -153,5 +209,6 @@ export function verifyArtifactBuffer(fileName: string, buffer: Buffer): Artifact
   if (ext === '.pptx') return verifyPptxBuffer(buffer);
   if (ext === '.xlsx') return verifyXlsxBuffer(buffer);
   if (ext === '.pdf') return verifyPdfBuffer(buffer);
+  if (ext === '.mp4') return verifyMp4Buffer(buffer);
   return { ok: true };
 }

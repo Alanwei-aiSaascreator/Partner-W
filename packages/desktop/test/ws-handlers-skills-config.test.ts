@@ -16,7 +16,10 @@ const getChatHistoryMock = vi.fn();
 const listSessionsBySpawnerMock = vi.fn();
 const sendChatMessageMock = vi.fn();
 const abortChatMock = vi.fn();
+const resetSessionMock = vi.fn();
+const deleteSessionMock = vi.fn();
 const beginArtifactRunForGatewayDispatchMock = vi.fn();
+const isArtifactTurnInFlightMock = vi.fn(() => false);
 const isArtifactRunPendingCurrentMock = vi.fn();
 const bindArtifactRunMock = vi.fn();
 const cancelArtifactRunMock = vi.fn();
@@ -52,6 +55,8 @@ const fakeGatewayClient = {
   listSessionsBySpawner: listSessionsBySpawnerMock,
   sendChatMessage: sendChatMessageMock,
   abortChat: abortChatMock,
+  resetSession: resetSessionMock,
+  deleteSession: deleteSessionMock,
   createAgent: createAgentMock,
 };
 
@@ -76,12 +81,22 @@ vi.mock('../src/main/workspace/config.js', () => ({
 }));
 
 vi.mock('../src/main/debug/index.js', () => ({
-  getDebugLogger: vi.fn(() => ({ emit: vi.fn(), info: vi.fn(), error: vi.fn() })),
+  // ⚠️ `warn`/`debug` 不能省：turn-lifecycle 的释放路径用它记诊断（B1 复审二轮用例会走到）。
+  getDebugLogger: vi.fn(() => ({
+    emit: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  })),
 }));
 
 vi.mock('../src/main/ipc/data-handlers.js', () => ({
   beginArtifactRunForGatewayDispatch: beginArtifactRunForGatewayDispatchMock,
   isArtifactRunPendingCurrent: isArtifactRunPendingCurrentMock,
+  // DOCX-205 合同 B（2026-10-10）：普通发送单飞门 —— 本文件默认"没有在飞的轮次"，
+  // 专测该门的用例自行 `mockReturnValueOnce(true)`。
+  isArtifactTurnInFlight: isArtifactTurnInFlightMock,
   bindArtifactRun: bindArtifactRunMock,
   cancelArtifactRun: cancelArtifactRunMock,
   cancelArtifactRunsForSession: cancelArtifactRunsForSessionMock,
@@ -186,12 +201,15 @@ describe('ws-handlers: skills + config IPC channels', () => {
     getChatHistoryMock.mockReset();
     sendChatMessageMock.mockReset().mockResolvedValue(undefined);
     abortChatMock.mockReset().mockResolvedValue(undefined);
+    resetSessionMock.mockReset().mockResolvedValue({ ok: true });
+    deleteSessionMock.mockReset().mockResolvedValue({ ok: true });
     beginArtifactRunForGatewayDispatchMock.mockReset().mockReturnValue('artifact-run-1');
     isArtifactRunPendingCurrentMock.mockReset().mockReturnValue(true);
     nativeBudgetGuardMock.mockReset().mockResolvedValue({ guardVersion: 'ppt-budget-v1' });
     bindArtifactRunMock.mockReset();
     cancelArtifactRunMock.mockReset();
     cancelArtifactRunsForSessionMock.mockReset();
+    isArtifactTurnInFlightMock.mockReset().mockReturnValue(false);
     fakeGatewayClient.isConnected = true;
     workflowRuntime.owned = workflowRuntime.supplied = true;
     createAgentMock.mockReset().mockImplementation(async (params) => ({ agentId: params.name }));
@@ -228,6 +246,20 @@ describe('ws-handlers: skills + config IPC channels', () => {
       sendChatMessageMock.mock.invocationCallOrder[0],
     );
     expect(cancelArtifactRunMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks a plain resend with a named turn-in-flight error while a turn is running', async () => {
+    // ⚠️ DOCX-205 合同（2026-10-10）B 块：单飞门的第二道（API 级）。渲染层键盘/按钮路径
+    //    由 useChatSend 的会话活动判据先拦；这道门兜任何不经渲染门的新请求。
+    isArtifactTurnInFlightMock.mockReturnValueOnce(true);
+    const result = await invoke('ws:send-message', {
+      gatewayId: 'gw-1',
+      sessionKey: 'agent:main:clawwork:task-1',
+      content: '再发一份 Word',
+    });
+    expect(result).toEqual({ ok: false, error: '上一项仍在处理，请完成后再发送。', errorCode: 'TURN_IN_FLIGHT' });
+    expect(sendChatMessageMock).not.toHaveBeenCalled();
+    expect(beginArtifactRunForGatewayDispatchMock).not.toHaveBeenCalled();
   });
 
   it.each(['你是干啥的，怎么获客', '帮我生成一个 HTML 网页'])(
@@ -425,6 +457,149 @@ describe('ws-handlers: skills + config IPC channels', () => {
       error: 'abort failed',
     });
   });
+
+  // ⭐ B1（2026-10-11 复审二轮）：停止 = 本地先取消 run，但"远端已停"只能由**确认的
+  //    生命周期证据**落地 —— 真实 turn-lifecycle 模块（本文件不 mock 它）作为观察点。
+  it('⭐ B1：abort 失败不假称已结束 —— 未确认停止保留，重连补发拿到应答才落地', async () => {
+    const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+    const sessionKey = 'agent:main:clawwork:task-1';
+    turnLifecycle.resetTurnLifecycleForTests();
+    turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+    expect(turnLifecycle.hasLiveTurnSessions()).toBe(true);
+
+    // abort RPC 失败：软状态保留（复审原话：失败的 abort 不能凭本地删除记录宣称远端已停）。
+    abortChatMock.mockRejectedValueOnce(new Error('abort failed'));
+    await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey });
+    expect(turnLifecycle.hasLiveTurnSessions(), '失败不许假称已结束').toBe(true);
+
+    // 恢复出口：重连后补发 abort，网关应答（aborted:false = 本来就没有在跑）⇒ 确认 ⇒ 落地。
+    await turnLifecycle.retryPendingGatewayTurnStops('gw-1', async () => ({ aborted: false }));
+    expect(turnLifecycle.hasLiveTurnSessions(), '网关应答 = 确认 ⇒ 落地').toBe(false);
+    turnLifecycle.resetTurnLifecycleForTests();
+  });
+
+  it('⭐ B1：abort 应答成功 ⇒ 确认停止（软状态立即落地，不留永久判忙）', async () => {
+    const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+    const sessionKey = 'agent:main:clawwork:task-1';
+    turnLifecycle.resetTurnLifecycleForTests();
+    turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+
+    abortChatMock.mockResolvedValueOnce({ aborted: true });
+    expect(await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey })).toEqual({
+      ok: true,
+      result: { aborted: true },
+    });
+    expect(turnLifecycle.hasLiveTurnSessions(), '网关已处理 abort ⇒ 确认的终态证据').toBe(false);
+    turnLifecycle.resetTurnLifecycleForTests();
+  });
+
+  it('⭐ B1：网关未连接时的停止同样保留未确认状态（不凭本地取消清软状态）', async () => {
+    const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+    const sessionKey = 'agent:main:clawwork:task-1';
+    turnLifecycle.resetTurnLifecycleForTests();
+    turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+
+    fakeGatewayClient.isConnected = false;
+    expect(await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey })).toEqual({
+      ok: false,
+      error: 'gateway not connected',
+    });
+    expect(turnLifecycle.hasLiveTurnSessions(), '未送达网关：软状态保留（可核对）').toBe(true);
+    turnLifecycle.resetTurnLifecycleForTests();
+  });
+
+  // ⭐ B1 复审三轮（2026-10-11）：停止回执必须绑定**具体操作**（ticket 身份）——
+  //    真实 IPC 回调 + 真实 turn-lifecycle 模块串接（本文件不 mock 生命周期模块）。
+  it('⭐ B1 复审三轮：A 的迟到 abort 回执不许清掉 B 的忙态（B 也已停止，回执在途）', async () => {
+    const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+    const sessionKey = 'agent:main:clawwork:task-1';
+    turnLifecycle.resetTurnLifecycleForTests();
+    turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1'); // A 轮
+
+    // A 的 abort 在途（回执挂住）。
+    let resolveA!: (value: unknown) => void;
+    abortChatMock.mockReturnValueOnce(new Promise((resolve) => (resolveA = resolve)));
+    const requestA = invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey });
+
+    // A 的真实终态先到；B 开始，用户也停止 B（B 的回执同样在途）。
+    turnLifecycle.noteGatewayTurnLifecycle('end', sessionKey, 'gw-1');
+    turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+    let resolveB!: (value: unknown) => void;
+    abortChatMock.mockReturnValueOnce(new Promise((resolve) => (resolveB = resolve)));
+    const requestB = invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey });
+
+    // A 的迟到回执返回：只许结算 A 自己的那次停止。
+    resolveA({ aborted: true });
+    expect(await requestA).toEqual({ ok: true, result: { aborted: true } });
+    expect(turnLifecycle.hasLiveTurnSessions(), 'A 的迟到回执不许清掉 B 的忙态').toBe(true);
+
+    // B 自己的回执返回 ⇒ B 落地。
+    resolveB({ aborted: true });
+    expect(await requestB).toEqual({ ok: true, result: { aborted: true } });
+    expect(turnLifecycle.hasLiveTurnSessions(), 'B 自己的回执 = 确认 ⇒ 落地').toBe(false);
+    turnLifecycle.resetTurnLifecycleForTests();
+  });
+
+  it.each(['ws:session-reset', 'ws:session-delete'])(
+    '⭐ B1 复审三轮：%s 失败不许给 await 期间新开的轮留下停止记录（catch 不重捕当前轮）',
+    async (channel) => {
+      const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+      const sessionKey = 'agent:main:clawwork:task-1';
+      const sessionOp = channel === 'ws:session-reset' ? resetSessionMock : deleteSessionMock;
+      turnLifecycle.resetTurnLifecycleForTests();
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1'); // A 轮
+
+      // 会话操作在途（挂住）。
+      let rejectOp!: (error: Error) => void;
+      sessionOp.mockReturnValueOnce(new Promise((_resolve, reject) => (rejectOp = reject)));
+      const request = invoke(channel, { gatewayId: 'gw-1', sessionKey });
+
+      // 在途期间：A 结束、B 开始（B 从未被停止）。
+      turnLifecycle.noteGatewayTurnLifecycle('end', sessionKey, 'gw-1');
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+      rejectOp(new Error('session op failed'));
+      expect(await request).toEqual({ ok: false, error: 'session op failed' });
+
+      // B 是这次失败操作之后新开的一轮：不许被标成"未确认停止"
+      // （否则重连补发会拿旧操作的回执确认/清掉 B）。
+      let abortCalls = 0;
+      await turnLifecycle.retryPendingGatewayTurnStops('gw-1', async () => {
+        abortCalls += 1;
+        return { aborted: false };
+      });
+      expect(abortCalls, '失败的会话操作不许给后来新开的一轮留下停止记录').toBe(0);
+      expect(turnLifecycle.isLiveTurnSession(sessionKey), 'B 是未被停止的新轮：必须保留').toBe(true);
+      turnLifecycle.resetTurnLifecycleForTests();
+    },
+  );
+
+  it.each(['ws:session-reset', 'ws:session-delete'])(
+    '⭐ B1 复审三轮：%s 成功 = 真实 RPC 合同的确认，且只消费捕获的那一轮',
+    async (channel) => {
+      const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+      const sessionKey = 'agent:main:clawwork:task-1';
+      const sessionOp = channel === 'ws:session-reset' ? resetSessionMock : deleteSessionMock;
+      turnLifecycle.resetTurnLifecycleForTests();
+
+      // 情形一：成功且同轮未变 ⇒ 网关受理 = 确认（软状态落地）。
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+      sessionOp.mockResolvedValueOnce({ ok: true });
+      expect(await invoke(channel, { gatewayId: 'gw-1', sessionKey })).toEqual({ ok: true });
+      expect(turnLifecycle.hasLiveTurnSessions(), '网关受理 = 确认的生命周期证据 ⇒ 落地').toBe(false);
+
+      // 情形二：成功回执迟到 —— 在途期间 A 结束、B 新开 ⇒ 不许消费 B。
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1'); // 新的 A'
+      let resolveOp!: (value: unknown) => void;
+      sessionOp.mockReturnValueOnce(new Promise((resolve) => (resolveOp = resolve)));
+      const request = invoke(channel, { gatewayId: 'gw-1', sessionKey });
+      turnLifecycle.noteGatewayTurnLifecycle('end', sessionKey, 'gw-1');
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1'); // B'
+      resolveOp({ ok: true });
+      expect(await request).toEqual({ ok: true });
+      expect(turnLifecycle.isLiveTurnSession(sessionKey), '迟到的成功回执不许消费之后新开的一轮').toBe(true);
+      turnLifecycle.resetTurnLifecycleForTests();
+    },
+  );
 
   it('★ 发送成功才记 chat_sent（首条同时记 first_chat_sent）', async () => {
     const reporter = await freshReporter();

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact } from '@clawwork/shared';
-import { artifactFamilyKey, groupArtifactVersions } from '../src/renderer/lib/artifact-versions.js';
+import {
+  artifactFamilyKey,
+  collapseArtifactCopies,
+  groupArtifactVersions,
+} from '../src/renderer/lib/artifact-versions.js';
 
 /** 图16（2026-10-06）：同任务重复/失败产物的归并规则。 */
 
@@ -216,5 +220,52 @@ describe('groupArtifactVersions', () => {
 
     expect(current.map((a) => a.id)).toEqual(['from-relocate']);
     expect(archived.map((a) => a.id)).toEqual(['from-root-scan']);
+  });
+});
+
+/**
+ * 2026-10-12（真机反馈"文件管理页为啥这么多"）：同一文件的双位置副本收敛。
+ * 实锤数据：22 行登记 = 14 个物理文件（8 个文件在根层 + 任务子目录各登记一条，
+ * 同名同大小同任务、登记时间差毫秒、只有路径不同）。
+ */
+describe('collapseArtifactCopies', () => {
+  function copy(id: string, filePath: string, overrides: Partial<Artifact> = {}): Artifact {
+    return {
+      ...make(id, 'deck-48b728a4.pptx', '2026-10-12T00:00:00.000Z'),
+      filePath,
+      ...overrides,
+    };
+  }
+
+  it('同名、同大小、同任务的双位置副本 ⇒ 收敛为一条（保留先出现的）', () => {
+    const root = copy('a', 'W:/ws/荣盈魔方工作区/deck-48b728a4.pptx');
+    const taskDir = copy('b', 'W:/ws/荣盈魔方工作区/task-1/deck-48b728a4.pptx');
+    expect(collapseArtifactCopies([root, taskDir])).toEqual([root]);
+  });
+
+  it('不同大小 = 不同内容（真版本）⇒ 不并', () => {
+    const one = copy('a', 'W:/ws/deck-48b728a4.pptx', { size: 100 });
+    const two = copy('b', 'W:/ws/task-1/deck-48b728a4.pptx', { size: 200 });
+    expect(collapseArtifactCopies([one, two])).toHaveLength(2);
+  });
+
+  it('不同任务同名（会议多任务合并）⇒ 各自可见，不并', () => {
+    const a = copy('a', 'W:/ws/task-1/deck.pptx', { taskId: 'task-1' });
+    const b = copy('b', 'W:/ws/task-2/deck.pptx', { taskId: 'task-2' });
+    expect(collapseArtifactCopies([a, b])).toHaveLength(2);
+  });
+
+  it('不同文件名的版本（-<8hex> 不同）⇒ 不并（那是版本归并的事，不是副本）', () => {
+    const a = make('a', 'deck-aaaaaaaa.pptx', '2026-10-12T00:00:00.000Z');
+    const b = make('b', 'deck-bbbbbbbb.pptx', '2026-10-12T00:00:01.000Z');
+    expect(collapseArtifactCopies([a, b])).toHaveLength(2);
+  });
+
+  it('空数组 / 单条原样返回（不 mutate 输入）', () => {
+    expect(collapseArtifactCopies([])).toEqual([]);
+    const one = make('a', 'x.pptx', '2026-10-12T00:00:00.000Z');
+    const input = [one];
+    expect(collapseArtifactCopies(input)).toEqual(input);
+    expect(input).toHaveLength(1);
   });
 });

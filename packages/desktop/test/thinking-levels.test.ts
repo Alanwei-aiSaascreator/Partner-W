@@ -37,6 +37,13 @@ describe('thinkingLevelsFor —— 参数化：不同目录 → 不同档位集�
     },
     // 我们没见过的 id 要原样透传，不能丢
     { name: '含未知档位 xhigh', entry: entry('m', ['off', 'high', 'xhigh']), expected: ['off', 'high', 'xhigh'] },
+    // ⚠️ 2026-10-12 用户拍板：`ultra`（内核"主动子代理编排"产品模式）**刻意不露出**——
+    //    唯一例外；除此之外一律原样透传。
+    {
+      name: 'ultra 被过滤（含 max 的模型内核会自动加它）',
+      entry: entry('glm-5.3-flash', ['low', 'high', 'max', 'ultra'], 'low'),
+      expected: ['low', 'high', 'max'],
+    },
     // 数据缺失 → 回退固定 6 档（回滚行为）
     { name: '没有 thinkingLevels 字段', entry: entry('m'), expected: FALLBACK_THINKING_LEVELS },
     { name: 'thinkingLevels 为空数组', entry: entry('m', []), expected: FALLBACK_THINKING_LEVELS },

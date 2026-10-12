@@ -24,3 +24,12 @@ export function resolveModelLabel(
   // 与 `ChatInput/utils.ts` 的 `getModelLabel` 同规则：剥掉 `provider/` 前缀。
   return modelId.split('/').pop() || modelId;
 }
+
+/**
+ * 2026-10-11（用户拍板）：三档任务模式（快速 / 智能 / 深度）背后跑哪个模型是**内部实现**，
+ * 不上屏 —— 仅 `custom`（高级：用户显式选过模型）才渲染消息级模型徽章/名称。
+ * 与 composer chip 的两级口径同规则（`ChatInput` 的 `modeDriven = mode !== 'custom'`）。
+ */
+export function shouldShowModelBadge(taskMode: string | null | undefined): boolean {
+  return taskMode === 'custom';
+}

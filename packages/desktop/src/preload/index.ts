@@ -17,6 +17,7 @@ import type {
   CronRunsParams,
   DocgenFailure,
   HtmlgenFailure,
+  VideogenFailure,
   PortableUpdatePublicState,
   QuestionResolveParams,
   RelayBootstrapPublicState,
@@ -239,6 +240,15 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('htmlgen:failed', listener);
       };
     },
+    onVideogenFailed: (callback: (failures: VideogenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: VideogenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('videogen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('videogen:failed', listener);
+      };
+    },
     onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, failures: SlidegenFailure[]): void => {
         callback(failures);
@@ -433,6 +443,10 @@ function buildApi(): ClawWorkAPI {
       thinkingContent?: string;
       /** 实际生成这条回复的模型 id（逐条来自网关）。 */
       model?: string;
+      /** ⚠️ DOCX-205 合同：整轮终态证据（见 core session-sync 的可信历史终态校验）。 */
+      terminal?: { kind: 'final'; runId: string; stopReason?: string; source?: string };
+      /** ⚠️ DOCX-205 合同：同步链路标记（带标记的消息在主进程只认终态证据）。 */
+      sync?: boolean;
     }) => ipcRenderer.invoke('data:create-message', msg),
 
     deleteTask: (taskId: string) => ipcRenderer.invoke('data:delete-task', { id: taskId }),

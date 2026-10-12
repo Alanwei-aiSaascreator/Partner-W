@@ -42,7 +42,16 @@ export function isPortableUpdateOperationActive(phase: PortableUpdatePhase): boo
 let portableService: PortableUpdateService | null = null;
 let portableUnsubscribe: (() => void) | null = null;
 
-export function attachPortableUpdateService(service: PortableUpdateService | null): void {
+/**
+ * ⭐ B2（2026-10-11 整改 · 复审二轮）：盘上服务**实际频道**（渲染层词汇 stable/beta）。
+ * 由装配方（update-handlers）在 attach 时一并给出 —— 检查结果的频道归属必须落在
+ * **创建这次检查的服务**上，而不是加入者读到的设置。
+ */
+let portableServiceChannel: 'stable' | 'beta' | null = null;
+
+export function attachPortableUpdateService(service: PortableUpdateService | null, channel?: 'stable' | 'beta'): void {
+  // 频道随服务一起换血：没有显式给（旧调用点/测试桩）就沿用上一个（服务没换就不许变）。
+  portableServiceChannel = service === null ? null : (channel ?? portableServiceChannel);
   if (service !== portableService) inFlightCheck = null;
   if (portableUnsubscribe !== null) {
     portableUnsubscribe();
@@ -88,6 +97,14 @@ interface UpdateCheckResult {
    * 界面据此换成"请换包"的提示。
    */
   portable: boolean;
+  /**
+   * ⭐ B2（复审二轮）：这次检查**实际归属**的频道（渲染层词汇 stable/beta）。
+   *
+   * ⚠️ 在**创建这次检查的那一刻**锁定（装机=当时的设置频道；盘上=在飞/就绪事务所属
+   *    服务的频道）——`inFlightCheck` 会把同一份结果交给后到的调用者，**加入者不许**按
+   *    自己被调用时的设置重标（那会用 stable 的检查冒充 beta；复审的真实反例）。
+   */
+  channel: 'stable' | 'beta';
 }
 
 type UpdateErrorCode = 'dev-not-supported' | 'network' | 'no-release-metadata' | 'signature' | 'unknown';
@@ -263,6 +280,13 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
   const promise = (async (): Promise<UpdateCheckResult> => {
     const currentVersion = app.getVersion();
     const portable = isPortableModeNow();
+    // ⭐ B2（复审二轮）：频道归属**随创建锁定**（本函数体在 await 前同步跑完这一段）：
+    //    · 盘上形态 = 在飞/就绪事务所属**服务**的频道（事务活跃时服务不换血，见
+    //      ensurePortableUpdateService）；服务未挂时退回当前设置（与旧口径一致）；
+    //    · 装机形态 = 创建这一刻的设置频道（也就是下面 allowPrerelease 用的那个值）。
+    //    `inFlightCheck` 复用同一条 promise ⇒ 加入者拿到的是**创建者**的频道。
+    const channel: 'stable' | 'beta' =
+      portable && portableService !== null ? (portableServiceChannel ?? getUpdateChannel()) : getUpdateChannel();
 
     // 盘上运行：签名的整目录清单才是真相源，electron-updater 在这里没有立足点。
     if (portable && portableService !== null) {
@@ -286,6 +310,7 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
         releaseNotes: null,
         state: portableState.phase,
         portable,
+        channel,
       };
     }
 
@@ -309,6 +334,7 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
           releaseUrl: '',
           state,
           portable,
+          channel,
         };
       }
 
@@ -348,6 +374,7 @@ export async function checkForUpdatesViaUpdater(): Promise<UpdateCheckResult> {
         releaseNotes: normalizeReleaseNotes(info),
         state,
         portable,
+        channel,
       };
     } catch (err) {
       state = state === 'downloaded' || state === 'downloading' ? state : 'error';

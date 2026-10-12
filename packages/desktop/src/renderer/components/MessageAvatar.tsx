@@ -79,6 +79,13 @@ export default function MessageAvatar({
   // 换形象/换性别后重试素材（坏图降级是那一张的事，不该跟着下一次选择走）。
   useEffect(() => setMbtiArtworkFailed(false), [resolvedLetters, resolvedGender]);
 
+  /**
+   * ⭐ 2026-10-12（用户真机反馈"白底不兼容"，系统性处理）：头像位的图素材（16 型圆头像 /
+   * 六角色立绘 / 网关头像）同样自带白底，圆形裁剪后仍是一枚"白贴纸"。给**图片头像**加一圈
+   * 细环（`ring` 画在元素自身外侧，不受 overflow 裁剪影响），白圆即成为有意为之的圆头像。
+   */
+  const showsArtworkImage = role === 'user' ? Boolean(shownMbtiArtwork || userArtworkUrl) : Boolean(showImg);
+
   return (
     <div
       // 探针/测试用：一个助手块在"等待→流式→定稿→收编"之间换的是**状态**不是节点，
@@ -88,6 +95,7 @@ export default function MessageAvatar({
       className={cn(
         'flex-shrink-0 size-[var(--density-avatar-size)] rounded-full flex items-center justify-center overflow-hidden',
         role === 'user' ? 'bg-[var(--bg-tertiary)]' : !showImg && 'bg-[var(--accent-dim)]',
+        showsArtworkImage && 'ring-1 ring-[var(--border)]',
       )}
     >
       {role === 'user' ? (

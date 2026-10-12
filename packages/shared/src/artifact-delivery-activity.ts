@@ -31,6 +31,8 @@ export type ArtifactDeliveryPhase =
   | 'generating-presentation'
   | 'generating-document'
   | 'generating-html'
+  /** 视频生成（2026-10-12 视频接入）：远端异步任务创建 → 轮询 → 下载，耗时以分钟计。 */
+  | 'generating-video'
   | 'saving-artifacts'
   | 'reconciling-artifacts';
 export type ArtifactDeliveryTerminalStatus = 'succeeded' | 'needs-review' | 'failed' | 'canceled';

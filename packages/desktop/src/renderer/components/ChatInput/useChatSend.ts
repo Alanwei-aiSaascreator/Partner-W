@@ -30,6 +30,7 @@ import type {
 import {
   DEFAULT_TASK_MODE,
   MODE_POLICY,
+  modelIdMatches,
   normalizeTaskModeSetting,
   resolveEffectiveTaskMode,
   resolveModeModelId,
@@ -50,6 +51,7 @@ import {
 } from '../../lib/attachment-actions';
 import { planVisionRouting } from '../../lib/vision-routing';
 import { planDeckRouting } from '../../lib/deck-intent';
+import { markModePolicyNotified, shouldNotifyModePolicyChange } from '../../lib/mode-policy-notice';
 import { userMdContentFromReadResult } from '../../lib/identity-persona';
 import { artifactFailureContext } from '../../lib/artifact-delivery-feedback';
 import { buildResponseLanguageContext } from '../../lib/response-language';
@@ -212,14 +214,23 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   // 切模型后当前档位可能不再被支持（实测：deepseek-v4-flash 支持 5 档，deepseek-r1 只支持 off）。
   // 自动回落到新模型的默认档位。**只改状态、不插系统消息** —— 用户可能正在打字，插消息会打断。
+  //
+  // ⚠️ 2026-10-12：**模式档（快速/智能/深度）不走这段**。模式任务的思考档由 `MODE_POLICY`
+  //    在发送时现算（`task.thinkingLevel` 在模式档下不参与发送，只是留痕）；而"真档位集不含 off"
+  //    是目录真值（glm-5.3-flash = [low,high,max]）——修复思考档接线后，任务默认档 `off`
+  //    会让这段**每次切模式都误触发**「已切换到 glm-5.3-flash，思考档位已重置为默认」的提示：
+  //    模型名不该露（用户拍板），"重置为默认"的语义也不对（档位由模式决定，不存在重置）。
+  //    custom（含旧任务）保持原行为：换模型导致档位不受支持时，回落 + 告知。
+  const modeDrivenThinking = currentMode !== 'custom';
   useEffect(() => {
+    if (modeDrivenThinking) return;
     if (!currentModelEntry) return; // 目录没加载完时不动（isThinkingSupported 也会一律放行）
     if (isThinkingSupported(currentModelEntry, currentThinking)) return;
     const fallback = thinkingDefaultFor(currentModelEntry);
     if (activeTask) updateTaskMetadata(activeTask.id, { thinkingLevel: fallback });
     else useTaskStore.getState().updatePending({ thinkingLevel: fallback });
     toast.info(t('chatInput.thinkingResetByModel', { model: currentModelEntry.name ?? currentModelEntry.id }));
-  }, [currentModelEntry, currentThinking, activeTask, updateTaskMetadata, t]);
+  }, [modeDrivenThinking, currentModelEntry, currentThinking, activeTask, updateTaskMetadata, t]);
 
   const modelsByProvider = useMemo(() => {
     const groups: Record<string, ModelCatalogEntry[]> = {};
@@ -287,6 +298,25 @@ export function useChatSend(opts: UseChatSendOpts) {
     if (isMeetingTaskBusy(activeTask?.id)) {
       toast.error(t('meeting.taskBusy'));
       return;
+    }
+    // ⚠️ DOCX-205 合同（2026-10-10）B 块：**普通新请求按会话单飞**。
+    //    上一轮「真实执行终态」未到之前不发第二条 —— 键盘 Enter 也走这里
+    //    （按钮变"停止"并不意味着 Enter 被拦）。判据与托盘/任务行同源
+    //    （`deriveSessionActivity`：activeTurn + processingBySession）。
+    //    审批回应 / 工具提问 / 显式停止走各自路径，不受此门影响；
+    //    不同 session（不同任务）各自独立。主进程 `ws:send-message` 还有第二道门
+    //    （执行终态 + 交付 settled 的 run 锁），兜住不经此门的调用方。
+    if (activeTask) {
+      const liveState = useMessageStore.getState();
+      const liveActivity = deriveSessionActivity(
+        getTaskSessionKeys(activeTask, activeRoom),
+        liveState.activeTurnBySession,
+        liveState.processingBySession,
+      );
+      if (liveActivity !== 'idle') {
+        toast.error(t('chatInput.turnInFlight'));
+        return;
+      }
     }
     const sendLockKey = activeTask?.id ?? '__pending_task__';
     if (sendInFlightTaskIdsRef.current.has(sendLockKey)) return;
@@ -883,6 +913,14 @@ export function useChatSend(opts: UseChatSendOpts) {
         const sendMode = resolveEffectiveTaskMode(task);
         let effectiveModel = currentModel;
         let effectiveThinking: string = currentThinking;
+        /**
+         * 存量模式任务的一次性"已切换"提示内容（BUG-067 复验整改）：
+         * 发送前只**存下**目标 `{modelId, modelName}`；是否真的"已采用"在 composer
+         * 返回／抛错后按**任务行最新 model**（core 在模型 patch 成功后立即更新它）判定。
+         * `result.ok` 只代表整轮派发结果——"pin 成功但后续派发失败"同样返回 `ok:false`，
+         * 不能拿它当采用判据（会把这次告知静默吞掉）。
+         */
+        let modePolicyNotice: { modelId: string; modelName: string } | undefined;
         if (sendMode !== 'custom') {
           const policy = MODE_POLICY[sendMode];
           const catalogModelIds = modelCatalog.map((entry) => entry.id);
@@ -915,6 +953,18 @@ export function useChatSend(opts: UseChatSendOpts) {
           if (deckPlan.markTask) updateTaskMetadata(task.id, { deckRouted: true });
           // 目录里没有 DeepSeek（没拉到 / 下架）⇒ `route: false`：**保持现状、不拦截**。
           if (deckPlan.route && deckPlan.modelId) effectiveModel = deckPlan.modelId;
+
+          // 存量模式任务首次采用新策略 ⇒ 一次性模型/价格提示（判据与标记见 lib/mode-policy-notice.ts）。
+          // 判据用 deck 路由后的**最终**模型：老 PPT 粘性任务换的是渠道（新平台 ID），
+          // 提示要报实际会跑的那个模型，不能报模式档模型。
+          // ⚠️ 只存内容，不弹不记 —— 采用判定与提示都在发送结算后（见下 .finally，BUG-067）。
+          const policyModelId = deckPlan.route && deckPlan.modelId ? deckPlan.modelId : modeModelId;
+          if (policyModelId && shouldNotifyModePolicyChange({ sendMode, task, effectiveModelId: policyModelId })) {
+            modePolicyNotice = {
+              modelId: policyModelId,
+              modelName: modelCatalog.find((entry) => entry.id === policyModelId)?.name ?? policyModelId,
+            };
+          }
         }
         const hasImageAttachment = attachedFilesForIntent.some(
           (file) => classifyAttachmentFile(file.fileName, file.mimeType) === 'image',
@@ -943,21 +993,40 @@ export function useChatSend(opts: UseChatSendOpts) {
           }
         }
 
-        const result = await composer.send(task.id, {
-          content: finalContent,
-          // 首轮产物索引：发给模型，但**不进** store / 落库 / 气泡。
-          contextPrefix: contextPrefix || undefined,
-          attachments: allAttachments.length > 0 ? allAttachments : undefined,
-          messageAttachments: allMessageAttachments,
-          deferUserMessageUntilSent,
-          presetModel: effectiveModel,
-          // 模式任务：思考档由 `MODE_POLICY` 决定（composer 会对着模型的真实能力再校验一次，
-          // 不支持时回落到该模型自己的默认档）；custom / 旧会话：用户自己那一档。
-          presetThinking: effectiveThinking,
-          titleHint: task.title ? undefined : titleHint,
-          mentionAll: isMentionAll || undefined,
-          mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
-        });
+        const result = await composer
+          .send(task.id, {
+            content: finalContent,
+            // 首轮产物索引：发给模型，但**不进** store / 落库 / 气泡。
+            contextPrefix: contextPrefix || undefined,
+            attachments: allAttachments.length > 0 ? allAttachments : undefined,
+            messageAttachments: allMessageAttachments,
+            deferUserMessageUntilSent,
+            presetModel: effectiveModel,
+            // 模式任务：思考档由 `MODE_POLICY` 决定（composer 会对着模型的真实能力再校验一次，
+            // 不支持时回落到该模型自己的默认档）；custom / 旧会话：用户自己那一档。
+            presetThinking: effectiveThinking,
+            titleHint: task.title ? undefined : titleHint,
+            mentionAll: isMentionAll || undefined,
+            mentions: agentMentions.length > 0 && !isMentionAll ? agentMentions.map((a) => a.agentId) : undefined,
+          })
+          .finally(() => {
+            // 三档/采用结算：**按任务行最新 model 判定是否真的"已采用"**（core 在模型 patch
+            // 成功后立即更新它）——`ok` 只控派发结果，pin 成功但派发失败同样 ok:false，
+            // 不能拿 ok 当采用判据；此时模型已切换，用户必须收到这一条告知。
+            // finally 在 resolve／reject 时都执行；可选提示自带容错，
+            // 绝不改变发送结果或覆盖原始发送异常。
+            const notice = modePolicyNotice;
+            if (!notice) return;
+            try {
+              const adopted = useTaskStore.getState().tasks.find((item) => item.id === task.id);
+              if (typeof adopted?.model !== 'string') return;
+              if (!modelIdMatches(adopted.model, notice.modelId)) return;
+              toast.info(t('chatInput.modePolicyUpdated', { model: notice.modelName }));
+              markModePolicyNotified(task.id);
+            } catch {
+              /* 可选提示失败不得改变发送结果或覆盖原始发送异常 */
+            }
+          });
         if (!result.ok) return;
         if (result.partialFailure) {
           toast.warning(t('chatInput.partialSendFailed'), { description: result.partialFailure });
@@ -984,6 +1053,8 @@ export function useChatSend(opts: UseChatSendOpts) {
     }
   }, [
     activeTask,
+    // B 块单飞门用（`getTaskSessionKeys(activeTask, activeRoom)`；判据与托盘同源）。
+    activeRoom,
     // ⚠️ `pendingNewTask` **不在这个依赖数组里**：首轮产物索引切断后（2026-10-07 · 区 3），
     //    handleSend 体内已不再读它（离线判定/当前模型/思考档位那几处在 hook 顶层，各自成依赖）。
     commitPendingTask,
