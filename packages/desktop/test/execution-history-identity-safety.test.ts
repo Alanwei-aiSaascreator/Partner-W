@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecutionEvent } from '@clawwork/core';
@@ -308,5 +309,179 @@ describe('V-ID 回归护栏 · 正常原生键与既有合同不退化', () => {
     await h.flush();
     expect(await h.listRuns('s1')).toEqual(['run-new', 'run-old']);
     h.close();
+  });
+});
+
+/**
+ * 2026-10-14 第三轮 · V-final（Codex 第二轮残留合同边界）· **包络读头预算**。
+ *
+ * 残留边界（审查原文）：`isValidIdentity` 允许双引号，session/run 各允许 4096 UTF-8 字节；
+ * `JSON.stringify` 把每个 `"` 转义成 `\"`。两者都是 4096 个双引号时，首行包络 16504B
+ * 超过 `ENVELOPE_HEAD_BYTES = 16 KiB`：`readHeadLine` 截断 ⇒ `listRuns` 跳过该文件、
+ * 重启后的 writer 也核验不了自己写出的文件；而 `readRun` 全文件读又能读到 —— list/read 分裂。
+ *
+ * 修复口径：**按实际序列化包络字节**（实际 workspaceKey/sessionKey/runId + 固定字段 +
+ * createdAt 最大宽度余量）统一写入判据与读头预算，超预算 ⇒ 写入前明确拒绝该条 + 诊断
+ * （专属 reason，非 I/O 错误、不闩锁 writer、不影响后续条目）；读侧同一预算判定一致。
+ * 旧 base64/无包络文件维持原状（不做迁移）——身份无法核验即拒收，本档不改该边界。
+ */
+describe('V-final · 包络读头预算：超预算身份写入前拒收，listRuns/readRun 同一判据', () => {
+  /** 审查反例身份：每字段 4096 个双引号（身份字节数在 IDENTITY_MAX_BYTES 上限内）。 */
+  const QUOTE_BURST = '"'.repeat(4096);
+
+  function componentOf(identity: string): string {
+    return createHash('sha256').update(identity, 'utf8').digest('hex');
+  }
+
+  /**
+   * 包络预算专用 store：把队列/单条/单 run/目录四档预算**放大**，避免它们先于包络预算
+   * 生效（引号身份本身会把记录正文撑大，默认的 4096 单条预算会先拒收，掩盖被测判据）。
+   */
+  function makeEnvelopeStore(rootDir: string): InstrumentedStore {
+    return makeStore(rootDir, {
+      maxQueueBytes: 1024 * 1024,
+      maxEntryBytes: 256 * 1024,
+      maxRunBytes: 1024 * 1024,
+      maxDirBytes: 16 * 1024 * 1024,
+    });
+  }
+
+  it('⭐ 4096 个双引号（转义后包络 > 16 KiB 读头预算）⇒ 写入前拒绝该条：零文件、留诊断、writer 不闩锁', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'exec-history-quote-burst-'));
+    expect(Buffer.byteLength(QUOTE_BURST, 'utf8')).toBe(4096); // 身份本身在 4096 字节上限内
+    // 事实基线（逐字节算出来的）：这种身份的真实序列化包络超过读头预算
+    const envelopeBytes = Buffer.byteLength(
+      JSON.stringify({
+        __executionHistoryEnvelope: 1,
+        workspaceKey: WORKSPACE_KEY,
+        sessionKey: QUOTE_BURST,
+        runId: QUOTE_BURST,
+        createdAt: Date.now(),
+      }),
+      'utf8',
+    );
+    expect(envelopeBytes).toBeGreaterThan(16 * 1024);
+
+    const h = makeEnvelopeStore(root);
+    h.append(QUOTE_BURST, [makeRecord({ runId: QUOTE_BURST, eventId: 'q#0' })]);
+    await h.flush();
+
+    // ① 超预算身份不得落盘（写出自己 listRuns 无法识别的文件就是本缺陷）
+    expect(ndjsonFiles(root), '超预算身份不得产生任何 ndjson 文件').toEqual([]);
+    // ② 拒绝必须显式（专属诊断），不是静默丢弃
+    expect(
+      h.diagnostics.some((d) => d.reason === 'identity-envelope-budget'),
+      '超预算身份必须走显式诊断（不静默）',
+    ).toBe(true);
+    // ③ 不是 I/O 错误：不得闩锁 writer（recordDiskError 语义不变）
+    expect(h.diagnostics.filter((d) => d.reason === 'write-error')).toEqual([]);
+
+    // ④ listRuns / readRun 对同一预算判定一致（都不返回它）
+    expect(await h.listRuns(QUOTE_BURST)).toEqual([]);
+    expect((await h.readRun(QUOTE_BURST, QUOTE_BURST)).records).toEqual([]);
+
+    // ⑤ 不影响后续条目：正常身份照常写、读、列举
+    const mainKey = `agent:main:clawwork:task:${MAIN_UUID}`;
+    h.append(mainKey, [makeRecord({ runId: MAIN_UUID, eventId: 'after#0' })]);
+    await h.flush();
+    expect((await h.readRun(mainKey, MAIN_UUID)).records.map((r) => r.eventId)).toEqual(['after#0']);
+    expect(await h.listRuns(mainKey)).toEqual([MAIN_UUID]);
+
+    // ⑥ 重启后仍然一致：盘上不存在任何"写得出去、读不出来"的文件
+    await h.close();
+    const h2 = makeEnvelopeStore(root);
+    expect(await h2.listRuns(QUOTE_BURST)).toEqual([]);
+    expect((await h2.readRun(QUOTE_BURST, QUOTE_BURST)).records).toEqual([]);
+    expect((await h2.readRun(mainKey, MAIN_UUID)).records.map((r) => r.eventId)).toEqual(['after#0']);
+    h2.close();
+  });
+
+  it('⭐ 盘上既存的超预算包络文件（修复前构建写出）⇒ listRuns 与 readRun 同一判据：都拒收，不分裂', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'exec-history-legacy-oversize-'));
+    const h = makeEnvelopeStore(root);
+    // 按 writer 的物理路径公式手工放一个"修复前写出的"文件：首行 = 超预算包络，正文 runId 一致
+    const dir = join(root, WORKSPACE_KEY, componentOf(QUOTE_BURST));
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${componentOf(QUOTE_BURST)}.ndjson`);
+    writeFileSync(
+      file,
+      `${JSON.stringify({
+        __executionHistoryEnvelope: 1,
+        workspaceKey: WORKSPACE_KEY,
+        sessionKey: QUOTE_BURST,
+        runId: QUOTE_BURST,
+        createdAt: 1_000,
+      })}\n${JSON.stringify(makeRecord({ runId: QUOTE_BURST, eventId: 'x#0' }))}\n`,
+    );
+    expect(Buffer.byteLength(readFileSync(file, 'utf8').split('\n')[0], 'utf8')).toBeGreaterThan(16 * 1024);
+
+    // listRuns 的有界读头截断 ⇒ 跳过；readRun 必须同一预算拒收（旧实现此处返回整份正文 = 分裂）
+    expect(await h.listRuns(QUOTE_BURST), 'listRuns 不列举读不出来头的文件').toEqual([]);
+    expect(
+      (await h.readRun(QUOTE_BURST, QUOTE_BURST)).records,
+      'readRun 不得在 listRuns 看不见的文件上返回证词（同一预算判据）',
+    ).toEqual([]);
+    expect(
+      h.diagnostics.some((d) => d.reason === 'identity-mismatch'),
+      '读侧拒收同走既有诊断出口',
+    ).toBe(true);
+    h.close();
+  });
+
+  it('⭐ 预算边界按实际序列化字节：接近预算（4000 引号/字段）可写可读可列举，超预算（4096）拒收', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'exec-history-quote-edge-'));
+    // 双字段各 4000 引号：转义后 8000B×2 + 固定字段 ≈ 16.1 KiB（仍严格小于 16 KiB 预算）
+    const nearBudget = '"'.repeat(4000);
+    const nearRun = '"'.repeat(4000);
+    const h = makeEnvelopeStore(root);
+    h.append(nearBudget, [makeRecord({ runId: nearRun, eventId: 'near#0' })]);
+    await h.flush();
+
+    const [file] = ndjsonFiles(root);
+    expect(file, '接近预算的身份仍应落盘（不许一刀切拒收）').toBeTruthy();
+    const headLine = readFileSync(file, 'utf8').split('\n')[0];
+    expect(Buffer.byteLength(headLine, 'utf8'), '落盘首行必须在有界读头内完整可读').toBeLessThan(16 * 1024);
+
+    expect((await h.readRun(nearBudget, nearRun)).records.map((r) => r.eventId)).toEqual(['near#0']);
+    expect(await h.listRuns(nearBudget)).toEqual([nearRun]);
+    await h.close();
+
+    // 重启后：同一文件的 listRuns/readRun 一致（有界读头拿得到完整包络）
+    const h2 = makeEnvelopeStore(root);
+    expect((await h2.readRun(nearBudget, nearRun)).records.map((r) => r.eventId)).toEqual(['near#0']);
+    expect(await h2.listRuns(nearBudget)).toEqual([nearRun]);
+
+    // 同一实例内再写超预算身份（session/run 双字段都是 4096 引号）：拒收，且不影响上面这条 run
+    h2.append(QUOTE_BURST, [makeRecord({ runId: QUOTE_BURST, eventId: 'burst#0' })]);
+    await h2.flush();
+    expect(ndjsonFiles(root), '超预算身份仍不得落盘（只有 near 那一个文件）').toHaveLength(1);
+    expect((await h2.readRun(nearBudget, nearRun)).records.map((r) => r.eventId)).toEqual(['near#0']);
+
+    // 判据是**逐字节**（实际序列化包络），不是"见到引号就拒"：只有 session 是 4096 引号、
+    // runId 很短时包络仍在预算内 ⇒ 照常可写可读可列举。
+    const singleFieldBurst = '"'.repeat(4096);
+    h2.append(singleFieldBurst, [makeRecord({ runId: 'run-short', eventId: 'sf#0' })]);
+    await h2.flush();
+    expect(await h2.listRuns(singleFieldBurst)).toEqual(['run-short']);
+    expect((await h2.readRun(singleFieldBurst, 'run-short')).records.map((r) => r.eventId)).toEqual(['sf#0']);
+    h2.close();
+  });
+
+  it('⭐ 含少量引号的正常身份（引号本身不是非法字符）写→读→列举→重启一致', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'exec-history-quote-normal-'));
+    const sessionKey = `agent:main:"quoted":clawwork:task:${MAIN_UUID}`;
+    const runId = 'run-"q"-1';
+    const h = makeEnvelopeStore(root);
+    h.append(sessionKey, [makeRecord({ runId, eventId: 'q#1' })]);
+    await h.flush();
+    expect(h.diagnostics, '正常身份不得产生任何诊断').toEqual([]);
+    expect((await h.readRun(sessionKey, runId)).records.map((r) => r.eventId)).toEqual(['q#1']);
+    expect(await h.listRuns(sessionKey)).toEqual([runId]);
+    await h.close();
+
+    const h2 = makeEnvelopeStore(root);
+    expect((await h2.readRun(sessionKey, runId)).records.map((r) => r.eventId)).toEqual(['q#1']);
+    expect(await h2.listRuns(sessionKey)).toEqual([runId]);
+    h2.close();
   });
 });

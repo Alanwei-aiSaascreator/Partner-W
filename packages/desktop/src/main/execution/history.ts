@@ -56,6 +56,20 @@ import {
  * `/ \ .`）；**原身份不丢** —— 每个 run 文件首行是与事件同管道写入的版本化**身份包络**；
  * 读取/列举先验包络再解析事件（路径与正文 runId 都不足以定身份），不匹配 ⇒ 拒收 + 诊断。
  * 旧实现是**未发布特性** ⇒ 不做旧文件兼容读取（旧文件在其它物理路径上且无包络）。
+ *
+ * ## 2026-10-14 第三轮 · V-final（Codex 第二轮残留合同边界：读头预算）
+ *
+ * 身份校验（4096 字节上限）与有界读头（16 KiB）原本是**两条独立判据**：`isValidIdentity`
+ * 允许双引号，而 `JSON.stringify` 把每个 `"` 转义成 `\"` —— session/run 各 4096 个双引号时
+ * 首行包络 16504B > 16 KiB：`readHeadLine` 截断 ⇒ `listRuns` 跳过该文件、重启后的 writer
+ * 也核验不了自己写出的文件；而 `readRun`（全文件读）又能读到 ⇒ list/read 分裂。
+ *
+ * 现在：写入前按**实际序列化包络字节**（真实 workspaceKey/sessionKey/runId + 固定字段 +
+ * createdAt 上界宽度余量，判据即 `JSON.stringify` 结果，不是拍的预算数字）统一验限 ——
+ * 超预算 ⇒ 拒收该条 + 专属诊断 `identity-envelope-budget`（**不是 I/O 错误**，不闩锁
+ * writer、不影响后续条目）；`readRun` 在读侧用**同一预算**对称拒收修复前遗留的超预算文件。
+ * 本档未证原生正常负载会触发该边界（正常键 ~100B 包络）—— 修的是"写出自己无法识别的文件"。
+ * 旧无包络/base64 文件仍不做迁移读取（身份无法核验即拒收，边界如实保留）。
  */
 
 export interface ExecutionHistoryDiagnostic {
@@ -69,6 +83,7 @@ export interface ExecutionHistoryDiagnostic {
     | 'entry-budget'
     | 'invalid-key'
     | 'identity-mismatch'
+    | 'identity-envelope-budget'
     | 'retention';
   queueDepth?: number;
   queueBytes?: number;
@@ -159,6 +174,16 @@ const ENVELOPE_FIELD = '__executionHistoryEnvelope';
 const ENVELOPE_VERSION = 1;
 /** 包络/文件头**有界读取**上限（单条包络远小于它；杜绝全目录正文扫描）。 */
 const ENVELOPE_HEAD_BYTES = 16 * 1024;
+/**
+ * V-final（2026-10-14 第三轮）· createdAt 参与包络字节计算的**上界余量**。
+ *
+ * 身份校验发生在写入之前，此刻还没有真实的 createdAt；而包络的**实际序列化字节**
+ * （含 JSON 转义）必须能在有界读头内完整读出。毫秒时间戳的序列化宽度不会超过
+ * `Number.MAX_SAFE_INTEGER` 的宽度，用它参与计算即可保证：写入前接受的任何身份，
+ * 无论落盘瞬间的时间戳取何值，包络都仍在预算内。判据本身仍是真实 `JSON.stringify`
+ * 的结果（不是拍一个预算数字）。
+ */
+const ENVELOPE_CREATED_AT_MARGIN = Number.MAX_SAFE_INTEGER;
 
 interface RunFileEnvelope {
   workspaceKey: string;
@@ -174,6 +199,25 @@ interface RunFileEnvelopeLine extends RunFileEnvelope {
 /** 身份 → 物理组件：sha256 小写 hex（定长 64、单大小写）。append/read/list 同一映射。 */
 function identityComponent(identity: string): string {
   return createHash('sha256').update(identity, 'utf8').digest('hex');
+}
+
+/** 身份包络对象 —— 写入与字节判据**同一定义**，保证验限与落盘内容逐字节同源。 */
+function buildEnvelope(
+  workspaceKey: string,
+  sessionKey: string,
+  runId: string,
+  createdAt: number,
+): RunFileEnvelopeLine {
+  return { __executionHistoryEnvelope: ENVELOPE_VERSION, workspaceKey, sessionKey, runId, createdAt };
+}
+
+/**
+ * 一行文本的**实际 UTF-8 字节数**是否严格小于有界读头预算（写侧预检与读侧判据共用的
+ * 唯一谓词）。`readHeadLine` 最多读 `ENVELOPE_HEAD_BYTES` 字节再找首个换行 ⇒ 行的字节数
+ * 必须**严格小于**预算，换行才落在窗口内（CRLF 亦然：`\r` 只会计入行长）。
+ */
+function headLineFitsBudget(line: string): boolean {
+  return Buffer.byteLength(line, 'utf8') < ENVELOPE_HEAD_BYTES;
 }
 
 /**
@@ -328,6 +372,19 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   }
 
   /**
+   * V-final · **写入前的包络预算判据**（与 `listRuns`/`readRun` 的有界读头同一预算）。
+   *
+   * 按**实际序列化包络字节**计算（含 JSON 转义：每个 `"` → `\"`，中文 → UTF-8 多字节），
+   * createdAt 用上界余量。超预算 ⇒ 该 (sessionKey, runId) 绝不落盘 —— 写出去的文件
+   * `readHeadLine` 会截断，`listRuns` 看不见、重启后的 writer 也核验不了它。
+   */
+  function envelopeBudgetExceeded(sessionKey: string, runId: string): boolean {
+    return !headLineFitsBudget(
+      JSON.stringify(buildEnvelope(options.workspaceKey, sessionKey, runId, ENVELOPE_CREATED_AT_MARGIN)),
+    );
+  }
+
+  /**
    * 落盘前的身份包络保证（与事件**同一管道**：在 writeOne 内、串行 pendingWrites 上）：
    * - 文件不存在/为空 ⇒ 先写包络行（**永远第 1 行**），再写事件；
    * - 已有文件 ⇒ 只读文件头核验包络（**有界**，不读正文）；不匹配 ⇒ 拒写本条 +
@@ -340,13 +397,7 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     if (cached) return cached === 'ok';
     const head = await readHeadLine(filePath);
     if (head === null) {
-      const envelope: RunFileEnvelopeLine = {
-        __executionHistoryEnvelope: ENVELOPE_VERSION,
-        workspaceKey: options.workspaceKey,
-        sessionKey: entry.sessionKey,
-        runId: entry.runId,
-        createdAt: now(),
-      };
+      const envelope = buildEnvelope(options.workspaceKey, entry.sessionKey, entry.runId, now());
       await appendFile(filePath, `${JSON.stringify(envelope)}\n`, 'utf8');
       runFileIdentity.set(runKey, 'ok');
       return true;
@@ -612,6 +663,20 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
         diagnostic({ source: 'execution-history', reason: 'invalid-key', message: record.runId });
         continue;
       }
+      // V-final：身份合法 ≠ 包络落盘后可核验 —— 身份上限（4096 字节）允许双引号，而
+      // JSON 转义把每个 `"` 变成 `\"`，病态身份足以把首行包络撑过 16 KiB 读头预算。
+      // 这种文件写出去就再也读不回来（`listRuns` 截断跳过、重启后 writer 也核验不了），
+      // 因此**按实际序列化包络字节**在写入前拒收该条：专属诊断、不闩锁 writer（不是
+      // I/O 错误）、不影响后续条目与其它身份。
+      if (envelopeBudgetExceeded(sessionKey, record.runId)) {
+        diagnostic({
+          source: 'execution-history',
+          reason: 'identity-envelope-budget',
+          runId: record.runId,
+          message: `envelope line >= ${ENVELOPE_HEAD_BYTES} bytes`,
+        });
+        continue;
+      }
       enqueue({
         sessionKey,
         runId: record.runId,
@@ -648,6 +713,19 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     // 第二轮 V：**先验身份包络，再解析事件** —— 路径与正文 runId 都不足以定身份。
     // 包络缺失（旧格式/外来文件）或不属于本 workspace/session/run ⇒ 整体拒收（不返回
     // 半份"疑似"证据）并显式记诊断；`evidence.gap` 等正记录只可能存在于已核验文件内。
+    //
+    // V-final：读侧与写侧**同一预算** —— 首行包络超出有界读头（本不该落盘，例如修复前
+    // 构建写出的文件）时 `listRuns` 会截断跳过；`readRun` 也必须在同一判据上拒收，否则
+    // 同一文件"列不出来、却能读出整份证词"（第二轮 V 残留的 list/read 分裂）。
+    if (!headLineFitsBudget(lines[0])) {
+      diagnostic({
+        source: 'execution-history',
+        reason: 'identity-mismatch',
+        runId,
+        message: 'run file envelope exceeds head budget',
+      });
+      return emptyRead(sessionKey, runId);
+    }
     if (!envelopeMatches(parseEnvelope(lines[0]), sessionKey, runId)) {
       diagnostic({
         source: 'execution-history',
