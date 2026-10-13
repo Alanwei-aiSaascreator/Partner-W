@@ -1193,8 +1193,16 @@ function finalizeAssistantArtifacts(input: {
         //    只换"从哪读"，write/edit 的 sinceMs 新鲜度守卫一字不放。
         currentNativeInput =
           nativeInputFromCompletedWrites(receiptWorkspace, tools, { sinceMs: run.createdAt }) ?? undefined;
-      } catch {
-        if (run.nativeControlled) nativeDiagnostics = [{ code: 'native-current-input-unavailable' }];
+      } catch (err) {
+        if (run.nativeControlled) {
+          // ⭐ BUG-058④ 接线（2026-10-13）：mtime 平局的 `native-input-ambiguous` 携带**具体
+          //    下一步**（并列文件名 + 显式 target 指引）——旧 catch 把一切压成固定码，会把
+          //    这份可执行指引吞掉。按错误码分流：歧义保留原文（喂模型），其余仍归 unavailable。
+          const message = err instanceof Error ? err.message : '';
+          nativeDiagnostics = message.startsWith('native-input-ambiguous')
+            ? [{ code: 'native-input-ambiguous', message }]
+            : [{ code: 'native-current-input-unavailable' }];
+        }
       }
     }
     // A same-task parent alone does not turn weather or plain chat into PPT work. Actual current-run evidence does.
