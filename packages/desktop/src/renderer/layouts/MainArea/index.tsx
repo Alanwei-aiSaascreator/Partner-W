@@ -1154,7 +1154,7 @@ export function ChatContent({
                           highlighted={message.id === highlightedId}
                           onHighlightDone={handleHighlightDone}
                           onImageClick={setLightboxSrc}
-                          onRetry={() => retryLastTurn(message.id)}
+                          onRetry={retryLastTurn}
                         />
                       );
                     }
@@ -1178,7 +1178,7 @@ export function ChatContent({
                         onImageClick={setLightboxSrc}
                         onFileClick={setPreviewFile}
                         retryable={message.id === retryableErrorMessageId}
-                        onRetry={() => retryLastTurn(message.id)}
+                        onRetry={retryLastTurn}
                       />
                     );
                   }

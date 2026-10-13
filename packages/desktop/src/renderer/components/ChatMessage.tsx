@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { Message } from '@clawwork/shared';
 import { Check, Copy, FileCode, Loader2, Save } from 'lucide-react';
@@ -39,8 +39,13 @@ interface ChatMessageProps {
    * ⚠️ 组件**同时**要求 `onRetry` 才渲染按钮：缺一个都不给，点了没反应的按钮比没有更糟。
    */
   retryable?: boolean;
-  /** 点「重试」要做什么（重发上一条用户消息 —— 由调用方决定，组件不碰发送）。 */
-  onRetry?: () => void;
+  /**
+   * 点「重试」要做什么（重发上一条用户消息 —— 由调用方决定，组件不碰发送）。
+   *
+   * ⭐ BUG-075（2026-10-13）：把 **messageId 交给回调**（调用方直传稳定的 `retryLastTurn`）——
+   *    旧形态是调用方内联 `() => retryLastTurn(id)`，每次渲染都是新函数引用 ⇒ 击穿本组件 memo。
+   */
+  onRetry?: (messageId: string) => void;
   /**
    * 本人画像的六角色 code（来自 App 下发的 profile；`MainArea` 传进来）。
    *
@@ -125,7 +130,8 @@ const ChatMessage = memo(function ChatMessage({
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const ref = useRef<HTMLDivElement>(null);
-  const parsedFiles = isUser ? parseFileBlocks(message.content) : null;
+  // ⭐ BUG-075（2026-10-13）：正则全文解析只在正文变化时重跑（思考流每快照重渲不再重扫全文）。
+  const parsedFiles = useMemo(() => (isUser ? parseFileBlocks(message.content) : null), [isUser, message.content]);
   const [copied, setCopied] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
@@ -230,7 +236,7 @@ const ChatMessage = memo(function ChatMessage({
                 'type-support shrink-0 rounded-full px-2 py-0.5 font-medium',
                 'text-[var(--accent)] hover:bg-[var(--bg-hover)] transition-colors glow-focus',
               )}
-              onClick={() => onRetry?.()}
+              onClick={() => onRetry?.(message.id)}
             >
               {t('common.retry')}
             </button>

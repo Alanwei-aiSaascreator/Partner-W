@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,7 @@ export interface ThinkingCollapseProps {
  * 惰性正文：live 或被用户展开之前不渲染正文节点（长 CoT 性能；定稿不闪重排）。
  * 样式全部在 `theme.css` 的 `.thinking-collapse*` / `.text-shimmer`（gate 豁免文件）。
  */
-export default function ThinkingCollapse({ text, phase, segment = 0, paused = false }: ThinkingCollapseProps) {
+function ThinkingCollapse({ text, phase, segment = 0, paused = false }: ThinkingCollapseProps) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const prevPhase = useRef(phase);
@@ -61,10 +61,16 @@ export default function ThinkingCollapse({ text, phase, segment = 0, paused = fa
   }, [segment]);
 
   // 流式进行中跟随最新一行（防止长推理把新内容藏在滚动区外）。
+  // ⭐ BUG-075（2026-10-13）：同一帧内的多次快照用 rAF 合并成一次滚动写入 ——
+  //    原来每个快照直接写 scrollTop 会强制同步布局，20+/秒的思考流下这里是主线程热点之一。
   useEffect(() => {
     if (phase !== 'live') return;
     const el = bodyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [text, phase]);
 
   if (!text.trim()) return null;
@@ -106,3 +112,7 @@ export default function ThinkingCollapse({ text, phase, segment = 0, paused = fa
     </div>
   );
 }
+
+// ⭐ BUG-075（2026-10-13）：思考流每快照都会重渲这一块 —— memo 是"父组件无辜重渲"时的最后一道闸
+//（props 全是原始值，浅比较即可正确跳过）。
+export default memo(ThinkingCollapse);

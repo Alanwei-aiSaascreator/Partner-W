@@ -35,7 +35,8 @@ export interface AssistantFinalizedBodyProps {
   message: Message;
   agentName?: string;
   onImageClick?: (src: string) => void;
-  onRetry?: () => void;
+  /** ⭐ BUG-075（2026-10-13）：带 messageId 的稳定引用（见 `ChatMessage` 同名字段注释）。 */
+  onRetry?: (messageId: string) => void;
 }
 
 export function AssistantFinalizedBody({ message, agentName, onImageClick, onRetry }: AssistantFinalizedBodyProps) {
@@ -149,7 +150,13 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
       ) : null}
       {/* BUG-026：把**真实**重试通道传下去 —— 工具失败"无法继续"时才有「重新尝试」按钮
           （没有回调就不给假按钮，见 ToolCallSummary 的 props 注释）。 */}
-      {message.toolCalls.length > 0 && <ToolCallSummary toolCalls={message.toolCalls} settled onRetry={onRetry} />}
+      {message.toolCalls.length > 0 && (
+        <ToolCallSummary
+          toolCalls={message.toolCalls}
+          settled
+          onRetry={onRetry ? () => onRetry(message.id) : undefined}
+        />
+      )}
       {!hasVisibleAnswer ? (
         <div
           data-testid="assistant-no-visible-answer"
@@ -162,7 +169,7 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
               type="button"
               data-testid="assistant-empty-retry"
               title={t('chatMessage.retryHint')}
-              onClick={onRetry}
+              onClick={() => onRetry?.(message.id)}
               className="font-medium text-[var(--accent)] underline-offset-4 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('common.retry')}
@@ -289,7 +296,8 @@ export type AssistantBlockProps = {
       /** 定稿：正文已经落在这条正式消息上。 */
       state: 'finalized';
       message: Message;
-      onRetry?: () => void;
+      /** ⭐ BUG-075（2026-10-13）：带 messageId 的稳定引用（见 `ChatMessage` 同名字段注释）。 */
+      onRetry?: (messageId: string) => void;
     }
 );
 
