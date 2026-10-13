@@ -41,6 +41,9 @@ vi.mock('../src/main/artifact/auto-extract.js', () => ({
 vi.mock('../src/main/db/index.js', () => ({
   getDb: getDbMock,
   isDbReady: vi.fn(() => true),
+  // V3-artifact（2026-10-14）：交付操作捕获路径会经 ownership 门读 getSqlite ——
+  // 本档不涉库上下文（null 两端相等 ⇒ 归属门放行，与其它套件同款桩）。
+  getSqlite: vi.fn(() => null),
 }));
 
 describe('registerDataHandlers', () => {

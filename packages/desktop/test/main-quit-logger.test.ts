@@ -26,6 +26,8 @@ function loadQuitHandler(close: () => Promise<void>) {
     // （这个桩不推 order）。
     destroyRelayLiveness: vi.fn(),
     teardownAnalytics: vi.fn(),
+    // V4（2026-10-14）：执行历史 writer 停表 —— 同"显式依赖白名单"（不推 order）。
+    stopExecutionHistory: vi.fn(),
     shutdownLocalGatewayRuntime: () => Promise.resolve(),
     destroyAllGateways: () => order.push('gateways'),
     destroyTray: () => order.push('tray'),

@@ -79,7 +79,20 @@ vi.mock('../src/renderer/layouts/EntryPreparation', async (importOriginal) => {
 });
 vi.mock('../src/renderer/components/ApprovalDialog', () => ({ default: () => null }));
 vi.mock('../src/renderer/components/CommandPalette', () => ({ default: () => null }));
-vi.mock('../src/renderer/platform', () => ({ composer: {} }));
+vi.mock('../src/renderer/platform', () => {
+  // V3-artifact（2026-10-14）：App 新增的结算通知 hook 经 stores/messageStore 的**转出口**
+  // 以函数形态调用 useMessageStore —— 补最小同形桩（选择器 + getState/subscribe）。
+  // executionBySession 恒空 ⇒ 通知路径不可达（这些账号竞态用例不涉及交付结算）。
+  const messageState = { executionBySession: {} as Record<string, unknown> };
+  const useMessageStore = (selector?: (state: typeof messageState) => unknown) =>
+    selector ? selector(messageState) : messageState;
+  Object.assign(useMessageStore, {
+    getState: () => messageState,
+    setState: () => {},
+    subscribe: () => () => {},
+  });
+  return { composer: {}, useMessageStore };
+});
 vi.mock('../src/renderer/stores/uiStore', () => {
   const state = {
     defaultGatewayId: 'local-runtime',
@@ -156,6 +169,12 @@ vi.mock('../src/renderer/hooks/useVideogenFailureToast', () => ({ useVideogenFai
 vi.mock('../src/renderer/hooks/useSlidegenToast', () => ({ useSlidegenToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useClaimGuardToast', () => ({ useClaimGuardToast: vi.fn() }));
 vi.mock('../src/renderer/hooks/useDeliveryActivitySubscription', () => ({ useDeliveryActivitySubscription: vi.fn() }));
+// V3/V4（2026-10-14）：与上面同族 App 级 hook 一视同仁地 mock —— 账号竞态用例不涉及
+// 执行事件订阅与本地历史恢复（真实实现要在 store 里走 tasks/db，超出本档断面）。
+vi.mock('../src/renderer/hooks/useExecutionEventsSubscription', () => ({
+  useExecutionEventsSubscription: vi.fn(),
+  useExecutionHistoryRecovery: vi.fn(),
+}));
 vi.mock('../src/renderer/hooks/useAutoRetryFailedTurn', () => ({ useAutoRetryFailedTurn: vi.fn() }));
 vi.mock('../src/renderer/lib/gateway-disappearance', () => ({ useGatewayDisappearanceNotice: vi.fn() }));
 

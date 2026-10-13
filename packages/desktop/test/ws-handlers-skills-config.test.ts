@@ -100,6 +100,8 @@ vi.mock('../src/main/ipc/data-handlers.js', () => ({
   bindArtifactRun: bindArtifactRunMock,
   cancelArtifactRun: cancelArtifactRunMock,
   cancelArtifactRunsForSession: cancelArtifactRunsForSessionMock,
+  // V3-artifact（2026-10-14）：停止事件的 run 归属查询（本文件默认"无绑定轮次"⇒ 不带归属）。
+  currentGatewayRunIdForSession: vi.fn(() => undefined),
 }));
 
 // ⚠️ **部分** mock（`importOriginal` 铺底）：整包替换会让"主进程代码新引用了某个

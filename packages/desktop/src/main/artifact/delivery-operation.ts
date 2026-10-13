@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactDeliveryTerminalStatus } from '@clawwork/shared';
 import { getWorkspaceScope } from '../workspace/scope.js';
+import { captureDeliveryActivityOwner, isDeliveryActivityOwnerCurrent } from '../db/delivery-activities.js';
 import { beginArtifactDeliveryActivity } from './delivery-activity.js';
 import type { ArtifactActivityCallback } from './activity-callback.js';
 import { emitMainExecutionEvents } from './execution-events.js';
@@ -49,10 +50,23 @@ export function captureArtifactDeliveryOperation(identity: {
     runId: captured.runId,
     gatewayId: captured.gatewayId,
   };
+  // ⭐ 归属门（2026-10-14 集成修正，语义与 delivery-activity 兄弟通道对齐）：owner 替换
+  //    （换库/换盘/换账号）后，旧流水线无论如何都不再向渲染层广播执行事件。
+  //    判据 = scope+revision 快照等值（捕获后未被替换） + database 身份/licenseGeneration/binding。
+  //    注意不要求 scope 非空：无库单测上下文（null==null、revision 未变）照常广播。
+  const activityOwner = captureDeliveryActivityOwner();
+  const ownsWorkspace = (): boolean => {
+    const current = getWorkspaceScope();
+    return (
+      current.scope === owner.scope &&
+      current.revision === owner.revision &&
+      isDeliveryActivityOwnerCurrent(activityOwner)
+    );
+  };
   const operationId = randomUUID();
   let operation: ReturnType<typeof beginArtifactDeliveryActivity>;
   let ended = false;
-  emitMainExecutionEvents(eventIdentity, [{ type: 'delivery.started', payload: { operationId } }]);
+  if (ownsWorkspace()) emitMainExecutionEvents(eventIdentity, [{ type: 'delivery.started', payload: { operationId } }]);
   return {
     operationId,
     phase: (phase, progress) => {
@@ -60,7 +74,7 @@ export function captureArtifactDeliveryOperation(identity: {
       if (operation) operation.phase(phase, progress);
       else {
         operation = beginArtifactDeliveryActivity({ ...captured, owner, operationId }, phase, progress);
-        if (operation)
+        if (operation && ownsWorkspace())
           emitMainExecutionEvents(eventIdentity, [{ type: 'delivery.phase', payload: { operationId, phase } }]);
       }
     },
@@ -68,9 +82,10 @@ export function captureArtifactDeliveryOperation(identity: {
       if (ended) return;
       ended = true;
       operation?.finish(status);
-      emitMainExecutionEvents(eventIdentity, [
-        { type: 'delivery.settled', payload: { operationId, outcome: settlementOutcome(status) } },
-      ]);
+      if (ownsWorkspace())
+        emitMainExecutionEvents(eventIdentity, [
+          { type: 'delivery.settled', payload: { operationId, outcome: settlementOutcome(status) } },
+        ]);
     },
   };
 }
