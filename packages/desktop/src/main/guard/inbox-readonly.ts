@@ -32,9 +32,23 @@
  *
  * ## 规则（不需要意图判断）
  *
- * `inbox` **恒只读**：write / edit / apply_patch 的目标路径里出现 `inbox` 目录段
- * （canonical 判定：分隔符归一、`.`/`..` 折叠、win32 大小写不敏感、symlink 走 realpath）
- * 一律拒绝。相对路径不需要 cwd —— 路径里的 `inbox` 段在解析后不可能消失。
+ * `inbox` **恒只读**：write / edit / apply_patch（Add / Update / Delete / Move 四个
+ * `***` 目标）里出现 `inbox` 目录段一律拒绝。判定分三层（BUG-056①）：
+ *
+ * 1. **字面段**：分隔符归一、`.`/`..` 折叠、win32 大小写不敏感 + **段尾点/空格归一**
+ *    （win32 上 `inbox.` / `inbox ` 与 `inbox` 是同一个目录；Node 的 `\\?\` 路径
+ *    不会替我们归一，实测 `realpath('inbox.')` 直接 ENOENT —— 两边都不能漏）。
+ * 2. **canonical 段**：绝对路径（以及宿主已解析为绝对的 `derivedPaths`）把
+ *    **最深已存在祖先** realpath 掉再拼未创建的后缀 —— symlink/junction 别名、
+ *    "新文件的父目录是链接"都在这里拦下。
+ * 3. **可信 cwd**：相对路径**只在宿主提供可信 cwd 时**按它解析（与执行器同一
+ *    `path.resolve` 语义）。**没有可信 cwd 就只做第 1 层字面判定，绝不拿
+ *    `process.cwd()` 去猜** —— 猜错会同时制造误杀和漏杀。
+ *    ⚠️ 随包内核 2026.9.3 的 `before_tool_call` 事件**不带** cwd（证据：
+ *    `openclaw/dist/plugin-entry-*.d.ts` 的 `PluginHookBeforeToolCallEvent` 与内核
+ *    `agent-tools.before-tool-call-*.mjs` 的事件构造处），所以第 3 层在当今内核上
+ *    是"契约就绪、等宿主给"；给 cwd 的接线一旦落地即自动生效（见 BUG-056 报告 §6）。
+ *
  * 读工具（read / ls）不受影响；正常输出路径（任务根、out/、生成目录）不含 `inbox` 段，
  * 不受影响。
  *
@@ -68,7 +82,10 @@ export function inboxReadonlyPolicyDir(stateDir: string): string {
 export const INBOX_READONLY_PLUGIN_ENTRY = `// 荣盈魔方 · 导入收件箱只读守卫（由应用生成，请勿手改）
 //
 // 规则：write / edit / apply_patch 的目标路径里出现 inbox 目录段一律拒绝。
-// 判定用 canonical 路径：分隔符归一、. / .. 折叠、win32 大小写不敏感、symlink 走 realpath。
+// 判定三层：①字面段（分隔符归一、. / .. 折叠、win32 大小写不敏感 + 段尾点/空格归一）
+// ②绝对路径（含宿主给的 derivedPaths）取最深已存在祖先 realpath 再判
+// ③相对路径只在宿主提供可信 cwd（event.cwd / ctx.cwd）时按它解析 ——
+//   没有可信 cwd 就只做①，绝不拿 process.cwd 去猜。
 import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 
@@ -87,6 +104,16 @@ function isWindows() {
   return process.platform === 'win32';
 }
 
+/**
+ * Windows 上段的**段尾点/空格**没有意义（Win32 会剥掉它们，"inbox." 就是 "inbox"）；
+ * Node 的 fs 走 \\\\?\\ 前缀又**不会**替我们剥 —— 实测 realpath("inbox.") 直接 ENOENT，
+ * 所以字面判定必须自己归一。POSIX 不动（"inbox." 是合法且不同的名字）。
+ */
+function normalizeSegment(segment) {
+  if (!isWindows()) return segment;
+  return segment.replace(/[ .]+$/, '').toLowerCase();
+}
+
 function splitSegments(value) {
   const text = String(value).replace(/\\\\/g, '/');
   const segments = [];
@@ -102,7 +129,7 @@ function splitSegments(value) {
 }
 
 function hasInboxSegment(segments) {
-  return segments.some((segment) => (isWindows() ? segment.toLowerCase() : segment) === 'inbox');
+  return segments.some((segment) => normalizeSegment(segment) === 'inbox');
 }
 
 /** realpath 最深的已存在祖先 + 尚未创建的后缀（symlink 别名也按 canonical 判）。 */
@@ -123,10 +150,26 @@ function canonicalSegments(target) {
   return splitSegments(absolute);
 }
 
-function targetIsReadonlyInbox(rawTarget) {
+/** 宿主（内核）给的可信工具 cwd —— 只在**是绝对路径**时才算数；不接受任何猜测来源。 */
+function trustedCwdOf(event, context) {
+  const candidates = [event && event.cwd, context && context.cwd];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim() && isAbsolute(candidate.trim())) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
+function targetIsReadonlyInbox(rawTarget, trustedCwd) {
   if (typeof rawTarget !== 'string' || !rawTarget.trim()) return false;
   if (hasInboxSegment(splitSegments(rawTarget))) return true;
-  return isAbsolute(rawTarget) && hasInboxSegment(canonicalSegments(rawTarget));
+  const absoluteTarget = isAbsolute(rawTarget)
+    ? resolve(rawTarget)
+    : trustedCwd
+      ? resolve(trustedCwd, rawTarget)
+      : null;
+  return absoluteTarget !== null && hasInboxSegment(canonicalSegments(absoluteTarget));
 }
 
 function writeTargetsOf(params, derivedPaths) {
@@ -146,10 +189,13 @@ function writeTargetsOf(params, derivedPaths) {
   return targets;
 }
 
-const handler = (event) => {
+const handler = (event, context) => {
   if (!event || !WRITE_TOOLS.has(event.toolName)) return undefined;
   const params = event.params && typeof event.params === 'object' ? event.params : {};
-  const hit = writeTargetsOf(params, event.derivedPaths).find(targetIsReadonlyInbox);
+  const trustedCwd = trustedCwdOf(event, context);
+  const hit = writeTargetsOf(params, event.derivedPaths).find((target) =>
+    targetIsReadonlyInbox(target, trustedCwd),
+  );
   if (!hit) return undefined;
   return { block: true, blockReason: BLOCK_REASON };
 };

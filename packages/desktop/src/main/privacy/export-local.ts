@@ -2,6 +2,7 @@ import { dialog } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { desc, sql } from 'drizzle-orm';
+import { isSecretKeyName } from '@clawwork/shared';
 import { getDb, isDbReady } from '../db/index.js';
 import { artifacts, messages, tasks } from '../db/schema.js';
 import { readConfig } from '../workspace/config.js';
@@ -117,11 +118,21 @@ function sessionIndexRow(task: Record<string, unknown>): Record<string, unknown>
 
 /**
  * 键名脱敏：任何**键名**命中敏感词、或值是 `enc:` 密文的字段一律剔除。
- * 与 debug logger 的 `SECRET_KEY_RE` 同一套纪律，是白名单之外的**最后一道闸**
- * （命中一律写进 notes，不静默）。
+ *
+ * ⚠️ 公共词族（token/password/secret/authorization/cookie/pairingcode/bootstraptoken/
+ *    api[_-]?key/relay[_-]?key）**复用** `@clawwork/shared` 的 `isSecretKeyName` ——
+ *    日志脱敏与导出脱敏必须是同一份规则（BUG-056⑤：relay key 以 `apiKey` 键写进
+ *    网关配置，两边曾各写各的、两边都漏）。这里额外加的只有**导出独有**的词：
+ *    license / anon key / pairing / credential（导出会碰到卡密与账号字段）。
+ *
+ * 这是白名单之外的**最后一道闸**（命中一律写进 notes，不静默）。
  */
-const SECRET_KEY_RE =
-  /(token|password|secret|license|anon[_-]?key|api[_-]?key|pairing|credential|authorization|cookie)/i;
+const EXPORT_ONLY_SECRET_KEY_RE = /(license|anon[_-]?key|pairing|credential)/i;
+
+/** 导出用的完整键名规则 = 公共规则（与日志同源）+ 导出独有词。导出可见，供测试钉一致性。 */
+export function isSecretKeyNameForExport(key: string): boolean {
+  return isSecretKeyName(key) || EXPORT_ONLY_SECRET_KEY_RE.test(key);
+}
 
 function stripSecretKeys(value: unknown, path: string, hits: string[]): unknown {
   if (Array.isArray(value)) {
@@ -132,7 +143,7 @@ function stripSecretKeys(value: unknown, path: string, hits: string[]): unknown 
   const out: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
     const childPath = path ? `${path}.${key}` : key;
-    if (SECRET_KEY_RE.test(key) || (typeof child === 'string' && child.startsWith('enc:'))) {
+    if (isSecretKeyNameForExport(key) || (typeof child === 'string' && child.startsWith('enc:'))) {
       hits.push(childPath);
       continue;
     }

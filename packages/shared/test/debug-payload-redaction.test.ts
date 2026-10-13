@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { REDACTED_CONTENT, sanitizeForLog, summarizePayload } from '../src/debug.js';
+import { REDACTED_CONTENT, isSecretKeyName, sanitizeForLog, summarizePayload } from '../src/debug.js';
 
 /** 与既有 `debug-observability.test.ts` 里的字面量一致（那是**密钥**被摘的标记）。 */
 const REDACTED = '***redacted***';
@@ -111,5 +111,90 @@ describe('负对照 —— 别把诊断信息一起摘掉（摘错了比不摘�
     expect(out.token).toBe(REDACTED);
     expect(out.authorization).toBe(REDACTED);
     expect(out.note).toBe('x'.repeat(500) + '…<truncated len=900>');
+  });
+});
+
+/**
+ * BUG-056⑤：密钥键名家族缺口 —— 原正则只有 token/password/secret/authorization/cookie/
+ * pairingcode/bootstraptoken，**不含 apiKey / relayKey**。
+ *
+ * ⚠️ 口径：这是**机制缺口**（relay key 以 `apiKey` 键写入网关配置，见
+ *    `main/commercial/relay-config.ts`），本组测试不声称已发生泄漏。
+ */
+describe('BUG-056⑤ —— apiKey / relayKey 家族（含大小写与分隔符变体）必须被摘', () => {
+  const SECRET_KEYS: Record<string, string> = {
+    apiKey: 'sk-family-1',
+    APIKEY: 'sk-family-2',
+    ApiKey: 'sk-family-3',
+    api_key: 'sk-family-4',
+    API_KEY: 'sk-family-5',
+    'api-key': 'sk-family-6',
+    relayKey: 'rly-family-1',
+    RelayKey: 'rly-family-2',
+    RELAY_KEY: 'rly-family-3',
+    relay_key: 'rly-family-4',
+    'relay-key': 'rly-family-5',
+  };
+
+  it('⭐ 键名家族一个不漏：每种写法对应的值都不落盘', () => {
+    const out = JSON.stringify(sanitizeForLog(SECRET_KEYS));
+
+    for (const [key, secret] of Object.entries(SECRET_KEYS)) {
+      expect(out, `键 ${key} 的密钥漏了`).not.toContain(secret);
+    }
+    expect(out.match(/\*\*\*redacted\*\*\*/g) ?? []).toHaveLength(Object.keys(SECRET_KEYS).length);
+  });
+
+  it('深层 object / array 里的变体同样命中（不看深度）', () => {
+    const frame = {
+      data: {
+        gateways: [{ config: { apiKey: 'deep-secret-1' } }],
+        snapshot: [{ relay_key: 'deep-secret-2' }],
+      },
+    };
+
+    const out = JSON.stringify(sanitizeForLog(frame));
+
+    expect(out).not.toContain('deep-secret-1');
+    expect(out).not.toContain('deep-secret-2');
+  });
+
+  it('公共规则以函数形式导出：`isSecretKeyName` 与 sanitize 的行为同源', () => {
+    for (const key of Object.keys(SECRET_KEYS)) expect(isSecretKeyName(key), key).toBe(true);
+    for (const key of ['token', 'password', 'secret', 'authorization', 'cookie', 'pairingCode', 'bootstrapToken']) {
+      expect(isSecretKeyName(key), key).toBe(true);
+    }
+  });
+
+  it('⭐ 负对照：正常业务字段不误抹（键名里出现 key/api 但不是密钥名）', () => {
+    const business = {
+      apiVersion: 'v1',
+      capacity: 42,
+      keyboard: 'ctrl',
+      monkey: 'chunky',
+      keyResult: 'ok',
+      relayLatency: 12,
+      apiName: 'catalog',
+    };
+
+    const out = summarizePayload(business) as Record<string, unknown>;
+
+    expect(out).toMatchObject(business);
+    expect(JSON.stringify(out)).not.toContain(REDACTED);
+  });
+
+  it('⭐ 不修改原对象：脱敏返回新对象，输入逐字不变', () => {
+    const input = {
+      apiKey: 'sk-keep-original',
+      nested: { relayKey: 'rly-keep-original', list: [{ api_key: 'sk-nested' }] },
+    };
+    const snapshot = JSON.stringify(input);
+
+    const out = sanitizeForLog(input);
+
+    expect(JSON.stringify(input), '脱敏不得原地改写调用方的对象').toBe(snapshot);
+    expect(out).not.toBe(input);
+    expect(JSON.stringify(out)).not.toContain('sk-keep-original');
+    expect(JSON.stringify(out)).not.toContain('rly-keep-original');
   });
 });

@@ -26,6 +26,14 @@ interface BeforeToolCallEvent {
   toolName: string;
   params: Record<string, unknown>;
   derivedPaths?: string[];
+  /**
+   * 宿主（内核）提供的可信工具 cwd —— 相对路径按它解析。
+   * ⚠️ 随包内核 2026.9.3 的 `before_tool_call` 事件**不带** cwd（证据：
+   *    `dist/plugin-entry-*.d.ts` 的 `PluginHookBeforeToolCallEvent`、内核
+   *    `agent-tools.before-tool-call-*.mjs` 的事件构造处）——没有它时插件
+   *    **只做字面段判定，绝不猜 process.cwd**（见下方"无可信 cwd"用例）。
+   */
+  cwd?: string;
 }
 
 type PolicyDecision = { block?: boolean; blockReason?: string } | undefined;
@@ -273,5 +281,108 @@ describe('inbox-readonly policy plugin (BUG-030 P3-1)', () => {
     expect(INBOX_READONLY_BLOCK_REASON).toContain('只读参考材料');
     expect(INBOX_READONLY_BLOCK_REASON).not.toContain(stateDir);
     expect(INBOX_READONLY_BLOCK_REASON).not.toMatch(/ENOENT|Error|write_|tool_call|inbox\//);
+  });
+
+  /** 建一个指向 inbox 的链接（win32 用 junction——无需管理员；POSIX 用 symlink）。 */
+  function linkToInbox(name: string): string | null {
+    const inboxDir = path.join(stateDir, 'task-1', 'inbox');
+    mkdirSync(inboxDir, { recursive: true });
+    const linkPath = path.join(stateDir, 'task-1', name);
+    try {
+      symlinkSync(inboxDir, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+      return linkPath;
+    } catch {
+      return null; // 环境不允许建链接 ⇒ 该用例跳过（不假装通过）
+    }
+  }
+
+  /**
+   * BUG-056①（联审）：相对路径变体绕过 —— `inbox.`（Win32 段尾点归一后就是 `inbox`）
+   * 走字面段判定时曾经**不命中**（段必须精确等于 `inbox`）。
+   */
+  it('⭐ Win32 段尾点/空格归一：`inbox.` / `inbox ` 段在 Win32 下就是 inbox ⇒ 拒绝', () => {
+    const win32 = process.platform === 'win32';
+    const relativeTargets = ['inbox./x.docx', 'inbox /x.docx', 'task-1\\inbox.\\x.md'];
+    for (const target of relativeTargets) {
+      const result = runThroughGuard(handler, { toolName: 'write', params: { path: target, content: 'x' } }, () => {});
+      expect(result.blocked, target).toBe(win32);
+    }
+  });
+
+  it('绝对路径经 `inbox.` 落到**已存在**的 inbox ⇒ 拒绝（canonical 已盖住，回归钉死）', () => {
+    mkdirSync(path.join(stateDir, 'task-1', 'inbox'), { recursive: true });
+    const target = path.join(stateDir, 'task-1', 'inbox.', 'x.docx');
+    const result = runThroughGuard(handler, { toolName: 'write', params: { path: target, content: 'x' } }, () => {
+      throw new Error('must not execute');
+    });
+    expect(result.blocked).toBe(process.platform === 'win32');
+  });
+
+  /**
+   * BUG-056①：**相对路径经链接/junction 指向 inbox** —— 没有链接字面段的相对路径，
+   * 字面判定永远命不中；宿主提供可信 cwd 时必须能解析出来。
+   */
+  it('⭐ 有可信 cwd（宿主提供）时，相对路径经 junction 指向 inbox ⇒ 拒绝', () => {
+    const linkPath = linkToInbox('ref-link');
+    if (!linkPath) return;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', cwd: stateDir, params: { path: 'task-1/ref-link/x.docx', content: 'x' } },
+      () => {
+        throw new Error('must not execute');
+      },
+    );
+    expect(result.blocked).toBe(true);
+  });
+
+  it('⭐ 有可信 cwd 时，`..` 折叠后再经 junction 指向 inbox ⇒ 拒绝（与执行器同一解析）', () => {
+    const linkPath = linkToInbox('ref-link');
+    if (!linkPath) return;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', cwd: stateDir, params: { path: 'task-1/inbox/../ref-link/x.docx', content: 'x' } },
+      () => {
+        throw new Error('must not execute');
+      },
+    );
+    expect(result.blocked).toBe(true);
+  });
+
+  it('⭐ 无可信 cwd 时不许拿 process.cwd 顶替：相对链接路径只做字面判定（放行）', () => {
+    const linkPath = linkToInbox('ref-link');
+    if (!linkPath) return;
+    const previousCwd = process.cwd();
+    // 把进程 cwd 挪到 stateDir：如果插件偷用 process.cwd 解析，这个用例就会拦下（= 红）
+    process.chdir(stateDir);
+    try {
+      const withoutCwd = runThroughGuard(
+        handler,
+        { toolName: 'write', params: { path: 'task-1/ref-link/x.docx', content: 'x' } },
+        () => {},
+      );
+      expect(withoutCwd.blocked, '无 cwd 时不得用 process.cwd 猜测（猜错=误杀/漏杀）').toBe(false);
+
+      // 同一个目标，宿主给了 cwd ⇒ 立刻拦下（证明差的就是"可信 cwd"这一个输入）
+      const withCwd = runThroughGuard(
+        handler,
+        { toolName: 'write', cwd: stateDir, params: { path: 'task-1/ref-link/x.docx', content: 'x' } },
+        () => {
+          throw new Error('must not execute');
+        },
+      );
+      expect(withCwd.blocked).toBe(true);
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  it('新建文件（目标还不存在）的父目录是链接 ⇒ 拒绝（最深已存在祖先 realpath）', () => {
+    const linkPath = linkToInbox('ref-link');
+    if (!linkPath) return;
+    const target = path.join(linkPath, 'new-file-not-created-yet.docx');
+    const result = runThroughGuard(handler, { toolName: 'write', params: { path: target, content: 'x' } }, () => {
+      throw new Error('must not execute');
+    });
+    expect(result.blocked).toBe(true);
   });
 });

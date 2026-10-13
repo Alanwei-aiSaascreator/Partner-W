@@ -109,9 +109,11 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
+import { isSecretKeyName } from '@clawwork/shared';
 import {
   buildLocalExport,
   saveExportFile,
+  isSecretKeyNameForExport,
   MAX_EXPORT_BYTES,
   MAX_MESSAGES,
   measureLocalBodies,
@@ -638,6 +640,58 @@ describe('本地导出：配置形状坏掉也不许整份失败', () => {
       },
     ]);
     expect(out.notes.join('')).toContain('跳过');
+  });
+});
+
+/**
+ * BUG-056⑤：导出脱敏与日志脱敏必须**同一套规则** —— 两边各写一份正则，
+ * 某天只改一处就会出现"日志摘了、导出没摘"（用户会把导出的 JSON 随手转发）。
+ * relay key 以 `apiKey` 键写进网关配置，这正是原先两边都漏的一族。
+ */
+describe('BUG-056⑤ —— 导出与日志同一条密钥键名规则', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('⭐ 公共规则（含 apiKey / relayKey 家族）在导出规则里完整生效', () => {
+    const sharedFamiliy = [
+      'apiKey',
+      'APIKEY',
+      'api_key',
+      'API_KEY',
+      'api-key',
+      'relayKey',
+      'RelayKey',
+      'relay_key',
+      'RELAY_KEY',
+      'relay-key',
+    ];
+    for (const key of sharedFamiliy) {
+      expect(isSecretKeyName(key), `公共规则漏了 ${key}`).toBe(true);
+      expect(isSecretKeyNameForExport(key), `导出规则漏了 ${key}`).toBe(true);
+    }
+    // 导出独有的词（license/pairing/credential/anon key）保持有效
+    for (const key of ['licenseKey', 'pairingCode', 'credential', 'anonKey', 'anon_key']) {
+      expect(isSecretKeyNameForExport(key), key).toBe(true);
+    }
+    // 负对照：正常业务字段不许被误判（键名层面）
+    for (const key of ['apiVersion', 'capacity', 'keyboard', 'monkey', 'keyResult', 'relayLatency']) {
+      expect(isSecretKeyNameForExport(key), key).toBe(false);
+      expect(isSecretKeyName(key), key).toBe(false);
+    }
+  });
+
+  it('⭐ 不修改原对象：导出读配置后，配置对象逐字不变（深冻结也不炸）', async () => {
+    const frozen = Object.freeze(structuredClone(appConfig));
+    setup({ tasks: [task('t1')], config: frozen });
+    const snapshot = JSON.stringify(frozen);
+
+    const out = await buildLocalExport();
+
+    expect(JSON.stringify(frozen), '导出不得原地改写配置对象').toBe(snapshot);
+    // 白名单第一道 + 键名规则第二道之后，密钥值一个都不许出现在产物里
+    const text = JSON.stringify(out);
+    for (const secret of SECRET_VALUES) expect(text, secret).not.toContain(secret);
   });
 });
 

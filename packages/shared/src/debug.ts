@@ -1,6 +1,25 @@
 const REDACTED = '***redacted***';
 const TRUNCATE_AT = 500;
-const SECRET_KEY_RE = /(token|password|secret|authorization|cookie|pairingcode|bootstraptoken)/i;
+/**
+ * 密钥**键名**家族（不区分大小写、分隔符可有可无）。
+ *
+ * ⚠️ BUG-056⑤：`apiKey` / `api_key` / `api-key` / `relayKey` 这一族曾经不在名单里 ——
+ *    而 relay key 正是以 `apiKey` 键写进网关配置的（`main/commercial/relay-config.ts`）。
+ *    这里按**键名**判定（不看值长什么样）：`key` 单独出现不算（正常字段里有 `keyResult`
+ *    这类名字），必须带 `api`/`relay` 前缀。判据只堵名字，不猜内容。
+ */
+const SECRET_KEY_RE =
+  /(token|password|secret|authorization|cookie|pairingcode|bootstraptoken|api[_-]?key|relay[_-]?key)/i;
+
+/**
+ * 这个**键名**是不是密钥家族 —— 日志脱敏与隐私导出共用这一份规则（BUG-056⑤）。
+ *
+ * 为什么导出成函数而不是让消费方各自写正则：两处各抄一份字符串，某天只改一处，
+ * 就会变成"日志摘了、导出没摘"（或反过来）。导出复用同一份判定。
+ */
+export function isSecretKeyName(key: string): boolean {
+  return SECRET_KEY_RE.test(key);
+}
 
 /**
  * **会话正文**类字段（外部审计 P3：日志里落地了用户原话）。
@@ -104,7 +123,7 @@ export function summarizePayload<T>(value: T): T {
 }
 
 function sanitizeValue(value: unknown, key?: string): unknown {
-  if (key && SECRET_KEY_RE.test(key)) {
+  if (key && isSecretKeyName(key)) {
     return REDACTED;
   }
 
