@@ -994,6 +994,45 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     );
   }
 
+  /**
+   * BUG-075 r3（2026-10-13 第三次独立复审反例）：思考与工具**按 content blocks 的
+   * 真实顺序交错写入**。
+   *
+   * 血案：`upsertToolCall` 的**新工具 id = 思考段边界**（seal 当前段）。此前这里固定
+   * 「先思考后工具」：`[工具, 新思考]` 帧里，工具之后的新思考先被写入（或作为新段
+   * 建立），随即被工具 upsert 错误归档 ⇒ 下一次累计快照被当新段追加
+   *（`first thought` / `after tool` / `after tool grows` 三段重复）。
+   * ⚠️ 不能反过来固定「先工具后思考」——那会把 `[思考, 工具]` 帧弄错。
+   * 块序缺失（index=-1，如纯 deltaText 帧）的写入保持原相对顺序、排在最后。
+   */
+  function writeFrameContentInBlockOrder(
+    sessionKey: string,
+    taskId: string,
+    payload: ChatEventPayload,
+    thinking: string,
+    toolCalls: readonly ToolCall[],
+    toolIndices: readonly number[],
+    changed: Array<{ kind: 'output' | 'thinking' | 'tools'; index: number }>,
+    readTurn: () => { id: string } | undefined,
+  ): void {
+    const writes: Array<{ kind: 'thinking'; index: number } | { kind: 'tools'; index: number; tc: ToolCall }> = [];
+    if (thinking) writes.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
+    toolCalls.forEach((tc, i) => writes.push({ kind: 'tools', index: toolIndices[i] ?? -1, tc }));
+    writes
+      .map((write, seq) => ({ write, seq }))
+      .sort((a, b) => {
+        const ai = a.write.index >= 0 ? a.write.index : Number.MAX_SAFE_INTEGER;
+        const bi = b.write.index >= 0 ? b.write.index : Number.MAX_SAFE_INTEGER;
+        return ai - bi || a.seq - b.seq;
+      })
+      .forEach(({ write }) => {
+        const before = readTurn();
+        if (write.kind === 'thinking') deps.getMessageStore().appendThinkingDelta(sessionKey, thinking);
+        else deps.getMessageStore().upsertToolCall(sessionKey, taskId, write.tc);
+        if (readTurn() !== before) changed.push({ kind: write.kind, index: write.index });
+      });
+  }
+
   /** 该类型 block 在 content 里的**最后一个**位置；没有 ⇒ -1（表示"块序不可用"）。 */
   function lastContentBlockIndex(payload: ChatEventPayload, type: 'text' | 'thinking' | 'toolCall'): number {
     const blocks = payload.message?.content ?? payload.content;
@@ -1148,19 +1187,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           replace: delta.replace,
         });
       }
-      if (thinking) {
-        const before = readTurn();
-        store.appendThinkingDelta(sessionKey, thinking);
-        if (readTurn() !== before)
-          changed.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
-      }
-      // G1：每个工具取**它自己**的 block 位置（重复/重排快照下相位才不会被抬错）。
-      const deltaToolIndices = toolCallContentIndices(payload);
-      for (const [tcIndex, tc] of toolCalls.entries()) {
-        const before = readTurn();
-        store.upsertToolCall(sessionKey, taskId, tc);
-        if (readTurn() !== before) changed.push({ kind: 'tools', index: deltaToolIndices[tcIndex] ?? -1 });
-      }
+      // G1/F1 + BUG-075 r3：思考与工具**按 content blocks 真实顺序交错写入**——
+      // 工具 upsert 的新 id 是思考段边界，固定序会把 `[工具, 新思考]` 归档错位
+      //（见 helper 注释与第三次复审反例）；每个工具取它自己的 block 位置。
+      writeFrameContentInBlockOrder(
+        sessionKey,
+        taskId,
+        payload,
+        thinking,
+        toolCalls,
+        toolCallContentIndices(payload),
+        changed,
+        readTurn,
+      );
       // 帧尾一次定音：多项真变化按 **content blocks 顺序**决定"最新活动"（F1）。
       sealChatFrameActivity(sessionKey, changed);
     } else if (state === 'final') {
@@ -1175,20 +1214,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         store.replaceStreamText(sessionKey, text);
         if (readTurn() !== before) changed.push({ kind: 'output', index: lastContentBlockIndex(payload, 'text') });
       }
-      if (thinking) {
-        const before = readTurn();
-        store.appendThinkingDelta(sessionKey, thinking);
-        if (readTurn() !== before)
-          changed.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
-      }
       debugEvent('renderer.chat.final.received', { taskId, sessionKey, chars: text.length });
-      // G1：final 分支与 delta 同形（每个工具保留自己的 block 位置）。
-      const finalToolIndices = toolCallContentIndices(payload);
-      for (const [tcIndex, tc] of toolCalls.entries()) {
-        const before = readTurn();
-        store.upsertToolCall(sessionKey, taskId, tc);
-        if (readTurn() !== before) changed.push({ kind: 'tools', index: finalToolIndices[tcIndex] ?? -1 });
-      }
+      // G1/F1 + BUG-075 r3：final 分支与 delta 同形——思考/工具按块序交错（见 helper）。
+      writeFrameContentInBlockOrder(
+        sessionKey,
+        taskId,
+        payload,
+        thinking,
+        toolCalls,
+        toolCallContentIndices(payload),
+        changed,
+        readTurn,
+      );
       sealChatFrameActivity(sessionKey, changed);
       store.finalizeStream(sessionKey, { runId: payload.runId });
       debugEvent('renderer.chat.finalized', { taskId, sessionKey });

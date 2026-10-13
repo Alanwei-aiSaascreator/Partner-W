@@ -180,6 +180,91 @@ describe('R1：累计快照与真实活动（真实 dispatcher + 真实 store）
 });
 
 /**
+ * BUG-075 r3 回归（2026-10-13 第三次独立复审反例）：**帧内 [新工具, 新思考]**。
+ *
+ * dispatcher 此前固定按「正文→思考→工具」写入，而 `upsertToolCall` 的**新工具 id =
+ * 思考段边界**（seal 当前段）。`[工具, 思考]` 帧里，工具之后的新思考被先写入、随即被
+ * 工具 upsert 错误归档 ⇒ 下一次累计快照被当新段追加：
+ *   [first thought] → [tc-9, after tool] → [tc-9(回显), after tool grows]
+ *   实际 first thought\n\nafter tool\n\nafter tool grows；
+ *   预期 first thought\n\nafter tool grows。
+ * 修法：思考/工具两类写入**按 content blocks 真实顺序交错**（正文保持原位；
+ * 不能只交换成「先工具后思考」——那会弄错 `[思考, 工具]`）。
+ */
+describe('BUG-075 r3：帧内写入顺序 = content blocks 真实顺序', () => {
+  const turnText = (h: ReturnType<typeof createHarness>) =>
+    h.store.getState().activeTurnBySession[SK]!.streamingThinking;
+
+  it('⭐ [first thought] → [tc-9, after tool] → [tc-9, after tool grows] ⇒ 不得重复保留旧段', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('first thought')]);
+    h.emitChatDelta([toolCall('tc-9'), thinking('after tool')]);
+    expect(turnText(h)).toBe('first thought\n\nafter tool');
+    h.emitChatDelta([toolCall('tc-9'), thinking('after tool grows')]);
+    expect(turnText(h), '工具后的新思考应作为当前段继续增长，而不是旧段重复').toBe('first thought\n\nafter tool grows');
+  });
+
+  it('对照：[思考, 工具] 同帧顺序不受影响；工具后的新思考照常落新段', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('先看目录'), toolCall('tc-1')]);
+    expect(turnText(h)).toBe('先看目录');
+    h.emitChatDelta([toolCall('tc-1'), thinking('换思路')]);
+    expect(turnText(h)).toBe('先看目录\n\n换思路');
+    h.emitChatDelta([toolCall('tc-1'), thinking('换思路继续')]);
+    expect(turnText(h)).toBe('先看目录\n\n换思路继续');
+  });
+
+  it('序列覆盖：[思考, 工具] → [工具回显, 思考增长] 双通道回声不重复', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('第一段'), toolCall('tc-2')]);
+    h.emitChatDelta([toolCall('tc-2'), thinking('第一段'), text('答案')]);
+    // 回声：工具没变化、思考与刚归档段同文 ⇒ 都不算活动
+    h.emitChatDelta([toolCall('tc-2'), thinking('第一段')]);
+    const a = h.activity()!;
+    expect(a.kind).toBe('output');
+    expect(a.thinkingSegment).toBe(1);
+    expect(turnText(h)).toBe('第一段');
+  });
+
+  it('final：thinkingContent 不重复、恰好一处分隔', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('first thought')]);
+    h.emitChatDelta([toolCall('tc-9'), thinking('after tool')]);
+    h.emitChatDelta([toolCall('tc-9'), thinking('after tool grows')]);
+    h.store.getState().finalizeStream(SK, { runId: 'run-1' });
+    const turn = h.store.getState().activeTurnBySession[SK]!;
+    expect(turn.thinkingContent).toBe('first thought\n\nafter tool grows');
+  });
+
+  /**
+   * ⚠️ 待明确契约（第三次独立复审 2026-10-13 明确"暂列待明确契约，不作为已归因缺陷"）：
+   *
+   * 「边界后新段与刚归档段**前缀/同文**」到底是"新段（应显示）"还是"旧回声（应忽略）"，
+   * 在 store 层没有任何可判据的差异（两者拿到的是同一对字符串）。当前实现选择了
+   * **回声守卫优先**（忽略），依据是 F1 形状（`[工具回显, 思考回声, 正文]` 同帧，
+   * 见上方"回声守卫"用例与旧 `turn-activity-snapshot` F1 测试）。
+   * 复审探针 `new-prefix-after-tool` / `new-identical-after-tool`（r3-verify.cjs:25-26）
+   * 记录的是**相反预期**（显示为新段）。消歧需要帧级上下文（同帧是否携带工具回显）
+   * 或产品口径裁决 —— 定案前这两个用例保持 skip，禁止单方面翻转。
+   */
+  it.skip('[待契约] 边界后新段 = 刚归档段前缀（复审探针 new-prefix-after-tool）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('检查配置后再继续')]);
+    h.emitChatDelta([toolCall('tool1')]);
+    h.emitChatDelta([thinking('检查配置')]);
+    expect(turnText(h)).toBe('检查配置后再继续\n\n检查配置');
+  });
+
+  it.skip('[待契约] 边界后新段与刚归档段完全同文（复审探针 new-identical-after-tool）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('检查配置')]);
+    h.emitChatDelta([toolCall('tool1')]);
+    h.emitChatDelta([thinking('检查配置')]);
+    expect(turnText(h)).toBe('检查配置\n\n检查配置');
+  });
+});
+
+/**
  * F1 回归（2026-10-08 终审）：**同帧多项都真变化时，按 content blocks 的真实顺序**定活动，
  * 不能沿用"提取字段后的固定处理顺序（正文→思考→工具）"。
  * 现有测试大多是"一个字段变化、其他字段重复"，因此全绿也盖不住本问题。
