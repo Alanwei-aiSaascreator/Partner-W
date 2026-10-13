@@ -154,6 +154,27 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('artifact:execution-events', listener);
       };
     },
+    // ⭐ 第二轮（R5 P1）：轮次登记回执（main 终稿登记处置完成时广播；载荷带捕获时
+    //    workspace scope/revision，接收侧对照当前权威 owner 同代才收）。
+    onTurnRegistration: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+        callback(
+          payload as {
+            taskId: string;
+            sessionKey: string;
+            runId: string;
+            status: 'registered' | 'needs-review' | 'none-expected';
+            expectedKinds: string[];
+            workspaceScope: string | null;
+            workspaceRevision: number;
+          },
+        );
+      };
+      ipcRenderer.on('artifact:turn-registration', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:turn-registration', listener);
+      };
+    },
     // ⭐ V4（I 接线）：有界执行历史的写入（fire-and-forget）与恢复读取。
     executionHistoryAppend: (sessionKey, records) => ipcRenderer.send('execution-history:append', sessionKey, records),
     executionHistoryReadRun: (sessionKey, runId) => ipcRenderer.invoke('execution-history:read-run', sessionKey, runId),

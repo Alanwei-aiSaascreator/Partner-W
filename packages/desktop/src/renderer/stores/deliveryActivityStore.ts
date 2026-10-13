@@ -7,6 +7,14 @@ import type {
 
 interface DeliveryActivityState {
   owner: ArtifactWorkspaceScope;
+  /**
+   * ⭐ 第二轮（R2-4）：**权威 owner 是否已就绪**。初始 false；scope-changed 事件或
+   *    活动快照（hydrate）带来真实 owner 后才置 true（活动帧 record 不算权威来源
+   *    —— 不得把"观察到的第一帧"当权威 owner）。消费方（执行事件接收门）在 false
+   *    期间对有界暂存帧做初始化屏障暂存，就绪后按原 scope/revision 过滤折入。
+   *    epoch 切换（clear）复位为 false（新代次重新走一次初始化屏障）。
+   */
+  ownerReady: boolean;
   workspaceEpoch: number;
   records: Record<string, ArtifactDeliveryActivity>;
   active: readonly ArtifactDeliveryActivity[];
@@ -28,15 +36,21 @@ function activeRecords(records: DeliveryActivityState['records']): ArtifactDeliv
 
 export const useDeliveryActivityStore = create<DeliveryActivityState>((set, get) => ({
   owner: { scope: null, revision: -1 },
+  ownerReady: false,
   workspaceEpoch: 0,
   records: {},
   active: [],
-  clear: (epoch) => set({ workspaceEpoch: epoch, records: {}, active: [] }),
+  clear: (epoch) => set({ workspaceEpoch: epoch, ownerReady: false, records: {}, active: [] }),
   setOwner: (owner, epoch) =>
     set((state) => {
       if (state.workspaceEpoch !== epoch || !acceptsOwner(state.owner, owner)) return state;
-      if (owner.revision === state.owner.revision) return state;
-      return { owner: { ...owner }, records: {}, active: [] };
+      // 权威来源（scope-changed / 快照 hydrate）带来真实 owner ⇒ 初始化屏障解除。
+      const nextReady = state.ownerReady || owner.scope !== null;
+      if (owner.revision === state.owner.revision) {
+        if (nextReady === state.ownerReady) return state;
+        return { ownerReady: true };
+      }
+      return { owner: { ...owner }, records: {}, active: [], ownerReady: nextReady };
     }),
   record: (activity, epoch) =>
     set((state) => {

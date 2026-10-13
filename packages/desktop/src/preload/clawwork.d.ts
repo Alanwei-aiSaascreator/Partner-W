@@ -540,6 +540,23 @@ export interface ClawWorkAPI {
       workspaceRevision: number;
     }) => void,
   ) => () => void;
+  /**
+   * ⭐ 第二轮（R5 P1）：**轮次登记回执** —— main 在终稿持久化时广播的"这一轮交付登记
+   *    结束"可信事实（registered / needs-review / none-expected）。渲染层完成资格消费它，
+   *    不再从"投影里恰好没有 operation"反推普通聊天。与执行事件同款纪律：载荷带捕获时
+   *    workspace scope/revision，接收侧只收与当前权威 owner 同代的帧。
+   */
+  onTurnRegistration: (
+    callback: (payload: {
+      taskId: string;
+      sessionKey: string;
+      runId: string;
+      status: 'registered' | 'needs-review' | 'none-expected';
+      expectedKinds: string[];
+      workspaceScope: string | null;
+      workspaceRevision: number;
+    }) => void,
+  ) => () => void;
   /** ⭐ V4：有界执行历史（本地证据）——写入 fire-and-forget；恢复读取只还原本地已写证据。 */
   executionHistoryAppend: (sessionKey: string, records: ExecutionEvent[]) => void;
   executionHistoryReadRun: (

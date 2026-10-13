@@ -23,6 +23,7 @@ import {
 import { saveArtifact } from '../artifact/save.js';
 import { forgetTaskDeliveryActivities } from '../artifact/delivery-activity.js';
 import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
+import { emitTurnRegistration } from '../artifact/turn-registration.js';
 import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
 import { subscribeWorkspaceScope } from '../workspace/scope.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
@@ -989,6 +990,12 @@ function registeredArtifactNames(taskId: string): Set<string> | null {
   }
 }
 
+/**
+ * 终稿登记处置（第二轮 R5 P1）：同步返回给调用方的**登记回执** —— 调用方据此广播
+ * `turn-registration`，渲染层完成资格消费它（不得从"空 operations"反推普通聊天）。
+ */
+type FinalizeRegistrationOutcome = 'registered' | 'needs-review' | 'none' | 'skipped';
+
 function finalizeAssistantArtifacts(input: {
   workspacePath: string;
   taskId: string;
@@ -1002,12 +1009,12 @@ function finalizeAssistantArtifacts(input: {
   toolCalls?: unknown[];
   /** 门处已核对过的当前 run 期望产物类型（claim 失败时用于结构化未确认判定）。 */
   expectedArtifactKinds?: string[];
-}): void {
+}): FinalizeRegistrationOutcome {
   const owner = captureArtifactWorkspaceOwner();
-  if (!owner.current()) return;
+  if (!owner.current()) return 'skipped';
   pruneCompletedAssistantMessages();
   const messageKey = completedMessageKey(input.taskId, input.messageId);
-  if (completedAssistantMessages.has(messageKey)) return;
+  if (completedAssistantMessages.has(messageKey)) return 'skipped';
   completedAssistantMessages.set(messageKey, {
     state: 'inFlight',
     touchedAt: Date.now(),
@@ -1041,8 +1048,9 @@ function finalizeAssistantArtifacts(input: {
           status: 'needs-review',
         });
       }
+      return 'needs-review';
     }
-    return;
+    return 'none';
   }
   const activity = captureArtifactDeliveryOperation(input);
   void (async () => {
@@ -2323,6 +2331,9 @@ function finalizeAssistantArtifacts(input: {
       claimedArtifactRuns.delete(run.token);
       activity.finish('failed');
     });
+  // 回执语义 = "登记处置已完成到可对外陈述的程度"：operationId 已定号（delivery.started
+  // 已广播），后续 phase/settled 由交付作业异步送达投影。
+  return 'registered';
 }
 
 export function registerDataHandlers(): void {
@@ -2588,7 +2599,7 @@ export function registerDataHandlers(): void {
               settleLiveTurn(resolvedSessionKey);
               const taskRow = db.select({ gid: tasks.gatewayId }).from(tasks).where(eq(tasks.id, msg.taskId)).get();
               const gatewayHttpBase = taskRow ? getGatewayClient(taskRow.gid)?.httpBase : undefined;
-              finalizeAssistantArtifacts({
+              const finalizeOutcome = finalizeAssistantArtifacts({
                 workspacePath,
                 taskId: msg.taskId,
                 sessionKey: resolvedSessionKey,
@@ -2601,6 +2612,22 @@ export function registerDataHandlers(): void {
                 toolCalls: msg.toolCalls,
                 expectedArtifactKinds: run.expectedArtifactKinds,
               });
+              // ⭐ 第二轮（R5 P1）：登记回执广播 —— 渲染层完成资格从"空 operations 猜
+              //    普通聊天"改为消费本回执（'skipped' 不发：无归属/无代次时不制造伪事实）。
+              if (finalizeOutcome !== 'skipped') {
+                emitTurnRegistration({
+                  taskId: msg.taskId,
+                  sessionKey: resolvedSessionKey,
+                  runId: msg.runId,
+                  status:
+                    finalizeOutcome === 'registered'
+                      ? 'registered'
+                      : finalizeOutcome === 'needs-review'
+                        ? 'needs-review'
+                        : 'none-expected',
+                  expectedKinds: run.expectedArtifactKinds,
+                });
+              }
             } else if (evidenceShape && run.expectedArtifactKinds.length > 0) {
               // 结构化「交付上下文未确认」：这是**已核实终态**（带证据）却接不上当前
               // run 上下文（runId 不符 / 该 run 已绑定别的 run）的文件任务 —— 如实
@@ -2625,6 +2652,15 @@ export function registerDataHandlers(): void {
                   status: 'needs-review',
                 });
               }
+              // 登记回执（第二轮 R5 P1）：已知文件需求但交付上下文未确认 ⇒ needs-review
+              //（需求保留：渲染层完成资格不得回退为"明确零需求"）。
+              emitTurnRegistration({
+                taskId: msg.taskId,
+                sessionKey: resolvedSessionKey,
+                runId: msg.runId,
+                status: 'needs-review',
+                expectedKinds: run.expectedArtifactKinds,
+              });
             }
           } else {
             // Legacy/history hydration still needs attachment and fenced-code
@@ -2638,6 +2674,16 @@ export function registerDataHandlers(): void {
               sessionKey: resolvedSessionKey,
               messageId: persistedMessageId,
               runId: msg.runId,
+            });
+            // 登记回执（第二轮 R5 P1）：本分支 = 无 artifact-run 上下文的终态消息，
+            // 交付捕获（operationId 已定号）在这里完成 ⇒ 如实告诉渲染层'registered'
+            //（作业的 phase/settled 由下方异步链补齐投影）。
+            emitTurnRegistration({
+              taskId: msg.taskId,
+              sessionKey: resolvedSessionKey,
+              runId: msg.runId,
+              status: 'registered',
+              expectedKinds: [],
             });
             let activityOutcome: ArtifactDeliverySettled['status'] = 'failed';
             autoExtractArtifacts({

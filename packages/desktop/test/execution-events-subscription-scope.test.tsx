@@ -37,6 +37,7 @@ vi.mock('../src/renderer/stores/messageStore', () => ({
 
 import { useExecutionEventsSubscription } from '../src/renderer/hooks/useExecutionEventsSubscription';
 import { useDeliveryActivityStore } from '../src/renderer/stores/deliveryActivityStore';
+import { getTurnRegistration, resetTurnRegistrationForTests } from '../src/renderer/lib/turn-registration';
 
 type TaskStoreLike = {
   getState: () => { workspaceEpoch: number };
@@ -54,7 +55,18 @@ interface ExecutionEventsPayload {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let captured: ((payload: ExecutionEventsPayload) => void) | null = null;
+let registrationCaptured: ((payload: RegistrationPayload) => void) | null = null;
 let unsubscribeSpy: ReturnType<typeof vi.fn>;
+
+interface RegistrationPayload {
+  taskId: string;
+  sessionKey: string;
+  runId: string;
+  status: 'registered' | 'needs-review' | 'none-expected';
+  expectedKinds: string[];
+  workspaceScope?: string | null;
+  workspaceRevision?: number;
+}
 
 function Host(): null {
   useExecutionEventsSubscription();
@@ -68,11 +80,17 @@ describe('useExecutionEventsSubscription · IPC 在途来源校验', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     captured = null;
+    registrationCaptured = null;
+    resetTurnRegistrationForTests();
     unsubscribeSpy = vi.fn();
     (window as unknown as { clawwork: unknown }).clawwork = {
       onExecutionEvents: (callback: (payload: ExecutionEventsPayload) => void) => {
         captured = callback;
         return unsubscribeSpy;
+      },
+      onTurnRegistration: (callback: (payload: RegistrationPayload) => void) => {
+        registrationCaptured = callback;
+        return () => {};
       },
     };
     taskStore().setState({ workspaceEpoch: 7 });
@@ -179,5 +197,133 @@ describe('useExecutionEventsSubscription · IPC 在途来源校验', () => {
       });
     });
     expect(messageScope.apply, '新 epoch 闭包 + 同代帧 ⇒ 收').toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 第二轮（R2-4）：权威 owner 就绪前的合法帧有界暂存——就绪后按原 scope 过滤、按序折入、恰一次', () => {
+    act(() => root.render(<Host />));
+    expect(captured).not.toBeNull();
+    expect(useDeliveryActivityStore.getState().ownerReady, '初始未就绪').toBe(false);
+
+    // 快照尚未返回：合法当前代帧（ws-A/3）与到得早的旧代帧（ws-B/9）先后到达。
+    const earlyA = { type: 'delivery.settled', payload: { operationId: 'op-early-a', outcome: 'complete' } };
+    const earlyB = { type: 'delivery.started', payload: { operationId: 'op-early-b' } };
+    act(() => {
+      captured?.({ sessionKey: 'sk-1', events: [earlyA], workspaceScope: 'ws-A', workspaceRevision: 3 });
+      captured?.({ sessionKey: 'sk-1', events: [earlyB], workspaceScope: 'ws-B', workspaceRevision: 9 });
+    });
+    expect(messageScope.apply, '未就绪 ⇒ 暂存，零 apply').not.toHaveBeenCalled();
+
+    // 权威 owner 就绪（ws-A/3，与快照同款来源）⇒ flush：只折入匹配帧、按接收序、恰一次。
+    act(() => {
+      useDeliveryActivityStore.getState().setOwner({ scope: 'ws-A', revision: 3 }, 0);
+    });
+    expect(messageScope.apply, '就绪后只折入与权威 owner 同代的那条').toHaveBeenCalledTimes(1);
+    expect(messageScope.apply).toHaveBeenLastCalledWith('sk-1', [earlyA]);
+
+    // 再触发一次 store 变化：暂存已清空 ⇒ 不重复折入。
+    act(() => {
+      useDeliveryActivityStore.getState().record(
+        {
+          operationId: 'act-x',
+          workspaceScope: 'ws-A',
+          workspaceRevision: 3,
+          sequence: 1,
+          status: 'active',
+          startedAt: 1,
+          updatedAt: 1,
+        } as never,
+        0,
+      );
+    });
+    expect(messageScope.apply, 'flush 恰一次（不得重复折入）').toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 第二轮（R2-4）：快照为空/失败（ownerReady 永不置位）⇒ 暂存不折入（fail-closed），不猜 owner', () => {
+    act(() => root.render(<Host />));
+    const frame = { type: 'delivery.started', payload: { operationId: 'op-lost' } };
+    act(() => {
+      captured?.({ sessionKey: 'sk-1', events: [frame], workspaceScope: 'ws-A', workspaceRevision: 3 });
+    });
+    // 空快照：owner 保持哨兵、ownerReady 不置位 —— 帧不得被折入（也不拿第一帧当权威 owner）。
+    expect(messageScope.apply).not.toHaveBeenCalled();
+    expect(useDeliveryActivityStore.getState().ownerReady).toBe(false);
+
+    // epoch 切换 ⇒ 旧暂存随 effect 实例销毁；新代帧照常自成新的初始化屏障。
+    act(() => {
+      taskStore().setState({ workspaceEpoch: 8 });
+      useDeliveryActivityStore.getState().clear(8);
+    });
+    const newCallback = captured;
+    act(() => {
+      newCallback?.({ sessionKey: 'sk-1', events: [frame], workspaceScope: 'ws-A', workspaceRevision: 3 });
+    });
+    expect(messageScope.apply, '旧暂存不得跨 epoch 折入').not.toHaveBeenCalled();
+    // 新代快照就绪 ⇒ 新暂存帧折入一次。
+    act(() => {
+      useDeliveryActivityStore.getState().setOwner({ scope: 'ws-A', revision: 3 }, 8);
+    });
+    expect(messageScope.apply, '新代就绪后折入恰一次').toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 第二轮（R5 P1）：登记回执同款归属校验——同代收下并落表；无 scope / 不同代 / 未知 status 一律拒', () => {
+    act(() => root.render(<Host />));
+    expect(registrationCaptured).not.toBeNull();
+    act(() => {
+      useDeliveryActivityStore.getState().setOwner({ scope: 'ws-A', revision: 3 }, 0);
+    });
+
+    // 同代回执 ⇒ 落表。
+    act(() => {
+      registrationCaptured?.({
+        taskId: 't-1',
+        sessionKey: 'sk-1',
+        runId: 'run-1',
+        status: 'registered',
+        expectedKinds: ['pptx'],
+        workspaceScope: 'ws-A',
+        workspaceRevision: 3,
+      });
+    });
+    expect(getTurnRegistration('sk-1', 'run-1')?.status).toBe('registered');
+
+    // 无 scope 回执 ⇒ 拒（fail-closed，不补 owner）。
+    act(() => {
+      registrationCaptured?.({
+        taskId: 't-1',
+        sessionKey: 'sk-1',
+        runId: 'run-2',
+        status: 'registered',
+        expectedKinds: [],
+      });
+    });
+    expect(getTurnRegistration('sk-1', 'run-2'), '无 scope 回执不得落表').toBeUndefined();
+
+    // 不同代回执（在途旧帧）⇒ 拒。
+    act(() => {
+      registrationCaptured?.({
+        taskId: 't-1',
+        sessionKey: 'sk-1',
+        runId: 'run-3',
+        status: 'needs-review',
+        expectedKinds: [],
+        workspaceScope: 'ws-B',
+        workspaceRevision: 9,
+      });
+    });
+    expect(getTurnRegistration('sk-1', 'run-3'), '在途旧代回执不得落表').toBeUndefined();
+
+    // 未知 status ⇒ 拒。
+    act(() => {
+      registrationCaptured?.({
+        taskId: 't-1',
+        sessionKey: 'sk-1',
+        runId: 'run-4',
+        status: 'bogus' as never,
+        expectedKinds: [],
+        workspaceScope: 'ws-A',
+        workspaceRevision: 3,
+      });
+    });
+    expect(getTurnRegistration('sk-1', 'run-4')).toBeUndefined();
   });
 });
