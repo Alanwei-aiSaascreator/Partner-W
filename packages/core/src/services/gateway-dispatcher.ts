@@ -995,42 +995,96 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   }
 
   /**
-   * BUG-075 r3（2026-10-13 第三次独立复审反例）：思考与工具**按 content blocks 的
-   * 真实顺序交错写入**。
+   * BUG-075 r3/r4（2026-10-13 第三次/窄复核反例）：思考与工具**按 content blocks 的
+   * 真实顺序、逐块写入**，且**工具两侧的思考块分属不同段**。
    *
-   * 血案：`upsertToolCall` 的**新工具 id = 思考段边界**（seal 当前段）。此前这里固定
-   * 「先思考后工具」：`[工具, 新思考]` 帧里，工具之后的新思考先被写入（或作为新段
-   * 建立），随即被工具 upsert 错误归档 ⇒ 下一次累计快照被当新段追加
-   *（`first thought` / `after tool` / `after tool grows` 三段重复）。
-   * ⚠️ 不能反过来固定「先工具后思考」——那会把 `[思考, 工具]` 帧弄错。
-   * 块序缺失（index=-1，如纯 deltaText 帧）的写入保持原相对顺序、排在最后。
+   * 血案（r3）：`upsertToolCall` 的**新工具 id = 思考段边界**（seal 当前段）。固定
+   * 「先思考后工具」会把 `[工具, 新思考]` 帧里工具之后的新思考错误归档；反过来固定
+   * 「先工具后思考」会把 `[思考, 工具]` 弄错 ⇒ 必须按块序交错。
+   *
+   * 血案（r4，多思考块跨工具）：此前把全部 thinking 块**拼成一个串**（parse-content
+   * 的 extractThinking）写在最后一个块的位置。`[A, T, B]` 帧因此被写成一次 'AB'
+   * 追加：工具前的 A 是**已完成段快照**，被错误地重发进当前段（实得 `A\n\nAB`，
+   * 应得 `A\n\nB`）。⇒ 逐块处理，**帧内最后一个 thinking 块 = 当前段的实时累计快照
+   *（照常并入当前段）；其余 thinking 块 = 历史候选**：若与当前段无关、且能被识别为
+   * 已完成段的重发（= 刚归档段的前缀/相等，或**命中已完成文本的段边界**），则跳过
+   *（绝不写进当前段、也不归档当前段）；识别不中（如首次投递的历史块）照常走合并，
+   * 由其后的工具块正常归档。块序缺失（-1）的写入保持原相对顺序排最后。
    */
   function writeFrameContentInBlockOrder(
     sessionKey: string,
     taskId: string,
     payload: ChatEventPayload,
-    thinking: string,
     toolCalls: readonly ToolCall[],
     toolIndices: readonly number[],
     changed: Array<{ kind: 'output' | 'thinking' | 'tools'; index: number }>,
-    readTurn: () => { id: string } | undefined,
+    readTurn: () =>
+      | {
+          id: string;
+          thinkingCompleted?: string;
+          thinkingCurrent?: string;
+          thinkingLastSealed?: string;
+        }
+      | undefined,
   ): void {
-    const writes: Array<{ kind: 'thinking'; index: number } | { kind: 'tools'; index: number; tc: ToolCall }> = [];
-    if (thinking) writes.push({ kind: 'thinking', index: lastContentBlockIndex(payload, 'thinking') });
+    const blocks = payload.message?.content ?? payload.content ?? [];
+    type FrameWrite =
+      | { kind: 'thinking'; text: string; index: number }
+      | { kind: 'tools'; index: number; tc: ToolCall };
+    const writes: FrameWrite[] = [];
     toolCalls.forEach((tc, i) => writes.push({ kind: 'tools', index: toolIndices[i] ?? -1, tc }));
-    writes
+    blocks.forEach((block, index) => {
+      if (block.type === 'thinking' && block.thinking) {
+        writes.push({ kind: 'thinking', text: block.thinking, index });
+      }
+    });
+    const ordered = writes
       .map((write, seq) => ({ write, seq }))
       .sort((a, b) => {
         const ai = a.write.index >= 0 ? a.write.index : Number.MAX_SAFE_INTEGER;
         const bi = b.write.index >= 0 ? b.write.index : Number.MAX_SAFE_INTEGER;
         return ai - bi || a.seq - b.seq;
       })
-      .forEach(({ write }) => {
-        const before = readTurn();
-        if (write.kind === 'thinking') deps.getMessageStore().appendThinkingDelta(sessionKey, thinking);
-        else deps.getMessageStore().upsertToolCall(sessionKey, taskId, write.tc);
-        if (readTurn() !== before) changed.push({ kind: write.kind, index: write.index });
-      });
+      .map((entry) => entry.write);
+    const lastThinkingIndex = writes.reduce(
+      (max, write) => (write.kind === 'thinking' && write.index > max ? write.index : max),
+      -1,
+    );
+    for (const write of ordered) {
+      const before = readTurn();
+      if (write.kind === 'thinking') {
+        const isHistoricCandidate = write.index >= 0 && write.index !== lastThinkingIndex;
+        if (isHistoricCandidate) {
+          const completed = before?.thinkingCompleted ?? '';
+          const current = before?.thinkingCurrent ?? '';
+          const sealed = before?.thinkingLastSealed ?? '';
+          const relatesCurrent =
+            current !== '' &&
+            (current === write.text || current.startsWith(write.text) || write.text.startsWith(current));
+          // 识别一：刚归档段的前缀/相等（含"已被更新版本覆盖"的窄形状——识别即可跳过）。
+          const recognizedSealed =
+            sealed !== '' && (sealed === write.text || sealed.startsWith(write.text) || write.text.startsWith(sealed));
+          // 识别二：命中已完成文本的**段边界**（'…\n\n' + block + '\n\n…'）——
+          // 覆盖"非最近段"的历史重发（多工具帧里中间那些旧块）；不做裸 includes，
+          // 防止吞掉与历史同文的合法新段（第二轮复审口径）。
+          const recognizedCompleted = completed !== '' && `\n\n${completed}\n\n`.includes(`\n\n${write.text}\n\n`);
+          if (!relatesCurrent && (recognizedSealed || recognizedCompleted)) {
+            debugEvent('renderer.chat.thinking.historic_block_skipped', {
+              taskId,
+              sessionKey,
+              chars: write.text.length,
+              index: write.index,
+              via: recognizedSealed ? 'sealed' : 'completed',
+            });
+            continue; // 重发的历史块：不写当前段、不归档当前段、不算活动
+          }
+        }
+        deps.getMessageStore().appendThinkingDelta(sessionKey, write.text);
+      } else {
+        deps.getMessageStore().upsertToolCall(sessionKey, taskId, write.tc);
+      }
+      if (readTurn() !== before) changed.push({ kind: write.kind, index: write.index });
+    }
   }
 
   /** 该类型 block 在 content 里的**最后一个**位置；没有 ⇒ -1（表示"块序不可用"）。 */
@@ -1194,7 +1248,6 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         sessionKey,
         taskId,
         payload,
-        thinking,
         toolCalls,
         toolCallContentIndices(payload),
         changed,
@@ -1220,7 +1273,6 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         sessionKey,
         taskId,
         payload,
-        thinking,
         toolCalls,
         toolCallContentIndices(payload),
         changed,

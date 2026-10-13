@@ -237,6 +237,33 @@ describe('BUG-075 r3：帧内写入顺序 = content blocks 真实顺序', () => 
   });
 
   /**
+   * ⭐⭐ BUG-075 r4 反例（2026-10-13 窄复核，多思考块跨工具）：
+   *   [A] → [A, T, B] → [A, T, BC] ⇒ 期望 A\n\nBC。
+   * 帧内**工具两侧的思考块分属不同段**：工具前的 A 是已完成段快照（重发时不得再进
+   * 当前段）；工具后的 B/BC 是当前段累计快照（增长只替换当前段）。
+   * 修前 bug：dispatcher 把全部 thinking 块**拼成一个串**写在最后一个块的位置
+   *（`parse-content.ts:55-61` 拼接）⇒ 第二帧得 A\n\nAB、第三帧 A\n\nABC。
+   */
+  it('⭐ 多思考块跨工具：[A] → [A, T, B] → [A, T, BC] ⇒ A\\n\\nBC（逐帧全文）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('A')]);
+    expect(turnText(h)).toBe('A');
+    h.emitChatDelta([thinking('A'), toolCall('tc-multi'), thinking('B')]);
+    expect(turnText(h), '第二帧：工具前是旧段快照、工具后 B 才是新段').toBe('A\n\nB');
+    h.emitChatDelta([thinking('A'), toolCall('tc-multi'), thinking('BC')]);
+    expect(turnText(h), '第三帧：旧块 A 不得重发进当前段；BC 是 B 的增长').toBe('A\n\nBC');
+  });
+
+  it('对照：多思考块跨两工具 [A] → [A, T1, B, T2, C] ⇒ A\\n\\nB\\n\\nC', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinking('A')]);
+    h.emitChatDelta([thinking('A'), toolCall('tc-m1'), thinking('B'), toolCall('tc-m2'), thinking('C')]);
+    expect(turnText(h)).toBe('A\n\nB\n\nC');
+    h.emitChatDelta([thinking('A'), toolCall('tc-m1'), thinking('B'), toolCall('tc-m2'), thinking('CD')]);
+    expect(turnText(h)).toBe('A\n\nB\n\nCD');
+  });
+
+  /**
    * ⚠️ 待明确契约（第三次独立复审 2026-10-13 明确"暂列待明确契约，不作为已归因缺陷"）：
    *
    * 「边界后新段与刚归档段**前缀/同文**」到底是"新段（应显示）"还是"旧回声（应忽略）"，
