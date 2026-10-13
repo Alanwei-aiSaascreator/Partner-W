@@ -515,7 +515,7 @@ interface LiveTimelineScope {
  * 实测背景：思考流以 20–26 次/秒的全量快照涌入；原实现里 `ChatContent` 直接订阅
  * `activeTurnBySession` / `processingBySession` ⇒ **每来一个快照整棵对话区重渲**，
  * 连同 ChatInput 整棵子树（元素创建 + i18n 查询是风暴时的 JS 大头）。修法（与行业一致：
- * Hermes #45343 的"订阅下沉到边界组件"、Vercel AI 的 getSnapshot 教训）：把 per-tick 的
+ * Hermes issue 45343 的"订阅下沉到边界组件"、Vercel AI 的 getSnapshot 教训）：把 per-tick 的
  * 订阅与派生全部收进本组件 —— 父级 `ChatContent` 只在消息/任务等**真实变化**时重渲；
  * 本组件重渲时，子树里 memo 过的条目（AssistantBlock/ChatMessage/ThinkingCollapse）
  * 照常跳过，只有真正在流的那一块更新。
