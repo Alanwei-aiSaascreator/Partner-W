@@ -7,6 +7,7 @@ import {
   isOpaqueToolFailure,
   debugToolFailures,
   latestDeclaredCall,
+  latestDispatchedCall,
   latestRunningCall,
   markUnreportedCalls,
   maskLocalPaths,
@@ -598,6 +599,58 @@ describe('V1 · declared（声明态）展示投影', () => {
     expect(latestDeclaredCall([call('1', 'ls', 'done'), call('2', 'exec', 'running'), first])).toBe(first);
     expect(latestDeclaredCall([call('1', 'ls', 'running')])).toBeNull();
     expect(latestDeclaredCall([])).toBeNull();
+  });
+});
+
+/**
+ * V2（2026-10-13 集中整改 step 2）：`dispatched`（进入处理：tool/start、item/running）。
+ *
+ * 与 declared 的区别：dispatched 有**网关接单证据**（有真实 startedAt 源时间）——
+ * 归"未结束"桶（转圈 + 等待时长），但仍**不是**"执行中"（`latestRunningCall` 不挑它，
+ * 执行中的唯一出口只认 running）。定稿后与 running/awaitingApproval 一样投影 unreported。
+ */
+describe('V2 · dispatched（进入处理）展示投影', () => {
+  const dispatchedCall = (id: string, name = 'exec'): ToolCall => ({
+    id,
+    name,
+    status: 'dispatched',
+    startedAt: '2026-09-15T00:00:00.000Z',
+  });
+
+  it('⭐ 归"未结束"桶：runningCount 计入 dispatched（摘要维持"正在处理"）', () => {
+    const summary = summarizeToolActivity([dispatchedCall('1', 'read_file')]);
+
+    expect(summary.runningCount).toBe(1);
+    expect(summary.declaredCount, 'dispatched 不是声明').toBe(0);
+    expect(summary.completedCount).toBe(0);
+    expect(summary.errorCount).toBe(0);
+    expect(summary.durationMs, '未结束 ⇒ 无总耗时').toBeNull();
+  });
+
+  it('⭐ 定稿后 dispatched ⇒ unreported（与 running 同路投影）', () => {
+    const shown = markUnreportedCalls([dispatchedCall('1')], true, 'toolActivity.noResult');
+
+    expect(shown[0].status).toBe('unreported');
+    expect(shown[0].result, '空白结果补产品文案').toBe('toolActivity.noResult');
+  });
+
+  it('⭐ 未定稿 dispatched ⇒ 原样（有 startedAt 照常等待计时）', () => {
+    const shown = markUnreportedCalls([dispatchedCall('1')], false, 'toolActivity.noResult');
+
+    expect(shown[0].status).toBe('dispatched');
+  });
+
+  it('⭐ `latestRunningCall` 不挑 dispatched（"执行中"不许由无执行证据的状态驱动）', () => {
+    expect(latestRunningCall([dispatchedCall('1')])).toBeNull();
+  });
+
+  it('⭐ `latestDispatchedCall` 取最新一条进入处理的调用（"调用处理中"文案用）', () => {
+    const first = dispatchedCall('1', 'ls');
+    const second = dispatchedCall('2', 'exec');
+    expect(latestDispatchedCall([first, second])).toBe(second);
+    expect(latestDispatchedCall([call('1', 'ls', 'done'), call('2', 'exec', 'running'), first])).toBe(first);
+    expect(latestDispatchedCall([call('1', 'ls', 'running')])).toBeNull();
+    expect(latestDispatchedCall([])).toBeNull();
   });
 });
 

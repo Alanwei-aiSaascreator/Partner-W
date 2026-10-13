@@ -1504,7 +1504,8 @@ describe('item 流的两个词表：未处理的取值要留痕', () => {
    */
   it.each([
     ['end', 'done'],
-    ['start', 'running'],
+    // 【V2 白名单】start ⇒ dispatched（调用进入处理；running 只留给有执行证据的适配器）
+    ['start', 'dispatched'],
   ])('⭐⭐ 认不出的 `status` ⇒ 记 `unknown_status`，并如实记下归类（phase=%s ⇒ %s）', (phase, expectedClassifiedAs) => {
     const h = createHarness();
 
@@ -1583,7 +1584,8 @@ describe('item 流的两个词表：未处理的取值要留痕', () => {
     emitItem(h, { kind: 'tool', phase: 'start', toolCallId: 'tc-1', name: 'ls', status: 'running' });
 
     const calls = h.messageStore.upsertToolCall.mock.calls;
-    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('running');
+    // 【V2 白名单】start 归 dispatched（非终态 ⇒ 调用进入处理）
+    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('dispatched');
   });
 
   /**
@@ -1643,14 +1645,15 @@ describe('item 流的两个词表：未处理的取值要留痕', () => {
 
   it('⚠️ **行为刻意不变**：认不出的 phase 仍然按原判据归类（不知道就别改它的样子）', () => {
     // `phase` 认不出 ⇒ 不满足 `phase === 'end'` ⇒ `settled` 只看 `failed`。
-    // 这里给 `status: 'running'`，所以归类**本来就是** `running` ——
+    // 这里给 `status: 'running'`，所以归类**本来就是** dispatched（非终态 ⇒ 调用进入处理；
+    // 【V2 白名单】旧口径是 running —— 现在 running 有"执行证据"含义，不再由 item 流产生）
     // 护栏**不许**把它改成别的（那才是朝另一个方向猜）。
     const h = createHarness();
 
     emitItem(h, { kind: 'tool', phase: 'some_future_phase', toolCallId: 'tc-1', name: 'ls', status: 'running' });
 
     const calls = h.messageStore.upsertToolCall.mock.calls;
-    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('running');
+    expect((calls[calls.length - 1]![2] as { status: string }).status).toBe('dispatched');
   });
 
   it.each(['start', 'update', 'end'])('对照：已知 phase `%s` 不记 `unknown_phase`', (phase) => {
@@ -3228,7 +3231,8 @@ describe('exec 停在「等人批准」时，卡片不许说「已完成」', ()
 
     const tc = lastToolCall(h);
     expect(tc.status, '命令一步都没跑 ⇒ 说"已完成"是撒谎').not.toBe('done');
-    expect(tc.status, '它**确实还没结束** ⇒ 诚实的落点是"进行中"').toBe('running');
+    // 【V2 白名单】旧口径 held result 落 running、approval 帧再改判；现在直接落 awaitingApproval。
+    expect(tc.status, '它**确实还没结束** ⇒ 诚实的落点是"等待批准"').toBe('awaitingApproval');
   });
 
   it('⭐ 也**不许**说 error（它没失败，人还没批呢）', () => {
@@ -3290,7 +3294,8 @@ describe('exec 停在「等人批准」时，卡片不许说「已完成」', ()
       (c) => (c[2] as { status: string; completedAt?: string }).status,
     );
     expect(seen, '一次都不许落 done —— 落一次就是"闪一下"').not.toContain('done');
-    expect(lastToolCall(h).status).toBe('running');
+    // 【V2 白名单】held result 直接落 awaitingApproval（旧口径 running）
+    expect(lastToolCall(h).status).toBe('awaitingApproval');
     expect(lastToolCall(h).completedAt, '没结束却带结束时间，等于把谎话写进数据里').toBeUndefined();
   });
 });
@@ -3761,7 +3766,8 @@ describe('approval 流：被拦下的命令不许显示成"已完成"', () => {
     //    网关的**行为**没变（它照旧在 tool 流上报 `isError: false`），
     //    变的是**我们**：不再把这个 `isError:false` 落成"已完成"（拍板"不让它先闪"）。
     //    ⇒ 断言的方向没放松，是**更早一步**就拦住了。
-    expect(lastToolCall(h).status, '前置：tool 流那一帧上命令还没结论，不许说"完成"').toBe('running');
+    // 【V2 白名单】held（approval-unavailable）直接落 awaitingApproval；旧口径先落 running。
+    expect(lastToolCall(h).status, '前置：tool 流那一帧上命令还没结论，不许说"完成"').toBe('awaitingApproval');
 
     emitApproval(h, {
       phase: 'requested',
@@ -4531,7 +4537,8 @@ describe('actual slide producer page records', () => {
         TASK.id,
         expect.objectContaining({
           slideProgress: packet,
-          status: 'running',
+          // 【V2 白名单】update 相位落 dispatched（旧口径 running）
+          status: 'dispatched',
           startedAt: '2026-10-02T00:00:00.000Z',
           result: undefined,
           completedAt: undefined,

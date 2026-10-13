@@ -11,6 +11,7 @@ import {
   classifyToolFailure,
   debugToolFailures,
   latestAwaitingApproval,
+  latestDispatchedCall,
   latestRunningCall,
   markUnreportedCalls,
   sanitizeToolTitle,
@@ -26,6 +27,8 @@ import ToolCallCard from './ToolCallCard';
 
 function StatusIcon({ status }: { status: ToolDisplayStatus | 'warning' }) {
   if (status === 'running') return <Loader2 size={14} className="animate-spin text-[var(--accent)]" />;
+  // ⭐ V2（2026-10-13）「调用处理中」：与 running 同视觉（系统在动），文案另行区分。
+  if (status === 'dispatched') return <Loader2 size={14} className="animate-spin text-[var(--accent)]" />;
   // ⭐ V1（2026-10-13）「声明态」：静态图标 —— 声明不是执行，转圈是在编"正在执行"。
   if (status === 'declared') return <Loader2 size={14} className="text-[var(--text-muted)]" />;
   // BUG-026：任务最终成功、只是中间有失败 ⇒ 中性提醒色，不是红色警报（失败不是主视觉）。
@@ -163,7 +166,8 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry, waitingForUser =
   const forcedOpen = !settled || hasUnreported || (hasFailures && !acknowledged);
   const open = forcedOpen || expanded;
   // ⚠️ 走**唯一出口**（与活动条同一个判据）：两处各写一遍的话，改一处就会两处不一致。
-  const currentCall = latestRunningCall(shown);
+  // V2：无"执行中"（running 只留给有执行证据的适配器）时退回"调用处理中"（dispatched）。
+  const currentCall = latestRunningCall(shown) ?? latestDispatchedCall(shown);
   // ⭐ 等待批准且**没有在跑**的动作（"没动，在等人"）—— 表头图标换静态 Clock（区1/A2 口径）。
   const awaitingOnly = waitingForUser || latestAwaitingApproval(shown) !== null;
   // ⭐ "正在做什么"优先用网关拼好的 `title`（带参数摘要），拿不到才退回按工具名分类的泛化文案

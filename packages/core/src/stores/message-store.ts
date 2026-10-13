@@ -10,6 +10,12 @@ import {
 } from '@clawwork/shared';
 import type { Message, MessageRole, MessageAttachment, ToolCall, IpcResult, ThinkingSegments } from '@clawwork/shared';
 import { splitInlineThinking } from '../protocol/normalize-history.js';
+import {
+  createExecutionProjection,
+  reduceExecutionProjection,
+  type ExecutionProjection,
+} from './execution-projection.js';
+import type { ExecutionEvent } from '../protocol/execution-events.js';
 
 const EMPTY_MESSAGES: Message[] = [];
 
@@ -145,6 +151,17 @@ export interface MessageState {
   messagesByTask: Record<string, Message[]>;
   activeTurnBySession: Record<string, ActiveTurn>;
   processingBySession: Set<string>;
+  /**
+   * V2（2026-10-13 step 2）：**执行投影**（按会话）—— 纯归约结果挂在现有 store
+   * 生命周期上（不创建并行执行 store）。
+   *
+   * - 写入：`applyExecutionEvents`（每帧事件折进 `reduceExecutionProjection`）；
+   * - 清理：与 `activeTurnBySession` 同生命周期（`clearActiveTurn` / `clearMessages`
+   *   同点摘键 —— 换账号/工作区即清该 scope 的投影与候选缓存）；
+   * - 消费：V2 尚无渲染订阅（无新增订阅 ⇒ App 根思考风暴提交数不受影响）；V3/V4 的
+   *   状态条与执行历史从这里投影。
+   */
+  executionBySession: Record<string, ExecutionProjection>;
   /**
    * 网关正在做什么（`run_status` 事件的 phase）。
    *
@@ -286,6 +303,11 @@ export interface MessageState {
    * 写入器按处理顺序各记各的会记错 —— 见 `bumpActivity` 旧址上方注释。
    */
   sealTurnActivity: (sessionKey: string, kindsInOrder: readonly ActiveTurnActivity['kind'][]) => void;
+  /**
+   * V2：把一帧映射出来的执行事件折进该会话的执行投影。
+   * 归约是纯函数（`reduceExecutionProjection`），本动作只负责挂在 store 生命周期上。
+   */
+  applyExecutionEvents: (sessionKey: string, events: readonly ExecutionEvent[]) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
   bindActiveRun: (sessionKey: string, runId: string) => void;
@@ -436,20 +458,24 @@ function thinkingSegmentsOf(
 function toolStatusRank(status: ToolCall['status']): number {
   switch (status) {
     case 'error':
-      return 3;
+      return 6;
     case 'done':
-      return 2;
+      return 4;
     // ⚠️ `awaitingApproval` 与 `running` **同级**——它俩都是"没结束"，谁也不比谁更"新"。
     //    同级时 `preferIncoming` 取 `>=` ⇒ 后到的说了算，这正是我们要的帧序：
-    //    tool 流的 result 先落 `running`，随后的 approval 帧把它改判成 `awaitingApproval`；
-    //    审批有了结论之后，`done`/`error`（2/3）照样压得过去。
+    //    tool 流的 result 先落 `dispatched`/held，approval 帧把它改判成 `awaitingApproval`；
+    //    审批有了结论之后，`done`/`error`（4/6）照样压得过去。
     //    ⇒ 既不会"降级"，也不会卡住收不了场。
     case 'running':
     case 'awaitingApproval':
+      return 2;
+    // ⭐ V2（2026-10-13 step 2）：`dispatched`（tool/start、item/running —— 调用进入处理）
+    //    压得过 declared（模型声明），压不过 running/awaitingApproval/done/error。
+    case 'dispatched':
       return 1;
     // ⭐ V1（2026-10-13）：`declared`（模型声明、无执行证据）权重**最低** ——
     //    任何有执行证据的状态都能覆盖它；`done`/`error` 之后迟到的旧声明或
-    //    start 帧**不许回退**（rank 0 < 2/3，`preferIncoming` 判 false）。
+    //    start 帧**不许回退**（`preferIncoming` 判 false）。
     case 'declared':
       return 0;
   }
@@ -463,7 +489,9 @@ function mergeToolCallState(existing: ToolCall | undefined, incoming: ToolCall):
     };
   const previousProgress = isSlidegenToolProgress(existing.slideProgress) ? existing.slideProgress : undefined;
   const nextProgress = isSlidegenToolProgress(incoming.slideProgress) ? incoming.slideProgress : undefined;
-  const latePage = (existing.status === 'done' || existing.status === 'error') && incoming.status === 'running';
+  const latePage =
+    (existing.status === 'done' || existing.status === 'error') &&
+    (incoming.status === 'running' || incoming.status === 'dispatched' || incoming.status === 'declared');
   const slideProgress =
     nextProgress &&
     !latePage &&
@@ -562,6 +590,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     messagesByTask: {},
     activeTurnBySession: {},
     processingBySession: new Set(),
+    executionBySession: {},
     runPhaseBySession: {},
     runRetryBySession: {},
     compactionAnnouncedEpisodeBySession: {},
@@ -692,6 +721,24 @@ export function createMessageStore(deps: MessageStoreDeps) {
         return {
           activeTurnBySession: { ...s.activeTurnBySession, [sessionKey]: { ...turn, activity } },
         };
+      }),
+
+    // V2：纯归约（`reduceExecutionProjection`）的 store 挂载点。事件被归约层拒收
+    // （旧 run 晚包 / 无归属）时投影引用不变 ⇒ 不触发任何 set。
+    applyExecutionEvents: (sessionKey, events) =>
+      set((s) => {
+        if (events.length === 0) return s;
+        let projection = s.executionBySession[sessionKey] ?? createExecutionProjection('');
+        let changed = false;
+        for (const event of events) {
+          const next = reduceExecutionProjection(projection, event);
+          if (next !== projection) {
+            projection = next;
+            changed = true;
+          }
+        }
+        if (!changed) return s;
+        return { executionBySession: { ...s.executionBySession, [sessionKey]: projection } };
       }),
 
     // ⚠️ 装载**本地已存**的消息时也要切一次行内推理。
@@ -885,7 +932,10 @@ export function createMessageStore(deps: MessageStoreDeps) {
         if (!s.activeTurnBySession[sessionKey]) return s;
         const next = { ...s.activeTurnBySession };
         delete next[sessionKey];
-        return { activeTurnBySession: next };
+        // V2：执行投影与活动轮次同生命周期（换会话/作废轮次即清该 scope 投影）。
+        const nextExecutions = { ...s.executionBySession };
+        delete nextExecutions[sessionKey];
+        return { activeTurnBySession: next, executionBySession: nextExecutions };
       }),
 
     clearMessages: (taskId) =>
@@ -898,6 +948,8 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const nextAutoRetry = { ...s.autoRetryFailureBySession };
         const nextTurnStartedAt = { ...s.turnStartedAtBySession };
         const nextRunRetry = { ...s.runRetryBySession };
+        // V2：同 scope 清理执行投影（换账号/工作区即清该任务全部会话的投影）。
+        const nextExecutions = { ...s.executionBySession };
 
         delete nextMessages[taskId];
         for (const key of Object.keys(nextTurns)) {
@@ -921,6 +973,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
         for (const key of Object.keys(nextRunRetry)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextRunRetry[key];
         }
+        for (const key of Object.keys(nextExecutions)) {
+          if (parseTaskIdFromSessionKey(key) === taskId) delete nextExecutions[key];
+        }
 
         return {
           messagesByTask: nextMessages,
@@ -931,6 +986,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
           autoRetryFailureBySession: nextAutoRetry,
           turnStartedAtBySession: nextTurnStartedAt,
           runRetryBySession: nextRunRetry,
+          executionBySession: nextExecutions,
         };
       }),
 

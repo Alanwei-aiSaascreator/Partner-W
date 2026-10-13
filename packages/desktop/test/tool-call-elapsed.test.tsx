@@ -44,7 +44,8 @@ describe('tool card elapsed waiting', () => {
     vi.useRealTimers();
   });
 
-  it.each(['running', 'awaitingApproval'] as const)(
+  it.each(['running', 'awaitingApproval', 'dispatched'] as const)(
+    // V2：dispatched（进入处理）有真实源时间 ⇒ 照常报已等待（不冒充执行耗时）。
     'updates observed waiting for %s without claiming execution duration',
     (status) => {
       render({ ...running, status });

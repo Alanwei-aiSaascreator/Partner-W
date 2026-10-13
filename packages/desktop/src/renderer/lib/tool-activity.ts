@@ -467,15 +467,17 @@ export function markUnreportedCalls(
 }
 
 /**
- * 还没结束的状态 —— `running` 与 `awaitingApproval`（A2，2026-09-19）。
+ * 还没结束的状态 —— `running`、`dispatched` 与 `awaitingApproval`。
  *
  * ⚠️ **它们不是一回事，但都"没结束"**：显示上要分开说（`awaitingApproval` 有自己的文案，
- * 见 `ToolCallCard` / `ComposerActivity`），**归类**上必须同一桶 ——
- * 少了 `awaitingApproval`，`summarizeToolActivity` 的 `runningCount` 就是 0，
- * 而 `ToolCallSummary` 会据此把"等着人批准"渲染成 **`done`**（那是撒谎）。
+ * `dispatched` 说"调用处理中"、`running` 才说"执行中"），**归类**上必须同一桶 ——
+ * 少了 `awaitingApproval`/`dispatched`，`summarizeToolActivity` 的 `runningCount` 就是 0，
+ * 而 `ToolCallSummary` 会据此把"等着人批准/调用处理中"渲染成 **`done`**（那是撒谎）。
+ * V2（2026-10-13 step 2）：`dispatched` 入桶 —— tool/start、item/running 是"进入处理"，
+ * 定稿后与 running/awaitingApproval 一样投影为「未收到结果」。
  */
 function isUnfinished(status: ToolDisplayStatus): boolean {
-  return status === 'running' || status === 'awaitingApproval';
+  return status === 'running' || status === 'awaitingApproval' || status === 'dispatched';
 }
 
 /**
@@ -501,6 +503,20 @@ export function latestAwaitingApproval(toolCalls: readonly DisplayToolCall[]): D
 export function latestDeclaredCall(toolCalls: readonly DisplayToolCall[]): DisplayToolCall | null {
   for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
     if (toolCalls[i].status === 'declared') return toolCalls[i];
+  }
+  return null;
+}
+
+/**
+ * 最新一条**进入处理**（dispatched，V2）的调用：tool/start、item/running。
+ *
+ * ⚠️ 与 `latestRunningCall` **分开**：dispatched 是"调用处理中"（网关接单了、
+ * 但没有执行证据），`running` 是"执行中"（只留给有明确执行证据的适配器）——
+ * 文案**不能**混用（05 F1：不承诺副作用已发生）。
+ */
+export function latestDispatchedCall(toolCalls: readonly DisplayToolCall[]): DisplayToolCall | null {
+  for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
+    if (toolCalls[i].status === 'dispatched') return toolCalls[i];
   }
   return null;
 }

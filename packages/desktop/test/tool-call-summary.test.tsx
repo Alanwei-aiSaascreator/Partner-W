@@ -368,6 +368,44 @@ describe('V1 · declared（声明态）摘要投影', () => {
   });
 });
 
+/**
+ * V2（2026-10-13 集中整改 step 2）：dispatched（进入处理）在摘要组件上的投影。
+ * - 实时：dispatched 归"未结束"桶 ⇒ 摘要 data-status=running（"正在处理"文案），卡片如实 dispatched；
+ * - 定稿：与 running 同路投影「未收到结果」（不算失败、无重试 CTA）。
+ */
+describe('V2 · dispatched（进入处理）摘要投影', () => {
+  const dispatchedCall = (id: string, name = 'exec'): ToolCall => ({
+    id,
+    name,
+    status: 'dispatched',
+    startedAt: '2026-09-15T00:00:00.000Z',
+  });
+
+  it('⭐ 实时只有 dispatched ⇒ 摘要"正在处理"（running 档），卡片如实 dispatched', () => {
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[dispatchedCall('1', 'read_file')]} />);
+
+    expect(container.querySelector('[data-testid="tool-activity-summary"]')?.getAttribute('data-status')).toBe(
+      'running',
+    );
+    expect(container.querySelector('[data-testid="tool-call-card"][data-status="dispatched"]')).not.toBeNull();
+    unmount();
+  });
+
+  it('⭐ 定稿后的 dispatched ⇒ 「未收到结果」（不算失败、无重试 CTA）', () => {
+    const onRetry = vi.fn();
+    const { container, unmount } = render(
+      <ToolCallSummary settled onRetry={onRetry} toolCalls={[dispatchedCall('1', 'sessions_spawn')]} />,
+    );
+
+    expect(container.querySelector('[data-testid="tool-activity-summary"]')?.getAttribute('data-status')).toBe(
+      'unreported',
+    );
+    expect(container.textContent).toContain('toolActivity.unreported:1');
+    expect(container.querySelector('[data-testid="tool-failure-retry"]')).toBeNull();
+    unmount();
+  });
+});
+
 describe('AssistantBlock tool activity', () => {
   // ⚠️ 2026-10-08 平铺改造（有意改写）：流式期间工具行**平铺可见**（原断言 0 张单卡）。
   it('renders all streaming calls through one shared flat summary', () => {

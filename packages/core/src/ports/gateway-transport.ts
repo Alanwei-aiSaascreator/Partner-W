@@ -7,11 +7,26 @@ import type {
   RuntimeDeployProgress,
 } from '@clawwork/shared';
 
+/**
+ * V2（2026-10-13 集中整改 step 2）：**可信 transport 元数据**（可选）。
+ *
+ * 由**真实连接拥有者**（main 进程 ws 客户端）生成 —— renderer 不能猜：
+ * - `channel`：主连接 / 审批连接 / 本地；
+ * - `connectionEpoch`：连接实例标识，重连后外层 seq 重置仍可区分域。
+ * 05 F2：外层 seq 按连接域计数，主/审批连接是不同域、重连不沿用旧域 ——
+ * 缺元数据的既有生产者照常工作，来源按 `unknown` 处理。
+ */
+export interface GatewayEventTransportMeta {
+  channel?: 'main' | 'approval' | 'local';
+  connectionEpoch?: string;
+}
+
 export interface GatewayEvent {
   event: string;
   payload: Record<string, unknown>;
   gatewayId: string;
   seq?: number;
+  meta?: GatewayEventTransportMeta;
 }
 
 export interface GatewayStatusEvent {

@@ -31,6 +31,11 @@ function StatusIcon({ status }: { status: ToolDisplayStatus }) {
         */}
         {status === 'running' && <Loader2 size={14} className="tool-icon-loading" />}
         {/*
+          ⭐ V2（2026-10-13 step 2）「调用处理中」：dispatched = 网关已接单、正在处理
+          （tool/start、item/running）—— 转圈是诚实的（系统在动），但文案不说"执行"。
+        */}
+        {status === 'dispatched' && <Loader2 size={14} className="tool-icon-loading" />}
+        {/*
           ⭐ V1（2026-10-13）「声明态」：模型声明了调用、还没有执行证据 —— **不转圈**：
           转圈/呼吸在说"在动"，而声明只是"已登记、待处理"（同一视觉纪律，见 A2）。
         */}
@@ -90,7 +95,9 @@ const ToolCallCard = memo(function ToolCallCard({
   };
   const [now, setNow] = useState(() => Date.now());
   const start = Date.parse(toolCall.startedAt);
-  const waiting = toolCall.status === 'running' || toolCall.status === 'awaitingApproval';
+  // V2：dispatched（调用处理中）与 running/awaitingApproval 同桶 —— 有源时间就如实报已等待。
+  const waiting =
+    toolCall.status === 'running' || toolCall.status === 'awaitingApproval' || toolCall.status === 'dispatched';
 
   useEffect(() => {
     if (!waiting || !Number.isFinite(start)) return;
@@ -102,7 +109,8 @@ const ToolCallCard = memo(function ToolCallCard({
   const waited = waiting && Number.isFinite(start) && now >= start ? now - start : null;
 
   const duration = useMemo(() => {
-    if (toolCall.status === 'running' || toolCall.status === 'awaitingApproval') return null;
+    if (toolCall.status === 'running' || toolCall.status === 'awaitingApproval' || toolCall.status === 'dispatched')
+      return null;
     const elapsed = toolCallDurationMs(toolCall);
     if (elapsed === null) return null;
     return elapsed < 100 ? '<0.1s' : `${(elapsed / 1000).toFixed(1)}s`;
@@ -141,7 +149,7 @@ const ToolCallCard = memo(function ToolCallCard({
   const actionKind = resolveDisplayKind(toolCall.name, classifyToolActivity(toolCall.name));
   const sanitizedResult = toolCall.result ? sanitizeToolText(toolCall.result) : '';
   const pageProgress = isSlidegenToolProgress(toolCall.slideProgress) ? toolCall.slideProgress : undefined;
-  const pagePending = toolCall.status === 'running';
+  const pagePending = toolCall.status === 'running' || toolCall.status === 'dispatched';
   const pageLabel = pageProgress
     ? t('chatInput.deliveryPageProgress', { completed: pageProgress.completed, total: pageProgress.total })
     : '';
@@ -162,7 +170,11 @@ const ToolCallCard = memo(function ToolCallCard({
           <button className="tool-row__trigger glow-focus">
             {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             <StatusIcon
-              status={waitingForUser && toolCall.status === 'running' ? 'awaitingApproval' : toolCall.status}
+              status={
+                waitingForUser && (toolCall.status === 'running' || toolCall.status === 'dispatched')
+                  ? 'awaitingApproval'
+                  : toolCall.status
+              }
             />
             <span className="tool-row__main">
               {label ? <span className="type-label text-[var(--text-secondary)]">{label} · </span> : null}
@@ -181,7 +193,12 @@ const ToolCallCard = memo(function ToolCallCard({
               running 追加 `text-shimmer`（"正在进行"的统一视觉）；awaiting **不加**（在等人 ≠ 在跑）。
             */}
             <span
-              className={cn('tool-row__status', toolCall.status === 'running' && !waitingForUser && 'text-shimmer')}
+              className={cn(
+                'tool-row__status',
+                (toolCall.status === 'running' || toolCall.status === 'dispatched') &&
+                  !waitingForUser &&
+                  'text-shimmer',
+              )}
             >
               {toolCall.status === 'awaitingApproval' && (
                 <span className="type-label text-[var(--text-muted)]" data-testid="awaiting-approval-label">

@@ -17,8 +17,12 @@ function getStatusIcon(status: ToolCall['status']) {
       return AlertCircle;
     case 'running':
       return Loader;
+    // ⭐ V2「调用处理中」（2026-10-13 step 2）：tool/start、item/running —— 转圈
+    // （与 running 同视觉；`animate-spin` 判据见下方 className）。
+    case 'dispatched':
+      return Loader;
     // ⭐ V1「声明态」（2026-10-13）：模型声明、无执行证据 —— 静态 Loader
-    // （`animate-spin` 只挂在 running 上 ⇒ 声明不转圈）。
+    // （`animate-spin` 只挂在 running/dispatched 上 ⇒ 声明不转圈）。
     case 'declared':
       return Loader;
     // ⭐ A2「等待批准」：**不转圈** —— 转圈说的是"在动"，而这条恰恰是"没动，在等人"。
@@ -36,6 +40,7 @@ function getStatusColor(status: ToolCall['status']): string {
     case 'error':
       return 'var(--danger)';
     case 'running':
+    case 'dispatched':
     case 'declared':
     case 'awaitingApproval':
       return 'var(--text-muted)';
@@ -65,7 +70,7 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
         <StatusIcon
           size={14}
           style={{ color: statusColor }}
-          className={toolCall.status === 'running' ? 'animate-spin' : ''}
+          className={toolCall.status === 'running' || toolCall.status === 'dispatched' ? 'animate-spin' : ''}
           aria-hidden="true"
         />
         {expanded ? (

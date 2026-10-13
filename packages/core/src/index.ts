@@ -51,6 +51,24 @@ export {
   toISOTimestamp,
 } from './protocol/normalize-history.js';
 
+// V2（2026-10-13 step 2）：执行事件协议 / 纯映射 / 纯归约。
+export { mapNativeToExecution } from './protocol/map-execution-event.js';
+export type { ExecutionMapContext } from './protocol/map-execution-event.js';
+export type {
+  ExecutionChannel,
+  ExecutionEvent,
+  ExecutionEventType,
+  ExecutionEventSource,
+  ExecutionEvidence,
+} from './protocol/execution-events.js';
+export { createExecutionProjection, reduceExecutionProjection, stepKeyOf } from './stores/execution-projection.js';
+export type {
+  ExecutionProjection,
+  ExecutionStep,
+  ExecutionStepState,
+  ExecutionModelPhase,
+} from './stores/execution-projection.js';
+
 export {
   createMessageStore,
   mergeCanonicalMessageWithActiveTurn,

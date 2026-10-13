@@ -546,6 +546,42 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
     expect(q('composer-activity')?.getAttribute('data-status'), '执行证据到达 ⇒ 升级"执行中"').toBe('running-tool');
     expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.runningTool');
   });
+
+  /**
+   * V2（2026-10-13 集中整改 step 2）：dispatched（tool/start、item/running —— 进入处理）。
+   * 活动条说「调用处理中」（复用 declaredTool 键），**不说"执行中"**；data-status 标
+   * `dispatched-tool`；真实执行证据（running）到达后升级。
+   */
+  it('⭐ V2：进入处理（dispatched）⇒ "调用处理中"；running 到达后升级"执行中"', async () => {
+    const { store } = await mountLive();
+
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_disp',
+        name: 'read_file',
+        status: 'dispatched',
+        title: 'read_file 报告.docx',
+        startedAt: new Date(T0).toISOString(),
+      });
+    });
+
+    expect(q('composer-activity')?.getAttribute('data-status')).toBe('dispatched-tool');
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.declaredTool');
+    expect(q('composer-activity')?.textContent).not.toContain('chatInput.waiting.runningTool');
+
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_disp',
+        name: 'read_file',
+        status: 'running',
+        title: 'read_file 报告.docx',
+        startedAt: new Date(T0).toISOString(),
+      });
+    });
+
+    expect(q('composer-activity')?.getAttribute('data-status'), '执行证据到达 ⇒ 升级"执行中"').toBe('running-tool');
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.runningTool');
+  });
 });
 
 /**

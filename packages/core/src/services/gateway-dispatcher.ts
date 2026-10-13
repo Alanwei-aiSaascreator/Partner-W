@@ -37,7 +37,14 @@ import { announceCompaction, currentCompactionEpisode } from './compaction-annou
 import { activeTurnProducedOutput } from '../stores/message-store.js';
 import type { MessageState } from '../stores/message-store.js';
 import type { GatewayReconnectInfo } from '../stores/ui-store.js';
-import type { GatewayTransportPort, GatewayStatusEvent, RuntimeStatusEvent } from '../ports/gateway-transport.js';
+import type {
+  GatewayTransportPort,
+  GatewayStatusEvent,
+  GatewayEvent,
+  GatewayEventTransportMeta,
+  RuntimeStatusEvent,
+} from '../ports/gateway-transport.js';
+import { mapNativeToExecution, type ExecutionMapContext } from '../protocol/map-execution-event.js';
 
 type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error' | 'compaction';
 
@@ -300,6 +307,8 @@ export interface GatewayDispatcherDeps {
     | 'markAutoRetryFailure'
     | 'replaceStreamText'
     | 'sealTurnActivity'
+    // V2：执行投影的写入动作（旁路映射折叠点）。
+    | 'applyExecutionEvents'
   >;
 
   getActiveTaskId: () => string | null;
@@ -725,7 +734,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       ticket: symbol;
       gatewayId: string;
       overflowReconciled?: boolean;
-      frames: Array<{ event: string; payload: Record<string, unknown> }>;
+      frames: Array<{ event: string; payload: Record<string, unknown>; meta?: GatewayEventTransportMeta }>;
     }
   >();
   const connectedGateways = new Set<string>();
@@ -735,6 +744,16 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   const catalogRequests = new Map<string, CatalogRequest>();
   const effectiveToolsRequestTokens = new Map<string, symbol>();
   let synced = false;
+
+  /**
+   * V2（2026-10-13 step 2）· 边界状态：执行事件的 ID 与本地回合序号**在这里分配**，
+   * 映射器（`mapNativeToExecution`）保持纯函数（不调时钟/UUID/store/日志）。
+   * `localFrameId` 首次接收时分配一次（落盘/重放沿用 —— V4 持久化消费方）。
+   */
+  let localFrameCounter = 0;
+  /** 每会话的本地接收序号（lastSeq 单调性用）；有界：超过上限清最旧。 */
+  const sessionSeqCounters = new Map<string, number>();
+  const SESSION_SEQ_COUNTER_LIMIT = 256;
 
   function beginDispatch(gatewayId: string, sessionKey: string): symbol {
     const ticket = Symbol();
@@ -771,9 +790,48 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         if (receipt.sessionKey !== sessionKey || !receipt.runId.trim()) return;
         bindRun(sessionKey, receipt.runId, true);
       } else currentRuns.delete(sessionKey);
-      for (const frame of pending.frames) routeRunFrame(frame.event, frame.payload, pending.gatewayId);
+      for (const frame of pending.frames) {
+        routeRunFrame({
+          event: frame.event,
+          gatewayId: pending.gatewayId,
+          payload: frame.payload,
+          ...(frame.meta ? { meta: frame.meta } : {}),
+        });
+      }
       return;
     }
+  }
+
+  /**
+   * V2（2026-10-13 step 2）· 旁路映射：在**已有归属/陈旧 run 守卫之后**调用（调用点分别在
+   * `handleChatEvent` / `handleAgentEvent` 的守卫链下游），把原生帧映射成执行事件并折进
+   * store 的执行投影。纯映射 + 纯归约，不改写任何既有写入路径 —— 逐事件族接管是后续步骤
+   *（同一路径只允许一个写入者）。
+   */
+  function mapAndFoldExecution(sessionKey: string, frame: GatewayEvent, taskId: string, logicalRunId: string): void {
+    const counterKey = sessionKey;
+    if (sessionSeqCounters.size >= SESSION_SEQ_COUNTER_LIMIT && !sessionSeqCounters.has(counterKey)) {
+      const oldest = sessionSeqCounters.keys().next().value;
+      if (oldest !== undefined) sessionSeqCounters.delete(oldest);
+    }
+    const seq = (sessionSeqCounters.get(counterKey) ?? -1) + 1;
+    sessionSeqCounters.set(counterKey, seq);
+    localFrameCounter += 1;
+    const context: ExecutionMapContext = {
+      localFrameId: String(localFrameCounter),
+      receivedAt: Date.now(),
+      seq,
+      taskId,
+      logicalRunId,
+      channel: frame.meta?.channel ?? 'unknown',
+      ...(frame.meta?.connectionEpoch !== undefined ? { connectionEpoch: frame.meta.connectionEpoch } : {}),
+      nativeSessionKey: sessionKey,
+      evidence: 'observed',
+    };
+    const events = mapNativeToExecution(frame, context);
+    // ⚠️ 可选调用（与 `bindActiveRun?.` 同纪律）：真实 store 有该动作；测试/旧接线的手写
+    // mock store 没有它 —— 旁路映射缺了它只影响投影，不打断任何既有写入路径。
+    if (events.length > 0) deps.getMessageStore().applyExecutionEvents?.(sessionKey, events);
   }
 
   function acceptsRun(sessionKey: string, runId: string | undefined, start = false): boolean {
@@ -796,7 +854,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       .catch((error) => console.error('[dispatcher] stale run sync failed', error));
   }
 
-  function routeRunFrame(event: string, payload: Record<string, unknown>, gatewayId: string): void {
+  function routeRunFrame(frame: GatewayEvent): void {
+    const { event, payload, gatewayId } = frame;
     const sessionKey = payload.sessionKey;
     const pending = typeof sessionKey === 'string' ? pendingDispatches.get(sessionKey) : undefined;
     if (pending && pending.gatewayId === gatewayId) {
@@ -809,11 +868,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           reconcileRun(taskId, sessionKey as string);
         }
       }
-      pending.frames.push({ event, payload });
+      pending.frames.push({ event, payload, meta: frame.meta });
       return;
     }
-    if (event === 'chat') handleChatEvent(payload as unknown as ChatEventPayload, gatewayId);
-    else handleAgentEvent(payload as unknown as AgentEvent, gatewayId);
+    if (event === 'chat') handleChatEvent(payload as unknown as ChatEventPayload, gatewayId, frame);
+    else handleAgentEvent(payload as unknown as AgentEvent, gatewayId, frame);
   }
 
   /**
@@ -1125,7 +1184,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     if (readTurn() !== before) deps.getMessageStore().sealTurnActivity?.(sessionKey, ['tools']);
   }
 
-  function handleChatEvent(payload: ChatEventPayload, gatewayId: string): void {
+  function handleChatEvent(payload: ChatEventPayload, gatewayId: string, frame?: GatewayEvent): void {
     const { sessionKey, state } = payload;
     if (!sessionKey) {
       debugEvent('renderer.event.dropped.missing_session', { state });
@@ -1170,6 +1229,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const ephemeral = deps.isEphemeralSession?.(sessionKey) === true;
 
     const store = deps.getMessageStore();
+    // V2 旁路映射：在归属/陈旧 run 守卫**之后**执行 —— chat 声明（step.declared）与
+    // model 终态事件折进执行投影；正文/思考写入仍走原逐块 helper（同一路径一个写入者）。
+    if (frame) {
+      const logicalRunId = payload.runId ?? store.activeTurnBySession[sessionKey]?.runId ?? '';
+      mapAndFoldExecution(sessionKey, frame, taskId, logicalRunId);
+    }
     const text = extractText(payload);
     const thinking = extractThinking(payload);
     const toolCalls = extractToolCalls(payload);
@@ -1419,7 +1484,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
-  function handleAgentEvent(payload: AgentEvent, gatewayId: string): void {
+  function handleAgentEvent(payload: AgentEvent, gatewayId: string, frame?: GatewayEvent): void {
     const { sessionKey, stream, data } = payload;
     if (!sessionKey || !data) {
       debugEvent('renderer.agent.dropped.missing_fields', {
@@ -1478,6 +1543,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
     if (payload.runId && stream === 'lifecycle' && (data as AgentLifecycleData).phase === 'start')
       deps.getMessageStore().bindActiveRun?.(sessionKey, payload.runId);
+
+    // V2 旁路映射：在归属/陈旧 run 守卫**之后**执行。reconcileOnly 分支（上方 stale_run
+    // 的 canonicalOnly 路径）**不映射** —— 旧 run 晚包不进执行投影（归约层还有一道
+    // runId 守卫），只走既有 syncSessionMessages。
+    if (frame) {
+      const logicalRunId = payload.runId ?? deps.getMessageStore().activeTurnBySession[sessionKey]?.runId ?? '';
+      mapAndFoldExecution(sessionKey, frame, taskId, logicalRunId);
+    }
 
     switch (stream) {
       case 'tool':
@@ -1717,7 +1790,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
     }
 
-    let status: ToolCallStatus = 'running';
+    // ⭐ V2（2026-10-13 step 2）：非终态相位落 `dispatched`（调用进入处理）——
+    //    `tool/start` 不是"已实际执行"的证据（05 F1：prepare 前发 start、跳过/中止也发
+    //    start、wire 无 executionStarted）。`running` 只保留给有明确执行证据的适配器。
+    let status: ToolCallStatus = 'dispatched';
     if (data.phase === 'result') {
       // ⚠️ **`isError` 不足以判断"跑完了"**：exec 停在「等人批准」时，工具流那一帧
       //    带的是 `isError: false`（运行时的失败清单里没有 `approval-pending`，
@@ -1726,9 +1802,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       //    会纠正它**：`approval` 流的 `pending` 是"知道但不接"、`item` 的
       //    `kind:"command"+status:"blocked"` 也在"刻意不接"名单里、合并器**不许降级**。
       //    （2026-09-19 扩：`approval-unavailable` 也归这条 —— 从前它靠 `approval` 流
-      //     **事后**压成 `error`，最终态对，但中间**先闪一下「已完成」**。用户拍板"不让它先闪"。）
+      //     **事后**压成 `error`，最终态对，但中间**先闪一下「已完成」**。用户拍板"不让它先闪"。
+      //    V2 差异白名单：被审批按住的 result **直接落 `awaitingApproval`**（旧行为先落
+      //    running、再由 approval 帧改判 —— running 现在有"执行证据"的含义，不再借它。）
       if (data.isError) status = 'error';
-      else if (isExecHeldByApproval(data.result)) status = 'running';
+      else if (isExecHeldByApproval(data.result)) status = 'awaitingApproval';
       else status = 'done';
     } else if (data.phase === 'error') {
       // ⚠️ **这条分支运行时不发** —— 生产代码 11 个发射点里没有 `phase:"error"`
@@ -1758,7 +1836,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       //    用户点开卡片永远看不到工具到底返回了什么。
       result: extractToolResultText(data.result) ?? data.meta,
       startedAt: '',
-      completedAt: status !== 'running' ? new Date().toISOString() : undefined,
+      // V2：只有 done/error 才带完成时间（dispatched/awaitingApproval 没有结束）。
+      completedAt: status === 'done' || status === 'error' ? new Date().toISOString() : undefined,
     };
 
     const store = deps.getMessageStore();
@@ -1796,7 +1875,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         typeof text === 'string' ? parseSlidegenToolStream(text, data.phase === 'update')?.progress : undefined;
       if (progress) {
         if (data.phase === 'update') tc.result = undefined;
-        if (data.phase !== 'update' || (!reconcileOnly && previousCall?.status === 'running'))
+        // V2：dispatched 与 running 一样是"处理中"证据（update 相位页数进度照常吸附）。
+        if (
+          data.phase !== 'update' ||
+          (!reconcileOnly && (previousCall?.status === 'running' || previousCall?.status === 'dispatched'))
+        )
           tc.slideProgress = progress;
       }
     }
@@ -1865,7 +1948,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
     const failed = (data.status !== undefined && ITEM_FAILURE_STATUSES.has(data.status)) || Boolean(data.error);
     const settled = data.phase === 'end' || failed;
-    const status: ToolCallStatus = failed ? 'error' : settled ? 'done' : 'running';
+    // ⭐ V2：item/running ⇒ `dispatched`（调用进入处理，不是执行证据）。
+    const status: ToolCallStatus = failed ? 'error' : settled ? 'done' : 'dispatched';
 
     // ⭐ 认不出的 `status` **不许默默归类** —— `blocked` 当初就是被"默默归类"漏掉的
     //    （`fc4afa3`：`phase:"end"` 让它落进 `done`，靠帧序而不是靠我们认对来兜底）。
@@ -2545,7 +2629,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         payloadKeys: Object.keys(data.payload ?? {}),
       });
       if (data.event === 'chat' || data.event === 'agent') {
-        routeRunFrame(data.event, data.payload, data.gatewayId);
+        routeRunFrame(data);
       } else if (data.event === 'sessions.changed') {
         handleSessionChangedEvent(data.payload as SessionChangedEvent, data.gatewayId);
       } else if (data.event === 'session.message') {

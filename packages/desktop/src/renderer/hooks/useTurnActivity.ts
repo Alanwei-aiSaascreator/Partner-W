@@ -7,6 +7,7 @@ import {
   classifyToolActivity,
   latestAwaitingApproval,
   latestDeclaredCall,
+  latestDispatchedCall,
   latestRunningCall,
   sanitizeToolTitle,
   type DisplayToolCall,
@@ -77,6 +78,12 @@ export interface TurnActivity {
   quip: string;
   /** 是否有"正在执行"的工具（用于状态标识，不等于完成度）。 */
   running: boolean;
+  /**
+   * V2（2026-10-13 step 2）：是否有**进入处理**的工具（tool/start、item/running ——
+   * 网关接单、无执行证据）。文案「调用处理中」，与 `running`（执行中）、
+   * `declared`（模型声明）三档分开。
+   */
+  dispatched: boolean;
   /**
    * V1（2026-10-13）：是否有**声明态**工具（模型声明了调用、还没有执行证据）。
    * 与 `running` 互斥的语义：声明 ≠ 执行 —— 文案说"调用处理中"，不说"执行中"。
@@ -149,11 +156,14 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
   const awaitingApproval = awaitingCall !== null;
   // V1：声明态（模型声明、无执行证据）—— "调用处理中"，**不是**"执行中"。
   const declaredCall = latestDeclaredCall(calls);
+  // V2：进入处理（tool/start、item/running）—— "调用处理中"，与 declared 同文案不同证据档。
+  const dispatchedCall = latestDispatchedCall(calls);
   // 已结束调用包含成功与错误，不代表成功步骤数或整个任务的完成度。
   const endedCallCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
 
   // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > **等人回答的提问** >
-  // 正在跑的工具 > 声明态工具（调用处理中）> 网关报的准备阶段 > 已结束工具调用计数 / 等待响应。
+  // 正在跑的工具（执行中）> 进入处理的工具（调用处理中）> 声明态工具 > 网关报的准备阶段
+  // > 已结束工具调用计数 / 等待响应。
   // ⭐ 两类"等人"排在最前：它们才是"为什么没有进展"的答案（而且该谁动在用户那边）。
   let headline: string;
   const activityLabel = (call: DisplayToolCall): string => {
@@ -175,9 +185,14 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
     headline = t('chatInput.waiting.awaitingAnswer');
   } else if (runningCall) {
     headline = t('chatInput.waiting.runningTool', { what: activityLabel(runningCall) });
+  } else if (dispatchedCall) {
+    // ⭐ V2（2026-10-13 step 2）：dispatched = 网关接单、无执行证据 —— 「调用处理中」，
+    //    绝不复用 `runningTool`（"执行中"）。复用 V1 的 `chatInput.waiting.declaredTool`
+    //    （九语言文案恰为「调用处理中：{{what}}」），零新增 i18n 键。
+    headline = t('chatInput.waiting.declaredTool', { what: activityLabel(dispatchedCall) });
   } else if (declaredCall) {
     // ⭐ V1（2026-10-13）：声明 ≠ 执行 —— 模型宣布了调用、还没有执行证据，
-    //    用"调用处理中"类文案（新键 `chatInput.waiting.declaredTool`，由 I 汇总九语言），
+    //    用"调用处理中"类文案（键 `chatInput.waiting.declaredTool`，由 I 汇总九语言），
     //    绝不复用 `runningTool`（"执行中"是编造）。
     headline = t('chatInput.waiting.declaredTool', { what: activityLabel(declaredCall) });
   } else if (compacting) {
@@ -220,6 +235,7 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
     headline,
     quip,
     running: Boolean(runningCall),
+    dispatched: Boolean(dispatchedCall),
     declared: Boolean(declaredCall),
     awaitingApproval,
     awaitingAnswer,

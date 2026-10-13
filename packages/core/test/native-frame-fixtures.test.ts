@@ -113,12 +113,16 @@ function createHarness() {
 }
 
 describe('T1 · tool start 先于准备；跳过/未执行也发 start（wire 无 executionStarted）', () => {
-  it('start → running：卡片随 start 即显示运行中（现状）', () => {
+  it('start → dispatched：卡片随 start 显示"调用处理中"（V2 有意改写：tool/start 不是执行证据）', () => {
+    // 【V2 白名单】旧断言 `status === 'running'` 依据"start 即执行"——05 F1 实证
+    // tool/start 在 prepareToolCall 之前发出、跳过/中止的调用也发 start、wire 无
+    // executionStarted ⇒ 落 `dispatched`（调用进入处理），`running` 只留给有明确执行
+    // 证据的适配器。
     const h = createHarness();
     h.primeTurn();
     h.emit(toolStartFrame());
     const call = h.calls().find((c) => c.id === 'tc-1')!;
-    expect(call.status).toBe('running');
+    expect(call.status).toBe('dispatched');
     expect(call.name).toBe('read');
     expect(call.args).toEqual({ path: 'a.txt' });
   });
@@ -163,13 +167,17 @@ describe('T1 · tool start 先于准备；跳过/未执行也发 start（wire �
 });
 
 describe('T2 · result(isError:false) 先于 approval/pending —— 不许提前 done', () => {
-  it('held result（details.status=approval-pending）后状态保持 running，随后 approval 帧落 awaitingApproval', () => {
+  it('held result（details.status=approval-pending）直接落 awaitingApproval（V2 有意改写：不借 running 中转）', () => {
+    // 【V2 白名单】旧断言 `保持 running`：held result 先落 running、approval 帧再改判。
+    // V2 的 `running` 有"执行证据"含义（只留给有确认执行的适配器），被审批按住的
+    // result 直接落 `awaitingApproval`（05 §4 状态归约：awaiting_approval 是独立档位），
+    // 随后 approval 帧同档位幂等、不提前 done 的护栏不变。
     const h = createHarness();
     h.primeTurn();
     h.emit(toolStartFrame({ toolCallId: 'tc-exec-1', name: 'bash' }));
     h.emit(heldResultFrame());
     let call = h.calls().find((c) => c.id === 'tc-exec-1')!;
-    expect(call.status, '被审批按住的 result 不得落 done（isExecHeldByApproval）').toBe('running');
+    expect(call.status, '被审批按住的 result 不得落 done（isExecHeldByApproval）').toBe('awaitingApproval');
     h.emit(approvalRequestedFrame());
     call = h.calls().find((c) => c.id === 'tc-exec-1')!;
     expect(call.status).toBe('awaitingApproval');

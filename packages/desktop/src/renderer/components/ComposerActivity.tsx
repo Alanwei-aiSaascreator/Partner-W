@@ -52,10 +52,8 @@ export default function ComposerActivity({ sessionKey, sessionKeys, onCancel }: 
   const { t } = useTranslation();
   // ⭐ P1-3：`awaitingApproval`/`awaitingAnswer` 是两类"等人"（等批准 / 等回答）——
   //    不是我们在动，是在等你 ⇒ 下面据此把"正在动"的视觉（转圈）停掉。
-  const { active, elapsedMs, headline, quip, running, declared, awaitingApproval, awaitingAnswer } = useTurnActivity(
-    sessionKey,
-    sessionKeys,
-  );
+  const { active, elapsedMs, headline, quip, running, dispatched, declared, awaitingApproval, awaitingAnswer } =
+    useTurnActivity(sessionKey, sessionKeys);
 
   if (!sessionKey || !active) return <ArtifactDeliveryActivity sessionKey={sessionKey} />;
 
@@ -72,9 +70,11 @@ export default function ComposerActivity({ sessionKey, sessionKeys, onCancel }: 
               ? 'awaiting-answer'
               : running
                 ? 'running-tool'
-                : declared
-                  ? 'declared-tool'
-                  : 'working'
+                : dispatched
+                  ? 'dispatched-tool'
+                  : declared
+                    ? 'declared-tool'
+                    : 'working'
         }
         className="mb-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2"
       >
