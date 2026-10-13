@@ -166,12 +166,36 @@ vi.mock('../src/renderer/lib/preset-agent-bootstrap', () => ({
   presetAgentBootstrapCoordinator: { getSnapshot: () => entryFactsFixture.startup.assistants },
 }));
 import App from '../src/renderer/App';
-import { loadOnboardingProfile, saveOnboardingProfile } from '../src/renderer/lib/user-onboarding';
+import {
+  loadOnboardingProfile,
+  loadOnboardingProfileResult,
+  saveOnboardingProfile,
+} from '../src/renderer/lib/user-onboarding';
 
-vi.mock('../src/renderer/lib/user-onboarding', () => ({
-  loadOnboardingProfile: vi.fn(() => null),
-  saveOnboardingProfile: vi.fn(),
-}));
+vi.mock('../src/renderer/lib/user-onboarding', () => {
+  /**
+   * 诊断入口与旧入口**共用同一把 mock**（BUG-034 集成在途）：`loadOnboardingProfileResult`
+   * 从 `loadOnboardingProfile` 的返回值派生 reason/profile，所以 App 无论走哪条读取路径，
+   * 本文件的 `mockReturnValue` 都照样生效 —— 集成前后这套账号竞态反例都不需要改写。
+   */
+  const loadOnboardingProfile = vi.fn((_userId: string): unknown => null);
+  const reportOnboardingProfileLoad = vi.fn(() => false);
+  const reportOnboardingProfileSave = vi.fn(() => false);
+  return {
+    loadOnboardingProfile,
+    loadOnboardingProfileResult: vi.fn((userId: string) => {
+      const profile = loadOnboardingProfile(userId);
+      return {
+        reason: profile ? 'ok' : 'missing',
+        profile,
+        diagnostic: { keyKind: profile ? 'v3' : null, recordVersion: null, sections: [] },
+      };
+    }),
+    reportOnboardingProfileLoad,
+    reportOnboardingProfileSave,
+    saveOnboardingProfile: vi.fn(),
+  };
+});
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 beforeEach(() => {
@@ -186,6 +210,9 @@ beforeEach(() => {
   entryFactsFixture.onboardingInstances = 0;
   entryFactsFixture.changeAccount = null;
   vi.mocked(loadOnboardingProfile).mockReset().mockReturnValue(null);
+  // 诊断入口只清调用记录、保留实现（它从 loadOnboardingProfile 派生）——否则上面的调用计数
+  // 断言会被上一个用例污染。
+  vi.mocked(loadOnboardingProfileResult).mockClear();
   vi.mocked(saveOnboardingProfile).mockReset();
 });
 afterEach(() => vi.useRealTimers());
@@ -269,11 +296,14 @@ it('keeps startup account A from replacing explicit login B while OTP is pending
     });
     expect(container.querySelector('[data-login-region="form"]')).not.toBeNull();
     expect(loadOnboardingProfile).not.toHaveBeenCalledWith('account-A');
+    // 直接钉 App 的诊断入口接线（BUG-034）：账号 = B、存储缺省、来源 = entry；A 一次都不许读。
+    expect(loadOnboardingProfileResult).not.toHaveBeenCalledWith('account-A', undefined, { source: 'entry' });
     await act(async () => {
       resolveOtp({ ok: true });
     });
     expect(container.querySelector('[data-entry-continue]')).not.toBeNull();
     expect(loadOnboardingProfile).toHaveBeenCalledWith('account-B');
+    expect(loadOnboardingProfileResult).toHaveBeenCalledWith('account-B', undefined, { source: 'entry' });
     expect(commercialSession).toHaveBeenCalledTimes(2);
   } finally {
     act(() => root.unmount());
@@ -434,6 +464,8 @@ it('keeps explicit local mode separate from commercial activation', async () => 
   try {
     await ui.render();
     expect(ui.container.querySelector('[data-account="local"]')).not.toBeNull();
+    // 本地模式同样走诊断入口，但来源标签**必须**是 local-entry（不许和商业入口混用）。
+    expect(loadOnboardingProfileResult).toHaveBeenCalledWith('local', undefined, { source: 'local-entry' });
     expect(bridge.commercialSession).not.toHaveBeenCalled();
     expect(bridge.commercialLicenseStatus).not.toHaveBeenCalled();
     expect(bridge.commercialLicenseActivate).not.toHaveBeenCalled();
@@ -707,7 +739,11 @@ it.each([1, 2, 3] as const)(
     try {
       await continueToOnboarding(ui);
       act(() => entryFactsFixture.onboardingProps!.onComplete(profile));
-      expect(saveOnboardingProfile).toHaveBeenCalledExactlyOnceWith(profile);
+      // BUG-034 集成（App.tsx）：第一参数 = profile 逐字相等；第 2/3 参 = 存储缺省 + 诊断来源。
+      // source **不做宽断言** —— 它就是本轮诊断能力的核验点，换了标签必须在这里现形。
+      expect(saveOnboardingProfile).toHaveBeenCalledExactlyOnceWith(profile, undefined, {
+        source: 'entry-complete',
+      });
       expect(ui.container.querySelector('[data-workspace-profile="account-A"]')).not.toBeNull();
       expect(ui.container.querySelector('[data-account]')).toBeNull();
     } finally {
@@ -863,7 +899,9 @@ it('keeps the profile editor mounted when storage throws and permits a current-s
     expect(entryFactsFixture.onboardingProps?.initialProfile).toBe(original);
     expect(ui.container.querySelector('[data-workspace-profile]')).toBeNull();
     act(() => entryFactsFixture.onboardingProps!.onComplete(updated));
-    expect(saveOnboardingProfile).toHaveBeenNthCalledWith(2, updated);
+    // 两次调用的形状一致：profile 逐字 + (undefined, {source}) —— 失败那次也走同一形状。
+    expect(saveOnboardingProfile).toHaveBeenNthCalledWith(1, updated, undefined, { source: 'entry-complete' });
+    expect(saveOnboardingProfile).toHaveBeenNthCalledWith(2, updated, undefined, { source: 'entry-complete' });
     expect(ui.container.querySelector('[data-profile-nickname="Edited nickname"]')).not.toBeNull();
     expect(ui.container.querySelector('[data-account]')).toBeNull();
   } finally {

@@ -94,11 +94,28 @@ vi.mock('../src/renderer/lib/gateway-disappearance', () => ({ useGatewayDisappea
 vi.mock('../src/renderer/lib/preset-agent-bootstrap', () => ({
   presetAgentBootstrapCoordinator: { getSnapshot: () => fixtures.assistants },
 }));
-vi.mock('../src/renderer/lib/user-onboarding', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../src/renderer/lib/user-onboarding')>()),
-  loadOnboardingProfile: vi.fn(() => localProfile()),
-  saveOnboardingProfile: vi.fn(),
-}));
+vi.mock('../src/renderer/lib/user-onboarding', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/renderer/lib/user-onboarding')>();
+  /**
+   * 诊断入口与旧入口**共用同一把 mock**（BUG-034 集成在途）：`loadOnboardingProfileResult` 的
+   * reason/profile 从被覆盖的 `loadOnboardingProfile` 派生，App 走哪条读取路径都拿到
+   * `localProfile()` ⇒ 这些 H5/H6 布局用例不必知道 App 用的是哪个读取口。
+   */
+  const loadOnboardingProfile = vi.fn((_userId: string) => localProfile());
+  return {
+    ...actual,
+    loadOnboardingProfile,
+    loadOnboardingProfileResult: vi.fn((userId: string) => {
+      const profile = loadOnboardingProfile(userId);
+      return {
+        reason: profile ? 'ok' : 'missing',
+        profile,
+        diagnostic: { keyKind: profile ? 'v3' : null, recordVersion: null, sections: [] },
+      };
+    }),
+    saveOnboardingProfile: vi.fn(),
+  };
+});
 
 import App from '../src/renderer/App';
 import { requestArtifactPreview } from '../src/renderer/lib/artifact-preview-navigation';

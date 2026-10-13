@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  anonymousAccountFingerprint,
   clearOnboardingDraft,
   goalAnalysisVersion,
   loadOnboardingProfile,
+  loadOnboardingProfileResult,
   onboardingDraftScope,
   readOnboardingDraft,
   readStoredPortraitIdentity,
   readStoredPortraitRole,
   recommendAssistants,
   recommendedStarterIds,
+  reportOnboardingProfileLoad,
+  reportOnboardingProfileSave,
   saveOnboardingDraft,
   saveOnboardingProfile,
   type OnboardingDraft,
@@ -517,5 +521,326 @@ describe('saveOnboardingProfile 的存储键纪律', () => {
     };
     saveOnboardingProfile(v3, storage);
     expect(values.has('rongying-cube:onboarding:v3:user-1')).toBe(true);
+  });
+});
+
+/**
+ * BUG-034：问卷"重问"先分因。加载结果必须把 missing / parse-invalid / schema-invalid /
+ * owner-mismatch / storage-error 分开 —— 否则"读不到"这五个字会掩盖完全不同的现场。
+ */
+describe('画像加载诊断（BUG-034）', () => {
+  function disk(): OnboardingStorage & { values: Map<string, string> } {
+    const values = new Map<string, string>();
+    return {
+      values,
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => void values.set(key, value),
+      removeItem: (key) => void values.delete(key),
+    };
+  }
+
+  /** 一份合法 v3 记录（首跑四件套齐全）。 */
+  const v3Record = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    version: 3,
+    userId: 'user-1',
+    nickname: '王老板',
+    introduction: '做小家电的',
+    role: 'sales',
+    customRole: '',
+    useCases: ['content', 'office'],
+    customGoal: '每周三条短视频',
+    selectedAssistantIds: ['content', 'office'],
+    responseDetail: 'balanced',
+    filePermission: 'ask-every-time',
+    completedAt: '2026-10-06T11:49:12.975Z',
+    industry: { code: null, generalConfirmed: true, source: 'user', catalogVersion: 1 },
+    questionnaire: { version: 1, answers: ['yes', 'yes', 'no', 'yes'] },
+    persona: { id: null, source: 'default', ruleVersion: null },
+    workMatch: { source: 'basic', profileVersion: '1m5g94p' },
+    ...overrides,
+  });
+
+  const V3_KEY = 'rongying-cube:onboarding:v3:user-1';
+  const V1_KEY = 'rongying-cube:onboarding:v1:user-1';
+
+  it('合法 v3 重开（同一个盘、换成一份新的存储视图）⇒ ok，且旧入口拿到同一份档案', () => {
+    const first = disk();
+    saveOnboardingProfile(v3Record() as unknown as OnboardingProfile, first);
+    // "正常退出、重开"在最底层就是：同一批字节上再建一份存储视图。
+    const reopened = disk();
+    reopened.values.set(V3_KEY, first.values.get(V3_KEY)!);
+
+    const result = loadOnboardingProfileResult('user-1', reopened);
+    expect(result.reason).toBe('ok');
+    expect(result.profile).not.toBeNull();
+    expect(result.profile).toEqual(loadOnboardingProfile('user-1', reopened));
+    // App 的入口判定吃的是"profile 非空" ⇒ 合法档案绝不会因为重开变成首次注册。
+    expect(Boolean(result.profile)).toBe(true);
+  });
+
+  it('没有记录 ⇒ missing（keyKind 为 null）；空串记录同样按 missing 收口', () => {
+    const storage = disk();
+    expect(loadOnboardingProfileResult('user-1', storage)).toMatchObject({
+      reason: 'missing',
+      profile: null,
+      diagnostic: { keyKind: null, recordVersion: null, sections: [] },
+    });
+    storage.values.set(V3_KEY, '');
+    expect(loadOnboardingProfileResult('user-1', storage)).toMatchObject({
+      reason: 'missing',
+      diagnostic: { keyKind: 'v3' },
+    });
+  });
+
+  it('坏 JSON ⇒ parse-invalid；缺字段 ⇒ schema-invalid（两个原因不同，且段名可读）', () => {
+    const storage = disk();
+    storage.values.set(V3_KEY, '{"version":3,"userId":"user-1"');
+    const truncated = loadOnboardingProfileResult('user-1', storage);
+    expect(truncated.reason).toBe('parse-invalid');
+    expect(truncated.diagnostic).toMatchObject({ keyKind: 'v3', recordVersion: null, sections: [] });
+
+    storage.values.set(V3_KEY, JSON.stringify(v3Record({ persona: undefined })));
+    const missingSection = loadOnboardingProfileResult('user-1', storage);
+    expect(missingSection.reason).toBe('schema-invalid');
+    expect(missingSection.profile).toBeNull();
+    expect(missingSection.diagnostic.recordVersion).toBe(3);
+    expect(missingSection.diagnostic.sections).toEqual(['persona']);
+  });
+
+  it('多段同时坏 ⇒ 全部段名都报出来（industry + workMatch）', () => {
+    const storage = disk();
+    storage.values.set(
+      V3_KEY,
+      JSON.stringify(v3Record({ industry: { code: 'Z' }, workMatch: { source: 'ai', profileVersion: 'p' } })),
+    );
+    const result = loadOnboardingProfileResult('user-1', storage);
+    expect(result.reason).toBe('schema-invalid');
+    expect(result.diagnostic.sections).toEqual(['industry', 'workMatch']);
+  });
+
+  it('版本不认识 / v3 键里塞了旧版本 ⇒ schema-invalid(version)，不按老键回读', () => {
+    const storage = disk();
+    storage.values.set(V3_KEY, JSON.stringify({ ...v3Record(), version: 2 }));
+    expect(loadOnboardingProfileResult('user-1', storage)).toMatchObject({
+      reason: 'schema-invalid',
+      diagnostic: { keyKind: 'v3', recordVersion: 2, sections: ['version'] },
+    });
+
+    storage.values.delete(V3_KEY);
+    storage.values.set(V1_KEY, JSON.stringify({ ...v3Record(), version: 9 }));
+    expect(loadOnboardingProfileResult('user-1', storage)).toMatchObject({
+      reason: 'schema-invalid',
+      diagnostic: { keyKind: 'legacy', recordVersion: 9, sections: ['version'] },
+    });
+  });
+
+  it('记录属于别的账号 ⇒ owner-mismatch：不拒自家人、也绝不回借（v3 与新老键各验一次）', () => {
+    const storage = disk();
+    storage.values.set(V3_KEY, JSON.stringify(v3Record({ userId: 'another-account' })));
+    const mismatch = loadOnboardingProfileResult('user-1', storage);
+    expect(mismatch.reason).toBe('owner-mismatch');
+    expect(mismatch.profile).toBeNull();
+    expect(mismatch.diagnostic).toMatchObject({ keyKind: 'v3', recordVersion: 3 });
+
+    storage.values.delete(V3_KEY);
+    storage.values.set(V1_KEY, JSON.stringify({ ...v3Record(), version: 1, userId: 'another-account' }));
+    expect(loadOnboardingProfileResult('user-1', storage).reason).toBe('owner-mismatch');
+  });
+
+  it('存储读取抛错 ⇒ storage-error（不是 missing），且旧入口不炸', () => {
+    const broken = {
+      getItem: (): string | null => {
+        throw new DOMException('Storage disabled', 'SecurityError');
+      },
+    };
+    expect(loadOnboardingProfileResult('user-1', broken)).toMatchObject({
+      reason: 'storage-error',
+      profile: null,
+      diagnostic: { keyKind: null },
+    });
+    expect(loadOnboardingProfile('user-1', broken)).toBeNull();
+  });
+
+  it('连 window 都没有（node 环境未注入存储）⇒ storage-error，而不是抛', () => {
+    expect(loadOnboardingProfileResult('user-1')).toMatchObject({ reason: 'storage-error', profile: null });
+  });
+
+  it('旧 v1 档案按既定迁移保留：ok + version 2 + 字段不丢；v2 原样照读', () => {
+    const storage = disk();
+    storage.values.set(
+      V1_KEY,
+      JSON.stringify({
+        version: 1,
+        userId: 'user-1',
+        nickname: '旧用户',
+        useCases: ['content'],
+        customGoal: '每周写三篇文章',
+        completedAt: '2026-09-14T00:00:00.000Z',
+      }),
+    );
+    const migrated = loadOnboardingProfileResult('user-1', storage);
+    expect(migrated.reason).toBe('ok');
+    expect(migrated.diagnostic).toMatchObject({ keyKind: 'legacy', recordVersion: 1 });
+    expect(migrated.profile).toEqual({
+      version: 2,
+      userId: 'user-1',
+      nickname: '旧用户',
+      role: 'custom',
+      customRole: '',
+      useCases: ['content'],
+      customGoal: '每周写三篇文章',
+      selectedAssistantIds: [],
+      responseDetail: 'balanced',
+      filePermission: 'ask-every-time',
+      completedAt: '2026-09-14T00:00:00.000Z',
+    });
+  });
+
+  it('结果与旧入口逐例恒等（兼容包装不许走样）', () => {
+    const cases: Array<[string, string, string]> = [
+      ['合法 v3', V3_KEY, JSON.stringify(v3Record())],
+      ['v3 键里写旧版本（版本错位）', V3_KEY, JSON.stringify({ ...v3Record(), version: 2 })],
+      ['老键里的合法 v2（无首跑字段）', V1_KEY, JSON.stringify({ ...v3Record(), version: 2 })],
+      ['坏 JSON', V3_KEY, 'not json'],
+      ['缺 persona', V3_KEY, JSON.stringify(v3Record({ persona: undefined }))],
+      ['别的账号', V3_KEY, JSON.stringify(v3Record({ userId: 'user-2' }))],
+      ['空串', V3_KEY, ''],
+    ];
+    for (const [label, key, raw] of cases) {
+      const storage = disk();
+      storage.values.set(key, raw);
+      expect(loadOnboardingProfileResult('user-1', storage).profile, label).toEqual(
+        loadOnboardingProfile('user-1', storage),
+      );
+    }
+  });
+
+  it('匿名指纹：同账号稳定、不同账号不同、不落明文', () => {
+    const fingerprint = anonymousAccountFingerprint('66435693-c7de-4359-b141-fa6df7d78d66');
+    expect(fingerprint).toBe(anonymousAccountFingerprint('66435693-c7de-4359-b141-fa6df7d78d66'));
+    expect(fingerprint).not.toBe(anonymousAccountFingerprint('local'));
+    expect(fingerprint).toMatch(/^acc-[0-9a-f]{8}$/);
+    expect(fingerprint).not.toContain('66435693');
+  });
+
+  it('加载记录只报原因/schema/指纹，不含画像内容；出口缺失或抛错都不崩', () => {
+    const storage = disk();
+    storage.values.set(V3_KEY, JSON.stringify(v3Record({ persona: undefined })));
+    const result = loadOnboardingProfileResult('user-1', storage);
+    type ReportEvent = { domain: string; event: string; data?: Record<string, unknown> };
+    const sink = vi.fn<(event: ReportEvent) => void>();
+    expect(reportOnboardingProfileLoad(result, 'user-1', { source: 'entry', report: sink })).toBe(true);
+    expect(sink).toHaveBeenCalledTimes(1);
+    const event = sink.mock.calls[0]![0];
+    expect(event.domain).toBe('renderer');
+    expect(event.event).toBe('onboarding.profile.load');
+    expect(event.data).toMatchObject({
+      reason: 'schema-invalid',
+      keyKind: 'v3',
+      recordVersion: 3,
+      sections: ['persona'],
+      source: 'entry',
+      account: anonymousAccountFingerprint('user-1'),
+    });
+    const serialized = JSON.stringify(event);
+    for (const leak of ['王老板', '小家电', '每周三条短视频', 'user-1']) expect(serialized).not.toContain(leak);
+
+    // 出口抛错：不许把入口带崩，如实返回 false
+    expect(
+      reportOnboardingProfileLoad(result, 'user-1', {
+        report: () => {
+          throw new Error('bridge closed');
+        },
+      }),
+    ).toBe(false);
+    // node 环境没有桥：静默跳过
+    expect(reportOnboardingProfileLoad(result, 'user-1')).toBe(false);
+  });
+
+  it('诊断入口传了 diagnostics 才上报：不传是纯读取，不碰出口', () => {
+    type ReportEvent = { domain: string; event: string; data?: Record<string, unknown> };
+    const storage = disk();
+    storage.values.set(V3_KEY, JSON.stringify(v3Record()));
+    const sink = vi.fn<(event: ReportEvent) => void>();
+    const silent = loadOnboardingProfileResult('user-1', storage);
+    expect(silent.reason).toBe('ok');
+    expect(sink).not.toHaveBeenCalled();
+    expect(loadOnboardingProfileResult('user-1', storage, { source: 'entry', report: sink }).reason).toBe('ok');
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0]![0].data).toMatchObject({ reason: 'ok', keyKind: 'v3', source: 'entry' });
+  });
+
+  it('保存记录（对账另一半）：成功报 keyKind，失败只报异常名', () => {
+    type ReportEvent = { domain: string; event: string; data?: Record<string, unknown> };
+    const okSink = vi.fn<(event: ReportEvent) => void>();
+    expect(reportOnboardingProfileSave({ ok: true, keyKind: 'v3' }, 'user-1', { report: okSink })).toBe(true);
+    expect(okSink.mock.calls[0]![0]).toMatchObject({
+      event: 'onboarding.profile.save',
+      data: { ok: true, keyKind: 'v3', account: anonymousAccountFingerprint('user-1') },
+    });
+    const failSink = vi.fn<(event: ReportEvent) => void>();
+    reportOnboardingProfileSave({ ok: false, errorKind: 'QuotaExceededError' }, 'user-1', { report: failSink });
+    expect(failSink.mock.calls[0]![0]).toMatchObject({
+      data: { ok: false, errorKind: 'QuotaExceededError' },
+    });
+  });
+});
+
+/**
+ * setItem 抛错 **不得**被吞成"保存成功"（App 的完成回调依赖这次抛出留住编辑页）。
+ * 这是既有行为的直接钉板：失败向上抛，且 v1 老键清理不许半途执行；带 diagnostics 时
+ * 失败也要留痕（但绝不影响抛出）。
+ */
+describe('保存失败必须向上抛（不许吞）', () => {
+  const profile: OnboardingProfile = {
+    version: 3,
+    userId: 'user-1',
+    nickname: '',
+    useCases: ['content'],
+    customGoal: '',
+    completedAt: '2026-10-07T00:00:00.000Z',
+    industry: { code: 'C', generalConfirmed: false, source: 'user', catalogVersion: 1 },
+  };
+
+  it('setItem 抛错 ⇒ saveOnboardingProfile 抛出，removeItem 清理不执行', () => {
+    const removeItem = vi.fn();
+    const storage: OnboardingStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException('Storage unavailable', 'QuotaExceededError');
+      },
+      removeItem,
+    };
+    expect(() => saveOnboardingProfile(profile, storage)).toThrow('Storage unavailable');
+    expect(removeItem).not.toHaveBeenCalled();
+  });
+
+  it('带 diagnostics 时：成功报回执；失败留痕后仍然抛出（不许吞）', () => {
+    type ReportEvent = { domain: string; event: string; data?: Record<string, unknown> };
+    const okSink = vi.fn<(event: ReportEvent) => void>();
+    const okStorage = {
+      getItem: () => null,
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    };
+    saveOnboardingProfile(profile, okStorage, { source: 'entry-complete', report: okSink });
+    expect(okStorage.setItem).toHaveBeenCalledTimes(1);
+    expect(okSink.mock.calls[0]![0]).toMatchObject({
+      event: 'onboarding.profile.save',
+      data: { ok: true, keyKind: 'v3', source: 'entry-complete' },
+    });
+
+    const failSink = vi.fn<(event: ReportEvent) => void>();
+    const failing: OnboardingStorage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException('Storage unavailable', 'QuotaExceededError');
+      },
+      removeItem: vi.fn(),
+    };
+    expect(() => saveOnboardingProfile(profile, failing, { report: failSink })).toThrow('Storage unavailable');
+    expect(failSink.mock.calls[0]![0]).toMatchObject({
+      data: { ok: false, errorKind: 'QuotaExceededError' },
+    });
   });
 });
