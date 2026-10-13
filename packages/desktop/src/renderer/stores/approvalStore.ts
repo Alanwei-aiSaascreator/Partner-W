@@ -22,14 +22,16 @@ const expireTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const useApprovalStore = create<{
   pendingApprovals: PendingApproval[];
   addApproval: (gatewayId: string, req: ExecApprovalRequest) => void;
-  removeApproval: (id: string) => void;
+  /** V3：按 **gateway + id** 匹配（相同 approvalId 来自不同 gateway 不串）。 */
+  removeApproval: (gatewayId: string, id: string) => void;
   resolveApproval: (id: string, decision: ApprovalDecision) => void;
   clear: () => void;
 }>((set, get) => ({
   pendingApprovals: [],
 
   addApproval(gatewayId, req) {
-    if (get().pendingApprovals.some((a) => a.id === req.id)) return;
+    // V3：相同 approvalId 来自不同 gateway 是两个审批（不互相去重、不互相移除）。
+    if (get().pendingApprovals.some((a) => a.id === req.id && a.gatewayId === gatewayId)) return;
     const taskId = resolveTaskId(req.request.sessionKey);
     if (taskId && taskId !== useTaskStore.getState().activeTaskId) {
       useUiStore.getState().markUnread(taskId);
@@ -37,24 +39,27 @@ export const useApprovalStore = create<{
     set((s) => ({ pendingApprovals: [...s.pendingApprovals, { ...req, gatewayId, taskId }] }));
     const ttl = req.expiresAtMs - Date.now();
     if (ttl > 0) {
+      const timerKey = `${gatewayId}:${req.id}`;
       expireTimers.set(
-        req.id,
+        timerKey,
         setTimeout(() => {
-          expireTimers.delete(req.id);
-          get().removeApproval(req.id);
+          expireTimers.delete(timerKey);
+          get().removeApproval(gatewayId, req.id);
         }, ttl),
       );
     }
   },
 
-  removeApproval(id) {
-    const approval = get().pendingApprovals.find((a) => a.id === id);
-    if (approval?.taskId && !get().pendingApprovals.some((a) => a.id !== id && a.taskId === approval.taskId)) {
+  removeApproval(gatewayId, id) {
+    const sameApproval = (a: PendingApproval): boolean => a.id === id && a.gatewayId === gatewayId;
+    const approval = get().pendingApprovals.find(sameApproval);
+    if (approval?.taskId && !get().pendingApprovals.some((a) => !sameApproval(a) && a.taskId === approval.taskId)) {
       useUiStore.getState().clearUnread(approval.taskId);
     }
-    clearTimeout(expireTimers.get(id));
-    expireTimers.delete(id);
-    set((s) => ({ pendingApprovals: s.pendingApprovals.filter((a) => a.id !== id) }));
+    const timerKey = `${gatewayId}:${id}`;
+    clearTimeout(expireTimers.get(timerKey));
+    expireTimers.delete(timerKey);
+    set((s) => ({ pendingApprovals: s.pendingApprovals.filter((a) => !sameApproval(a)) }));
   },
 
   resolveApproval(id, decision) {
@@ -75,7 +80,7 @@ export const useApprovalStore = create<{
           toast.error(title, { description });
           return;
         }
-        get().removeApproval(id);
+        get().removeApproval(approval.gatewayId, id);
       })
       .catch((err) => {
         const appError = buildAppError({

@@ -546,6 +546,7 @@
     "waiting": {
       "awaitingAnswer": "Aguardando sua resposta",
       "awaitingApproval": "Aguardando aprovação: {{what}}",
+      "awaitingApprovalParallel": "Aguardando aprovação: {{what}} (mais {{count}} etapas em andamento)",
       "declaredTool": "Processando chamada: {{what}}",
       "line": {
         "fresh0": "Aguardando uma resposta",

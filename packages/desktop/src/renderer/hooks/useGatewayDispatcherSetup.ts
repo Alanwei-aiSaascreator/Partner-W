@@ -127,8 +127,10 @@ function getDispatcher(): GatewayDispatcher {
       onPerformerCandidate: (taskId, sessionKey) => handlePerformerCandidate(taskId, sessionKey),
       onSubagentCandidate: (sessionKey, gatewayId) => handleSubagentCandidate(sessionKey, gatewayId),
       onApprovalRequested: handleApprovalRequested,
-      onApprovalResolved: (id) => {
-        useApprovalStore.getState().removeApproval(id);
+      // V3（2026-10-13 step 3）：结论对象携带 gateway/decision/源 request ——
+      // 移除按 gateway+id 匹配（相同 approvalId 来自不同 gateway 不串）。
+      onApprovalResolved: (conclusion) => {
+        useApprovalStore.getState().removeApproval(conclusion.gatewayId, conclusion.id);
       },
       onQuestionRequested: (gatewayId, request) => useQuestionStore.getState().addQuestion(gatewayId, request),
       onQuestionResolved: (id) => useQuestionStore.getState().removeQuestion(id),

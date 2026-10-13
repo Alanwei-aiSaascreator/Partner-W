@@ -546,6 +546,7 @@
     "waiting": {
       "awaitingAnswer": "等待你的回答",
       "awaitingApproval": "等待批准：{{what}}",
+      "awaitingApprovalParallel": "等待批准：{{what}}（另有 {{count}} 个步骤进行中）",
       "declaredTool": "调用处理中：{{what}}",
       "line": {
         "fresh0": "等待响应",

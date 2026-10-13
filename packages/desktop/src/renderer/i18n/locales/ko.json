@@ -546,6 +546,7 @@
     "waiting": {
       "awaitingAnswer": "답변을 기다리는 중",
       "awaitingApproval": "승인 대기 중: {{what}}",
+      "awaitingApprovalParallel": "승인 대기 중: {{what}} ({{count}}개 단계 진행 중)",
       "declaredTool": "호출 처리 중: {{what}}",
       "line": {
         "fresh0": "응답을 기다리고 있습니다",

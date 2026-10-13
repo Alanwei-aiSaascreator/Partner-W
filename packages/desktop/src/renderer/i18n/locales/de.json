@@ -546,6 +546,7 @@
     "waiting": {
       "awaitingAnswer": "Warte auf deine Antwort",
       "awaitingApproval": "Warte auf Genehmigung: {{what}}",
+      "awaitingApprovalParallel": "Warte auf Genehmigung: {{what}} ({{count}} weitere Schritte laufen)",
       "declaredTool": "Aufruf wird verarbeitet: {{what}}",
       "line": {
         "fresh0": "Warte auf eine Antwort",
