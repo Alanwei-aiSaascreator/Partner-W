@@ -102,51 +102,86 @@ export function mergeGatewayStreamText(previous: string, incoming: string): stri
 }
 
 /**
- * 推理（thinking）流的合并 —— 与 `mergeGatewayStreamText` 的关键差别：**按段**。
+ * 推理（thinking）分段的**显式状态**（2026-10-13 第二次独立复审整改）。
  *
- * 推理是**分段重发**的：每段工具调用之后模型重新开始推理，网关从空快照重新累积
- * （不是接在上一段后面）。实机实测（2026-09-20，一个 worker 的 121 条 thinking 事件）
- * 里有 **7 次重置** —— `chars` 从 227 → 3、1409 → 3、860 → 3 …，共 8 段。
- *
- * ⚠️ 跨段时两个方向**都不是前缀**，`mergeGatewayStreamText` 会落到 `previous + incoming`
- * **直接拼接** ⇒ 8 段推理糊成一团，界面上就是"同一句反复出现、越接越长"。
- * ⇒ 这里把无法判定为同段的情况当成**新的一段**，用空行隔开。
- *
- * ⚠️ 本通道送的是**累计快照**（见 `AgentThinkingData` 的注释），所以不处理"真增量片段"；
- *    即便真来了增量，空行隔开也只是多一个换行，不会丢内容。
+ * 背景（为什么必须显式存，而不是拿字符串猜）：推理是**分段重发**的 —— 每段工具调用
+ * 之后模型重新开始推理，网关从空快照重新累积（不是接在上一段后面，实机实测
+ * 2026-09-20：一个 worker 的 121 条 thinking 事件里 7 次重置、共 8 段）；本通道送的是
+ * **累计快照**。同一段内快照只会"变长"（新快照以上一个快照为前缀），除此之外一律是新段。
+ * **"当前段身份"没有任何可靠的纯字符串特征**：
+ *   - 最长后缀匹配会把合法新段当延长（`…开始检查` + 新段`检查结果正常` 被拼成
+ *     `…开始检查结果正常`）——复审反例 1；
+ *   - 全历史 includes 会把与历史同文的新段整段吞掉——复审反例 2；
+ *   - 两者还都退化成平方级扫描（重复前缀输入）。
+ * ⇒ 状态必须**显式保存**：已完成段（completed）+ 当前段最新快照（current）。
+ *   段边界由**真实事件语义**给出：工具调用落地 = 前一段结束（`sealThinkingSegment`）。
  */
-export function mergeThinkingSegments(previous: string, incoming: string): string {
-  if (!incoming) return previous;
-  if (incoming === previous) return previous;
-  if (incoming.startsWith(previous)) return incoming;
-  if (previous.startsWith(incoming)) return previous;
-  // ⚠️ 重连/重订阅会把**旧段**再投一次：它已经是我们结果的尾部 ⇒ 保持，别再加一遍。
-  //    否则"重复投递不会把推理拼成两遍"这条保证就破了。
-  if (previous.endsWith(incoming)) return previous;
-  // ⭐ 当前段增长（2026-10-13，BUG-075 P1）：跨过工具边界后，新快照仍然是**同一个
-  //    当前段**的累计快照，只是比上一个快照更长 —— 它一定以「`previous` 末尾的那个
-  //    上一个快照」为前缀，而那个快照是 `previous` 的一个**后缀**。
-  //    找最长后缀 S 使 `incoming` 以 S 开头 ⇒ 把 S **替换**成 `incoming`
-  //   （只动当前段；历史段一个字符都不碰，替换也不会丢字符 —— S 原样是 incoming 的头）。
-  //    ⚠️ 修前这里直接落到"新一段"追加：B → BC → BCD 被拼成 `…\n\nB\n\nBC\n\nBCD`，
-  //    N 个快照的合并体积是**平方级**（独立复审实测：2,000 快照 20,044,023 字符 vs
-  //    应得 20,040；4,000 个合并 >5s 超时，同段对照仅 ~30ms）。
-  //    ⚠️ 不许按空行拆 `previous` 找段边界：分隔符和推理正文里的空行不可区分。
-  const maxOverlap = Math.min(previous.length, incoming.length);
-  const first = incoming.charCodeAt(0);
-  for (let len = maxOverlap; len >= 1; len--) {
-    const start = previous.length - len;
-    // S 必须是 incoming 的前缀 ⇒ 首字符先对上，绝大多数后缀一位就出局。
-    if (previous.charCodeAt(start) !== first) continue;
-    if (incoming.startsWith(previous.slice(start))) {
-      return previous.slice(0, start) + incoming;
-    }
+export interface ThinkingSegments {
+  /** 已完成段的合并文本（段间空行分隔；没有已完成段 = ''）。 */
+  completed: string;
+  /** 当前段的最新累计快照（原始文本；工具边界后从空重新开始）。 */
+  current: string;
+  /**
+   * **刚归档那一段**的文本（回声守卫基线，仅一段、O(1)）。
+   *
+   * 形状来源（F1 回归，2026-10-08）：工具边界之后的帧里旧 thinking 块可能被**原样重投**
+   *（blocks 数组还带着上一段的文本）——它必须被当作回声忽略，不得开新段、不得弹 activity。
+   * ⚠️ 只认**刚归档的最近一段**：更早的历史一律不猜（2026-10-13 复审：新段允许与历史
+   *    完全同文——拿全历史做 includes/前缀都会吞掉合法新段）。
+   */
+  lastSealed: string;
+}
+
+/** 显示文本：已完成段 + 空行 + 当前段（给 UI 与 final 用）。 */
+export function renderThinkingSegments(state: ThinkingSegments): string {
+  if (!state.current) return state.completed;
+  if (!state.completed) return state.current;
+  return state.completed + '\n\n' + state.current;
+}
+
+/**
+ * 当前段快照合并 —— **只跟"当前段最新快照"比**，不猜历史：
+ *  - incoming 是 current 的延伸（含相等）⇒ 只替换当前段；current 为空时 = 新段起点，
+ *    但先过**回声守卫**（见下）；
+ *  - incoming 是 current 的前缀 ⇒ 旧快照/重复重投 ⇒ 原样不动（**同引用**返回，
+ *    调用方以此作"真的变了"的判定，activity revision 不应被旧快照推动）；
+ *  - 回声守卫：current 为空且 incoming 是 `lastSealed` 的前缀（含相等）⇒ 刚归档段的
+ *    重投 ⇒ 原样不动（F1 形状；复审反例均不是该形状，互不冲突）；
+ *  - 其余 ⇒ **新段**：current 归档进 completed，新段从 incoming 开始。
+ *    新段与历史/已完成段完全同文**也允许**（文本相同 ≠ 同一段）。
+ *
+ * 复杂度：每次调用 ≤3 次前缀比较（O(len)），没有后缀扫描/历史搜索。
+ */
+export function mergeThinkingSnapshot(state: ThinkingSegments, incoming: string): ThinkingSegments {
+  if (!incoming) return state;
+  if (state.current === incoming) return state;
+  if (state.current.startsWith(incoming)) return state;
+  if (incoming.startsWith(state.current)) {
+    // 回声守卫：刚归档段的重投（只认最近一段；current 为空 = 还没开始新段）
+    if (state.current === '' && state.lastSealed.startsWith(incoming)) return state;
+    return { ...state, current: incoming };
   }
-  // 当前段**旧快照**的重投（重连后按顺序重放本段已发过的快照）：它是「当前段最新
-  // 快照」（= `previous` 的某个后缀）的前缀 ⇒ 已被盖住，保持不动，绝不再追加一遍。
-  if (previous.includes(incoming)) return previous;
-  // 空行隔开：它们是**不同**的推理块，不该粘成一团。
-  return previous + '\n\n' + incoming;
+  return {
+    completed: state.completed ? state.completed + '\n\n' + state.current : state.current,
+    current: incoming,
+    lastSealed: state.current,
+  };
+}
+
+/**
+ * 段边界：当前段判完（真实语义：**工具调用落地后模型重新开始推理**）⇒ 归档进已完成段，
+ * 并把归档文本记进 `lastSealed`（回声守卫基线）。空段是 no-op。
+ *
+ * ⚠️ 显示文本在 seal 前后**不变**（current 原样挪进 completed，分隔符相同）——
+ *    界面不抖、activity revision 不被推动。
+ */
+export function sealThinkingSegment(state: ThinkingSegments): ThinkingSegments {
+  if (!state.current) return state;
+  return {
+    completed: state.completed ? state.completed + '\n\n' + state.current : state.current,
+    current: '',
+    lastSealed: state.current,
+  };
 }
 
 export function isClawWorkSession(sessionKey: string, deviceId?: string): boolean {

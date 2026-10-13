@@ -2,11 +2,13 @@ import { createStore } from 'zustand/vanilla';
 import {
   isSlidegenToolProgress,
   mergeGatewayStreamText,
-  mergeThinkingSegments,
+  mergeThinkingSnapshot,
+  renderThinkingSegments,
+  sealThinkingSegment,
   parseAgentIdFromSessionKey,
   parseTaskIdFromSessionKey,
 } from '@clawwork/shared';
-import type { Message, MessageRole, MessageAttachment, ToolCall, IpcResult } from '@clawwork/shared';
+import type { Message, MessageRole, MessageAttachment, ToolCall, IpcResult, ThinkingSegments } from '@clawwork/shared';
 import { splitInlineThinking } from '../protocol/normalize-history.js';
 
 const EMPTY_MESSAGES: Message[] = [];
@@ -14,7 +16,24 @@ const EMPTY_MESSAGES: Message[] = [];
 export interface ActiveTurn {
   id: string;
   streamingText: string;
+  /**
+   * 思考的**显示文本**（= `renderThinkingSegments(已完成段 + 当前段最新快照)`）。
+   * 分段状态本体在下面两个字段；这个字段只是渲染结果。
+   */
   streamingThinking: string;
+  /**
+   * 思考分段的**显式状态**（2026-10-13 第二次独立复审整改）：已完成段 + 当前段最新快照
+   * + 刚归档段（回声守卫基线）。
+   *
+   * 为什么要有它：跨工具边界后的"当前段"没有任何可靠的字符串特征（最长后缀/全历史
+   * includes 都会猜错——见 `mergeThinkingSnapshot` 的注释与复审反例）。工具调用落地
+   * （新 id 的 `upsertToolCall`）= 前一段结束 ⇒ `sealThinkingSegment` 归档。
+   *
+   * 可选：老字面量 / 迁移中的内存对象没有它们 —— 读取时按"显示文本 = 当前段"兜底。
+   */
+  thinkingCompleted?: string;
+  thinkingCurrent?: string;
+  thinkingLastSealed?: string;
   toolCalls: ToolCall[];
   finalized: boolean;
   content: string;
@@ -387,10 +406,30 @@ function newActiveTurn(): ActiveTurn {
     id: generateId(),
     streamingText: '',
     streamingThinking: '',
+    thinkingCompleted: '',
+    thinkingCurrent: '',
+    thinkingLastSealed: '',
     toolCalls: [],
     finalized: false,
     content: '',
     timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * 读一个 turn 的思考分段状态。缺字段（老字面量/迁移对象）时把**显示文本当当前段** ——
+ * 等价于"还没有归档过任何段"，不丢已有内容。
+ */
+function thinkingSegmentsOf(
+  turn: Pick<ActiveTurn, 'streamingThinking' | 'thinkingCompleted' | 'thinkingCurrent' | 'thinkingLastSealed'>,
+): ThinkingSegments {
+  if (turn.thinkingCompleted === undefined && turn.thinkingCurrent === undefined) {
+    return { completed: '', current: turn.streamingThinking, lastSealed: '' };
+  }
+  return {
+    completed: turn.thinkingCompleted ?? '',
+    current: turn.thinkingCurrent ?? '',
+    lastSealed: turn.thinkingLastSealed ?? '',
   };
 }
 
@@ -582,6 +621,27 @@ export function createMessageStore(deps: MessageStoreDeps) {
           }
           // R1：重复/未变化的工具快照 ⇒ 连 state 都不动（不是"最新活动"；引用比较即变更判定）。
           if (!changed) return s;
+          // ⭐ 段边界（2026-10-13 复审整改）：**新的**工具调用落地 = 之前那段推理结束 ——
+          //    真实语义：每段工具调用之后模型重新开始推理，网关从空快照重新累积。
+          //    把当前段归档进已完成段（显示文本不变；新段首个快照到达时才出现空行分隔）。
+          //    同 id 的状态更新（running→done 等）不算边界。
+          if (idx < 0) {
+            const prev = thinkingSegmentsOf(turn);
+            const sealed = sealThinkingSegment(prev);
+            return {
+              activeTurnBySession: {
+                ...s.activeTurnBySession,
+                [sessionKey]: {
+                  ...turn,
+                  toolCalls: next,
+                  thinkingCompleted: sealed.completed,
+                  thinkingCurrent: sealed.current,
+                  thinkingLastSealed: sealed.lastSealed,
+                  streamingThinking: renderThinkingSegments(sealed),
+                },
+              },
+            };
+          }
           return {
             activeTurnBySession: {
               ...s.activeTurnBySession,
@@ -695,18 +755,23 @@ export function createMessageStore(deps: MessageStoreDeps) {
       set((s) => {
         const existing = s.activeTurnBySession[sessionKey];
         const turn = existing ?? newActiveTurn();
-        // ⚠️ 思考走**分段**合并：跨段要空行隔开，不能用通用那条（会直接拼接，
-        //    把 8 段推理糊成一团 —— 见 `mergeThinkingSegments` 的注释与实测数据）。
-        const streamingThinking = mergeThinkingSegments(turn.streamingThinking, delta);
-        const changed = streamingThinking !== turn.streamingThinking;
-        // R1：累计思考快照原样重发 ⇒ 不是新活动、更不是"新一段"（段号只有真进入新段才 +1）。
-        if (!changed && existing) return s;
+        // ⚠️ 思考走**显式分段状态**合并（2026-10-13 复审整改）：只跟"当前段最新快照"比，
+        //    不跟整个历史猜段 —— 跨段空行由 `renderThinkingSegments` 负责。
+        const prev = thinkingSegmentsOf(turn);
+        const next = mergeThinkingSnapshot(prev, delta);
+        // R1：累计快照原样重发 / 当前段旧快照重投 ⇒ 状态**同引用**返回 ⇒ 不是新活动
+        //    （连 state 都不动；activity revision 不涨）。
+        if (next === prev && existing) return s;
+        const streamingThinking = renderThinkingSegments(next);
         return {
           activeTurnBySession: {
             ...s.activeTurnBySession,
             [sessionKey]: {
               ...turn,
               streamingThinking,
+              thinkingCompleted: next.completed,
+              thinkingCurrent: next.current,
+              thinkingLastSealed: next.lastSealed,
             },
           },
         };
@@ -732,7 +797,14 @@ export function createMessageStore(deps: MessageStoreDeps) {
           return {
             activeTurnBySession: {
               ...s.activeTurnBySession,
-              [sessionKey]: { ...turn, streamingText: '', streamingThinking: '' },
+              [sessionKey]: {
+                ...turn,
+                streamingText: '',
+                streamingThinking: '',
+                thinkingCompleted: '',
+                thinkingCurrent: '',
+                thinkingLastSealed: '',
+              },
             },
           };
         }
@@ -747,6 +819,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
               thinkingContent,
               streamingText: '',
               streamingThinking: '',
+              thinkingCompleted: '',
+              thinkingCurrent: '',
+              thinkingLastSealed: '',
               runId: meta?.runId ?? turn.runId,
             },
           },

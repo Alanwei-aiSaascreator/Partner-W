@@ -1,5 +1,11 @@
 import { test, expect } from 'vitest';
-import { mergeGatewayStreamText, mergeThinkingSegments } from '../src/constants';
+import {
+  mergeGatewayStreamText,
+  mergeThinkingSnapshot,
+  renderThinkingSegments,
+  sealThinkingSegment,
+  type ThinkingSegments,
+} from '../src/constants';
 
 test('mergeGatewayStreamText upgrades a partial snapshot to the longer snapshot', () => {
   expect(
@@ -20,100 +26,117 @@ test('mergeGatewayStreamText ignores an older snapshot replayed after a newer on
 });
 
 /**
- * 推理流的**分段**合并（2026-09-20）。
+ * 推理（thinking）分段的**显式状态**合并（2026-10-13 第二次独立复审整改）。
  *
- * ⚠️ 为什么推理不能直接用 `mergeGatewayStreamText`：推理是**按段**重发的 ——
- * 每段工具调用之后模型重新开始推理，网关从空快照重新累积。
- * 实机实测（2026-09-20，一个 worker 的 121 条 thinking 事件）里有 **7 次重置**：
- * `chars` 从 227 → 3、1409 → 3、860 → 3 …，共 8 段。
+ * 契约：`state = { completed: 已完成段, current: 当前段最新累计快照 }`。
+ * - 段内：新快照以 `current` 为前缀 ⇒ 替换；`current` 以 incoming 为前缀 ⇒ 旧快照，原样；
+ * - 新段：其余一律视为新段 —— **不猜历史**（与历史完全同文也允许）；
+ * - 段边界由**真实事件语义**给出（工具调用落地 ⇒ `sealThinkingSegment`），不由字符串猜。
  *
- * 跨段时两个方向**都不是前缀**，`mergeGatewayStreamText` 会落到
- * `previous + incoming` 直接拼接 ⇒ 8 段推理糊成一团，
- * 界面上就是"同一句反复出现、越接越长"（用户截图看到的就是这个）。
+ * 血案（复审反例）：拿纯字符串猜段身份必错 ——
+ * ① 最长后缀匹配吞段（`…开始检查` + 新段 `检查结果正常` 被拼成 `…开始检查结果正常`）；
+ * ② 全历史 includes 吞段（与历史同文的新段整段消失）；
+ * ③ 两者都是平方级扫描（重复前缀输入 80k 直接超时）。
  */
-test('mergeThinkingSegments upgrades a partial snapshot within one segment', () => {
-  expect(
-    mergeThinkingSegments('Let me read the key files', 'Let me read the key files to understand the identity'),
-  ).toBe('Let me read the key files to understand the identity');
+
+const state = (completed: string, current: string, lastSealed = ''): ThinkingSegments => ({
+  completed,
+  current,
+  lastSealed,
 });
 
-test('mergeThinkingSegments ignores an older snapshot replayed after a newer one', () => {
-  expect(mergeThinkingSegments('新的一段推理', '新的一段')).toBe('新的一段推理');
+test('首次快照建立当前段；段内增长只替换当前段', () => {
+  const s1 = mergeThinkingSnapshot(state('', ''), 'Let me read');
+  expect(s1).toEqual(state('', 'Let me read'));
+  const s2 = mergeThinkingSnapshot(s1, 'Let me read the key files');
+  expect(s2).toEqual(state('', 'Let me read the key files'));
+  expect(renderThinkingSegments(s2)).toBe('Let me read the key files');
 });
 
-test('⭐ mergeThinkingSegments separates a NEW segment with a blank line (not glued together)', () => {
-  // 这两句在真实日志里就是前后两段（中间隔着一次工具调用）
-  const seg1 = 'Let me read the key files to understand the identity, soul, and dreams';
-  const seg2 = 'Let me understand the context: this is a 爆款内容教练 agent';
-
-  expect(mergeThinkingSegments(seg1, seg2)).toBe(`${seg1}\n\n${seg2}`);
-  // 反过来的顺序（迟到的另一段）也必须是隔开，而不是粘上
-  expect(mergeThinkingSegments(seg2, seg1)).toBe(`${seg2}\n\n${seg1}`);
+test('空快照 / 相同快照原样不动（同引用返回）', () => {
+  const s = state('第一段', '当前');
+  expect(mergeThinkingSnapshot(s, '')).toBe(s);
+  expect(mergeThinkingSnapshot(s, '当前')).toBe(s);
 });
 
-test('mergeThinkingSegments ignores empty snapshots (进度心跳不带文本)', () => {
-  expect(mergeThinkingSegments('已有推理', '')).toBe('已有推理');
+test('当前段旧快照（前缀）重投 ⇒ 同引用不动', () => {
+  const s = state('H', 'ABCA');
+  expect(mergeThinkingSnapshot(s, 'AB')).toBe(s);
 });
 
-test('mergeThinkingSegments is idempotent when re-fed its own result', () => {
-  const merged = mergeThinkingSegments('第一段', '第二段');
-  expect(mergeThinkingSegments(merged, '第二段')).toBe(merged);
+test('⭐ 反例1：新段开头与上一段结尾同字 —— 一字不动地分两段（不许猜后缀）', () => {
+  // 真实形状：seal 边界由工具调用落地给出（见 message-store）。
+  const s = mergeThinkingSnapshot(sealThinkingSegment(state('', '开始检查')), '检查结果正常');
+  expect(s).toEqual(state('开始检查', '检查结果正常', '开始检查'));
+  expect(renderThinkingSegments(s)).toBe('开始检查\n\n检查结果正常');
 });
 
-/**
- * ⭐ 跨工具边界后**当前段继续增长**（2026-10-13 独立复审反例 / BUG-075 P1）。
- *
- * 网关的思考通道送的是**累计快照**（按段从空重新累积）。修前实现对"跨段后的增长"
- * 完全不认：每个新快照与前文两个方向都不是前缀 ⇒ 每个快照都被当成**新一段**追加，
- * 于是 B → BC → BCD 变成 `A\n\nB\n\nBC\n\nBCD`，N 个快照的合并体积是**平方级**
- *（复审实测：2,000 快照 20,040 字符应得、实得 20,044,023；4,000 个合并超过 5 秒，
- * 同段对照仅 ~30ms）—— 现场输入 249 → 2 → 17 → … → 23,791 的长度直方图与它吻合。
- *
- * 契约（复审原话）：历史已完成段 + 当前段累计快照；**当前段增长只替换当前段**，
- * 不重复追加旧快照，也不覆盖历史段。
- */
-test('⭐ 跨工具边界：当前段快照 B → BC → BCD 只替换当前段，得 A\\n\\nBCD', () => {
-  let merged = mergeThinkingSegments('A', 'B');
-  expect(merged).toBe('A\n\nB');
-  merged = mergeThinkingSegments(merged, 'BC');
-  expect(merged).toBe('A\n\nBC');
-  merged = mergeThinkingSegments(merged, 'BCD');
-  expect(merged).toBe('A\n\nBCD');
+test('⭐ 反例2：新段与历史完全同文也要整段显示（去重只认"刚归档段"这一份回声基线）', () => {
+  const s = mergeThinkingSnapshot(sealThinkingSegment(state('', '先读取配置，再检查依赖。')), '读取配置');
+  expect(s).toEqual(state('先读取配置，再检查依赖。', '读取配置', '先读取配置，再检查依赖。'));
+  expect(renderThinkingSegments(s)).toBe('先读取配置，再检查依赖。\n\n读取配置');
 });
 
-test('多段之后继续增长：历史段一个字符都不动', () => {
-  let merged = mergeThinkingSegments('第一段', '第二段');
-  merged = mergeThinkingSegments(merged, '第二段变长');
-  merged = mergeThinkingSegments(merged, '第三段');
-  expect(merged).toBe('第一段\n\n第二段变长\n\n第三段');
-  merged = mergeThinkingSegments(merged, '第三段继续');
-  expect(merged).toBe('第一段\n\n第二段变长\n\n第三段继续');
+test('⭐ 反例3：重投旧快照不许被当增长（修前 H → AB → ABCA → 重投 AB 得 ABCAB）', () => {
+  let s = sealThinkingSegment(state('', 'H')); // 工具边界之后
+  s = mergeThinkingSnapshot(s, 'AB');
+  s = mergeThinkingSnapshot(s, 'ABCA');
+  const before = s;
+  expect(mergeThinkingSnapshot(s, 'AB')).toBe(before);
+  expect(renderThinkingSegments(s)).toBe('H\n\nABCA');
 });
 
-test('当前段的旧快照（重连/重订阅重投）不再重复追加', () => {
-  let merged = mergeThinkingSegments('A', 'B');
-  merged = mergeThinkingSegments(merged, 'BC');
-  merged = mergeThinkingSegments(merged, 'BCD');
-  merged = mergeThinkingSegments(merged, 'BCDE');
-  expect(merged).toBe('A\n\nBCDE');
-
-  // 重投最新快照 / 重投更早的快照：都已被结果盖住 ⇒ 保持不动
-  expect(mergeThinkingSegments(merged, 'BCDE')).toBe('A\n\nBCDE');
-  expect(mergeThinkingSegments(merged, 'BC')).toBe('A\n\nBCDE');
+test('⭐ 回声守卫：刚归档段被原样重投（F1 形状）⇒ 同引用忽略，不弹 activity、不重复显示', () => {
+  const sealed = sealThinkingSegment(state('', '先看目录'));
+  expect(mergeThinkingSnapshot(sealed, '先看目录')).toBe(sealed); // 整段回声
+  expect(mergeThinkingSnapshot(sealed, '先看')).toBe(sealed); // 旧快照形状的回声（前缀）
+  // 新段若以"刚归档段"为前缀之外的内容开头 ⇒ 正常开段
+  const next = mergeThinkingSnapshot(sealed, '先看目录，再查配置');
+  expect(next).toEqual(state('先看目录', '先看目录，再查配置', '先看目录'));
+  expect(renderThinkingSegments(next)).toBe('先看目录\n\n先看目录，再查配置');
 });
 
-test('同段（工具调用之前）的增长语义不受影响', () => {
-  let merged = mergeThinkingSegments('', '让我读一下');
-  expect(merged).toBe('让我读一下');
-  merged = mergeThinkingSegments(merged, '让我读一下这几个文件');
-  expect(merged).toBe('让我读一下这几个文件');
+test('seal：归档当前段；seal 前后显示文本不变；空 current 是 no-op', () => {
+  const s = state('', '第一段推理');
+  const sealed = sealThinkingSegment(s);
+  expect(sealed).toEqual(state('第一段推理', '', '第一段推理'));
+  expect(renderThinkingSegments(sealed)).toBe(renderThinkingSegments(s));
+  expect(sealThinkingSegment(sealed)).toBe(sealed);
 });
 
-test('⭐ 快照风暴线性收敛：N 次增长后的体积 = 历史 + 最新快照（不是平方级）', () => {
-  const N = 500;
-  let merged = mergeThinkingSegments('第一段完成', '第二段 ');
-  for (let i = 1; i <= N; i++) {
-    merged = mergeThinkingSegments(merged, '第二段 ' + 'x'.repeat(i * 10));
-  }
-  expect(merged).toBe('第一段完成\n\n第二段 ' + 'x'.repeat(N * 10));
+test('多段：工具边界逐个归档，段间恰好一个空行', () => {
+  let s = mergeThinkingSnapshot(state('', ''), 'A');
+  s = sealThinkingSegment(s);
+  s = mergeThinkingSnapshot(s, 'B');
+  s = sealThinkingSegment(s);
+  s = mergeThinkingSnapshot(s, 'C');
+  s = mergeThinkingSnapshot(s, 'CD');
+  expect(renderThinkingSegments(s)).toBe('A\n\nB\n\nCD');
+});
+
+test('短段 / 与历史同文（文本相同 ≠ 同一段）', () => {
+  let s = state('好', ''); // 历史里已经有一个"好"
+  s = mergeThinkingSnapshot(s, '好');
+  expect(renderThinkingSegments(s)).toBe('好\n\n好');
+});
+
+test('正文含空行只是字符，不是段界', () => {
+  let s = mergeThinkingSnapshot(state('', ''), 'A\n\nB');
+  s = mergeThinkingSnapshot(s, 'A\n\nB\n\nC');
+  expect(renderThinkingSegments(s)).toBe('A\n\nB\n\nC');
+  s = sealThinkingSegment(s);
+  s = mergeThinkingSnapshot(s, 'C\n\nD');
+  expect(renderThinkingSegments(s)).toBe('A\n\nB\n\nC\n\nC\n\nD');
+});
+
+test('⭐ 重复前缀性能边界：80k 重复前缀不许平方级扫描（复审 ③）', () => {
+  const N = 80_000;
+  const heavy = 'a'.repeat(N);
+  // ① 同段增长（真正延伸）⇒ 替换当前段，线性
+  const grow = mergeThinkingSnapshot(state('', `${heavy}b`), `${heavy}bc`);
+  expect(grow.current).toBe(`${heavy}bc`);
+  // ② 异尾 ⇒ 新段（不猜、不扫、深比较一次通过）；旧段归档并成为回声基线
+  const forked = mergeThinkingSnapshot(state('', `${heavy}b`), `${heavy}c`);
+  expect(forked).toEqual(state(`${heavy}b`, `${heavy}c`, `${heavy}b`));
+  expect(renderThinkingSegments(forked)).toBe(`${heavy}b\n\n${heavy}c`);
 });

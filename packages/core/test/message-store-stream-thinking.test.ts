@@ -177,3 +177,117 @@ describe('message-store appendThinkingDelta —— 跨工具边界后当前段�
     expect(turn.streamingThinking).toBe('');
   });
 });
+
+/**
+ * ⭐⭐ 第二次独立复审反例（2026-10-13）：**"最长后缀替换"与"全历史 includes"都猜不出
+ * 当前段身份** —— 段身份只能**显式保存**（已完成段 + 当前段最新快照）；工具调用落地
+ * （新 id）就是前一段的结束（真实语义：每段工具调用之后模型重新开始推理，网关从空快照
+ * 重新累积）。旧快照去重只在**当前段内**判断；新段允许与历史完全同文。
+ */
+describe('message-store appendThinkingDelta —— 段身份必须精确（复审第二轮反例）', () => {
+  const tool = (id: string, status: 'running' | 'done' = 'done') => ({
+    id,
+    name: 'read',
+    status,
+    args: {},
+    startedAt: '2026-10-13T00:00:00.000Z',
+    completedAt: '2026-10-13T00:00:01.000Z',
+  });
+
+  it('⭐ 反例1：新段开头与上一段结尾同字（"检查"）不许被吞掉分隔', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, '开始检查');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-r2-1'));
+    store.getState().sealTurnActivity(SK, ['tools']);
+    store.getState().appendThinkingDelta(SK, '检查结果正常');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('开始检查\n\n检查结果正常');
+  });
+
+  it('⭐ 反例2：新段与历史完全同文也要显示（文本相同 ≠ 同一段）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, '先读取配置，再检查依赖。');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-r2-2'));
+    store.getState().sealTurnActivity(SK, ['tools']);
+    store.getState().appendThinkingDelta(SK, '读取配置');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('先读取配置，再检查依赖。\n\n读取配置');
+  });
+
+  it('⭐ 反例3：旧快照重投不许污染当前段，也不许弹 activity（state 引用不动）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, 'H');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-r2-3'));
+    store.getState().sealTurnActivity(SK, ['tools']);
+    store.getState().appendThinkingDelta(SK, 'AB');
+    store.getState().appendThinkingDelta(SK, 'ABCA');
+
+    const before = store.getState().activeTurnBySession[SK]!;
+    store.getState().appendThinkingDelta(SK, 'AB'); // 重投当前段的旧快照
+    const after = store.getState().activeTurnBySession[SK]!;
+
+    expect(after.streamingThinking).toBe('H\n\nABCA');
+    expect(after).toBe(before); // R1：没变 ⇒ 连 state 都不动
+  });
+
+  it('⭐ 回声守卫：工具后帧里刚归档段被原样重投 ⇒ 不开新段、不重复显示（F1 形状）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, '先看目录');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-echo-1'));
+    store.getState().sealTurnActivity(SK, ['tools']);
+
+    const before = store.getState().activeTurnBySession[SK]!;
+    store.getState().appendThinkingDelta(SK, '先看目录'); // 旧 thinking 块原样回放
+    expect(store.getState().activeTurnBySession[SK]).toBe(before); // 连 state 都不动
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('先看目录');
+
+    // 真正的新段（不以刚归档段为前缀延伸）照常开段
+    store.getState().appendThinkingDelta(SK, '先看目录，再查配置');
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('先看目录\n\n先看目录，再查配置');
+  });
+
+  it('多个工具边界：三段各自归档，段间恰好一个空行', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, 'A');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-m1'));
+    store.getState().appendThinkingDelta(SK, 'B');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-m2'));
+    store.getState().appendThinkingDelta(SK, 'C');
+    store.getState().appendThinkingDelta(SK, 'CD');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('A\n\nB\n\nCD');
+  });
+
+  it('工具状态更新（同 id）不是段边界：段内增长不受影响', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, 'A');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-u1', 'running'));
+    store.getState().appendThinkingDelta(SK, '第二段');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-u1', 'done')); // 同 id 状态更新
+    store.getState().appendThinkingDelta(SK, '第二段继续');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('A\n\n第二段继续');
+  });
+
+  it('正文含空行不干扰段合并（空行只是字符，不是段界）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, 'A\n\nB');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-b1'));
+    store.getState().appendThinkingDelta(SK, 'C\n\nD');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('A\n\nB\n\nC\n\nD');
+  });
+
+  it('⭐ final：两段 + 恰好一次分隔，整段进 thinkingContent', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, '开始检查');
+    store.getState().upsertToolCall(SK, 'task-1', tool('tool-f1'));
+    store.getState().appendThinkingDelta(SK, '检查结果正常');
+    store.getState().appendThinkingDelta(SK, '检查结果正常，且格式正确');
+    store.getState().finalizeStream(SK);
+
+    const turn = store.getState().activeTurnBySession[SK]!;
+    expect(turn.thinkingContent).toBe('开始检查\n\n检查结果正常，且格式正确');
+    expect(turn.streamingThinking).toBe('');
+  });
+});
