@@ -813,6 +813,25 @@ function pruneCompletedAssistantMessages(now = Date.now()): void {
   }
 }
 
+/**
+ * ⭐ V3-artifact（I 接线）：该会话**当前**一轮的网关 runId —— 停止事件（cancel.*）的归属。
+ *
+ * 取每个会话队列里**最后一个仍在 active、且已绑定 gatewayRunId** 的 run（send-chat 回执
+ * `bindArtifactRun` 绑定的那条）；没有 ⇒ undefined，调用方 fail-closed **不发事件**
+ *（投影是 run 归属的，宁缺勿猜）。⚠️ 必须在 `cancelArtifactRunsForSession` **之前**取
+ *（那一步会清掉 run 记录）。
+ */
+export function currentGatewayRunIdForSession(sessionKey: string): string | undefined {
+  for (const [key, queue] of artifactRuns) {
+    if (!key.endsWith(`\0${sessionKey}`)) continue;
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+      const run = queue[index];
+      if (run.state === 'active' && run.gatewayRunId) return run.gatewayRunId;
+    }
+  }
+  return undefined;
+}
+
 export function cancelArtifactRunsForSession(sessionKey: string): void {
   for (const [key, queue] of artifactRuns) {
     if (!key.endsWith(`\0${sessionKey}`)) continue;

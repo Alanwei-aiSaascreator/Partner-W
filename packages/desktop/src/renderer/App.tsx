@@ -36,6 +36,8 @@ import { useSlidegenToast } from './hooks/useSlidegenToast';
 import { useArtifactPanelReveal } from './hooks/useArtifactPanelReveal';
 import { useClaimGuardToast } from './hooks/useClaimGuardToast';
 import { useDeliveryActivitySubscription } from './hooks/useDeliveryActivitySubscription';
+import { useExecutionEventsSubscription, useExecutionHistoryRecovery } from './hooks/useExecutionEventsSubscription';
+import { useDeliverySettlementNotification } from './lib/delivery-settlement-notification';
 import { useAutoRetryFailedTurn } from './hooks/useAutoRetryFailedTurn';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -247,6 +249,11 @@ export default function App() {
   useArtifactPanelReveal();
   useClaimGuardToast();
   useDeliveryActivitySubscription();
+  // V3-artifact（I 接线）：主进程交付/取消执行事件 → 投影；交付结算后的补发通知。
+  useExecutionEventsSubscription();
+  useDeliverySettlementNotification();
+  // V4（I 接线）：激活任务的会话从本地执行历史恢复（只还原本地已写证据）。
+  useExecutionHistoryRecovery();
   // 「整轮失败自动重发 1 次」（包 D）：空转型失败（零最终交付）自动重发一次，先明示再发。
   // 挂 App 不挂 MainArea：打开设置会卸载 MainArea —— 那期间被漏掉的失败就再也不会重发了。
   useAutoRetryFailedTurn();

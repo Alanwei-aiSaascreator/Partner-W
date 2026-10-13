@@ -1562,7 +1562,8 @@
   "notifications": {
     "approvalRequired": "需要执行授权",
     "gatewayDisconnected": "Gateway 已断开",
-    "taskComplete": "任务完成"
+    "taskComplete": "任务完成",
+    "taskPartiallyComplete": "任务部分完成"
   },
   "onboarding": {
     "assignmentSubtitle": "根据你的岗位和目标生成首批助手，你可以随时调整。",

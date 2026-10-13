@@ -1562,7 +1562,8 @@
   "notifications": {
     "approvalRequired": "承認が必要です",
     "gatewayDisconnected": "ゲートウェイ切断",
-    "taskComplete": "タスク完了"
+    "taskComplete": "タスク完了",
+    "taskPartiallyComplete": "タスクが一部完了"
   },
   "onboarding": {
     "assignmentSubtitle": "We matched your role and goals to a starter assistant set. You can adjust it now or later.",

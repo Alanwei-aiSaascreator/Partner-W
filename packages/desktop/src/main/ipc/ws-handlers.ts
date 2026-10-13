@@ -35,8 +35,9 @@ import {
   bindArtifactRun,
   cancelArtifactRun,
   cancelArtifactRunsForSession,
+  currentGatewayRunIdForSession,
 } from './data-handlers.js';
-import { noteGatewayTurnStop } from '../artifact/turn-lifecycle.js';
+import { noteGatewayTurnStop, noteGatewayTurnStopRejected } from '../artifact/turn-lifecycle.js';
 
 async function gatewayRpc(
   gatewayId: string,
@@ -775,6 +776,11 @@ export function registerWsHandlers(): void {
   });
 
   ipcMain.handle('ws:abort-chat', async (_event, payload: { gatewayId: string; sessionKey: string }) => {
+    // ⭐ V3-artifact 接线（I）：停止事件（cancel.*）的归属 —— 取本轮已绑定的网关 runId；
+    //    取不到就不带 runId ⇒ 主进程侧 fail-closed 不发事件（不猜归属），UI 走既有 stop ticket。
+    //    ⚠️ 必须在 cancelArtifactRunsForSession **之前**取（那一步会清掉 run 记录）。
+    const abortRunId = currentGatewayRunIdForSession(payload.sessionKey);
+    const stopContext = abortRunId ? { runId: abortRunId } : undefined;
     cancelArtifactRunsForSession(payload.sessionKey);
     const gw = getGatewayClient(payload.gatewayId);
     // ⭐ B1（2026-10-11 整改 · 复审二轮）：停止的**同轮状态**要可核对 ——
@@ -782,20 +788,25 @@ export function registerWsHandlers(): void {
     //    直到 abort 被网关确认，或重连补发拿到应答（见 turn-lifecycle 注释）。
     //    ⚠️ 失败路径**不**宣称远端已停（ok:false 原样返回；软状态保留，等真实证据）。
     if (!gw?.isConnected) {
-      noteGatewayTurnStop(payload.sessionKey, false);
+      const notConnectedTicket = noteGatewayTurnStop(payload.sessionKey, false, undefined, stopContext);
+      if (notConnectedTicket)
+        noteGatewayTurnStopRejected(payload.sessionKey, notConnectedTicket, 'gateway-not-connected', stopContext);
       return { ok: false, error: 'gateway not connected' };
     }
     // abort 在途就先记"未确认"：超时/异常时记录停在正确的轮次上（不会误标到之后新开的轮）。
     // ⭐ 复审三轮：await **前**捕获这次操作的 stop ticket —— 迟到的回执只许结算
     //    同一次操作（ticket 身份不符 ⇒ 不许消费，见 turn-lifecycle.noteGatewayTurnStop）。
-    const stopTicket = noteGatewayTurnStop(payload.sessionKey, false);
+    const stopTicket = noteGatewayTurnStop(payload.sessionKey, false, undefined, stopContext);
     try {
       const result = await gw.abortChat(payload.sessionKey);
       // 网关已处理这次 abort（aborted true=已中止 / false=本来就没有在跑）⇒ 确认的
       // 生命周期证据；只落地**这次操作捕获的那一轮**。
-      noteGatewayTurnStop(payload.sessionKey, true, stopTicket);
+      noteGatewayTurnStop(payload.sessionKey, true, stopTicket, stopContext);
       return { ok: true, result };
     } catch (err) {
+      // abort 被拒/超时：如实折 cancel.unconfirmed（**不显示"已停止"**），软状态保留可重试；
+      // ticket 不符（迟到/被替换）时 noteGatewayTurnStopRejected 一个字节都不动。
+      if (stopTicket) noteGatewayTurnStopRejected(payload.sessionKey, stopTicket, 'rpc-error', stopContext);
       const msg = err instanceof Error ? err.message : 'unknown error';
       return { ok: false, error: msg };
     }

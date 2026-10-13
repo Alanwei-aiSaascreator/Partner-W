@@ -71,7 +71,7 @@ import type {
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
 // 这里只引用 —— 渲染层不该再抄一份字段名。
-import type { PrivacyState } from '@clawwork/core';
+import type { ExecutionEvent, PrivacyState } from '@clawwork/core';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
 
@@ -525,6 +525,22 @@ export interface ClawWorkAPI {
   listGateways: () => Promise<GatewayListItem[]>;
 
   onGatewayEvent: (callback: (data: GatewayEvent) => void) => () => void;
+  /** ⭐ V3-artifact：主进程执行事件出口（交付/取消两族）——渲染层折入执行投影。 */
+  onExecutionEvents: (callback: (payload: { sessionKey: string; events: ExecutionEvent[] }) => void) => () => void;
+  /** ⭐ V4：有界执行历史（本地证据）——写入 fire-and-forget；恢复读取只还原本地已写证据。 */
+  executionHistoryAppend: (sessionKey: string, records: ExecutionEvent[]) => void;
+  executionHistoryReadRun: (
+    sessionKey: string,
+    runId: string,
+  ) => Promise<{
+    workspaceKey: string;
+    sessionKey: string;
+    runId: string;
+    records: ExecutionEvent[];
+    gaps: unknown[];
+    truncated: boolean;
+  }>;
+  executionHistoryListRuns: (sessionKey: string) => Promise<string[]>;
   onGatewayStatus: (callback: (status: GatewayStatusEvent) => void) => () => void;
   /** 初始读（渲染层挂载时补读一次）：`null` = 还没有结论，**不是**"没问题"。 */
   runtimeStatus: () => Promise<RuntimeStatusEvent | null>;

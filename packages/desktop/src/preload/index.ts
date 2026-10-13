@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { ExecutionEvent } from '@clawwork/core';
 import type {
   ApprovalDecision,
   Artifact,
@@ -134,6 +135,20 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('gateway-event', listener);
       };
     },
+    // ⭐ V3-artifact（I 接线）：主进程执行事件出口（交付/取消两族）——渲染层折入执行投影。
+    onExecutionEvents: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+        callback(payload as { sessionKey: string; events: ExecutionEvent[] });
+      };
+      ipcRenderer.on('artifact:execution-events', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:execution-events', listener);
+      };
+    },
+    // ⭐ V4（I 接线）：有界执行历史的写入（fire-and-forget）与恢复读取。
+    executionHistoryAppend: (sessionKey, records) => ipcRenderer.send('execution-history:append', sessionKey, records),
+    executionHistoryReadRun: (sessionKey, runId) => ipcRenderer.invoke('execution-history:read-run', sessionKey, runId),
+    executionHistoryListRuns: (sessionKey) => ipcRenderer.invoke('execution-history:list-runs', sessionKey),
     onGatewayStatus: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, status: unknown): void => {
         // 形状对应 preload/clawwork.d.ts 的 `GatewayStatusEvent`（含 serverVersion /

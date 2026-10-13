@@ -1562,7 +1562,8 @@
   "notifications": {
     "approvalRequired": "승인 필요",
     "gatewayDisconnected": "게이트웨이 연결 끊김",
-    "taskComplete": "작업 완료"
+    "taskComplete": "작업 완료",
+    "taskPartiallyComplete": "작업 부분 완료"
   },
   "onboarding": {
     "assignmentSubtitle": "We matched your role and goals to a starter assistant set. You can adjust it now or later.",

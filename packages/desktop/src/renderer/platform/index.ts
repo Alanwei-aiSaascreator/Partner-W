@@ -21,6 +21,7 @@ import type {
   SystemSessionState,
   SystemSessionService,
 } from '@clawwork/core';
+import { sanitizeForLog } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
 import { resolveTaskAgentName } from '@/lib/task-agent-name';
 import { createElectronPorts } from './electron-adapter';
@@ -72,6 +73,10 @@ const uiStoreApi = createUiStore({
 
 const messageStoreApi = createMessageStore({
   persistMessage: (...args) => getPorts().persistence.persistMessage(...args),
+  // ⭐ V4（I 接线）：被归约**接受**的执行状态边缘喂给有界历史 writer（fire-and-forget）；
+  //    脱敏用公共规则（日志/导出的同一份 `sanitizeForLog`）。
+  persistExecutionHistory: (sessionKey, records) => window.clawwork?.executionHistoryAppend?.(sessionKey, [...records]),
+  sanitizeHistoryText: (text) => sanitizeForLog(text),
 });
 
 const taskStoreApi = createTaskStore({

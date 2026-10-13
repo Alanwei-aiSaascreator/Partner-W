@@ -1562,7 +1562,8 @@
   "notifications": {
     "approvalRequired": "需要核准",
     "gatewayDisconnected": "Gateway 已斷線",
-    "taskComplete": "任務完成"
+    "taskComplete": "任務完成",
+    "taskPartiallyComplete": "任務部分完成"
   },
   "onboarding": {
     "assignmentSubtitle": "We matched your role and goals to a starter assistant set. You can adjust it now or later.",

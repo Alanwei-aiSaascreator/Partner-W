@@ -8,6 +8,8 @@ import { initAllGateways, destroyAllGateways, getGatewayClient, reconnectGateway
 import { getMainWindow, setMainWindow } from './window-manager.js';
 import { sendToWindow } from './ws/window-utils.js';
 import { initDebugLogger, getDebugLogger } from './debug/index.js';
+import { getExecutionHistory, stopExecutionHistory } from './execution/history-instance.js';
+import type { ExecutionEvent } from '@clawwork/core';
 import { registerWsHandlers } from './ipc/ws-handlers.js';
 import { registerArtifactHandlers } from './ipc/artifact-handlers.js';
 import { registerInboxHandlers } from './ipc/inbox-handlers.js';
@@ -536,6 +538,21 @@ continueAfterPortableAppData(
           registerSettingsHandlers();
           registerSearchHandlers();
           registerDataHandlers();
+          // ⭐ V4（I 接线）：有界执行历史 —— 写入 fire-and-forget（不阻塞渲染层）、
+          //    恢复读取按当前工作区隔离（换盘/换 userData 即换目录）。
+          ipcMain.on('execution-history:append', (_event, sessionKey: unknown, records: unknown) => {
+            if (typeof sessionKey !== 'string' || !sessionKey) return;
+            if (!Array.isArray(records) || records.length === 0) return;
+            getExecutionHistory().append(sessionKey, records as ExecutionEvent[]);
+          });
+          ipcMain.handle('execution-history:read-run', (_event, sessionKey: unknown, runId: unknown) => {
+            if (typeof sessionKey !== 'string' || typeof runId !== 'string') return null;
+            return getExecutionHistory().readRun(sessionKey, runId);
+          });
+          ipcMain.handle('execution-history:list-runs', (_event, sessionKey: unknown) => {
+            if (typeof sessionKey !== 'string') return [];
+            return getExecutionHistory().listRuns(sessionKey);
+          });
           registerTeamMeetingHandlers();
           registerStatsHandlers();
           registerUpdateHandlers({ onRendererReady: () => portableHealth.markRendererReady() });
@@ -814,6 +831,9 @@ app.on('before-quit', (event) => {
 
   const logger = getDebugLogger();
   logger.info({ domain: 'app', event: 'app.before-quit', data: { installingUpdate: isInstallingUpdate() } });
+
+  // ⭐ V4（I 接线）：执行历史 writer 停表收尾（不阻塞退出 —— close 内部按 writer 纪律吞错）。
+  stopExecutionHistory();
 
   // Flush pending debug log writes before exit, then complete shutdown
   logger
