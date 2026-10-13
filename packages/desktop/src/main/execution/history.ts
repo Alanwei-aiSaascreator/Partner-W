@@ -1,4 +1,5 @@
-import { appendFile, mkdir, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { appendFile, mkdir, open, readdir, readFile, rm, stat, type FileHandle } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import type { ExecutionEvent, ExecutionEventType } from '@clawwork/core';
 import {
@@ -31,12 +32,30 @@ import {
  * ## 2026-10-14 集中修复（R1/R3/R4/history-order）
  *
  * - **R1 身份映射**：业务身份（原生 sessionKey/runId）与物理路径组件分离 —— 文件系统用
- *   base64url 稳定编码（append/list/read 同一映射），记录内校验 runId 原始身份；
+ *   **sha256 小写 hex（定长 64）** 定位，原始身份存**身份包络**（文件首行），
+ *   append/list/read 同一映射、读写两侧都核验包络（第二轮 V 修复，见下）；
  * - **R3 队列预算**：条数+字节双项、入队前反复腾位/拒收；缺口按 (session,run) 有界聚合，
  *   flush 时物化一条 `evidence.gap`；`queueStats()` 让不变式可被直接断言；
  * - **R4 listRuns**：按 mtime（可信元数据）最新在前 —— 调用方限额 slice 之前即可确定最新；
  * - **history-order**：readRun 不按来源 seq 重排（seq 只在同生产者域内可比），
  *   文件行序 = 接收顺序 = 重放顺序。
+ *
+ * ## 2026-10-14 第二轮 V 修复（Codex V-ID-1 / V-ID-2）
+ *
+ * 第一轮的 base64url 物理组件有两个确定缺陷，本版替换为「定长哈希 + 身份包络核验」：
+ *
+ * - **V-ID-1 大小写折叠**：可打印 ASCII 身份 `…:aaa:…`→`YWFh…` 与 `…:aaG:…`→`YWFH…`
+ *   编码**仅差大小写**；Windows 大小写不敏感文件系统把两者折叠为同一路径 ⇒ 同 runId 时
+ *   `readRun` 无法区分、`listRuns` 会串列另一 session 的 run。（把 base64url 转小写只会
+ *   把不同编码永久合并，不是修法。）
+ * - **V-ID-2 长度判据**：旧检查只数 JS 字符串长度（180）—— `'中'.repeat(180)` 长度 180、
+ *   UTF-8 540 字节、编码后 720 字符 ⇒ 物理组件超限，写盘失败被 `recordDiskError` 闩锁，
+ *   该 writer 之后**整批停写**。
+ *
+ * 现在：物理组件 = `crypto.createHash('sha256')` 小写 hex（定长 64、单大小写、字母表无
+ * `/ \ .`）；**原身份不丢** —— 每个 run 文件首行是与事件同管道写入的版本化**身份包络**；
+ * 读取/列举先验包络再解析事件（路径与正文 runId 都不足以定身份），不匹配 ⇒ 拒收 + 诊断。
+ * 旧实现是**未发布特性** ⇒ 不做旧文件兼容读取（旧文件在其它物理路径上且无包络）。
  */
 
 export interface ExecutionHistoryDiagnostic {
@@ -49,6 +68,7 @@ export interface ExecutionHistoryDiagnostic {
     | 'closed-drop'
     | 'entry-budget'
     | 'invalid-key'
+    | 'identity-mismatch'
     | 'retention';
   queueDepth?: number;
   queueBytes?: number;
@@ -117,26 +137,83 @@ interface PendingEntry {
 const GAP_TYPE = 'evidence.gap' as const;
 
 /**
- * R1（2026-10-14 集中修复）· **业务身份 ≠ 物理路径组件**。
+ * R1（2026-10-14 集中修复 · 第二轮 V 重写）· **业务身份 ≠ 物理路径组件**。
  *
  * 原生 sessionKey/runId（多段冒号的任务会话键、含设备域的长键）带冒号且可能远超
- * 64 字符 —— 直接当文件名既非法（Windows）又被旧正则整体拒绝（R1：真实键静默丢）。
- * 这里：**业务身份保留原样**（记录内校验用），文件系统用 base64url **稳定可逆编码**
- * （同一映射用于 append/list/read；编码字母表无 `/ \ .`，天然不可穿越）。
- * 禁止「仅放开冒号」与「特殊字符全替换 `_`」（后者会让 `a:b` 与 `a_b` 撞同一个文件）。
+ * 64 字符 —— 直接当文件名非法（Windows）。第一轮的 base64url 组件有两个确定缺陷
+ * （V-ID-1 大小写折叠、V-ID-2 长度只数字符，见文件头），本版改为：
+ *
+ * - **物理组件 = sha256 小写 hex**：定长 64、单大小写输出（大小写不敏感文件系统上
+ *   不再折叠）、字母表无 `/ \ .`（天然不可穿越）、长度与身份字节数无关（中文长身份
+ *   不再撑爆 255 组件上限）。禁止「仅放开冒号」与「`_` 清洗」（后者让 `a:b` 与 `a_b` 撞车）。
+ * - **原身份不丢失**：run 文件首行是与事件同管道写入的版本化**身份包络**（下），
+ *   读取/列举**先验包络**再解析事件 —— 路径只是定位，身份以包络为准。
+ *
+ * ⚠️ 旧编码是**未发布特性**：不做旧文件兼容读取（旧文件在别的物理路径上且无包络，
+ * 只会在保留期清理时删除）。若未来需要迁移，必须另立迁移程序，不得放宽这里的核验。
  */
-const IDENTITY_MAX_CHARS = 180; // 编码后 ≤240，加 `.ndjson` 仍 < 单组件 255 上限
+const IDENTITY_MAX_BYTES = 4096; // 组件定长 64 ⇒ 与编码长度无关；仅拒绝病态超长身份
 const RUN_FILE_SUFFIX = '.ndjson';
+/** 身份包络（run 文件首行）字段：路径不可信，身份以它为准。 */
+const ENVELOPE_FIELD = '__executionHistoryEnvelope';
+const ENVELOPE_VERSION = 1;
+/** 包络/文件头**有界读取**上限（单条包络远小于它；杜绝全目录正文扫描）。 */
+const ENVELOPE_HEAD_BYTES = 16 * 1024;
 
-function encodeIdentityComponent(identity: string): string {
-  return Buffer.from(identity, 'utf8').toString('base64url');
+interface RunFileEnvelope {
+  workspaceKey: string;
+  sessionKey: string;
+  runId: string;
+  createdAt: number;
 }
 
-/** 解码物理组件；非规范编码（往返不一致）一律 null（拒收）。 */
-function decodeIdentityComponent(component: string): string | null {
+interface RunFileEnvelopeLine extends RunFileEnvelope {
+  __executionHistoryEnvelope: number;
+}
+
+/** 身份 → 物理组件：sha256 小写 hex（定长 64、单大小写）。append/read/list 同一映射。 */
+function identityComponent(identity: string): string {
+  return createHash('sha256').update(identity, 'utf8').digest('hex');
+}
+
+/**
+ * **有界**读取 run 文件头的第一行（包络/元数据用途，不读正文）。
+ * 文件不存在、是目录、或读取失败 ⇒ null（调用方按"不可核验"处理，绝不猜测）。
+ */
+async function readHeadLine(filePath: string): Promise<string | null> {
+  let handle: FileHandle | undefined;
   try {
-    const decoded = Buffer.from(component, 'base64url').toString('utf8');
-    return encodeIdentityComponent(decoded) === component ? decoded : null;
+    handle = await open(filePath, 'r');
+    const buffer = Buffer.allocUnsafe(ENVELOPE_HEAD_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead === 0) return null;
+    const head = buffer.subarray(0, bytesRead);
+    const newlineAt = head.indexOf(0x0a);
+    return (newlineAt >= 0 ? head.subarray(0, newlineAt) : head).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/** 解析身份包络行；非包络（含旧格式裸事件、半行 JSON）一律 null ⇒ 视为不可核验。 */
+function parseEnvelope(line: string | null | undefined): RunFileEnvelope | null {
+  if (!line) return null;
+  try {
+    const parsed = JSON.parse(line) as Record<string, unknown> | null;
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    if (parsed[ENVELOPE_FIELD] !== ENVELOPE_VERSION) return null;
+    const { workspaceKey, sessionKey, runId } = parsed;
+    if (typeof workspaceKey !== 'string' || typeof sessionKey !== 'string' || typeof runId !== 'string') {
+      return null;
+    }
+    return {
+      workspaceKey,
+      sessionKey,
+      runId,
+      createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : 0,
+    };
   } catch {
     return null;
   }
@@ -146,14 +223,14 @@ function decodeIdentityComponent(component: string): string | null {
  * 业务身份合法性（与文件系统无关的那部分）：非空、有界、无控制字符、无路径分隔符。
  * 分隔符从来不是合法业务身份（原生键都是 `agent:…:task:…`），拒掉是纵深防线。
  *
- * 控制字符拒收另有一层理由：Windows 目录不区分大小写，而 base64url **区分** ——
- * 首字节落入 0x00–0x17（C0 控制区）与 0x68+ 的两串身份能编出"仅大小写不同"的组件名，
- * 在大小写不敏感的文件系统上撞同一个文件。ASCII 身份里这条路径被控制字符拒收堵死；
- * 残留边界（非 ASCII 身份 × 大小写不敏感文件系统）如实记录，不声称数学上无碰撞。
+ * 长度判据按 **UTF-8 字节**（V-ID-2）：旧实现只数 JS 字符串长度，`'中'.repeat(180)`
+ * 长度 180 却能编码出 720 字符的物理组件；现在组件是定长哈希，这里只拒绝病态超长
+ * 输入（>4096 字节）并如实记诊断，不再把长度与路径组件上限挂钩。
  */
 function isValidIdentity(key: unknown): key is string {
   if (typeof key !== 'string') return false;
-  if (key.length === 0 || key.length > IDENTITY_MAX_CHARS) return false;
+  if (key.length === 0) return false;
+  if (Buffer.byteLength(key, 'utf8') > IDENTITY_MAX_BYTES) return false;
   if (key === '.' || key === '..') return false;
   if (key.includes('/') || key.includes('\\')) return false;
   // eslint-disable-next-line no-control-regex -- 拒收 C0/DEL 正是本行的目的
@@ -219,6 +296,8 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   const runWrittenBytes = new Map<string, number>();
   const runTruncated = new Set<string>();
   const runGapDropped = new Map<string, number>();
+  /** 第二轮 V：run 文件身份包络核验结果（'ok' | 'mismatch'），按 run 缓存避免每次读头。 */
+  const runFileIdentity = new Map<string, 'ok' | 'mismatch'>();
   /**
    * R3：队列丢载的缺口**不占队列槽位**（否则缺口本身就把有界承诺撑破，正是旧缺陷
    * 「删一、加二」），而是按 (session,run) 有界聚合，flush 时每条 run 至多物化一条
@@ -228,11 +307,62 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   const PENDING_GAP_RUN_LIMIT = 64;
 
   function sessionDirOf(sessionKey: string): string {
-    return join(workspaceDir, encodeIdentityComponent(sessionKey));
+    return join(workspaceDir, identityComponent(sessionKey));
   }
 
   function runFileOf(sessionKey: string, runId: string): string {
-    return join(sessionDirOf(sessionKey), `${encodeIdentityComponent(runId)}${RUN_FILE_SUFFIX}`);
+    return join(sessionDirOf(sessionKey), `${identityComponent(runId)}${RUN_FILE_SUFFIX}`);
+  }
+
+  /**
+   * 第二轮 V · **读写共用的身份判据**：包络必须属于本 workspace + 本 sessionKey
+   * （`envelopeOwnedBy`），且（对单 run 读写）runId 一致（`envelopeMatches`）。
+   * 核心不变量：**路径只是定位，身份以包络为准** —— 不凭目录名或正文 runId 推定 session。
+   */
+  function envelopeOwnedBy(envelope: RunFileEnvelope | null, sessionKey: string): envelope is RunFileEnvelope {
+    return envelope !== null && envelope.workspaceKey === options.workspaceKey && envelope.sessionKey === sessionKey;
+  }
+
+  function envelopeMatches(envelope: RunFileEnvelope | null, sessionKey: string, runId: string): boolean {
+    return envelopeOwnedBy(envelope, sessionKey) && envelope.runId === runId;
+  }
+
+  /**
+   * 落盘前的身份包络保证（与事件**同一管道**：在 writeOne 内、串行 pendingWrites 上）：
+   * - 文件不存在/为空 ⇒ 先写包络行（**永远第 1 行**），再写事件；
+   * - 已有文件 ⇒ 只读文件头核验包络（**有界**，不读正文）；不匹配 ⇒ 拒写本条 +
+   *   诊断 `identity-mismatch`（他人文件/旧格式文件不得被继续写入，也不得冒充本 run）。
+   * 核验结果按 run 缓存，避免每次 append 都读头（与本模块其它 runKey 表同类，按 run 有界）。
+   */
+  async function ensureRunFileIdentity(entry: PendingEntry, filePath: string): Promise<boolean> {
+    const runKey = `${entry.sessionKey}|${entry.runId}`;
+    const cached = runFileIdentity.get(runKey);
+    if (cached) return cached === 'ok';
+    const head = await readHeadLine(filePath);
+    if (head === null) {
+      const envelope: RunFileEnvelopeLine = {
+        __executionHistoryEnvelope: ENVELOPE_VERSION,
+        workspaceKey: options.workspaceKey,
+        sessionKey: entry.sessionKey,
+        runId: entry.runId,
+        createdAt: now(),
+      };
+      await appendFile(filePath, `${JSON.stringify(envelope)}\n`, 'utf8');
+      runFileIdentity.set(runKey, 'ok');
+      return true;
+    }
+    if (!envelopeMatches(parseEnvelope(head), entry.sessionKey, entry.runId)) {
+      runFileIdentity.set(runKey, 'mismatch');
+      diagnostic({
+        source: 'execution-history',
+        reason: 'identity-mismatch',
+        runId: entry.runId,
+        message: 'run file identity envelope mismatch',
+      });
+      return false;
+    }
+    runFileIdentity.set(runKey, 'ok');
+    return true;
   }
 
   function recordDiskError(error: unknown): void {
@@ -444,6 +574,9 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     const dir = sessionDirOf(entry.sessionKey);
     const filePath = runFileOf(entry.sessionKey, entry.runId);
     await mkdir(dir, { recursive: true });
+    // 第二轮 V：先核验/写入身份包络，再落事件（同一管道）。包络不匹配 ⇒ 拒写本条，
+    // 不污染不可信文件、也不把错误内容写成"本 run 的证据"。
+    if (!(await ensureRunFileIdentity(entry, filePath))) return;
     await appendFile(filePath, `${JSON.stringify(entry.record)}\n`, 'utf8');
     const runKey = `${entry.sessionKey}|${entry.runId}`;
     runWrittenBytes.set(runKey, (runWrittenBytes.get(runKey) ?? 0) + entry.bytes);
@@ -512,11 +645,25 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     const gaps: ExecutionHistoryGap[] = [];
     let truncated = false;
     const lines = raw.split('\n');
-    for (let i = 0; i < lines.length; i += 1) {
+    // 第二轮 V：**先验身份包络，再解析事件** —— 路径与正文 runId 都不足以定身份。
+    // 包络缺失（旧格式/外来文件）或不属于本 workspace/session/run ⇒ 整体拒收（不返回
+    // 半份"疑似"证据）并显式记诊断；`evidence.gap` 等正记录只可能存在于已核验文件内。
+    if (!envelopeMatches(parseEnvelope(lines[0]), sessionKey, runId)) {
+      diagnostic({
+        source: 'execution-history',
+        reason: 'identity-mismatch',
+        runId,
+        message: 'run file identity envelope missing or mismatched',
+      });
+      return emptyRead(sessionKey, runId);
+    }
+    for (let i = 1; i < lines.length; i += 1) {
       const line = lines[i].trim();
       if (!line) continue;
       try {
         const parsed = JSON.parse(line) as ExecutionEvent;
+        // 混入的包络行（同文件重复写头）不是事件：跳过，不让它冒充证据。
+        if ((parsed as unknown as Record<string, unknown>)[ENVELOPE_FIELD] !== undefined) continue;
         // 判别联合：内联字面量比较才能收窄（helper 只收窄 type 本身，收不了对象）。
         if (parsed.type === 'evidence.gap') {
           gaps.push({
@@ -526,8 +673,8 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
           });
           continue;
         }
-        // R1：记录内校验**原始身份** —— 文件里混进的其它 run 记录不得冒充本 run 证据。
-        //（物理目录身份由同一编码映射决定；记录身份以 runId 为准。）
+        // R1：记录内校验**原始身份** —— 文件里混进的其它 run 记录不得冒充本 run 证据
+        //（文件级身份已由首行包络核验；这里再按记录 runId 逐条核对，两层纵深）。
         if (parsed.runId !== runId) {
           gaps.push({ reason: 'identity-mismatch', dropped: 0, at: now() });
           continue;
@@ -548,9 +695,13 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   }
 
   /**
-   * R4：**在应用限额之前**按可信元数据（文件 mtime）确定最新候选 —— readdir 顺序与
-   * UUID 字典序都不代表时间顺序，调用方 `slice(0,8)` 必须拿到最新 8 个 run。
-   * 只 stat 元数据，不读正文；同 mtime 用 runId 升序做**确定性**平局判据。
+   * R4 + 第二轮 V：**在应用限额之前**按可信元数据（文件 mtime）确定最新候选 —— readdir
+   * 顺序与 UUID 字典序都不代表时间顺序，调用方 `slice(0,8)` 必须拿到最新 8 个 run。
+   *
+   * 原始 runId 只能来自**身份包络**（物理文件名是哈希，不可逆）：这里对每个候选文件做
+   * **有界读头**（只读第 1 行，不做全目录正文扫描）并核验本 workspace + 本 sessionKey；
+   * 核验不过的文件**如实跳过**并留 `identity-mismatch` 诊断。同 mtime 用 runId 升序做
+   * **确定性**平局判据。
    */
   async function listRuns(sessionKey: string): Promise<string[]> {
     if (!isValidIdentity(sessionKey)) return [];
@@ -560,11 +711,15 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
       const runs: Array<{ runId: string; mtimeMs: number }> = [];
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith(RUN_FILE_SUFFIX)) continue;
-        const runId = decodeIdentityComponent(entry.name.slice(0, -RUN_FILE_SUFFIX.length));
-        if (!runId || !isValidIdentity(runId)) continue;
+        const full = join(dir, entry.name);
         try {
-          const info = await stat(join(dir, entry.name));
-          runs.push({ runId, mtimeMs: info.mtimeMs });
+          const info = await stat(full);
+          const envelope = parseEnvelope(await readHeadLine(full));
+          if (!envelopeOwnedBy(envelope, sessionKey) || !isValidIdentity(envelope.runId)) {
+            diagnostic({ source: 'execution-history', reason: 'identity-mismatch', message: entry.name });
+            continue;
+          }
+          runs.push({ runId: envelope.runId, mtimeMs: info.mtimeMs });
         } catch {
           /* 文件刚被清理：跳过 */
         }
