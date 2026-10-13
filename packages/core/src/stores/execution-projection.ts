@@ -172,10 +172,16 @@ function foldStep(
   if (
     existing &&
     existing.state === incomingState &&
+    existing.name === name &&
     existing.occurredAt === occurredAt &&
-    base.lastSeq === event.seq
+    event.seq <= base.lastSeq
   ) {
-    return { steps, changed: false }; // 等值重复 ⇒ 引用不变（与 store 写入器同纪律）
+    // 等值重复 ⇒ 引用不变（与 store 写入器同纪律）。2026-10-14（R2 幂等）：
+    // 判据从 `base.lastSeq === event.seq` 放宽到 `event.seq <= base.lastSeq` ——
+    // 恢复重放（hydrate）会整批重发**已观察过**的事件，只认"恰好等于最大 seq"会让
+    // 批次里每个更早的等值事件都翻新一次投影（引用变、界面白提交）。语义不变：
+    // 状态/名称/源时间全等且序号不比已观察的新 ⇒ 这不是新事实。
+    return { steps, changed: false };
   }
   return {
     steps: {
@@ -406,6 +412,82 @@ function foldDelivery(
     },
     changed: true,
   };
+}
+
+/**
+ * R5（2026-10-14 集中修复）· **完成资格的唯一真源**。
+ *
+ * 复审旁路（preflight R5）：① 同 run 已 settled/failed/unconfirmed/partial 时 chat.final
+ * 仍能走"任务完成"；② 可信交付登记的到达是异步的 —— final 当场看到 `none` 不能证明
+ * 这是普通聊天；③ 已登记 A 完成即算 settled、模型还能继续生成 B —— 缺"需求封口"条件。
+ * 这里把判据收成一处，dispatcher（core）与 renderer 交付出口/通知**共用同一个结论**，
+ * 各自不得再写一份；`idempotencyKey` 提供 run 级幂等依据（同一 run 同一资格只通知一次）。
+ *
+ * 判据（fail-closed，宁可不说完成）：
+ *  - 需求未封口 ⇒ `'not-complete'`（还有需求可能登记进来）；
+ *  - 投影无 run 归属 ⇒ `'not-complete'`（没有幂等依据，不归属就不报告）；
+ *  - 模型相位 `failed` ⇒ `'failed'`（失败轮不得报"任务完成"；交付证据保留供展示）；
+ *  - **明确普通聊天**（需求集合为空且已封口）：模型 `ended` ⇒ `complete`，否则 not-complete；
+ *  - 有交付需求：任何需求未结算（或登记了但投影中无证据）⇒ `not-complete`；
+ *    全部结算后：全 complete ⇒ `complete`；部分 complete ⇒ `partial`；
+ *    无 complete、有 failed ⇒ `failed`；其余（全 unconfirmed）⇒ `unconfirmed`。
+ */
+export type RunCompletionStatus = 'complete' | 'partial' | 'failed' | 'unconfirmed' | 'not-complete';
+
+export interface RunCompletionRequirementSet {
+  /**
+   * 可信交付需求（operationKey = `gatewayId|operationId`，与投影 `delivery.operations`
+   * 的键同形）。空数组 = **明确普通聊天**（无可信交付需求）。
+   */
+  operationKeys: readonly string[];
+  /**
+   * 需求集合是否**已封口**（不会再登记新需求进入本 run）。
+   * 触发时机由可信边界给出（例如回合结束时的登记确认窗口）；未封口一律 not-complete。
+   */
+  sealed: boolean;
+}
+
+export interface RunCompletionVerdict {
+  runId: string;
+  status: RunCompletionStatus;
+  /** run 级幂等键（`runId|status`）：消费方按此去重，同一 run 同一资格只通知一次。 */
+  idempotencyKey: string;
+}
+
+/** 便捷构造：需求集合 = 投影里**经可信登记**（delivery.started）的全部 operation。 */
+export function deliveryRequirementsOf(projection: ExecutionProjection, sealed: boolean): RunCompletionRequirementSet {
+  return { operationKeys: Object.keys(projection.delivery.operations), sealed };
+}
+
+export function evaluateRunCompletion(
+  projection: ExecutionProjection,
+  requirements: RunCompletionRequirementSet,
+): RunCompletionVerdict {
+  const runId = projection.runId;
+  const status = (value: RunCompletionStatus): RunCompletionVerdict => ({
+    runId,
+    status: value,
+    idempotencyKey: `${runId}|${value}`,
+  });
+
+  if (!runId) return status('not-complete');
+  if (!requirements.sealed) return status('not-complete');
+  if (projection.modelPhase === 'failed') return status('failed');
+
+  if (requirements.operationKeys.length === 0) {
+    return status(projection.modelPhase === 'ended' ? 'complete' : 'not-complete');
+  }
+
+  const operations = requirements.operationKeys.map((key) => projection.delivery.operations[key]);
+  if (operations.some((operation) => !operation || operation.outcome === undefined)) {
+    // 需求登记了但证据未达、或作业未结算 ⇒ 不能证明整轮完成（旁路二/三）。
+    return status('not-complete');
+  }
+  const outcomes = operations.map((operation) => operation!.outcome!);
+  if (outcomes.every((outcome) => outcome === 'complete')) return status('complete');
+  if (outcomes.some((outcome) => outcome === 'complete')) return status('partial');
+  if (outcomes.some((outcome) => outcome === 'failed')) return status('failed');
+  return status('unconfirmed');
 }
 
 export function reduceExecutionProjection(previous: ExecutionProjection, event: ExecutionEvent): ExecutionProjection {

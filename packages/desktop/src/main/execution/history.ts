@@ -27,6 +27,16 @@ import {
  * - 恢复只还原本地证据：缺口保留，不补造"执行中"或"审批通过"；
  * - 按 workspace/account 隔离（实例绑定 workspaceKey + 根目录；跨 workspace 读不到）；
  * - 保留期只清理**本模块自有**的 ndjson 文件（绝不删用户文件/旧 debug 资产）。
+ *
+ * ## 2026-10-14 集中修复（R1/R3/R4/history-order）
+ *
+ * - **R1 身份映射**：业务身份（原生 sessionKey/runId）与物理路径组件分离 —— 文件系统用
+ *   base64url 稳定编码（append/list/read 同一映射），记录内校验 runId 原始身份；
+ * - **R3 队列预算**：条数+字节双项、入队前反复腾位/拒收；缺口按 (session,run) 有界聚合，
+ *   flush 时物化一条 `evidence.gap`；`queueStats()` 让不变式可被直接断言；
+ * - **R4 listRuns**：按 mtime（可信元数据）最新在前 —— 调用方限额 slice 之前即可确定最新；
+ * - **history-order**：readRun 不按来源 seq 重排（seq 只在同生产者域内可比），
+ *   文件行序 = 接收顺序 = 重放顺序。
  */
 
 export interface ExecutionHistoryDiagnostic {
@@ -87,6 +97,13 @@ export interface ExecutionHistoryStore {
   close(): Promise<void>;
   readRun(sessionKey: string, runId: string): Promise<ExecutionHistoryReadResult>;
   listRuns(sessionKey: string): Promise<string[]>;
+  /**
+   * 诊断/测试观测点：当前待写队列的条数与字节。
+   *
+   * 不变式（R3）：`entries ≤ maxQueueEntries`、`bytes ≤ maxQueueBytes`，
+   * 且 `bytes` ≡ 队列里每条记录**实际编码字节**的总和（缺口/诊断不占队列）。
+   */
+  queueStats(): { entries: number; bytes: number };
 }
 
 interface PendingEntry {
@@ -98,7 +115,51 @@ interface PendingEntry {
 }
 
 const GAP_TYPE = 'evidence.gap' as const;
-const VALID_KEY_RE = /^[^/\\:*?"<>|]{1,64}$/;
+
+/**
+ * R1（2026-10-14 集中修复）· **业务身份 ≠ 物理路径组件**。
+ *
+ * 原生 sessionKey/runId（多段冒号的任务会话键、含设备域的长键）带冒号且可能远超
+ * 64 字符 —— 直接当文件名既非法（Windows）又被旧正则整体拒绝（R1：真实键静默丢）。
+ * 这里：**业务身份保留原样**（记录内校验用），文件系统用 base64url **稳定可逆编码**
+ * （同一映射用于 append/list/read；编码字母表无 `/ \ .`，天然不可穿越）。
+ * 禁止「仅放开冒号」与「特殊字符全替换 `_`」（后者会让 `a:b` 与 `a_b` 撞同一个文件）。
+ */
+const IDENTITY_MAX_CHARS = 180; // 编码后 ≤240，加 `.ndjson` 仍 < 单组件 255 上限
+const RUN_FILE_SUFFIX = '.ndjson';
+
+function encodeIdentityComponent(identity: string): string {
+  return Buffer.from(identity, 'utf8').toString('base64url');
+}
+
+/** 解码物理组件；非规范编码（往返不一致）一律 null（拒收）。 */
+function decodeIdentityComponent(component: string): string | null {
+  try {
+    const decoded = Buffer.from(component, 'base64url').toString('utf8');
+    return encodeIdentityComponent(decoded) === component ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 业务身份合法性（与文件系统无关的那部分）：非空、有界、无控制字符、无路径分隔符。
+ * 分隔符从来不是合法业务身份（原生键都是 `agent:…:task:…`），拒掉是纵深防线。
+ *
+ * 控制字符拒收另有一层理由：Windows 目录不区分大小写，而 base64url **区分** ——
+ * 首字节落入 0x00–0x17（C0 控制区）与 0x68+ 的两串身份能编出"仅大小写不同"的组件名，
+ * 在大小写不敏感的文件系统上撞同一个文件。ASCII 身份里这条路径被控制字符拒收堵死；
+ * 残留边界（非 ASCII 身份 × 大小写不敏感文件系统）如实记录，不声称数学上无碰撞。
+ */
+function isValidIdentity(key: unknown): key is string {
+  if (typeof key !== 'string') return false;
+  if (key.length === 0 || key.length > IDENTITY_MAX_CHARS) return false;
+  if (key === '.' || key === '..') return false;
+  if (key.includes('/') || key.includes('\\')) return false;
+  // eslint-disable-next-line no-control-regex -- 拒收 C0/DEL 正是本行的目的
+  if (/[\u0000-\u001f\u007f]/.test(key)) return false;
+  return true;
+}
 
 function isGapType(type: ExecutionEventType): type is 'evidence.gap' {
   return type === GAP_TYPE;
@@ -158,6 +219,21 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   const runWrittenBytes = new Map<string, number>();
   const runTruncated = new Set<string>();
   const runGapDropped = new Map<string, number>();
+  /**
+   * R3：队列丢载的缺口**不占队列槽位**（否则缺口本身就把有界承诺撑破，正是旧缺陷
+   * 「删一、加二」），而是按 (session,run) 有界聚合，flush 时每条 run 至多物化一条
+   * `evidence.gap`（dropped = 合并计数）。键表有界：超限逐出最旧。
+   */
+  const pendingGaps = new Map<string, { sessionKey: string; runId: string; reason: string; dropped: number }>();
+  const PENDING_GAP_RUN_LIMIT = 64;
+
+  function sessionDirOf(sessionKey: string): string {
+    return join(workspaceDir, encodeIdentityComponent(sessionKey));
+  }
+
+  function runFileOf(sessionKey: string, runId: string): string {
+    return join(sessionDirOf(sessionKey), `${encodeIdentityComponent(runId)}${RUN_FILE_SUFFIX}`);
+  }
 
   function recordDiskError(error: unknown): void {
     if (diskError) return;
@@ -165,8 +241,35 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     diagnostic({ source: 'execution-history', reason: 'write-error', message: diskError.message });
   }
 
-  function validKey(key: string): boolean {
-    return VALID_KEY_RE.test(key) && key !== '.' && key !== '..';
+  function noteDropped(sessionKey: string, runId: string, reason: string, count = 1): void {
+    const key = `${sessionKey}|${runId}`;
+    const existing = pendingGaps.get(key);
+    if (existing) {
+      existing.dropped += count;
+      return;
+    }
+    if (pendingGaps.size >= PENDING_GAP_RUN_LIMIT) {
+      const oldest = pendingGaps.keys().next().value;
+      if (oldest !== undefined) pendingGaps.delete(oldest);
+    }
+    pendingGaps.set(key, { sessionKey, runId, reason, dropped: count });
+  }
+
+  /** 取出并清空待物化的缺口（按 run 有界）。 */
+  function takePendingGaps(): PendingEntry[] {
+    const entries: PendingEntry[] = [];
+    for (const gap of pendingGaps.values()) {
+      const record = gapRecord(gap.runId, '', gap.sessionKey, gap.reason, gap.dropped, now());
+      entries.push({
+        sessionKey: gap.sessionKey,
+        runId: gap.runId,
+        record,
+        bytes: entryBytes(record),
+        priority: 'terminal',
+      });
+    }
+    pendingGaps.clear();
+    return entries;
   }
 
   function entryBytes(record: ExecutionEvent): number {
@@ -227,6 +330,15 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     }
   }
 
+  /**
+   * R3（2026-10-14 集中修复）· 入队预算：**条数 + 字节双项、反复腾位/拒收**。
+   *
+   * 旧缺陷：「删一条 progress、再塞 gap + incoming」净增一条，且 gap 字节不计入
+   * queueBytes ⇒ 持续追加可突破条数与字节两个上限（有界承诺失效）。
+   * 现在：丢载只丢队列里**已有的进度**（先丢最早的 —— 新进度取代旧进度），缺口
+   * 走有界待物化表；无论如何腾不出位（队列全是终态 / 单条超剩余预算）⇒ 拒收本条目
+   * 并显式报告缺证（诊断 + 持久化缺口），**不吹「永不丢终态」**。
+   */
   function enqueue(entry: PendingEntry): void {
     if (closing) {
       diagnostic({ source: 'execution-history', reason: 'closed-drop', queueDepth: queue.length });
@@ -239,50 +351,43 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
         runId: entry.runId,
         message: `${entry.bytes} > ${maxEntryBytes}`,
       });
+      noteDropped(entry.sessionKey, entry.runId, 'entry-budget');
       return;
     }
-    // 队列预算：溢出时先丢进度（从队尾倒序找），丢不掉再丢本条目；无论如何显式记 gap。
-    if (queue.length >= maxQueueEntries || queueBytes + entry.bytes > maxQueueBytes) {
-      let madeRoom = false;
-      let droppedProgress = 0;
-      for (let i = queue.length - 1; i >= 0; i -= 1) {
-        const candidate = queue[i];
-        if (candidate.priority === 'progress') {
-          queue.splice(i, 1);
-          queueBytes -= candidate.bytes;
-          droppedProgress += 1;
-          madeRoom = true;
-          break;
-        }
-      }
-      if (!madeRoom) {
-        // 全是终态：丢本条目（若本条目是终态也只能丢 —— 显式记 gap，不静默）
-        const dropped = 1;
-        diagnostic({
-          source: 'execution-history',
-          reason: 'queue-full',
-          queueDepth: queue.length,
-          queueBytes,
-          dropped,
-        });
-        return;
-      }
-      queue.push(enqueueGap(entry.sessionKey, entry.runId, 'queue-full', droppedProgress, 'overflow'));
-      void droppedProgress;
+    let droppedProgress = 0;
+    while (queue.length + 1 > maxQueueEntries || queueBytes + entry.bytes > maxQueueBytes) {
+      const index = queue.findIndex((candidate) => candidate.priority === 'progress');
+      if (index < 0) break; // 没有可丢的进度槽位
+      const [evicted] = queue.splice(index, 1);
+      queueBytes -= evicted.bytes;
+      droppedProgress += 1;
+      noteDropped(evicted.sessionKey, evicted.runId, 'queue-full');
+    }
+    if (queue.length + 1 > maxQueueEntries || queueBytes + entry.bytes > maxQueueBytes) {
+      // 腾不到位：拒收本条目（哪怕它是终态）—— 缺证显式报告，不静默、不越界。
+      diagnostic({
+        source: 'execution-history',
+        reason: 'queue-full',
+        runId: entry.runId,
+        queueDepth: queue.length,
+        queueBytes,
+        dropped: 1 + droppedProgress,
+      });
+      noteDropped(entry.sessionKey, entry.runId, 'queue-full');
+      return;
+    }
+    if (droppedProgress > 0) {
+      diagnostic({
+        source: 'execution-history',
+        reason: 'queue-full',
+        runId: entry.runId,
+        queueDepth: queue.length,
+        queueBytes,
+        dropped: droppedProgress,
+      });
     }
     queue.push(entry);
     queueBytes += entry.bytes;
-  }
-
-  function enqueueGap(
-    sessionKey: string,
-    runId: string,
-    reason: string,
-    dropped: number,
-    _label: string,
-  ): PendingEntry {
-    const record = gapRecord(runId, '', sessionKey, reason, dropped, now());
-    return { sessionKey, runId, record, bytes: entryBytes(record), priority: 'terminal' };
   }
 
   async function writeBatch(entries: PendingEntry[]): Promise<void> {
@@ -299,8 +404,14 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
           const dropped = runGapDropped.get(runKey) ?? 0;
           runGapDropped.set(runKey, dropped + 1);
           // 写一条 run-budget gap（终端路径不受此限）
-          const gap = enqueueGap(entry.sessionKey, entry.runId, 'run-budget', dropped + 1, 'run');
-          await writeOne(gap);
+          const record = gapRecord(entry.runId, '', entry.sessionKey, 'run-budget', dropped + 1, now());
+          await writeOne({
+            sessionKey: entry.sessionKey,
+            runId: entry.runId,
+            record,
+            bytes: entryBytes(record),
+            priority: 'terminal',
+          });
           diagnostic({ source: 'execution-history', reason: 'run-budget', runId: entry.runId, dropped: dropped + 1 });
           continue; // 进度丢弃（显式已记）
         }
@@ -330,8 +441,8 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
       });
       return;
     }
-    const dir = join(workspaceDir, entry.sessionKey);
-    const filePath = join(dir, `${entry.runId}.ndjson`);
+    const dir = sessionDirOf(entry.sessionKey);
+    const filePath = runFileOf(entry.sessionKey, entry.runId);
     await mkdir(dir, { recursive: true });
     await appendFile(filePath, `${JSON.stringify(entry.record)}\n`, 'utf8');
     const runKey = `${entry.sessionKey}|${entry.runId}`;
@@ -347,8 +458,9 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
 
   async function flush(): Promise<void> {
     if (diskError) return; // 磁盘已坏：只留诊断，不重试风暴
-    if (queue.length === 0) return;
-    const batch = queue.splice(0, queue.length);
+    const gaps = takePendingGaps();
+    if (queue.length === 0 && gaps.length === 0) return;
+    const batch = [...gaps, ...queue.splice(0, queue.length)];
     queueBytes = 0;
     // ⚠️ 写失败绝不冒泡给调用方（与 logger 同纪律：日志器永远不该弄崩应用）——
     // 失败已由 recordDiskError 闩锁记诊断。
@@ -358,12 +470,12 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   }
 
   function append(sessionKey: string, records: readonly ExecutionEvent[]): void {
-    if (!validKey(sessionKey)) {
+    if (!isValidIdentity(sessionKey)) {
       diagnostic({ source: 'execution-history', reason: 'invalid-key', message: sessionKey });
       return;
     }
     for (const record of records) {
-      if (!validKey(record.runId)) {
+      if (!isValidIdentity(record.runId)) {
         diagnostic({ source: 'execution-history', reason: 'invalid-key', message: record.runId });
         continue;
       }
@@ -377,20 +489,24 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     }
   }
 
+  function emptyRead(sessionKey: string, runId: string): ExecutionHistoryReadResult {
+    return { workspaceKey: options.workspaceKey, sessionKey, runId, records: [], gaps: [], truncated: false };
+  }
+
   async function readRun(sessionKey: string, runId: string): Promise<ExecutionHistoryReadResult> {
-    if (!validKey(sessionKey) || !validKey(runId)) {
-      return { workspaceKey: options.workspaceKey, sessionKey, runId, records: [], gaps: [], truncated: false };
+    if (!isValidIdentity(sessionKey) || !isValidIdentity(runId)) {
+      return emptyRead(sessionKey, runId);
     }
-    const filePath = resolve(join(workspaceDir, sessionKey, `${runId}.ndjson`));
+    const filePath = resolve(runFileOf(sessionKey, runId));
     // 路径围栏：只允许本 workspace 目录内的文件（跨 workspace / 穿越一律拒）。
     if (!filePath.startsWith(resolve(workspaceDir) + sep)) {
-      return { workspaceKey: options.workspaceKey, sessionKey, runId, records: [], gaps: [], truncated: false };
+      return emptyRead(sessionKey, runId);
     }
     let raw = '';
     try {
       raw = await readFile(filePath, 'utf8');
     } catch {
-      return { workspaceKey: options.workspaceKey, sessionKey, runId, records: [], gaps: [], truncated: false };
+      return emptyRead(sessionKey, runId);
     }
     const records: ExecutionEvent[] = [];
     const gaps: ExecutionHistoryGap[] = [];
@@ -410,6 +526,12 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
           });
           continue;
         }
+        // R1：记录内校验**原始身份** —— 文件里混进的其它 run 记录不得冒充本 run 证据。
+        //（物理目录身份由同一编码映射决定；记录身份以 runId 为准。）
+        if (parsed.runId !== runId) {
+          gaps.push({ reason: 'identity-mismatch', dropped: 0, at: now() });
+          continue;
+        }
         records.push(parsed);
       } catch {
         // 半行 JSON（崩溃残留）：只容忍**最后一行**，中段损坏显式记缺口。
@@ -419,18 +541,43 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
     }
     if (runTruncated.has(`${sessionKey}|${runId}`)) truncated = true;
     if (gaps.some((g) => g.reason === 'run-budget')) truncated = true;
-    records.sort((a, b) => a.seq - b.seq);
+    // history-order（2026-10-14）：**不按来源 seq 重排** —— seq 是各生产者实例自己的
+    // 计数域（dispatcher 与 main 各从 0 起、重建还会重置），跨域不可比。文件里的
+    // 行序 ≡ writer 串行落盘顺序 ≡ 事件接收顺序，恢复重放必须按这个顺序。
     return { workspaceKey: options.workspaceKey, sessionKey, runId, records, gaps, truncated };
   }
 
+  /**
+   * R4：**在应用限额之前**按可信元数据（文件 mtime）确定最新候选 —— readdir 顺序与
+   * UUID 字典序都不代表时间顺序，调用方 `slice(0,8)` 必须拿到最新 8 个 run。
+   * 只 stat 元数据，不读正文；同 mtime 用 runId 升序做**确定性**平局判据。
+   */
   async function listRuns(sessionKey: string): Promise<string[]> {
-    if (!validKey(sessionKey)) return [];
+    if (!isValidIdentity(sessionKey)) return [];
     try {
-      const files = await readdir(join(workspaceDir, sessionKey));
-      return files.filter((f) => f.endsWith('.ndjson')).map((f) => f.slice(0, -'.ndjson'.length));
+      const dir = sessionDirOf(sessionKey);
+      const entries = await readdir(dir, { withFileTypes: true });
+      const runs: Array<{ runId: string; mtimeMs: number }> = [];
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith(RUN_FILE_SUFFIX)) continue;
+        const runId = decodeIdentityComponent(entry.name.slice(0, -RUN_FILE_SUFFIX.length));
+        if (!runId || !isValidIdentity(runId)) continue;
+        try {
+          const info = await stat(join(dir, entry.name));
+          runs.push({ runId, mtimeMs: info.mtimeMs });
+        } catch {
+          /* 文件刚被清理：跳过 */
+        }
+      }
+      runs.sort((a, b) => b.mtimeMs - a.mtimeMs || (a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0));
+      return runs.map((run) => run.runId);
     } catch {
       return [];
     }
+  }
+
+  function queueStats(): { entries: number; bytes: number } {
+    return { entries: queue.length, bytes: queueBytes };
   }
 
   function start(): void {
@@ -451,14 +598,15 @@ export function createExecutionHistory(options: ExecutionHistoryOptions): Execut
   function close(): Promise<void> {
     closing = true;
     stop();
+    const gaps = takePendingGaps();
+    const batch = [...gaps, ...queue.splice(0, queue.length)];
+    queueBytes = 0;
     return enqueueWrite(async () => {
-      if (!diskError && queue.length > 0) {
-        const batch = queue.splice(0, queue.length);
-        queueBytes = 0;
+      if (!diskError && batch.length > 0) {
         await writeBatch(batch);
       }
     }).catch(() => undefined);
   }
 
-  return { append, start, stop, flush, close, readRun, listRuns };
+  return { append, start, stop, flush, close, readRun, listRuns, queueStats };
 }

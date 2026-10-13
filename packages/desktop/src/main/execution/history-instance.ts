@@ -9,7 +9,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { getWorkspacePath } from '../workspace/config.js';
-import { createExecutionHistory, type ExecutionHistoryStore } from './history.js';
+import { getDebugLogger } from '../debug/index.js';
+import { createExecutionHistory, type ExecutionHistoryDiagnostic, type ExecutionHistoryStore } from './history.js';
 
 let cached: { key: string; store: ExecutionHistoryStore } | null = null;
 
@@ -17,6 +18,25 @@ function workspaceKeyNow(): string {
   const workspace = getWorkspacePath();
   const material = workspace && workspace.trim() ? workspace : '(default)';
   return createHash('sha256').update(material).digest('hex').slice(0, 16);
+}
+
+/**
+ * R1（2026-10-14 集中修复）：writer 的诊断必须接到**已有脱敏诊断出口** ——
+ * 此前实例没接 `onDiagnostic`，拒写/预算/磁盘异常全静默（真实 sessionKey 被拒写时
+ * 界面上"什么都不发生"）。`getDebugLogger()` 的事件先过 `sanitizeForLog` 再落盘/广播。
+ * 诊断出口本身不许弄崩应用：整体 try/catch 吞掉。
+ */
+function reportDiagnostic(diagnostic: ExecutionHistoryDiagnostic): void {
+  try {
+    getDebugLogger().warn({
+      domain: 'artifact',
+      event: 'execution-history.diagnostic',
+      message: diagnostic.message ? `${diagnostic.reason}: ${diagnostic.message}` : diagnostic.reason,
+      ...(diagnostic.runId ? { runId: diagnostic.runId } : {}),
+    });
+  } catch {
+    /* 诊断失败绝不冒泡（与 writer 的 write-error 闩锁同纪律） */
+  }
 }
 
 /** 取当前工作区的执行历史实例（不存在则创建并 start；换工作区自动切换）。 */
@@ -31,6 +51,7 @@ export function getExecutionHistory(): ExecutionHistoryStore {
   const store = createExecutionHistory({
     rootDir: join(app.getPath('userData'), 'execution-history'),
     workspaceKey: key,
+    onDiagnostic: reportDiagnostic,
   });
   store.start();
   cached = { key, store };

@@ -168,13 +168,13 @@ export function selectHistoryEvents(
     dropped += 1;
   }
 
-  // 第三步：终态/审批/取消在前、进度在后（稳定排序，writer 溢出时从尾部丢）。
-  records.sort((a, b) => {
-    const pa = executionEventPriority(a.type) === 'terminal' ? 0 : 1;
-    const pb = executionEventPriority(b.type) === 'terminal' ? 0 : 1;
-    if (pa !== pb) return pa - pb;
-    return a.seq - b.seq;
-  });
-
+  // 第三步（history-order，2026-10-14 修正）：**不再按 priority / seq 重排批次**。
+  //
+  // 旧口径"终态在前，writer 溢出时从尾部丢"把两个概念捆在一起，代价是**持久化顺序
+  // ≠ 消费顺序**：同一批里 requested → confirmed 这类同 run 多事件被倒装，恢复重放
+  // 会得到与现场不同的投影；而跨生产者/重建后的 `seq` 根本不是同一计数域（dispatcher
+  // 与 main 各从 0 起），拿它当序也是错的。
+  // 现在：**保持输入（接收）顺序落盘**；溢出丢载由 writer 按每条记录自带的
+  // `executionEventPriority` 自行扫描（见 main/execution/history.ts 的 enqueue）。
   return { records, dropped };
 }

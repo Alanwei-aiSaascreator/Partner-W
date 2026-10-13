@@ -535,7 +535,10 @@ export function createSessionSync(deps: SessionSyncDeps) {
       const activeRunId = currentStore.activeTurnBySession[sessionKey]?.runId;
       const historyRunId = gatewayAssistant.at(-1)?.runId;
       if (gatewayAssistant.length > 0 && (!activeRunId || activeRunId === historyRunId)) {
-        currentStore.clearActiveTurn(sessionKey);
+        // run-promotion（2026-10-14）：清理带**期望 run** —— 这条路是"历史已对齐、把
+        // activeTurn 收掉"，只许清它自己那一轮的投影；投影若已属新轮（迟到同步回到时
+        // 新轮已开始），不得误删。
+        currentStore.clearActiveTurn(sessionKey, historyRunId ? { runId: historyRunId } : undefined);
       }
       return;
     }

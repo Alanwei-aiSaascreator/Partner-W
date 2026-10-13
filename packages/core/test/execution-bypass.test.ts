@@ -403,7 +403,7 @@ describe('V3 · 交付完成门（chat.final 不再直接弹"任务完成"）', 
     payload: over.payload,
   });
 
-  it('⭐ 活动作业未结算 ⇒ chat.final 不弹任务完成；普通聊天照旧', async () => {
+  it('⭐ 活动作业未结算 ⇒ chat.final 不弹任务完成（统一留痕延后）', async () => {
     const h = createHarness();
     h.primeTurn();
 
@@ -440,38 +440,34 @@ describe('V3 · 交付完成门（chat.final 不再直接弹"任务完成"）', 
   it('⭐ V4 修正：settled 之后新 operation ⇒ 交付门重新拦截 chat.final 通知', async () => {
     const h = createHarness();
     h.primeTurn();
-    h.store
-      .getState()
-      .applyExecutionEvents(FIXTURE.taskSessionKey, [
-        deliveryEvent({
-          eventId: 'f#0',
-          seq: 0,
-          receivedAt: 1,
-          type: 'delivery.started',
-          payload: { operationId: 'op-1', kind: 'ppt' },
-        }),
-        deliveryEvent({
-          eventId: 'f#1',
-          seq: 1,
-          receivedAt: 2,
-          type: 'delivery.settled',
-          payload: { operationId: 'op-1', outcome: 'complete' },
-        }),
-      ] as never);
+    h.store.getState().applyExecutionEvents(FIXTURE.taskSessionKey, [
+      deliveryEvent({
+        eventId: 'f#0',
+        seq: 0,
+        receivedAt: 1,
+        type: 'delivery.started',
+        payload: { operationId: 'op-1', kind: 'ppt' },
+      }),
+      deliveryEvent({
+        eventId: 'f#1',
+        seq: 1,
+        receivedAt: 2,
+        type: 'delivery.settled',
+        payload: { operationId: 'op-1', outcome: 'complete' },
+      }),
+    ] as never);
     expect(h.projection()?.delivery.phase).toBe('settled');
 
     // 同 run 后到的新作业
-    h.store
-      .getState()
-      .applyExecutionEvents(FIXTURE.taskSessionKey, [
-        deliveryEvent({
-          eventId: 'f#2',
-          seq: 2,
-          receivedAt: 3,
-          type: 'delivery.started',
-          payload: { operationId: 'op-2', kind: 'video' },
-        }),
-      ] as never);
+    h.store.getState().applyExecutionEvents(FIXTURE.taskSessionKey, [
+      deliveryEvent({
+        eventId: 'f#2',
+        seq: 2,
+        receivedAt: 3,
+        type: 'delivery.started',
+        payload: { operationId: 'op-2', kind: 'video' },
+      }),
+    ] as never);
     expect(h.projection()?.delivery.phase, '新 operation 未结算 ⇒ 回到交付中').toBe('pending');
 
     h.emit(chatFinalFrame([{ type: 'text', text: '主体完成，视频生成中…' }]));
@@ -481,14 +477,18 @@ describe('V3 · 交付完成门（chat.final 不再直接弹"任务完成"）', 
     );
   });
 
-  it('⭐ 普通聊天（无 operation 登记）⇒ chat.final 照旧弹任务完成（不用等文件）', async () => {
+  it('⭐ R5：普通聊天 final 也不再直接弹通知 —— 一律留痕延后，由统一资格（封口后）发', async () => {
     const h = createHarness();
     h.primeTurn();
     h.emit(chatFinalFrame([{ type: 'text', text: '答案是 42。' }]));
-    // maybeNotify 经 getSettings().then(...) 异步发通知 ⇒ 等微任务拍完
-    await vi.waitFor(() => expect(h.sendNotification).toHaveBeenCalled());
-    expect(h.sendNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'notifications.taskComplete', taskId: FIXTURE.taskId }),
+    // R5（2026-10-14）：final 当场看到"无 operation"**不能证明**这是普通聊天（登记经异步
+    // 最终交付路径才到）—— dispatcher 不再调 maybeNotify；现场完成通知由 renderer 的
+    // `useDeliverySettlementNotification` 在**封口后**（模型结束 + 轮次关闭）按统一资格发。
+    await vi.waitFor(() =>
+      expect(h.reportDebugEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'renderer.chat.task_complete_deferred' }),
+      ),
     );
+    expect(h.sendNotification, 'dispatcher 侧一发不发（通知只有一个出口）').not.toHaveBeenCalled();
   });
 });

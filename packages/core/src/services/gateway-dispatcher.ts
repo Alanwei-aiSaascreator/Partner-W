@@ -331,6 +331,8 @@ export interface GatewayDispatcherDeps {
     | 'sealTurnActivity'
     // V2：执行投影的写入动作（旁路映射折叠点）。
     | 'applyExecutionEvents'
+    // run-promotion（2026-10-14）：可信 run 绑定时显式轮换 execution scope。
+    | 'beginExecutionRun'
     // V3：读取交付投影（chat.final 的"任务完成"通知是否被交付门拦下）。
     | 'executionBySession'
   >;
@@ -781,6 +783,20 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    * `localFrameId` 首次接收时分配一次（落盘/重放沿用 —— V4 持久化消费方）。
    */
   let localFrameCounter = 0;
+  /**
+   * 实例 token（history-order 复核，2026-10-14）：`localFrameCounter` 是**本实例**的
+   * 帧计数 —— dispatcher 重建（重连/重进页面）后从 0 重来，纯计数会让新事件的
+   * `eventId` 与已落盘的旧事件撞 ID（幂等/去重消费方会把新事实误判成重放）。
+   * 帧 ID 带实例 token ⇒ 跨实例唯一；main 侧本就是 `main#<uuid>`（见
+   * `main/artifact/execution-events.ts`），两侧都满足"边界分配一次、全局唯一"。
+   */
+  const frameInstanceToken = (() => {
+    try {
+      return crypto.randomUUID().slice(0, 8);
+    } catch {
+      return Math.random().toString(36).slice(2, 10);
+    }
+  })();
   /** 每会话的本地接收序号（lastSeq 单调性用）；有界：超过上限清最旧。 */
   const sessionSeqCounters = new Map<string, number>();
   const SESSION_SEQ_COUNTER_LIMIT = 256;
@@ -807,8 +823,17 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     currentRuns.set(sessionKey, { runId, confirmed, retired });
     closedStreams.delete(sessionKey);
     const store = deps.getMessageStore();
-    if (store.activeTurnBySession[sessionKey]?.runId && store.activeTurnBySession[sessionKey].runId !== runId)
-      store.clearActiveTurn(sessionKey);
+    const activeRunId = store.activeTurnBySession[sessionKey]?.runId;
+    if (activeRunId && activeRunId !== runId) {
+      // run-promotion（2026-10-14）：带期望 run 的清理 —— 只收拾**旧轮**自己的残留，
+      // 迟到/重放路径不得误删已属于新轮的投影。
+      store.clearActiveTurn(sessionKey, { runId: activeRunId });
+    }
+    // run-promotion（2026-10-14）：可信 run 绑定/新轮确认边界 = **显式建立 execution scope**。
+    // 没有它，canonical 提升摘掉 activeTurn 后留下的孤立投影会一直挡住下一轮：
+    // 归约器按 runId 拒收新轮事件 ⇒ 投影不切换、执行历史记录为 0。
+    // 同 run（重连/重复确认）幂等；归约器的跨 run 拒收规则不变。
+    store.beginExecutionRun?.(sessionKey, runId);
   }
 
   function settleDispatch(ticket: symbol, receipt?: ChatDispatchReceipt, accepted = true): void {
@@ -847,7 +872,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const seq = (sessionSeqCounters.get(sessionKey) ?? -1) + 1;
     sessionSeqCounters.set(sessionKey, seq);
     localFrameCounter += 1;
-    return { localFrameId: String(localFrameCounter), receivedAt: Date.now(), seq };
+    return { localFrameId: `${frameInstanceToken}-${localFrameCounter}`, receivedAt: Date.now(), seq };
   }
 
   function mapAndFoldExecution(sessionKey: string, frame: GatewayEvent, taskId: string, logicalRunId: string): void {
@@ -1443,21 +1468,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       // 那正是"没采纳的答案自己跑进对话里"的路径。
       if (!ephemeral) {
         autoTitleIfNeeded(taskId, sessionKey, deps.getTaskStore, deps.getMessageStore);
-        // V3（2026-10-13 step 3 交付门）：chat.final **不再直接**弹"任务完成" ——
-        // 交付投影里有活动作业（delivery.phase === 'pending'）时通知延后，由交付结算
-        // （P 侧 turn-lifecycle/delivery-activity 的完整/部分失败/未确认证据）决定；
-        // 普通聊天（无 operation 登记，phase === 'none'）照旧 —— 不用等文件。
-        const deliveryPending = deps.getMessageStore().executionBySession?.[sessionKey]?.delivery.phase === 'pending';
-        if ((!deps.isWindowFocused() || deps.getActiveTaskId() !== taskId) && !deliveryPending) {
-          const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
-          maybeNotify('taskComplete', {
-            title: deps.translate('notifications.taskComplete'),
-            body: task?.title || taskId,
-            taskId,
-          });
-        } else if (deliveryPending) {
-          debugEvent('renderer.chat.task_complete_deferred', { taskId, sessionKey });
-        }
+        // R5（2026-10-14 集中修复）：chat.final **一律不直接**弹"任务完成" —— 完成资格
+        // 统一由 `evaluateRunCompletion`（execution-projection 的单一真源）在**封口后**
+        // 判定，renderer 交付出口（`useDeliverySettlementNotification`）消费并发送现场
+        // 转变通知。为什么不能在 final 当场发（复审旁路一/二/三）：
+        //   · final 看到 `delivery.phase === 'none'` **不能证明**这是普通聊天 —— 可信
+        //     operation 登记经异步最终交付路径（消息落地时 finalizeAssistantArtifacts）
+        //     才到 renderer，先发完成就会"完成后又收到 started"；
+        //   · 同 run 已 settled/failed/unconfirmed/partial 时也不能沿用"完成"；
+        //   · 需求集合需要"封口"条件（登记窗口关闭）后才能判"全部结算"。
+        // 这里只留痕并交接；封口信号 = 模型相位结束 + 轮次关闭（见 renderer 侧实现，
+        // 登记广播先于轮次关闭送达，见 `delivery-settlement-notification.ts` 头注）。
+        debugEvent('renderer.chat.task_complete_deferred', { taskId, sessionKey });
         deps.syncSessionMessages(taskId, sessionKey).catch((err) => {
           debugEvent('renderer.sync.post-final.failed', {
             taskId,
@@ -1474,7 +1496,10 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       //    ⇒ 一个已经跑过 write/exec 的轮次被整轮重发（副作用重复，不可逆）。
       //    下面登记候选时把它带出去（`AutoRetryFailure.producedOutput`）。
       const producedOutput = activeTurnProducedOutput(store.activeTurnBySession[sessionKey]);
-      store.clearActiveTurn(sessionKey);
+      // run-promotion（2026-10-14）：带本轮 runId 的清理 —— 迟到的失败帧不得误删新轮投影；
+      // 帧没带 runId 时退回无条件清理（旧行为，无法归属就按"明确的整轮失败"处理）。
+      if (payload.runId) store.clearActiveTurn(sessionKey, { runId: payload.runId });
+      else store.clearActiveTurn(sessionKey);
 
       const errorCode = payload.errorCode ?? payload.error?.code;
       const rawMessage =
@@ -1550,7 +1575,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     } else if (state === 'aborted') {
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
-      store.clearActiveTurn(sessionKey);
+      if (payload.runId) store.clearActiveTurn(sessionKey, { runId: payload.runId });
+      else store.clearActiveTurn(sessionKey);
       // 用户中断可能记在两处：task 级（普通会话的「停止」）与**会话**级（对比的某一列，
       // 它的登记表在删会话那一刻就摘键了，task 级标记也已经跟不上 —— 见依赖的说明）。
       const userAborted = abortedByUser.has(taskId) || deps.isSessionAbortedByUser?.(sessionKey) === true;

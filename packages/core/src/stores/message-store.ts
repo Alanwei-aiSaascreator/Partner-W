@@ -307,8 +307,38 @@ export interface MessageState {
   /**
    * V2：把一帧映射出来的执行事件折进该会话的执行投影。
    * 归约是纯函数（`reduceExecutionProjection`），本动作只负责挂在 store 生命周期上。
+   *
+   * `options.mode`（R2，2026-10-14）：
+   *  - `'live'`（默认）：现场事件 —— 被接受的状态边缘同时交给执行历史 writer；
+   *  - `'hydrate'`：**恢复应用** —— 不重新 persist、不触发业务操作；且先过 scope 复核
+   *    （见 `canHydrateExecution`）：现场已有**别的 run**（activeTurn 或投影）时，旧历史
+   *    一律不灌入。
    */
-  applyExecutionEvents: (sessionKey: string, events: readonly ExecutionEvent[]) => void;
+  applyExecutionEvents: (
+    sessionKey: string,
+    events: readonly ExecutionEvent[],
+    options?: { mode?: 'live' | 'hydrate' },
+  ) => void;
+  /**
+   * R2：恢复（hydrate）适用性复核 —— hook/IPC 在应用旧历史**之前**调用。
+   *
+   * 返回 false = 本会话已有现场归属且属于**别的 run**（新轮），旧历史不得灌入
+   * （否则会把现场新 run 的投影/事件全部挡在跨 run 守卫之外）。
+   * 真正的 workspace/epoch 归属由调用方（可信边界）负责，本接口只管 core 可判的
+   * session/run scope。
+   */
+  canHydrateExecution: (sessionKey: string, runId: string) => boolean;
+  /**
+   * run-promotion（2026-10-14）：在**可信 run 绑定/新轮确认边界**显式建立 execution scope。
+   *
+   * 背景：canonical 提升会把 activeTurn 摘掉，但执行投影留在旧 run 上 —— 下一轮的所有
+   * 执行事件被归约器的跨 run 守卫整条拒收（投影不切换、历史记录为 0）。
+   * 语义：**投影已存在且属于不同 run** 时，按新 run 初始化投影（换出孤立旧投影）；
+   * 同 run 幂等（引用不变）；没有投影时什么都不做（不给"还没有执行证据"的会话造空状态，
+   * 首个事件会自然把 runId 绑上）。
+   * ⚠️ 只在可信边界调用（dispatcher 的 bindRun / 用户动作确认处），不放松归约器拒收。
+   */
+  beginExecutionRun: (sessionKey: string, runId: string) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
   bindActiveRun: (sessionKey: string, runId: string) => void;
@@ -349,7 +379,16 @@ export interface MessageState {
     taskId: string,
     options?: { model?: string; timestamp?: string },
   ) => Message | null;
-  clearActiveTurn: (sessionKey: string) => void;
+  /**
+   * 清掉活动轮次 + 该会话的执行投影。
+   *
+   * `options.runId`（2026-10-14 run-promotion 修正）：**陈旧异步清理的护栏** ——
+   * 传入"我这一轮"的 runId 时，只有投影仍属于该 run 才清（新轮投影不得被旧清理误删）；
+   * 不传 = 无条件清理（用户主动重置/清空等明确动作）。
+   * ⚠️ early return 已修：**孤立投影**（activeTurn 已被 promotion 摘掉、投影还在）
+   * 也必须被明确清理清掉。
+   */
+  clearActiveTurn: (sessionKey: string, options?: { runId?: string }) => void;
   clearMessages: (taskId: string) => void;
   setHighlightedMessage: (id: string | null) => void;
   setProcessing: (sessionKey: string, processing: boolean) => void;
@@ -594,6 +633,23 @@ function persistMessageUpdate(deps: MessageStoreDeps, msg: Message): void {
 
 export { EMPTY_MESSAGES };
 
+/**
+ * R2（2026-10-14）：恢复（hydrate）适用性 —— core 可判的那半边。
+ *
+ * 现场归属（activeTurn 的 runId / 已建立的投影 runId）与要恢复的 runId 不一致 ⇒
+ * 属于"别的轮次"：旧历史不得灌入。两个来源都要看：
+ *  - activeTurn：新轮已开始但还没有执行事件（投影尚未建立）时，投影判据看不出来；
+ *  - 投影：promotion 之后 activeTurn 已被摘掉，投影是唯一的现场归属证据。
+ */
+function canHydrateInState(state: MessageState, sessionKey: string, runId: string): boolean {
+  if (!runId) return false; // 无归属的历史没有恢复价值（归约器也拒收）
+  const liveRunId = state.activeTurnBySession[sessionKey]?.runId;
+  if (liveRunId && liveRunId !== runId) return false;
+  const projection = state.executionBySession[sessionKey];
+  if (projection?.runId && projection.runId !== runId) return false;
+  return true;
+}
+
 export function createMessageStore(deps: MessageStoreDeps) {
   return createStore<MessageState>((set, get) => ({
     messagesByTask: {},
@@ -735,13 +791,18 @@ export function createMessageStore(deps: MessageStoreDeps) {
     // V2：纯归约（`reduceExecutionProjection`）的 store 挂载点。事件被归约层拒收
     // （旧 run 晚包 / 无归属）时投影引用不变 ⇒ 不触发任何 set。
     // V4：被接受的状态边缘同时交给执行历史 writer（脱敏/合并后 fire-and-forget）。
-    applyExecutionEvents: (sessionKey, events) =>
+    // R2：hydrate 模式 = 恢复应用（不重新 persist；应用前过 scope 复核）。
+    applyExecutionEvents: (sessionKey, events, options) =>
       set((s) => {
         if (events.length === 0) return s;
+        const hydrate = options?.mode === 'hydrate';
         let projection = s.executionBySession[sessionKey] ?? createExecutionProjection('');
         let changed = false;
         const accepted: ExecutionEvent[] = [];
         for (const event of events) {
+          // R2：恢复旧历史前复核 scope —— 现场已有别的 run（新轮）时整条跳过，
+          // 不得让旧历史建立/污染新轮的投影。
+          if (hydrate && event.runId !== '' && !canHydrateInState(s, sessionKey, event.runId)) continue;
           const next = reduceExecutionProjection(projection, event);
           if (next !== projection) {
             projection = next;
@@ -749,7 +810,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
             accepted.push(event);
           }
         }
-        if (changed) {
+        if (changed && !hydrate) {
           const selection = selectHistoryEvents(accepted, {
             sanitize: deps.sanitizeHistoryText ?? ((text: string) => text),
           });
@@ -757,6 +818,21 @@ export function createMessageStore(deps: MessageStoreDeps) {
         }
         if (!changed) return s;
         return { executionBySession: { ...s.executionBySession, [sessionKey]: projection } };
+      }),
+
+    canHydrateExecution: (sessionKey, runId) => canHydrateInState(get(), sessionKey, runId),
+
+    // run-promotion：可信边界显式建立 execution scope（见接口注释）。
+    beginExecutionRun: (sessionKey, runId) =>
+      set((s) => {
+        if (!runId) return s;
+        const projection = s.executionBySession[sessionKey];
+        // 无投影：什么都不做 —— 不给"还没有任何执行证据"的会话造空状态；
+        // 首个事件会自然把 runId 绑上（归约器从 '' 接受）。要修的只是**孤立旧投影**。
+        if (!projection || projection.runId === runId) return s;
+        return {
+          executionBySession: { ...s.executionBySession, [sessionKey]: createExecutionProjection(runId) },
+        };
       }),
 
     // ⚠️ 装载**本地已存**的消息时也要切一次行内推理。
@@ -945,15 +1021,22 @@ export function createMessageStore(deps: MessageStoreDeps) {
       return adopted;
     },
 
-    clearActiveTurn: (sessionKey) =>
+    clearActiveTurn: (sessionKey, options) =>
       set((s) => {
-        if (!s.activeTurnBySession[sessionKey]) return s;
-        const next = { ...s.activeTurnBySession };
-        delete next[sessionKey];
+        const hasTurn = Boolean(s.activeTurnBySession[sessionKey]);
+        const projection = s.executionBySession[sessionKey];
+        // run-promotion（2026-10-14）：early return 之前先算"投影要不要清"——
+        // 孤立投影（activeTurn 已被 canonical 提升摘掉）也必须能被明确清理清掉。
+        // 带上 `options.runId` 的陈旧异步清理：投影已属**别的 run**（新轮）⇒ 保新轮。
+        const clearsExecution = Boolean(projection) && (!options?.runId || projection?.runId === options.runId);
+        if (!hasTurn && !clearsExecution) return s;
+        const nextTurns = { ...s.activeTurnBySession };
+        delete nextTurns[sessionKey];
+        if (!clearsExecution) return { activeTurnBySession: nextTurns };
         // V2：执行投影与活动轮次同生命周期（换会话/作废轮次即清该 scope 投影）。
         const nextExecutions = { ...s.executionBySession };
         delete nextExecutions[sessionKey];
-        return { activeTurnBySession: next, executionBySession: nextExecutions };
+        return { activeTurnBySession: nextTurns, executionBySession: nextExecutions };
       }),
 
     clearMessages: (taskId) =>

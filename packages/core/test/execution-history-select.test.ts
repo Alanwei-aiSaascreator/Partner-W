@@ -136,7 +136,11 @@ describe('V4 · selectHistoryEvents —— 状态边缘选择', () => {
     expect(executionEventPriority('step.declared')).toBe('progress');
   });
 
-  it('⭐ 批内排序：终态/审批/取消在前，进度在后（writer 溢出从尾部丢）', () => {
+  it('⭐ 批内保序：持久化顺序 ≡ 接收顺序（priority 只作 writer 丢载判据，不再重排批次）', () => {
+    // 2026-10-14 history-order 修正：批次重排会让"落盘顺序 ≠ 消费顺序"——恢复重放
+    // （cancel.requested → cancel.confirmed 这类同帧多事件）会得到与现场不同的投影。
+    // 现在：selectHistoryEvents **保持输入顺序**；溢出丢载由 writer 按每条 record 的
+    // priority 自行扫描（见 main/execution/history.ts 的 enqueue）。
     const events: ExecutionEvent[] = [
       base({ eventId: 'p1', seq: 0, payload: { toolCallId: 'tc-1', name: 'read', phase: 'update' } }),
       base({
@@ -148,8 +152,44 @@ describe('V4 · selectHistoryEvents —— 状态边缘选择', () => {
     ];
     const { records } = selectHistoryEvents(events, opts);
 
-    expect(records[0].eventId, '终态在前').toBe('t1');
-    expect(records[1].eventId).toBe('p1');
+    expect(records.map((r) => r.eventId)).toEqual(['p1', 't1']);
+  });
+
+  it('⭐ 同 run 同帧多事件保序：requested → confirmed 重放与现场投影一致', () => {
+    const requested = base({
+      eventId: 'req#0',
+      seq: 4,
+      type: 'cancel.requested',
+      payload: { stopTicketId: 'ticket-1' },
+    });
+    const confirmed = base({
+      eventId: 'conf#0',
+      seq: 5,
+      type: 'cancel.confirmed',
+      payload: { stopTicketId: 'ticket-1' },
+    });
+    const { records } = selectHistoryEvents([requested, confirmed], opts);
+    expect(records.map((r) => r.eventId)).toEqual(['req#0', 'conf#0']);
+
+    let live = createExecutionProjection('run-a');
+    for (const event of [requested, confirmed]) live = reduceExecutionProjection(live, event);
+    let replayed = createExecutionProjection('run-a');
+    for (const record of records) replayed = reduceExecutionProjection(replayed, record);
+    expect(replayed.stop.state).toBe('confirmed');
+    expect(replayed.stop.state).toBe(live.stop.state);
+  });
+
+  it('⭐ 跨生产者 seq 交错不参与批次重排：进度与主进程终态各按接收顺序落盘', () => {
+    const dispatchProgress = base({ eventId: 'd#0', seq: 40 });
+    const mainSettled = base({
+      eventId: 'main#x',
+      seq: 0,
+      type: 'delivery.settled',
+      payload: { operationId: 'op-1', outcome: 'complete' },
+      source: { gatewayId: 'gw-1', channel: 'local', event: 'main', derivedIndex: 0 },
+    });
+    const { records } = selectHistoryEvents([dispatchProgress, mainSettled], opts);
+    expect(records.map((r) => r.eventId)).toEqual(['d#0', 'main#x']);
   });
 
   it('⭐ 恢复重放幂等：同 ID 事件重放两次，投影不变（不重复计）', () => {
@@ -181,18 +221,16 @@ describe('V4 · selectHistoryEvents —— 状态边缘选择', () => {
     const SK = 'agent:main:clawwork:task:task-1';
 
     // 同一 step 两条进度 + 一条终态：历史只收终态（进度在批内被合并丢弃）
-    store
-      .getState()
-      .applyExecutionEvents(SK, [
-        base({ eventId: 'f1#0', seq: 0 }),
-        base({ eventId: 'f2#0', seq: 1 }),
-        base({
-          eventId: 'f3#0',
-          seq: 2,
-          type: 'step.result',
-          payload: { toolCallId: 'tc-1', name: 'read', isError: false, resultText: 'ok' },
-        }),
-      ]);
+    store.getState().applyExecutionEvents(SK, [
+      base({ eventId: 'f1#0', seq: 0 }),
+      base({ eventId: 'f2#0', seq: 1 }),
+      base({
+        eventId: 'f3#0',
+        seq: 2,
+        type: 'step.result',
+        payload: { toolCallId: 'tc-1', name: 'read', isError: false, resultText: 'ok' },
+      }),
+    ]);
     expect(persisted).toHaveLength(1);
     expect(persisted[0].records.map((r) => r.eventId)).toEqual(['f3#0']);
 

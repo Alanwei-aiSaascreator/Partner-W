@@ -68,6 +68,14 @@ export type {
   ExecutionStepState,
   ExecutionModelPhase,
 } from './stores/execution-projection.js';
+// R5（2026-10-14 集中修复）：完成资格的**唯一真源** —— dispatcher 与交付出口/通知共用；
+// 别再各自写一份"任务完成"判据（renderer 接线由 I 做）。
+export { evaluateRunCompletion, deliveryRequirementsOf } from './stores/execution-projection.js';
+export type {
+  RunCompletionStatus,
+  RunCompletionVerdict,
+  RunCompletionRequirementSet,
+} from './stores/execution-projection.js';
 // V4（2026-10-13 step 5）：执行历史的事件选择 + 预算常量（main 侧 writer 共用同一常量）。
 export {
   selectHistoryEvents,

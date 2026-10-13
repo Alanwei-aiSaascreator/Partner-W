@@ -135,8 +135,10 @@ describe('V4 · createExecutionHistory —— 有界写入', () => {
     const h = makeStore(root);
     h.append('s1', [makeRecord({ eventId: 'ok-1' })]);
     await h.flush();
-    // 模拟崩溃留下的半行
-    writeFileSync(join(root, 'ws-1', 's1', 'run-a.ndjson'), '{"eventId":"half', { flag: 'a' });
+    // 模拟崩溃留下的半行（按真实落盘位置找文件 —— 物理名是身份编码，不写死）
+    const [file] = listAll(root).filter((f) => f.endsWith('.ndjson'));
+    expect(file).toBeTruthy();
+    writeFileSync(file, '{"eventId":"half', { flag: 'a' });
 
     const result = await h.readRun('s1', 'run-a');
     expect(result.records.map((r) => r.eventId)).toContain('ok-1');
@@ -172,8 +174,16 @@ describe('V4 · createExecutionHistory —— 有界写入', () => {
 
   it('⭐ 磁盘写失败 ⇒ 只记诊断、不崩溃（write-error 闩锁，flush 不抛）', async () => {
     const root = mkdtempSync(join(tmpdir(), 'exec-history-'));
-    // 用同名**目录**占住目标文件路径 ⇒ appendFile 必失败
-    mkdirSync(join(root, 'ws-1', 's1', 'run-a.ndjson'), { recursive: true });
+    // 先正常写一次拿到真实落盘路径（物理名 = 身份编码，不写死）
+    const probe = makeStore(root);
+    probe.append('s1', [makeRecord()]);
+    await probe.flush();
+    const [file] = listAll(root).filter((f) => f.endsWith('.ndjson'));
+    expect(file).toBeTruthy();
+    // 把文件换成同名**目录** ⇒ 之后的 appendFile 必失败
+    nodeFs.rmSync(file, { force: true });
+    mkdirSync(file, { recursive: true });
+
     const h = makeStore(root);
     h.append('s1', [makeRecord()]);
     await expect(h.flush(), 'flush 不把磁盘错误抛给调用方').resolves.toBeUndefined();
@@ -183,6 +193,7 @@ describe('V4 · createExecutionHistory —— 有界写入', () => {
       '写失败必须显式诊断',
     ).toBe(true);
     h.close();
+    probe.close();
   });
 
   it('⭐ 保留期只清理我们自己的文件：非本模块文件与未过期文件不删', async () => {
