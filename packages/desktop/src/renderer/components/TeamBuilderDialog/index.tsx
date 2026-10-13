@@ -67,14 +67,16 @@ const EMPTY_CONFIG: TeamConfig = { name: '', emoji: '🤖', description: '', age
  *    ② 不许用 `t(key, { defaultValue })` 兜底。
  *    而 i18n 文件当前由另一条并行任务持有，本任务不得改动 ⇒ 先落常量，
  *    需要翻译时按下面注释里的键名补进 locale（键名已按 teams.* 命名约定起好）。
+ *
+ * ⭐ 2026-10-14 五小时窗（门禁 4 条 unused exports 安全修正）：`SessionFailed` /
+ *    `Connecting` / `NoGateway` 三条已迁入 locale 且组件全走 teams.* 文案键（实读
+ *    428/441/615/851 行）⇒ **删除死常量**；`Busy` / `Incomplete` 仍被
+ *    `test/team-builder-session.test.tsx` 直接引用（断言渲染文案），保留。
  */
 export const TEAM_BUILDER_SESSION_BUSY_MESSAGE =
   '助手会话正被另一个 AI 功能占用（目标分析或 AI 建助手），请等它结束后点「重试」。'; // → teams.teamBuilderSessionBusy
-export const TEAM_BUILDER_SESSION_FAILED_MESSAGE = '创建引导没能开始（助手会话没建起来），请点「重试」再试一次。'; // → teams.teamBuilderSessionFailed
-export const TEAM_BUILDER_CONNECTING_MESSAGE = '正在连接助手…'; // → teams.teamBuilderConnecting
 export const TEAM_BUILDER_INCOMPLETE_MESSAGE =
   '助手还没给出完整配置：至少 2 位成员（含 1 位协调者），每位成员要有名称、说明、模型和身份。'; // → teams.teamBuilderIncomplete
-export const TEAM_BUILDER_NO_GATEWAY_MESSAGE = '还没有可用的网关，先完成初始化再创建团队。'; // → teams.teamBuilderNoGateway
 
 const EMPTY_MODELS: ModelCatalogEntry[] = [];
 

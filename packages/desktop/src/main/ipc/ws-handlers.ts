@@ -970,19 +970,24 @@ export function registerWsHandlers(): void {
         reason?: 'new' | 'reset';
       },
     ) => {
+      // ⭐ R6 同族（2026-10-14 五小时窗）：与 `ws:abort-chat` 同款 —— 停止事件要带
+      //    本轮 run 归属；**必须在 cancelArtifactRunsForSession 之前**取（那一步会清
+      //    run 记录）。取不到 ⇒ 上下文缺省（取消帧 fail-closed 不发，软状态照旧）。
+      const resetRunId = currentGatewayRunIdForSession(payload.sessionKey);
+      const resetStopContext = resetRunId ? { runId: resetRunId } : undefined;
       cancelArtifactRunsForSession(payload.sessionKey);
       const gw = getGatewayClient(payload.gatewayId);
       // ⭐ B1（复审二轮）：会话销毁入口同样先本地取消 run —— 失败路径必须把
       //    「未确认停止」留在可核对的轮次记录里（重连后补发核对），不许凭本地删除
       //    就把软状态丢掉（那会让升级忙态/单飞门永久悬着或提前放行）。
       if (!gw?.isConnected) {
-        noteGatewayTurnStop(payload.sessionKey, false);
+        noteGatewayTurnStop(payload.sessionKey, false, undefined, resetStopContext);
         return { ok: false, error: 'gateway not connected' };
       }
       // ⭐ 复审三轮：作用域在 await **前**捕获（这次操作的 stop ticket）—— 失败的
       //    回执只许结算这一轮；catch 不再重新捕获（那个"当前轮"可能是期间新开的，
       //    不是这次操作的对象 —— 旧实现会把新轮误标成"未确认停止"）。
-      const stopTicket = noteGatewayTurnStop(payload.sessionKey, false);
+      const stopTicket = noteGatewayTurnStop(payload.sessionKey, false, undefined, resetStopContext);
       try {
         await gw.resetSession(payload.sessionKey, payload.reason);
         // 重置已被网关受理 = 真实 RPC 合同的确认 ⇒ 只消费这次操作捕获的那一轮。
@@ -1004,15 +1009,18 @@ export function registerWsHandlers(): void {
         sessionKey: string;
       },
     ) => {
+      // ⭐ R6 同族（2026-10-14）：同 ws:session-reset —— run 归属在清记录前取。
+      const deleteRunId = currentGatewayRunIdForSession(payload.sessionKey);
+      const deleteStopContext = deleteRunId ? { runId: deleteRunId } : undefined;
       cancelArtifactRunsForSession(payload.sessionKey);
       const gw = getGatewayClient(payload.gatewayId);
       // ⭐ B1（复审二轮）：同 ws:session-reset —— 失败路径保留「未确认停止」记录。
       if (!gw?.isConnected) {
-        noteGatewayTurnStop(payload.sessionKey, false);
+        noteGatewayTurnStop(payload.sessionKey, false, undefined, deleteStopContext);
         return { ok: false, error: 'gateway not connected' };
       }
       // ⭐ 复审三轮：同 ws:session-reset —— await 前捕获这次操作的 ticket，catch 不重捕。
-      const stopTicket = noteGatewayTurnStop(payload.sessionKey, false);
+      const stopTicket = noteGatewayTurnStop(payload.sessionKey, false, undefined, deleteStopContext);
       try {
         await gw.deleteSession(payload.sessionKey, true);
         // 删除已被网关受理 = 真实 RPC 合同的确认 ⇒ 只消费这次操作捕获的那一轮。

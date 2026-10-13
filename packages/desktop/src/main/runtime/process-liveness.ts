@@ -61,10 +61,9 @@ export function processStartTimeMatches(lockStartTime: number, actualStartTime: 
  */
 const startTimeCache = new Map<number, number | null>();
 
-/** 只给测试：清掉启动时间缓存。 */
-export function resetProcessStartTimeCache(): void {
-  startTimeCache.clear();
-}
+// ⭐ 2026-10-14 五小时窗：原「只给测试」的 `resetProcessStartTimeCache` 全仓零引用
+//    （knip 门禁 4 条 unused exports 之一，实测无任何测试导入）⇒ 安全删除；
+//    模块级缓存本身按 vitest 逐档隔离，不需要清接口。
 
 function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
   const root = env.SystemRoot ?? env.WINDIR ?? 'C:\\Windows';

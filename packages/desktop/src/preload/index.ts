@@ -136,9 +136,18 @@ function buildApi(): ClawWorkAPI {
       };
     },
     // ⭐ V3-artifact（I 接线）：主进程执行事件出口（交付/取消两族）——渲染层折入执行投影。
+    // ⭐ 2026-10-14 五小时窗：载荷带捕获时 workspace scope/revision（在途来源校验用，
+    //    接收侧对照当前权威 owner；无字段帧一律拒 —— 见 clawwork.d.ts 同款注释）。
     onExecutionEvents: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
-        callback(payload as { sessionKey: string; events: ExecutionEvent[] });
+        callback(
+          payload as {
+            sessionKey: string;
+            events: ExecutionEvent[];
+            workspaceScope: string | null;
+            workspaceRevision: number;
+          },
+        );
       };
       ipcRenderer.on('artifact:execution-events', listener);
       return () => {

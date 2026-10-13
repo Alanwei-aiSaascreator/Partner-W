@@ -24,6 +24,9 @@ const isArtifactRunPendingCurrentMock = vi.fn();
 const bindArtifactRunMock = vi.fn();
 const cancelArtifactRunMock = vi.fn();
 const cancelArtifactRunsForSessionMock = vi.fn();
+// V3-artifact（2026-10-14 五小时窗）：停止事件的 run 归属查询 —— 显式命名以便逐例
+// 设定/复位（默认"无绑定轮次"⇒ 不带归属；专测在清理 run 记录前取到的用例自设 runId）。
+const currentGatewayRunIdForSessionMock = vi.fn<() => string | undefined>(() => undefined);
 const createAgentMock = vi.fn();
 const workflowRuntime = vi.hoisted(() => ({ owned: true, supplied: true }));
 const nativeBudgetGuardMock = vi.fn();
@@ -101,7 +104,7 @@ vi.mock('../src/main/ipc/data-handlers.js', () => ({
   cancelArtifactRun: cancelArtifactRunMock,
   cancelArtifactRunsForSession: cancelArtifactRunsForSessionMock,
   // V3-artifact（2026-10-14）：停止事件的 run 归属查询（本文件默认"无绑定轮次"⇒ 不带归属）。
-  currentGatewayRunIdForSession: vi.fn(() => undefined),
+  currentGatewayRunIdForSession: currentGatewayRunIdForSessionMock,
 }));
 
 // ⚠️ **部分** mock（`importOriginal` 铺底）：整包替换会让"主进程代码新引用了某个
@@ -211,6 +214,7 @@ describe('ws-handlers: skills + config IPC channels', () => {
     bindArtifactRunMock.mockReset();
     cancelArtifactRunMock.mockReset();
     cancelArtifactRunsForSessionMock.mockReset();
+    currentGatewayRunIdForSessionMock.mockReset().mockReturnValue(undefined);
     isArtifactTurnInFlightMock.mockReset().mockReturnValue(false);
     fakeGatewayClient.isConnected = true;
     workflowRuntime.owned = workflowRuntime.supplied = true;
@@ -493,6 +497,108 @@ describe('ws-handlers: skills + config IPC channels', () => {
     });
     expect(turnLifecycle.hasLiveTurnSessions(), '网关已处理 abort ⇒ 确认的终态证据').toBe(false);
     turnLifecycle.resetTurnLifecycleForTests();
+  });
+
+  // ⭐ V3-artifact（2026-10-14 五小时窗 · 复审指令"WS 真 run 上下文的窄测试"）：
+  //    ws:abort-chat 必须在 cancelArtifactRunsForSession **之前**取本轮 runId，并把它
+  //    带进停止事件上下文 —— 否则取消事件缺 run 归属（fail-closed 不发，投影永远看不到
+  //    "已在请求停止"）。两半：①有 runId ⇒ 请求/确认两帧都带同一 run；②取不到 ⇒ 一发不发。
+  it('⭐ V3-artifact：停止在清理 run 记录之前取 runId，取消事件带真实 run 归属（取不到则 fail-closed 不发）', async () => {
+    const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+    const { BrowserWindow } = await import('electron');
+    const send = vi.fn();
+    const getAllWindows = vi.mocked(BrowserWindow.getAllWindows);
+    getAllWindows.mockReturnValue([{ webContents: { isDestroyed: () => false, send } }] as never);
+    try {
+      const sessionKey = 'agent:main:clawwork:task-1';
+      const order: string[] = [];
+      currentGatewayRunIdForSessionMock.mockImplementation(() => {
+        order.push('read-run');
+        return 'run-live-42';
+      });
+      cancelArtifactRunsForSessionMock.mockImplementation(() => {
+        order.push('cancel-runs');
+      });
+      // ⭐ P-3（2026-10-14）：合法 workspace 上下文 —— 取消帧载荷带捕获时 scope/revision，
+      //    无 scope 的帧在发射侧 fail-closed 拒发。本用例钉的是 **runId 归属**，显式建 scope
+      //    让"取不到 runId ⇒ 一发不发"的负对照仍然只由 runId 决定（不因缺 scope 假绿）。
+      const { setWorkspaceDatabaseOwner } = await import('../src/main/workspace/scope.js');
+      setWorkspaceDatabaseOwner({});
+      turnLifecycle.resetTurnLifecycleForTests();
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+
+      abortChatMock.mockResolvedValueOnce({ aborted: true });
+      expect(await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey })).toEqual({
+        ok: true,
+        result: { aborted: true },
+      });
+
+      // ①顺序：先读 runId、再清 run 记录（读在清之后 ⇒ 永远拿不到身份）。
+      expect(order).toEqual(['read-run', 'cancel-runs']);
+      // ②身份：请求帧与确认帧都带同一真实 run（task 由 sessionKey 解析）。
+      const payloads = send.mock.calls
+        .filter(([channel]) => channel === 'artifact:execution-events')
+        .map(([, payload]) => payload as { sessionKey: string; events: Array<Record<string, unknown>> });
+      const events = payloads.flatMap((entry) => entry.events);
+      expect(events.map((event) => event.type)).toEqual(['cancel.requested', 'cancel.confirmed']);
+      for (const event of events) {
+        expect(event.runId).toBe('run-live-42');
+        expect(event.taskId).toBe('task-1');
+      }
+
+      // ③负对照：取不到 runId ⇒ 不发任何取消事件（不猜归属、不折到错误 run）。
+      send.mockClear();
+      currentGatewayRunIdForSessionMock.mockImplementation(() => undefined);
+      turnLifecycle.resetTurnLifecycleForTests();
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+      abortChatMock.mockResolvedValueOnce({ aborted: true });
+      expect(await invoke('ws:abort-chat', { gatewayId: 'gw-1', sessionKey })).toEqual({
+        ok: true,
+        result: { aborted: true },
+      });
+      expect(send, '无 run 归属 ⇒ 一发不发（fail-closed）').not.toHaveBeenCalled();
+      turnLifecycle.resetTurnLifecycleForTests();
+    } finally {
+      getAllWindows.mockReturnValue([] as never);
+    }
+  });
+
+  // ⭐ R6 同族（2026-10-14）：session-reset / session-delete 两个停止入口同款 ——
+  //    也在 cancelArtifactRunsForSession 之前取 runId（R6 复核点名的"其余停止入口可见性"）。
+  it('⭐ R6 同族：session-reset 在清 run 记录前取 runId，取消帧带真实 run 归属', async () => {
+    const turnLifecycle = await import('../src/main/artifact/turn-lifecycle.js');
+    const { BrowserWindow } = await import('electron');
+    const send = vi.fn();
+    const getAllWindows = vi.mocked(BrowserWindow.getAllWindows);
+    getAllWindows.mockReturnValue([{ webContents: { isDestroyed: () => false, send } }] as never);
+    try {
+      const { setWorkspaceDatabaseOwner } = await import('../src/main/workspace/scope.js');
+      setWorkspaceDatabaseOwner({});
+      const sessionKey = 'agent:main:clawwork:task-1';
+      const order: string[] = [];
+      currentGatewayRunIdForSessionMock.mockImplementation(() => {
+        order.push('read-run');
+        return 'run-reset-7';
+      });
+      cancelArtifactRunsForSessionMock.mockImplementation(() => {
+        order.push('cancel-runs');
+      });
+      turnLifecycle.resetTurnLifecycleForTests();
+      turnLifecycle.noteGatewayTurnLifecycle('start', sessionKey, 'gw-1');
+
+      resetSessionMock.mockResolvedValueOnce({ ok: true });
+      expect(await invoke('ws:session-reset', { gatewayId: 'gw-1', sessionKey })).toEqual({ ok: true });
+
+      expect(order).toEqual(['read-run', 'cancel-runs']);
+      const events = send.mock.calls
+        .filter(([channel]) => channel === 'artifact:execution-events')
+        .flatMap(([, payload]) => (payload as { events: Array<Record<string, unknown>> }).events);
+      expect(events.map((event) => event.type)).toEqual(['cancel.requested', 'cancel.confirmed']);
+      expect(events.every((event) => event.runId === 'run-reset-7')).toBe(true);
+      turnLifecycle.resetTurnLifecycleForTests();
+    } finally {
+      getAllWindows.mockReturnValue([] as never);
+    }
   });
 
   it('⭐ B1：网关未连接时的停止同样保留未确认状态（不凭本地取消清软状态）', async () => {

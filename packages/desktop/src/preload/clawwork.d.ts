@@ -525,8 +525,21 @@ export interface ClawWorkAPI {
   listGateways: () => Promise<GatewayListItem[]>;
 
   onGatewayEvent: (callback: (data: GatewayEvent) => void) => () => void;
-  /** ⭐ V3-artifact：主进程执行事件出口（交付/取消两族）——渲染层折入执行投影。 */
-  onExecutionEvents: (callback: (payload: { sessionKey: string; events: ExecutionEvent[] }) => void) => () => void;
+  /**
+   * ⭐ V3-artifact：主进程执行事件出口（交付/取消两族）——渲染层折入执行投影。
+   * ⭐ 2026-10-14 五小时窗（IPC 在途来源校验）：载荷必须携带**捕获时**的 workspace
+   *    scope/revision（与 delivery-activity 兄弟通道同款）；渲染层只收与当前权威
+   *    owner 同代的帧——"主进程校验通过后发出、到达前用户换区"的在途帧据此在接收侧被拒
+   *    （不从当前 workspace 补 owner；无 scope 帧一律拒，fail-closed）。
+   */
+  onExecutionEvents: (
+    callback: (payload: {
+      sessionKey: string;
+      events: ExecutionEvent[];
+      workspaceScope: string | null;
+      workspaceRevision: number;
+    }) => void,
+  ) => () => void;
   /** ⭐ V4：有界执行历史（本地证据）——写入 fire-and-forget；恢复读取只还原本地已写证据。 */
   executionHistoryAppend: (sessionKey: string, records: ExecutionEvent[]) => void;
   executionHistoryReadRun: (
