@@ -40,7 +40,7 @@ import { useAutoRetryFailedTurn } from './hooks/useAutoRetryFailedTurn';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LEFT_NAV_RAIL_WIDTH, motionDuration, motionEase } from '@/styles/design-tokens';
-import { loadOnboardingProfile, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
+import { loadOnboardingProfileResult, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
 import {
   AUTH_CHECK_FALLBACK_MS,
   entryAccountFromSession,
@@ -123,7 +123,8 @@ export default function App() {
       });
       setPreparedScope(null);
       setOnboardingAccount(account);
-      setOnboardingProfile(loadOnboardingProfile(account.userId));
+      const onboardingLoad = loadOnboardingProfileResult(account.userId, undefined, { source: 'entry' });
+      setOnboardingProfile(onboardingLoad.profile);
       setOnboardingResolved(true);
       setEntryErrorCode(undefined);
       setAuthState('ok');
@@ -363,7 +364,8 @@ export default function App() {
         }
         if (entryMode === 'local') {
           setOnboardingAccount({ userId: 'local', nickname: '' });
-          setOnboardingProfile(loadOnboardingProfile('local'));
+          const localOnboardingLoad = loadOnboardingProfileResult('local', undefined, { source: 'local-entry' });
+          setOnboardingProfile(localOnboardingLoad.profile);
           setOnboardingResolved(true);
           setAuthState('ok');
           return;
@@ -543,7 +545,8 @@ export default function App() {
         useTaskStore.getState().workspaceEpoch !== workspaceEpoch
       )
         return;
-      saveOnboardingProfile(profile);
+      // BUG-034（2026-10-13）：失败照旧向上抛（编辑页留住）；成功/失败各留一条诊断（不含画像内容）。
+      saveOnboardingProfile(profile, undefined, { source: 'entry-complete' });
       setOnboardingProfile(profile);
       setEditingOnboardingProfile(false);
     },
