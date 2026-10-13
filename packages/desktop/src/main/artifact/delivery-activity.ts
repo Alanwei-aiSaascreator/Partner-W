@@ -143,6 +143,12 @@ export function registerDeliveryActivityHandlers(): void {
 export function beginArtifactDeliveryActivity(
   input: Pick<ArtifactDeliveryActivity, 'taskId' | 'sessionKey' | 'messageId' | 'runId'> & {
     owner: ArtifactWorkspaceScope;
+    /**
+     * ⭐ V3-artifact：调用方已经为这次操作定好号（`captureArtifactDeliveryOperation` 在
+     * **可信请求登记**那一刻生成）——活动帧与执行事件必须共用同一个 operationId，
+     * 两条通道才说同一件事。缺省（老调用点/直接 begin）在这里现生成。
+     */
+    operationId?: string;
   },
   initialPhase: ArtifactDeliveryPhase,
   initialProgress?: ArtifactDeliveryPageProgress,
@@ -170,7 +176,7 @@ export function beginArtifactDeliveryActivity(
   };
   if (!ownsWorkspace() || active.size >= 2048) return null;
   const originalTaskIdentity = taskIdentity(persistenceOwner, identity);
-  const operationId = randomUUID(),
+  const operationId = input.operationId ?? randomUUID(),
     startedAt = Date.now();
   let sequence = 0,
     terminal = false,

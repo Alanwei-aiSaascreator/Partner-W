@@ -15,6 +15,10 @@ import {
   MAX_PLAIN_TEXT_SOURCE_BYTES,
 } from '../src/main/artifact/too-large.js';
 import { resolve } from 'node:path';
+import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import JSZip from 'jszip';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
@@ -618,5 +622,139 @@ describe('artifact handlers', () => {
 
     expect(result.result[0].availability).toBe('unknown');
     expect(getArtifactAvailabilityMock, '根解析不出来时不许去判"文件在不在"').not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⭐ BUG-056③（2026-10-13 S 包 patch，P 接入）：`artifact:save-image-url` 的 `file://` 边界。
+   *
+   * 旧实现是**词法** `startsWith(resolve(ws) + sep)`：`<ws>-evil\a.png` 这种**同前缀相邻目录**
+   * 会被放行；工作区内的 junction/符号链接指向外部时，词法判据也看不见真实落点。
+   * 新判据：`fileURLToPath` 解码 → workspace 与目标各自的 `realpath` → 相对包含
+   * （出界/同前缀相邻目录/根自身都拒）→ 只读**检查过的 canonical 目标**（`isFile`）。
+   *
+   * 残余（如实）：realpath→read 之间仍有极窄的交换窗口（Windows 无 O_NOFOLLOW 等价物），
+   * 已把风险收窄，但不宣称并发替换被彻底消除。
+   */
+  describe('artifact:save-image-url 的 file:// 边界（BUG-056③）', () => {
+    async function saveImageUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+      return (await handleMap.get('artifact:save-image-url')?.({}, { taskId: 'task-1', messageId: 'm1', url })) as {
+        ok: boolean;
+        error?: string;
+      };
+    }
+    async function mockWorkspace(ws: string): Promise<void> {
+      const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+      vi.mocked(getWorkspacePath).mockReturnValue(ws);
+    }
+
+    it('⭐ 工作区内的中文文件名 URL 允许（fileURLToPath 解码后 canonical 在根内）', async () => {
+      const ws = mkdtempSync(join(tmpdir(), 'img-ws-中文-'));
+      try {
+        await mockWorkspace(ws);
+        const image = join(ws, '图 像.png');
+        writeFileSync(image, 'png-bytes');
+        const reply = await saveImageUrl(pathToFileURL(image).href);
+        expect(reply).toEqual(expect.objectContaining({ ok: true }));
+        // 保存的是**解码后目标**的字节（不是 URL 串）
+        const { saveArtifactFromBuffer } = await import('../src/main/artifact/save.js');
+        const saved = vi.mocked(saveArtifactFromBuffer).mock.calls.at(-1)?.[0] as { buffer?: Buffer };
+        expect(saved.buffer?.toString('utf8')).toBe('png-bytes');
+      } finally {
+        rmSync(ws, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 同前缀相邻目录（<ws>-evil）拒绝 —— 词法 startsWith 的原始误放行', async () => {
+      const parent = mkdtempSync(join(tmpdir(), 'img-parent-'));
+      try {
+        const ws = join(parent, 'workspace');
+        const evil = join(parent, 'workspace-evil');
+        mkdirSync(ws);
+        mkdirSync(evil);
+        writeFileSync(join(evil, 'a.png'), 'evil-bytes');
+        await mockWorkspace(ws);
+        // ① 同前缀相邻目录
+        await expect(saveImageUrl(pathToFileURL(join(evil, 'a.png')).href)).resolves.toEqual({
+          ok: false,
+          error: 'file path outside workspace',
+        });
+        // ② 完全在外的普通绝对路径（负对照：旧判据本就拒，这里钉住新判据同样拒）
+        mkdirSync(join(parent, 'elsewhere'), { recursive: true });
+        writeFileSync(join(parent, 'elsewhere', 'plain.png'), 'x');
+        await expect(saveImageUrl(pathToFileURL(join(parent, 'elsewhere', 'plain.png')).href)).resolves.toEqual({
+          ok: false,
+          error: 'file path outside workspace',
+        });
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 工作区内的 link 指向外部 ⇒ canonical 出界 ⇒ 拒绝（不是"在根里"就算数）', async () => {
+      const ws = mkdtempSync(join(tmpdir(), 'img-link-ws-'));
+      const outside = mkdtempSync(join(tmpdir(), 'img-link-out-'));
+      try {
+        await mockWorkspace(ws);
+        writeFileSync(join(outside, 'secret.png'), 'secret-bytes');
+        const link = join(ws, 'pictures');
+        const kind = process.platform === 'win32' ? 'junction' : 'dir';
+        try {
+          symlinkSync(outside, link, kind);
+        } catch {
+          // 无权限建链接（如未开开发者模式的 Windows）⇒ 本用例失去被测对象，明确跳过
+          return;
+        }
+        await expect(saveImageUrl(pathToFileURL(join(link, 'secret.png')).href)).resolves.toEqual({
+          ok: false,
+          error: 'file path outside workspace',
+        });
+      } finally {
+        rmSync(ws, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 文件不存在 ⇒ 明确失败 file not found（不猜、回落）', async () => {
+      const ws = mkdtempSync(join(tmpdir(), 'img-missing-'));
+      try {
+        await mockWorkspace(ws);
+        await expect(saveImageUrl(pathToFileURL(join(ws, '不存在.png')).href)).resolves.toEqual({
+          ok: false,
+          error: 'file not found',
+        });
+      } finally {
+        rmSync(ws, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 目标是目录 ⇒ 明确失败 not a file（canonical 在根内也不读）', async () => {
+      const ws = mkdtempSync(join(tmpdir(), 'img-dir-'));
+      try {
+        await mockWorkspace(ws);
+        const directory = join(ws, 'assets');
+        mkdirSync(directory);
+        await expect(saveImageUrl(pathToFileURL(directory).href)).resolves.toEqual({
+          ok: false,
+          error: 'not a file',
+        });
+      } finally {
+        rmSync(ws, { recursive: true, force: true });
+      }
+    });
+
+    it('⭐ 工作区自身（relation 为空）也拒绝，不把根目录当图片', async () => {
+      const ws = mkdtempSync(join(tmpdir(), 'img-self-'));
+      try {
+        await mockWorkspace(ws);
+        await expect(saveImageUrl(pathToFileURL(ws).href)).resolves.toEqual({
+          ok: false,
+          error: 'file path outside workspace',
+        });
+      } finally {
+        rmSync(ws, { recursive: true, force: true });
+      }
+    });
   });
 });

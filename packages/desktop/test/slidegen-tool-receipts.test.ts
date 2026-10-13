@@ -552,14 +552,15 @@ it('supersedes an earlier failed native exec from its own claimed background ses
 });
 
 /**
- * ⭐ V1（2026-10-13）：`ToolCallStatus` 新增 `declared`（只有模型声明、未确认执行）。
- * `superseded` 守卫的本意是"**还在进行中**的尝试不能被更晚的收据取代"（先等它）——
- * `declared` 与 running/awaitingApproval 同类（未结束），必须一并挡住。
- * 不挡的话：模型刚声明、还没确认执行的那次尝试会被后来（甚至别处）的收据"取代"掉，
+ * ⭐ V1/V2（2026-10-13）：`ToolCallStatus` 新增 `declared`（只有模型声明、未确认执行）
+ * 与 `dispatched`（原生 tool/start、item/running —— 已进入处理、尚未终态）。
+ * `superseded` 守卫的本意是"**未结束**的尝试不能被更晚的收据取代"（先等它）——
+ * 两者与 running/awaitingApproval 同类，必须一并挡住。
+ * 不挡的话：刚声明/刚派发、还没终态的那次尝试会被后来（甚至别处）的收据"取代"掉，
  * 它自己的未认领输出就被静默豁免了。
  */
-it('⭐ declared（只有声明、未确认执行）也算"未结束"，不被更晚的收据取代', () => {
-  const declared = { ...failedNativeAttempt('exec-declared'), status: 'declared' as const };
+it.each(['declared', 'dispatched'] as const)('⭐ %s（未结束）不被更晚的收据取代', (status) => {
+  const pending = { ...failedNativeAttempt(`exec-${status}`), status };
   const succeeded = tool({
     id: 'exec-succeeded',
     args: {
@@ -567,7 +568,7 @@ it('⭐ declared（只有声明、未确认执行）也算"未结束"，不被�
     },
     result: nativeReport(),
   });
-  expect(collector.hasUnconfirmedSlideToolOutput([declared, succeeded], [nativeEntry])).toBe(true);
+  expect(collector.hasUnconfirmedSlideToolOutput([pending, succeeded], [nativeEntry])).toBe(true);
 });
 
 it('does not supersede a failed native attempt when the later claim used a different source file', () => {

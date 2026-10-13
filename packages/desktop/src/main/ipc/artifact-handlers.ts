@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, dialog, shell, nativeImage, type NativeImage } from 'electron';
-import { readFileSync, realpathSync, writeFileSync } from 'fs';
+import { readFileSync, realpathSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'node:url';
 import { isAbsolute, relative, resolve, sep } from 'path';
@@ -331,11 +331,35 @@ export function registerArtifactHandlers(): void {
         if (/^https?:\/\//.test(url)) {
           buffer = await safeFetch(url);
         } else if (url.startsWith('file://')) {
-          const filePath = resolve(fileURLToPath(url));
-          if (!filePath.startsWith(resolve(workspacePath) + sep)) {
+          // BUG-056③（2026-10-13 S 包 patch，P 接入）：词法 startsWith 不算边界 ——
+          // 先解码 → canonical 化 root/target → 相对包含判据 → 读**检查过的** canonical 目标。
+          let filePath: string;
+          try {
+            filePath = resolve(fileURLToPath(url)); // fileURLToPath 内含百分号解码：中文/空格 URL 合法
+          } catch {
+            return { ok: false, error: 'invalid file url' };
+          }
+          let realRoot: string;
+          let realTarget: string;
+          try {
+            realRoot = realpathSync(workspacePath);
+          } catch {
+            return { ok: false, error: 'workspace not found' };
+          }
+          try {
+            realTarget = realpathSync(filePath); // 不存在 ⇒ 这里明确失败（不猜）
+          } catch {
+            return { ok: false, error: 'file not found' };
+          }
+          const relation = relative(realRoot, realTarget);
+          if (relation === '' || relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) {
+            // 内部 link 指向外部、同前缀相邻目录（`<ws>-evil`）都落在这里
             return { ok: false, error: 'file path outside workspace' };
           }
-          buffer = readFileSync(filePath);
+          if (!statSync(realTarget).isFile()) return { ok: false, error: 'not a file' };
+          // 残余（如实）：realpath→read 之间仍有极窄的交换窗口（Windows 无 O_NOFOLLOW 等价物）；
+          // 读的是刚判过的 canonical 路径，把风险收窄，但不宣称并发替换已彻底消除。
+          buffer = readFileSync(realTarget);
         } else {
           return { ok: false, error: 'unsupported url scheme' };
         }
