@@ -51,14 +51,32 @@ export interface MainExecutionIdentity {
   sessionKey: string;
   runId?: string;
   gatewayId?: string;
+  /**
+   * ⭐ P-3（2026-10-14 五小时窗）：**捕获时**的 workspace scope/revision。
+   *
+   * 必须由调用方在可信捕获点（`captureArtifactDeliveryOperation` 入口 / stop ticket
+   * 创建那一刻）取 `getWorkspaceScope()` 填进来 —— **禁止在发射时现取**：那样
+   * "发出前换区"的帧会被错标成新代，接收侧的对照就失去意义。
+   * scope 空（无库/无工作区）或缺 revision ⇒ 本模块拒发（与无 runId 同款 fail-closed；
+   * 接收侧 `useExecutionEventsSubscription` 对无 scope 帧一律拒收，发它只会制造注定被丢的帧）。
+   */
+  workspaceScope?: string | null;
+  workspaceRevision?: number;
 }
 
 /** 主进程执行事件的广播通道（preload 订阅见报告里给 I 的 patch）。 */
 export const EXECUTION_EVENTS_CHANNEL = 'artifact:execution-events';
 
+/**
+ * 广播载荷：⭐ P-3 起**必填** `workspaceScope`/`workspaceRevision`（捕获时快照）。
+ * 渲染层接收侧用它对照当前权威 owner（delivery-activity 同源快照）——
+ * "主进程校验通过后发出、到达前换区"的在途帧据此被拒。
+ */
 export interface MainExecutionEventsPayload {
   sessionKey: string;
   events: ExecutionEvent[];
+  workspaceScope: string | null;
+  workspaceRevision: number;
 }
 
 const seqBySession = new Map<string, number>();
@@ -93,6 +111,21 @@ export function emitMainExecutionEvents(
   if (events.length === 0) return 0;
   if (!identity.taskId || !identity.sessionKey) return 0;
   if (!runId) return 0; // 不归属的事件归约层拒收；不发（fail-closed，见文件头）。
+  const workspaceScope = identity.workspaceScope;
+  const workspaceRevision = identity.workspaceRevision;
+  // ⭐ P-2/P-3（2026-10-14）：无有效**捕获代** workspace scope/revision ⇒ 拒发
+  //    （"拒发"分支，与无 runId 同款 fail-closed）。理由两条：
+  //    ① 接收侧对无 scope 帧一律拒（fail-closed）——发它在功能上等于没发；
+  //    ② 越界广播本身是缺陷（旧工作区生产者向新代渲染层发帧），出口统一堵死，
+  //       所有主进程出口（delivery + cancel）按构造满足接收合同。
+  //    调用方拿不到 scope 时应在**捕获时**就拒绝登记（见 delivery-operation）。
+  if (
+    !workspaceScope ||
+    typeof workspaceRevision !== 'number' ||
+    !Number.isSafeInteger(workspaceRevision) ||
+    workspaceRevision < 0
+  )
+    return 0;
   const gatewayId = identity.gatewayId?.trim() ?? '';
   const sent: ExecutionEvent[] = [];
   for (const event of events) {
@@ -115,6 +148,8 @@ export function emitMainExecutionEvents(
   broadcast(EXECUTION_EVENTS_CHANNEL, {
     sessionKey: identity.sessionKey,
     events: sent,
+    workspaceScope,
+    workspaceRevision,
   } satisfies MainExecutionEventsPayload);
   return sent.length;
 }

@@ -25,8 +25,10 @@
  *  - 释放的只是软状态，**不释放 run 单飞门**（未 claim 的 run 仍由
  *    `isArtifactTurnInFlight` 的队列判据挡着，写盘/登记不会被提前放行）。
  */
+import { randomUUID } from 'node:crypto';
 import { parseTaskIdFromSessionKey } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
+import { getWorkspaceScope } from '../workspace/scope.js';
 import { emitMainExecutionEvents, type MainExecutionEventInput } from './execution-events.js';
 
 const RELEASE_GRACE_MS = 15_000;
@@ -38,6 +40,12 @@ const RELEASE_GRACE_MS = 15_000;
  * 本身不带 runId，所以由**调用方**（`ws:abort-chat` 等，手里有本轮 run 身份）在
  * 发起停止时显式传入；缺省 ⇒ 本轮不发事件（fail-closed，不猜一个 run 归属）。
  * `taskId` 缺省时按会话键的既定格式派生（`agent:…:<taskId>`）。
+ *
+ * ⭐ R6（2026-10-14 五小时窗）：本上下文只在**创建 stop ticket 那一刻**被读取并**冻结**
+ * 进 ticket（见 {@link GatewayTurnStopTicket}）。确认/拒绝/重连补发/网关终结等后续路径
+ * 一律从原 ticket 取身份，**不再**从"当前前台 / 新 run / 新调用点"推断 —— 这里的
+ * runId/taskId 参数在那些路径上已不参与身份，只为兼容既有调用点保留（reason 仍在
+ * `cancel.requested` 的展示载荷里使用）。
  */
 export interface TurnStopEventContext {
   runId?: string;
@@ -57,12 +65,33 @@ const releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let releaseHandler: ((sessionKey: string) => void) | null = null;
 
 /**
+ * ⭐ R6（2026-10-14 五小时窗）：停止 ticket 的**不可变身份** —— 创建（`noteGatewayTurnStop`
+ * 的未确认分支）那一刻冻结，之后确认 / 拒绝 / 重连补发 / 网关终结**全部**从原 ticket 取：
+ *
+ *  - `gatewayId`/`since`：这一轮软状态的归属（对象身份之外的第二道核对）；
+ *  - `runId`/`taskId`：**发起停止时**那一轮的交付事件身份（缺 runId ⇒ 取消帧 fail-closed
+ *    不发，见文件头）——重连补发不再依赖"当前前台 / 新 run"（那会把确认帧标到错 run 上）；
+ *  - `scope`/`revision`：**创建那一刻**的 workspace 捕获代（P-3：帧载荷携带它，接收侧
+ *    据此拒换区后的在途帧）；
+ *  - `stopTicketId`：唯一化的票据 id（投影的 `cancel.*` 用它核对"同一次操作"）。
+ */
+export interface GatewayTurnStopTicket {
+  readonly gatewayId: string;
+  readonly since: number;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly scope: string | null;
+  readonly revision: number;
+  readonly stopTicketId: string;
+}
+
+/**
  * ⭐ B1（2026-10-11 整改 · 复审二轮）：**未确认的停止** —— 「可核对的同轮状态」。
  *
  * 停止入口（`ws:abort-chat` / 会话重置 / 删除）都会**先本地取消 run**（删掉队列与完成
  * 记录）。复审原话：*失败的 abort 不能凭本地删除记录就宣称远端已结束* —— 所以本地取消
- * 之后软状态**保留**，并把"这一轮被停止过、还没确认"记在这里（sessionKey → 归属网关 +
- * 轮次起始时刻）。落地路径全是**确认过的真实证据**：
+ * 之后软状态**保留**，并把"这一轮被停止过、还没确认"记在这里（sessionKey → 停止 ticket）。
+ * 落地路径全是**确认过的真实证据**：
  *  - 真实终态事件（lifecycle end/error、chat aborted）到达 ⇒ 自然释放；
  *  - 下一次**重连成功** ⇒ {@link retryPendingGatewayTurnStops} 补发一次 abort，网关真的
  *    应答了（aborted true=已中止 / false=本来就没有在跑）⇒ 确认的生命周期证据，落地；
@@ -71,8 +100,11 @@ let releaseHandler: ((sessionKey: string) => void) | null = null;
  * 身份判据 = **ticket 对象身份**（复审三轮）：每次停止操作在 await 前捕获自己的 ticket
  * （{@link noteGatewayTurnStop} 的返回值），确认时只许消费**同一个对象**（`gatewayId`/
  * `since` 全等只是第二道核对）—— 迟到的旧回执既不能结算新轮，也不能删新轮的恢复记录。
+ *
+ * ⚠️ 连接死亡**不自动等于远端已停止**（现状保持）：网关终结路径只折
+ * `cancel.unconfirmed{gateway-terminated}`（"再也不可能确认"），绝不冒充 confirmed。
  */
-const pendingTurnStops = new Map<string, { gatewayId: string; since: number }>();
+const pendingTurnStops = new Map<string, GatewayTurnStopTicket>();
 
 /**
  * 会话 → 真实 run 状态（由 `data-handlers` 注册）。重连核对用：
@@ -113,26 +145,53 @@ function dropLiveTurn(sessionKey: string): void {
   clearReleaseTimer(sessionKey);
 }
 
-/** stop ticket 的稳定 id（投影的 `cancel.*` 用它核对"同一次操作"，见 V3 cancel 族）。 */
-function stopTicketId(ticket: Readonly<{ gatewayId: string; since: number }>): string {
-  return `${ticket.gatewayId}|${ticket.since}`;
+/**
+ * 创建停止 ticket：**此刻**冻结这一轮的身份与 workspace 捕获代（见 {@link GatewayTurnStopTicket}）。
+ * `stopTicketId` 唯一化（gatewayId|since 在毫秒级可重复，追加一次性 UUID 保证"两次停止操作"
+ * 永不共号 —— 投影按 id 拒"迟到回执"）。
+ */
+function createStopTicket(
+  sessionKey: string,
+  gatewayId: string,
+  since: number,
+  context?: TurnStopEventContext,
+): GatewayTurnStopTicket {
+  const scope = getWorkspaceScope();
+  const runId = context?.runId?.trim();
+  const taskId = context?.taskId ?? parseTaskIdFromSessionKey(sessionKey) ?? undefined;
+  return {
+    gatewayId,
+    since,
+    stopTicketId: `${gatewayId}|${since}|${randomUUID()}`,
+    ...(runId ? { runId } : {}),
+    ...(taskId ? { taskId } : {}),
+    scope: scope.scope,
+    revision: scope.revision,
+  };
 }
 
 /**
  * ⭐ V3-artifact：把一次停止状态变化折回渲染层投影（`cancel.requested/confirmed/unconfirmed`）。
  *
- * fail-closed：拿不到 taskId/runId（调用方没给上下文）⇒ `emitMainExecutionEvents` 直接不发 ——
- * 投影是 run 归属的，宁缺勿猜（旧接线行为 = 不发，UI 走既有 stop ticket 自己的显示）。
+ * ⭐ R6（2026-10-14）：身份**只从 ticket 取**（runId/taskId/scope 在创建时冻结）——
+ * 不从"当前前台 / 新调用点上下文"推断，重连补发与网关终结因此也能落在原 run 上。
+ *
+ * fail-closed：ticket 缺 taskId/runId，或捕获 scope 为空 ⇒ `emitMainExecutionEvents`
+ * 直接不发 —— 投影是 run 归属的，宁缺勿猜（UI 走既有 stop ticket 自己的显示）。
  */
-function emitCancelEvent(
-  sessionKey: string,
-  gatewayId: string,
-  context: TurnStopEventContext | undefined,
-  event: MainExecutionEventInput,
-): void {
-  const taskId = context?.taskId ?? parseTaskIdFromSessionKey(sessionKey) ?? undefined;
-  if (!taskId) return;
-  emitMainExecutionEvents({ taskId, sessionKey, runId: context?.runId, gatewayId }, [event]);
+function emitCancelEvent(sessionKey: string, ticket: GatewayTurnStopTicket, event: MainExecutionEventInput): void {
+  if (!ticket.taskId) return;
+  emitMainExecutionEvents(
+    {
+      taskId: ticket.taskId,
+      sessionKey,
+      runId: ticket.runId,
+      gatewayId: ticket.gatewayId,
+      workspaceScope: ticket.scope,
+      workspaceRevision: ticket.revision,
+    },
+    [event],
+  );
 }
 
 export function noteGatewayTurnLifecycle(
@@ -191,8 +250,13 @@ export function isLiveTurnSession(sessionKey: string): boolean {
  *
  * ⚠️ 只动软状态，**不取消 run**：run 有自己的真实释放路径（终态 claim / cancel / 15 分钟
  *    TTL），留着的 run 继续把普通发送单飞门关着 —— 释放软状态不允许提前放行写盘/登记。
+ *
+ * ⭐ R6（2026-10-14）：未确认停止的身份从**原 ticket** 取（runId/scope 是发起停止那一刻捕
+ * 获的）—— 呼叫方不再提供上下文也标不错 run；`context` 参数只为兼容既有调用点保留。
+ * ⚠️ 连接死亡**不自动等于远端已停止**：这里只折 `cancel.unconfirmed`（绝不冒充 confirmed）。
  */
 export function releaseGatewayTurnSessions(gatewayId: string, reason: string, context?: TurnStopEventContext): void {
+  void context; // R6：身份已冻结在 ticket 上；本参数不再参与事件归属。
   const released: string[] = [];
   for (const [sessionKey, owner] of [...liveTurnSessions]) {
     if (owner.gatewayId !== gatewayId) continue;
@@ -200,9 +264,9 @@ export function releaseGatewayTurnSessions(gatewayId: string, reason: string, co
     //    如实证 `cancel.unconfirmed`（**不显示"已停止"**），再落软状态。
     const pending = pendingTurnStops.get(sessionKey);
     if (pending && pending.gatewayId === gatewayId) {
-      emitCancelEvent(sessionKey, gatewayId, context, {
+      emitCancelEvent(sessionKey, pending, {
         type: 'cancel.unconfirmed',
-        payload: { stopTicketId: stopTicketId(pending), reason: 'gateway-terminated' },
+        payload: { stopTicketId: pending.stopTicketId, reason: 'gateway-terminated' },
       });
     }
     dropLiveTurn(sessionKey);
@@ -258,7 +322,7 @@ export function noteGatewayTurnStop(
   confirmed: boolean,
   expected?: Readonly<{ gatewayId: string; since: number }>,
   context?: TurnStopEventContext,
-): Readonly<{ gatewayId: string; since: number }> | undefined {
+): GatewayTurnStopTicket | undefined {
   if (confirmed) {
     const pending = pendingTurnStops.get(sessionKey);
     const live = liveTurnSessions.get(sessionKey);
@@ -270,17 +334,20 @@ export function noteGatewayTurnStop(
       data: { sessionKey, gatewayId: live.gatewayId },
     });
     // ⭐ V3-artifact：网关已处理这次 abort（aborted true/false 都算）⇒ cancel.confirmed。
+    //    ⭐ R6：身份（runId/taskId/scope）从**原 ticket**取 —— 重连补发/迟到回执的确认
+    //    也落在发起停止的那一轮上，不从"当前前台/新 run"推断。
     //    ticketId 与 requested 那次逐字相同 —— 投影据此核"同一次操作"，旧 ticket 不清新 run。
-    emitCancelEvent(sessionKey, live.gatewayId, context, {
+    emitCancelEvent(sessionKey, pending, {
       type: 'cancel.confirmed',
-      payload: { stopTicketId: stopTicketId(expected) },
+      payload: { stopTicketId: pending.stopTicketId },
     });
     dropLiveTurn(sessionKey);
-    return expected;
+    return pending;
   }
   const live = liveTurnSessions.get(sessionKey);
   if (!live) return; // 没有在跑的轮次：没有可核对的软状态（已释放/从未建立）。
-  const ticket = { gatewayId: live.gatewayId, since: live.since };
+  // ⭐ R6：ticket 在这里**创建并冻结**身份 + workspace 捕获代（此后不改）。
+  const ticket = createStopTicket(sessionKey, live.gatewayId, live.since, context);
   pendingTurnStops.set(sessionKey, ticket);
   getDebugLogger().warn({
     domain: 'artifact',
@@ -288,9 +355,9 @@ export function noteGatewayTurnStop(
     data: { sessionKey, gatewayId: live.gatewayId },
   });
   // ⭐ V3-artifact：点击停止（本地已取消 run、远端 abort 在途/未达）⇒ cancel.requested。
-  emitCancelEvent(sessionKey, live.gatewayId, context, {
+  emitCancelEvent(sessionKey, ticket, {
     type: 'cancel.requested',
-    payload: { stopTicketId: stopTicketId(ticket), ...(context?.reason ? { reason: context.reason } : {}) },
+    payload: { stopTicketId: ticket.stopTicketId, ...(context?.reason ? { reason: context.reason } : {}) },
   });
   return ticket;
 }
@@ -303,6 +370,8 @@ export function noteGatewayTurnStop(
  * 但**不落软状态**：既有"未确认停止"的记录保留，重连补发（`retryPendingGatewayTurnStops`）
  * 或网关终结（`releaseGatewayTurnSessions`）仍是它的收口路径（本条只是把"未确认"这一事实
  * 也告诉投影）。ticket 身份不符（迟到/被替换）⇒ 一个字节都不动。
+ *
+ * ⭐ R6：事件身份从**原 ticket** 取（`context` 只为兼容既有调用点保留，不参与归属）。
  */
 export function noteGatewayTurnStopRejected(
   sessionKey: string,
@@ -310,11 +379,12 @@ export function noteGatewayTurnStopRejected(
   reason: string,
   context?: TurnStopEventContext,
 ): boolean {
+  void context; // R6：身份已冻结在 ticket 上。
   const pending = pendingTurnStops.get(sessionKey);
   if (!pending || pending !== ticket) return false;
-  emitCancelEvent(sessionKey, ticket.gatewayId, context, {
+  emitCancelEvent(sessionKey, pending, {
     type: 'cancel.unconfirmed',
-    payload: { stopTicketId: stopTicketId(ticket), reason },
+    payload: { stopTicketId: pending.stopTicketId, reason },
   });
   return true;
 }

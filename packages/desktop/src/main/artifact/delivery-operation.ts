@@ -29,8 +29,9 @@ function settlementOutcome(status: ArtifactDeliveryTerminalStatus): 'complete' |
  *    计入"本轮必需集合"——**两项请求只一项真正启动/另一项启动失败时，整轮仍知道缺一项**。
  *  - `delivery.phase` 在作业真正启动（第一次 `phase()`）时发；`delivery.settled` 在生产者
  *    走完 生成→写盘→校验→登记 之后的 `finish()` 发出（指纹绑定由生产者自己的时点承担）。
- *  - 事件经 `execution-events` 广播回渲染层折入 V3 投影；身份不足（无 runId）时**不发**，
- *    不让投影把无归属的事件归到前台。
+ *  - 事件经 `execution-events` 广播回渲染层折入 V3 投影；身份不足（无 runId）或
+ *    **无有效 workspace scope/revision**（P-2，2026-10-14）时**不发** —— 不让投影把
+ *    无归属的事件归到前台，也不让旧工作区的生产者向新代渲染层漏广播。
  *
  * ⚠️ 活动帧（`artifact:delivery-activity`）与执行事件共用**同一个 operationId**：两条通道
  * 说的是同一件事，界面引用哪条都不会串台。
@@ -44,20 +45,28 @@ export function captureArtifactDeliveryOperation(identity: {
 }): { operationId: string; phase: ArtifactActivityCallback; finish: (status: ArtifactDeliveryTerminalStatus) => void } {
   const owner = getWorkspaceScope();
   const captured = { ...identity };
+  // ⭐ P-3（2026-10-14）：帧身份里的 scope/revision = **捕获时**快照（不是发射时现取）——
+  //    接收侧据此拒"发出后到达前换区"的在途帧。
   const eventIdentity = {
     taskId: captured.taskId,
     sessionKey: captured.sessionKey,
     runId: captured.runId,
     gatewayId: captured.gatewayId,
+    workspaceScope: owner.scope,
+    workspaceRevision: owner.revision,
   };
   // ⭐ 归属门（2026-10-14 集成修正，语义与 delivery-activity 兄弟通道对齐）：owner 替换
-  //    （换库/换盘/换账号）后，旧流水线无论如何都不再向渲染层广播执行事件。
+  //    （换库/换盘/换账号/换授权代次）后，旧流水线无论如何都不再向渲染层广播执行事件。
   //    判据 = scope+revision 快照等值（捕获后未被替换） + database 身份/licenseGeneration/binding。
-  //    注意不要求 scope 非空：无库单测上下文（null==null、revision 未变）照常广播。
+  // ⭐ P-2 合同收口（2026-10-14 五小时窗）：**无有效 workspace scope ⇒ 一律不发** ——
+  //    旧注释里"不要求 scope 非空（无库单测照常广播）"的豁免已撤销：那正是越界广播
+  //    （旧工作区生产者向新代渲染层发帧）的来源；判据与 delivery-activity 句柄
+  //    （`owner.scope !== null` + owner 当前）逐条对齐。
   const activityOwner = captureDeliveryActivityOwner();
   const ownsWorkspace = (): boolean => {
     const current = getWorkspaceScope();
     return (
+      owner.scope !== null &&
       current.scope === owner.scope &&
       current.revision === owner.revision &&
       isDeliveryActivityOwnerCurrent(activityOwner)
