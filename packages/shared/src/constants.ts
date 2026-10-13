@@ -123,6 +123,28 @@ export function mergeThinkingSegments(previous: string, incoming: string): strin
   // ⚠️ 重连/重订阅会把**旧段**再投一次：它已经是我们结果的尾部 ⇒ 保持，别再加一遍。
   //    否则"重复投递不会把推理拼成两遍"这条保证就破了。
   if (previous.endsWith(incoming)) return previous;
+  // ⭐ 当前段增长（2026-10-13，BUG-075 P1）：跨过工具边界后，新快照仍然是**同一个
+  //    当前段**的累计快照，只是比上一个快照更长 —— 它一定以「`previous` 末尾的那个
+  //    上一个快照」为前缀，而那个快照是 `previous` 的一个**后缀**。
+  //    找最长后缀 S 使 `incoming` 以 S 开头 ⇒ 把 S **替换**成 `incoming`
+  //   （只动当前段；历史段一个字符都不碰，替换也不会丢字符 —— S 原样是 incoming 的头）。
+  //    ⚠️ 修前这里直接落到"新一段"追加：B → BC → BCD 被拼成 `…\n\nB\n\nBC\n\nBCD`，
+  //    N 个快照的合并体积是**平方级**（独立复审实测：2,000 快照 20,044,023 字符 vs
+  //    应得 20,040；4,000 个合并 >5s 超时，同段对照仅 ~30ms）。
+  //    ⚠️ 不许按空行拆 `previous` 找段边界：分隔符和推理正文里的空行不可区分。
+  const maxOverlap = Math.min(previous.length, incoming.length);
+  const first = incoming.charCodeAt(0);
+  for (let len = maxOverlap; len >= 1; len--) {
+    const start = previous.length - len;
+    // S 必须是 incoming 的前缀 ⇒ 首字符先对上，绝大多数后缀一位就出局。
+    if (previous.charCodeAt(start) !== first) continue;
+    if (incoming.startsWith(previous.slice(start))) {
+      return previous.slice(0, start) + incoming;
+    }
+  }
+  // 当前段**旧快照**的重投（重连后按顺序重放本段已发过的快照）：它是「当前段最新
+  // 快照」（= `previous` 的某个后缀）的前缀 ⇒ 已被盖住，保持不动，绝不再追加一遍。
+  if (previous.includes(incoming)) return previous;
   // 空行隔开：它们是**不同**的推理块，不该粘成一团。
   return previous + '\n\n' + incoming;
 }

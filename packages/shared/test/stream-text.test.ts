@@ -59,3 +59,61 @@ test('mergeThinkingSegments is idempotent when re-fed its own result', () => {
   const merged = mergeThinkingSegments('第一段', '第二段');
   expect(mergeThinkingSegments(merged, '第二段')).toBe(merged);
 });
+
+/**
+ * ⭐ 跨工具边界后**当前段继续增长**（2026-10-13 独立复审反例 / BUG-075 P1）。
+ *
+ * 网关的思考通道送的是**累计快照**（按段从空重新累积）。修前实现对"跨段后的增长"
+ * 完全不认：每个新快照与前文两个方向都不是前缀 ⇒ 每个快照都被当成**新一段**追加，
+ * 于是 B → BC → BCD 变成 `A\n\nB\n\nBC\n\nBCD`，N 个快照的合并体积是**平方级**
+ *（复审实测：2,000 快照 20,040 字符应得、实得 20,044,023；4,000 个合并超过 5 秒，
+ * 同段对照仅 ~30ms）—— 现场输入 249 → 2 → 17 → … → 23,791 的长度直方图与它吻合。
+ *
+ * 契约（复审原话）：历史已完成段 + 当前段累计快照；**当前段增长只替换当前段**，
+ * 不重复追加旧快照，也不覆盖历史段。
+ */
+test('⭐ 跨工具边界：当前段快照 B → BC → BCD 只替换当前段，得 A\\n\\nBCD', () => {
+  let merged = mergeThinkingSegments('A', 'B');
+  expect(merged).toBe('A\n\nB');
+  merged = mergeThinkingSegments(merged, 'BC');
+  expect(merged).toBe('A\n\nBC');
+  merged = mergeThinkingSegments(merged, 'BCD');
+  expect(merged).toBe('A\n\nBCD');
+});
+
+test('多段之后继续增长：历史段一个字符都不动', () => {
+  let merged = mergeThinkingSegments('第一段', '第二段');
+  merged = mergeThinkingSegments(merged, '第二段变长');
+  merged = mergeThinkingSegments(merged, '第三段');
+  expect(merged).toBe('第一段\n\n第二段变长\n\n第三段');
+  merged = mergeThinkingSegments(merged, '第三段继续');
+  expect(merged).toBe('第一段\n\n第二段变长\n\n第三段继续');
+});
+
+test('当前段的旧快照（重连/重订阅重投）不再重复追加', () => {
+  let merged = mergeThinkingSegments('A', 'B');
+  merged = mergeThinkingSegments(merged, 'BC');
+  merged = mergeThinkingSegments(merged, 'BCD');
+  merged = mergeThinkingSegments(merged, 'BCDE');
+  expect(merged).toBe('A\n\nBCDE');
+
+  // 重投最新快照 / 重投更早的快照：都已被结果盖住 ⇒ 保持不动
+  expect(mergeThinkingSegments(merged, 'BCDE')).toBe('A\n\nBCDE');
+  expect(mergeThinkingSegments(merged, 'BC')).toBe('A\n\nBCDE');
+});
+
+test('同段（工具调用之前）的增长语义不受影响', () => {
+  let merged = mergeThinkingSegments('', '让我读一下');
+  expect(merged).toBe('让我读一下');
+  merged = mergeThinkingSegments(merged, '让我读一下这几个文件');
+  expect(merged).toBe('让我读一下这几个文件');
+});
+
+test('⭐ 快照风暴线性收敛：N 次增长后的体积 = 历史 + 最新快照（不是平方级）', () => {
+  const N = 500;
+  let merged = mergeThinkingSegments('第一段完成', '第二段 ');
+  for (let i = 1; i <= N; i++) {
+    merged = mergeThinkingSegments(merged, '第二段 ' + 'x'.repeat(i * 10));
+  }
+  expect(merged).toBe('第一段完成\n\n第二段 ' + 'x'.repeat(N * 10));
+});
