@@ -107,6 +107,9 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 export const registerTurnReleaseHandler = () => undefined;
                 export const registerTurnRunStateProbe = () => undefined;
                 export const settleLiveTurn = () => undefined;
+                // 第二轮（R5 P1）· 2026-10-14：data-handlers 接入轮次登记回执发射器
+                // （artifact/turn-registration）——桩必须跟着长（同"桩必须跟着长"纪律）。
+                export const emitTurnRegistration = () => false;
               `;
           },
         },
