@@ -77,3 +77,97 @@ describe('产物登记的唯一索引语义（真 SQLite + 真文件系统）', 
     expect(rows[0].size).toBe('second-pass'.length);
   });
 });
+
+/**
+ * ⭐ BUG-058②（2026-10-13 计划 P2）：**源文件那条路**（`saveArtifact`）的同键重放。
+ *
+ * 为什么必须真索引 + 真文件系统：这一条的行为是"读源之前先只读重放探测"——
+ * 源被删、目标缺/坏、异键、坏新源四种形状的正确性全落在**真实 fs 语义**上
+ * （mock 里写不出来"源没了但目标还在"这种组合）。
+ */
+interface SourceReplayProbeResult {
+  first: { id: string; name: string; localPath: string };
+  replay: { id: string; name: string };
+  filesAfterReplay: string[];
+  replaySameBytes: boolean;
+  rowsAfterReplay: Array<Record<string, unknown>>;
+  foreignKey: { ok: boolean; name?: string };
+  badNewSource: { ok: boolean; name?: string };
+  afterBadNewSource: { rows: Array<Record<string, unknown>>; files: string[]; firstFileStillValid: boolean };
+  targetMissing: { ok: boolean; name?: string };
+  targetDamaged: { ok: boolean; name?: string };
+  replayProbeDamaged: { id: string; name: string } | null;
+  replayProbeIntact: { id: string; name: string } | null;
+  replayProbeForeign: { id: string; name: string } | null;
+  rowsAfterAll: Array<Record<string, unknown>>;
+  filesFinal: string[];
+}
+
+describe('⭐ BUG-058② · 源已清理的同键重放（真 SQLite + 真文件系统，saveArtifact 本体）', () => {
+  let electronProbe: ElectronProbe;
+  let workspacePath: string;
+  let result: SourceReplayProbeResult;
+
+  beforeAll(async () => {
+    electronProbe = await buildElectronProbe({ probePath, packageDir, privateProbeRoot });
+    workspacePath = mkdtempSync(join(privateProbeRoot ?? tmpdir(), 'clawwork-artifact-source-replay-'));
+    result = runElectronProbe({
+      compiledProbePath: electronProbe.compiledProbePath,
+      packageDir,
+      workspacePath,
+      scenario: 'save-source-replay',
+      privateProbeRoot,
+    }) as unknown as SourceReplayProbeResult;
+  }, 60_000);
+
+  afterAll(() => {
+    electronProbe.cleanup();
+    rmSync(workspacePath, { recursive: true, force: true });
+  });
+
+  it('⭐ 首次保存 → 删源 → 同键重放：返回同 id、单行、无复制（旧实现整轮 failed）', () => {
+    expect(result.replay.id).toBe(result.first.id);
+    expect(result.replay.name).toBe(result.first.name);
+    // 只有一份文件，且一个字节都没被改写（重放没有复制任何东西）
+    expect(result.filesAfterReplay).toEqual([result.first.name]);
+    expect(result.replaySameBytes).toBe(true);
+    // 库里也只有一行（没有第二次登记）
+    expect(result.rowsAfterReplay).toHaveLength(1);
+    expect(result.rowsAfterReplay[0]).toMatchObject({ id: result.first.id, source_key: 'docgen:pptx:hash-1' });
+  });
+
+  it('⭐ 异键不豁免：同 message、不同 sourceKey（源已删）⇒ 不返回既有行', () => {
+    expect(result.foreignKey.ok).toBe(false);
+    expect(result.foreignKey.name).toBe('ArtifactIntegrityError');
+  });
+
+  it('⭐ 坏新源不落盘、不删原有效行', () => {
+    expect(result.badNewSource.ok).toBe(false);
+    expect(result.badNewSource.name).toBe('ArtifactIntegrityError');
+    // 原文件一个字节没动、没有多出文件、原行还在
+    expect(result.afterBadNewSource.firstFileStillValid).toBe(true);
+    expect(result.afterBadNewSource.files).toEqual([result.first.name]);
+    expect(result.afterBadNewSource.rows).toHaveLength(1);
+    expect(result.afterBadNewSource.rows[0]).toMatchObject({ id: result.first.id });
+  });
+
+  it('⭐ 目标也缺 / 目标被改坏（源仍缺）⇒ 如实失败，不伪成功、不重登记', () => {
+    expect(result.targetMissing.ok).toBe(false);
+    expect(result.targetMissing.name).toBe('ArtifactIntegrityError');
+    expect(result.targetDamaged.ok).toBe(false);
+    expect(result.targetDamaged.name).toBe('ArtifactIntegrityError');
+    // 两次失败都没有留下"第二行/第二份文件"的痕迹
+    expect(result.rowsAfterAll).toHaveLength(1);
+    expect(result.rowsAfterAll[0]).toMatchObject({ id: result.first.id });
+    expect(result.filesFinal).toEqual([result.first.name]);
+  });
+
+  it('⭐ findReplayArtifact（视频/付费路径花钱前的探测）同样只认"目标本体有效"', () => {
+    // 目标坏 ⇒ null（存坏的 mp4 不许冒充"已交付"）
+    expect(result.replayProbeDamaged).toBeNull();
+    // 目标恢复有效 ⇒ 返回既有行（同 id）
+    expect(result.replayProbeIntact).toEqual({ id: result.first.id, name: result.first.name });
+    // 异键 ⇒ null（同 message 也不行）
+    expect(result.replayProbeForeign).toBeNull();
+  });
+});

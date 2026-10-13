@@ -33,6 +33,15 @@ export function documentFileStem(title: string, fallbackStem: string): string {
     .replace(/\.{2,}/g, '·')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, MAX_DOCUMENT_STEM_CHARS);
+    .slice(0, MAX_DOCUMENT_STEM_CHARS)
+    // ⭐ **截断之后**还要再洗一次收尾的点/空白（BUG-058①，2026-10-13 联审残余）：
+    //    标题以单个点结尾（`方案.`）或第 60 个字符恰好是点（截断把点留在末尾）时，
+    //    出片路拼 `${stem}${ext}` 会得到 `方案..docx` —— 落盘层
+    //    `workspace/safe-name.ts:8` 的 `includes('..')` 守卫把这个当路径逃逸**无条件 throw**
+    //    ⇒ 整份 render-failed（BUG-042-a 只洗了连续点，尾点没治）。
+    //    去这里是"源头"修法：落盘层守的是任意来源的名字，一个字都不放松。
+    //    `[.\s]+$` 一并吃掉"点 + 空白"的组合；中间的点（`v1.2`）完好保留；
+    //    全部去空（`.` / `. . .`）⇒ 退回 `fallbackStem`。
+    .replace(/[.\s]+$/, '');
   return cleaned || fallbackStem;
 }

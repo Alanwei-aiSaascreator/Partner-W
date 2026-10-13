@@ -23,6 +23,19 @@ export interface NativeInputOptions {
    * 冒充新 Artifact 的那个洞，一字没放宽）。
    */
   sinceMs?: number;
+  /**
+   * ⭐ BUG-058④（2026-10-13 联审残余）：**显式目标**（相对工作区的路径；绝对路径
+   * 按同一口径归一）。可信调用方**确实知道**要渲染哪一份时用它消歧。
+   *
+   * 语义边界（刻意收窄，别扩大解释）：
+   *  · **只在 mtime 并列**（真的分不出谁最新）时生效；它必须**就在并列候选里**，
+   *    否则歧义照旧 —— 它不是"指定谁就选谁"的后门；
+   *  · 它**不绕过** sha / freshness / containment 任何一道守卫（候选是这些判据的
+   *    产物，target 只是从中挑一个）；
+   *  · 原生**执行顺序**的透传不在本函数内猜测（数组序、收包 completedAt 都不可信，
+   *    见 BUG-058④）——那是 V/E 的显式依赖，到位前这里保持"无证据 ⇒ 明确歧义"。
+   */
+  target?: string;
 }
 
 /**
@@ -104,6 +117,22 @@ export function nativeInputFromCompletedWrites(
     .map(([relative, mtimeMs]) => ({ relative, mtimeMs }))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   if (chosen.length === 0) return undefined;
-  if (chosen.length > 1 && chosen[0].mtimeMs === chosen[1].mtimeMs) throw Error('native-input-ambiguous');
+  if (chosen.length > 1 && chosen[0].mtimeMs === chosen[1].mtimeMs) {
+    const tied = chosen.filter((item) => item.mtimeMs === chosen[0].mtimeMs);
+    // ⭐ BUG-058④：mtime 平局时**只**认"落在并列候选里的显式目标"。
+    //    ⛔ 数组序、收包 completedAt 都不是执行序（BUG-046 ③/BUG-054 实证），
+    //    拿它们猜选会把"渲染了哪一份"这种事交给巧合 —— 不许。
+    const requested = options.target?.trim();
+    if (requested) {
+      const normalized = path.isAbsolute(requested) ? path.relative(workspace, requested) : requested;
+      const picked = tied.find((item) => item.relative === normalized);
+      if (picked) return picked.relative;
+    }
+    throw Error(
+      `native-input-ambiguous: ${tied.map((item) => item.relative).join(', ')}` +
+        ` 的修改时间完全相同，无法确定要渲染哪一份（数组序与收包时间都不足以裁决）；` +
+        `请在调用处显式指定目标文件（target），或先重新写入目标文件使其 mtime 更新后重试`,
+    );
+  }
   return chosen[0].relative;
 }

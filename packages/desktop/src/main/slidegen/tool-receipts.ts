@@ -375,7 +375,10 @@ export function hasUnconfirmedSlideToolOutput(
    *    - 不同源文件（如纠正稿另存 `xxx-v2.slidegen`）⇒ 不成立（谱系不同，见方案 §件② 反例）。
    */
   const superseded = (tool: ToolCall, index: number): boolean => {
-    if (tool.status === 'running' || tool.status === 'awaitingApproval') return false;
+    // ⭐ V1（2026-10-13）：`declared`（只有模型声明、未确认执行）与 running/awaitingApproval
+    //    同类 —— 都是"未结束"，都不能被更晚的收据取代（见 `hasUnconfirmedSlideToolOutput`
+    //    的调用方 `data-handlers` 的未认领输出判据）。
+    if (tool.status === 'running' || tool.status === 'awaitingApproval' || tool.status === 'declared') return false;
     const source = renderSourceForAttempt(tool, index);
     if (!source) return false;
     return tools.some((later, laterIndex) => {

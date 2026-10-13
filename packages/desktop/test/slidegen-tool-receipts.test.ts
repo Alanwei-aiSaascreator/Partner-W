@@ -128,7 +128,7 @@ it.each([
 it('requires an explicit current run instead of using legacy messages', () => {
   expect(collect([message({ runId: undefined })], '')).toEqual({ receipts: [], rejected: 0 });
 });
-it.each(['running', 'error', 'awaitingApproval'] as const)('ignores %s tools', (status) => {
+it.each(['running', 'error', 'awaitingApproval', 'declared'] as const)('ignores %s tools', (status) => {
   expect(collect([message({ toolCalls: [tool({ status })] })]).receipts).toEqual([]);
 });
 it('ignores read tools and assistant text quoting a generation report', () => {
@@ -549,6 +549,25 @@ it('supersedes an earlier failed native exec from its own claimed background ses
     result: nativeReport() + '\n\nProcess exited with code 0.',
   });
   expect(collector.hasUnconfirmedSlideToolOutput([failedNativeAttempt(), launch, poll], [nativeEntry])).toBe(false);
+});
+
+/**
+ * ⭐ V1（2026-10-13）：`ToolCallStatus` 新增 `declared`（只有模型声明、未确认执行）。
+ * `superseded` 守卫的本意是"**还在进行中**的尝试不能被更晚的收据取代"（先等它）——
+ * `declared` 与 running/awaitingApproval 同类（未结束），必须一并挡住。
+ * 不挡的话：模型刚声明、还没确认执行的那次尝试会被后来（甚至别处）的收据"取代"掉，
+ * 它自己的未认领输出就被静默豁免了。
+ */
+it('⭐ declared（只有声明、未确认执行）也算"未结束"，不被更晚的收据取代', () => {
+  const declared = { ...failedNativeAttempt('exec-declared'), status: 'declared' as const };
+  const succeeded = tool({
+    id: 'exec-succeeded',
+    args: {
+      command: `$env:ROYIN_NATIVE_PPT_VALIDATION="1"; node "Q:\\skills\\deck-layout\\scripts\\generate.cjs" ${nativeSourceArgument}`,
+    },
+    result: nativeReport(),
+  });
+  expect(collector.hasUnconfirmedSlideToolOutput([declared, succeeded], [nativeEntry])).toBe(true);
 });
 
 it('does not supersede a failed native attempt when the later claim used a different source file', () => {

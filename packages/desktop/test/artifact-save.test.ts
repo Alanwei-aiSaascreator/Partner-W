@@ -12,6 +12,9 @@ vi.mock('fs', () => ({
   // 2026-09-25：产物落盘现在会先看"目录里有没有同名"（不撞就用干净名字）。
   // 这个 mock 里一律"没有" ⇒ 走干净名字那条路；这些用例断言的是 DB/复制/删除，不看名字。
   existsSync: vi.fn(() => false),
+  // BUG-058②（2026-10-13）：重放命中要复核"目标本体可读"——非受检格式走 open/close 探针。
+  openSync: vi.fn(() => 3),
+  closeSync: vi.fn(),
 }));
 
 vi.mock('crypto', () => ({
@@ -83,7 +86,7 @@ function mockDb(options: { rows?: Array<Record<string, unknown> | undefined>; in
   const insert = vi.fn(() => ({ values }));
   mockGetDb.mockReturnValue({ insert } as unknown as ReturnType<typeof getDb>);
 
-  return { insert, values, run, prepare, deleteRun };
+  return { insert, values, run, prepare, deleteRun, get };
 }
 
 function mockDbSuccess() {
@@ -96,7 +99,7 @@ function mockDbFailure() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockStatSync.mockReturnValue({ size: 1024 } as ReturnType<typeof statSync>);
+  mockStatSync.mockReturnValue({ size: 1024, isFile: () => true } as ReturnType<typeof statSync>);
 });
 
 describe('saveArtifact', () => {
@@ -358,8 +361,11 @@ describe('唯一约束 = "它已经存在"（重放 / 陈旧行 / 竞态）', ()
     sourceKey: 'docgen:docx:abc123',
   };
 
-  it('⭐ 重放（同 message + 同 sourceKey 已在、文件还在）⇒ 返回既有行，不写第二份、不再登记', async () => {
+  it('⭐ 重放（同 message + 同 sourceKey 已在、目标本体仍有效）⇒ 返回既有行，不写第二份、不再登记', async () => {
     mockExistsSync.mockReturnValue(true);
+    // BUG-058②（2026-10-13）：命中口径收紧为"目标本体复核"——大小与行一致、可读
+    // （非受检格式走 open/close 探针）；夹具跟着真实盘上形态对齐。
+    mockStatSync.mockReturnValue({ size: 11, isFile: () => true } as ReturnType<typeof statSync>);
     const db = mockDb({ rows: [row()] });
 
     const result = await saveArtifactFromBuffer(params);
@@ -428,5 +434,137 @@ describe('唯一约束 = "它已经存在"（重放 / 陈旧行 / 竞态）', ()
     await expect(saveArtifactFromBuffer({ ...params, sourceKey: undefined })).rejects.toThrow('database is locked');
 
     expect(mockUnlinkSync).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * ⭐ BUG-058②（2026-10-13 计划 P2）：**保存路径（源文件那条）**的同键重放探测
+ * 必须在**读源字节之前** —— 重放的源可能已被清理（slidegen-cli 落位路），
+ * 旧顺序先做完整性门 ⇒ 拿"源不在了"否掉一份**已经存好**的产物、整轮 failed。
+ *
+ * 命中口径同时收紧：同 task/message/sourceKey **且目标本体仍然有效**
+ * （可读 / 大小 / 受检格式字节完整）—— 目标被改坏不当重放。
+ *
+ * 真文件系统 + 真 SQLite 的语义在 `artifact-save-index.test.ts` 的
+ * `save-source-replay` 场景（探针里跑 `saveArtifact` 本体）。
+ */
+describe('⭐ BUG-058② · 同键重放：读源字节之前探测', () => {
+  const sourcePath = '/tmp/snapshot/deck.pptx';
+  const targetPath = resolve('/workspace/tasks/task-1', 'deck.pptx');
+  const params = {
+    workspacePath: '/workspace',
+    taskId: 'task-1',
+    messageId: 'msg-1',
+    sourcePath,
+    sourceKey: 'docgen:pptx:hash-1',
+  };
+  const row = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'prior-deck',
+    task_id: 'task-1',
+    message_id: 'msg-1',
+    type: 'file',
+    name: 'deck.pptx',
+    file_path: targetPath,
+    local_path: 'task-1/deck.pptx',
+    root: 'workspace',
+    mime_type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    size: 42,
+    source_key: 'docgen:pptx:hash-1',
+    content_text: '',
+    created_at: '2026-10-13T00:00:00.000Z',
+    ...overrides,
+  });
+
+  async function validPptx(): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types/>');
+    zip.file('ppt/presentation.xml', '<?xml version="1.0"?><p:presentation/>');
+    zip.file('ppt/slides/slide1.xml', '<?xml version="1.0"?><p:sld/>');
+    return (await zip.generateAsync({ type: 'nodebuffer' })) as Buffer;
+  }
+
+  it('⭐ 命中（同 task/message/sourceKey + 目标本体有效）⇒ 返回既有行；不读源、不复制、不写库', async () => {
+    const pptxBytes = Buffer.from(await validPptx());
+    const db = mockDb({ rows: [row()] });
+    mockExistsSync.mockReturnValue(true);
+    // 目标本体的盘上形态与行记账一致（size 42 = row().size），受检格式字节有效。
+    mockStatSync.mockReturnValue({ size: 42, isFile: () => true } as ReturnType<typeof statSync>);
+    // 源已清理：任何对 sourcePath 的读取都当场炸 —— 探测若在读源之后，这条必红。
+    mockReadFileSync.mockImplementation(((file: string) => {
+      if (file === sourcePath) throw new Error('ENOENT');
+      if (file === targetPath) return pptxBytes;
+      throw new Error(`unexpected read: ${file}`);
+    }) as typeof readFileSync);
+
+    const result = await saveArtifact(params);
+
+    expect(result.id).toBe('prior-deck');
+    expect(mockReadFileSync.mock.calls.map((call) => call[0])).not.toContain(sourcePath);
+    expect(mockCopyFileSync).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+    // 探测的键就是 (task, message, sourceKey)
+    expect(db.get).toHaveBeenCalledWith('task-1', 'msg-1', 'docgen:pptx:hash-1');
+  });
+
+  it('⭐ 目标被改坏（受检格式字节坏）+ 新源有效 ⇒ 不当重放：清陈旧行、重材化，不伪成功', async () => {
+    const pptxBytes = Buffer.from(await validPptx());
+    // 探测（miss，目标坏）→ 结算 ①（同键行，目标坏 ⇒ 清行）→ 结算 ③（落点空）
+    const db = mockDb({ rows: [row(), row(), undefined] });
+    mockExistsSync.mockReturnValue(true);
+    // size 与行记账一致（42）⇒ 判别只落在"字节完整性"这一层，不被大小短路。
+    mockStatSync.mockReturnValue({ size: 42, isFile: () => true } as ReturnType<typeof statSync>);
+    mockReadFileSync.mockImplementation(((file: string) => {
+      if (file === targetPath) return Buffer.from('PK broken, not a zip'); // 目标被外部改坏
+      return pptxBytes; // 源仍然有效
+    }) as typeof readFileSync);
+
+    const result = await saveArtifact(params);
+
+    expect(result.id).not.toBe('prior-deck'); // 坏目标不许冒充"已存在"
+    expect(db.deleteRun).toHaveBeenCalledTimes(1); // 陈旧行清掉
+    expect(mockCopyFileSync).toHaveBeenCalledTimes(1); // 用新源重材化
+    expect(db.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ 目标也缺 + 源已清理 ⇒ 如实失败（不伪成功、不删行、不复制）', async () => {
+    const db = mockDb({ rows: [row()] });
+    mockStatSync.mockImplementation(((file: string) => {
+      if (file === targetPath) throw new Error('ENOENT');
+      return { size: 1024, isFile: () => true } as ReturnType<typeof statSync>;
+    }) as typeof statSync);
+    mockReadFileSync.mockImplementation((() => {
+      throw new Error('ENOENT');
+    }) as typeof readFileSync);
+
+    await expect(saveArtifact(params)).rejects.toThrow(ArtifactIntegrityError);
+
+    expect(db.deleteRun).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(mockCopyFileSync).not.toHaveBeenCalled();
+    expect(mockUnlinkSync).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 异键不豁免：没有同键行时照走完整性门（源已清理 ⇒ unreadable）', async () => {
+    const db = mockDb({ rows: [undefined] });
+    mockReadFileSync.mockImplementation((() => {
+      throw new Error('ENOENT');
+    }) as typeof readFileSync);
+
+    await expect(saveArtifact({ ...params, sourceKey: 'docgen:pptx:other' })).rejects.toThrow(ArtifactIntegrityError);
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(mockCopyFileSync).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 坏新源不落盘、不删原有效行：完整性门先于任何写/删', async () => {
+    const db = mockDb({ rows: [undefined, undefined, undefined] });
+    mockReadFileSync.mockImplementation((() => Buffer.from('这不是文档')) as unknown as typeof readFileSync);
+
+    await expect(saveArtifact({ ...params, sourceKey: 'docgen:pptx:hash-2' })).rejects.toThrow(ArtifactIntegrityError);
+
+    expect(mockCopyFileSync).not.toHaveBeenCalled();
+    expect(db.deleteRun).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
   });
 });

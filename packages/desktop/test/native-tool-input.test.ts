@@ -129,3 +129,96 @@ describe('BUG-046 ③ 当前源判据重定义（mtime 优先 + 编辑工具 + f
     expect(nativeInputFromCompletedWrites(folder, tools)).toBeUndefined();
   });
 });
+
+/**
+ * BUG-058④（联审 P3 残余，2026-10-13 计划口径）：mtime 平局时**只许**用
+ * 可信原生顺序或**显式目标**消歧；没有证据就保持明确歧义（并给出具体下一步）。
+ *
+ * 不许的两条捷径（都是"看起来合理"的猜测）：
+ *  · **工具数组序** —— 模型写回的顺序 ≠ 执行序（BUG-046 ③ / BUG-054 两度实证）；
+ *  · **收包 completedAt** —— 收包时间同样不是执行序（乱序到达/重放都会反）。
+ * 原生执行顺序的透传需要 V/E 提供可信来源（本批不造）；显式目标由调用方**显式**给出，
+ * 且必须**就在并列候选里** —— 它不绕过 sha / freshness / containment 任何一道守卫。
+ */
+describe('BUG-058④ · mtime 平局：只认显式目标，不许数组序/收包时间猜选', () => {
+  const done = (id: string, name: string, args: Record<string, unknown>, completedAt?: string) => ({
+    id,
+    name,
+    status: 'done' as const,
+    startedAt: '',
+    ...(completedAt ? { completedAt } : {}),
+    args,
+  });
+  const tie = (): void => {
+    writeFileSync(join(folder, 'a.native-ppt.json'), 'A');
+    writeFileSync(join(folder, 'b.native-ppt.json'), 'B');
+    const stamp = new Date(1_600_000_000_000);
+    utimesSync(join(folder, 'a.native-ppt.json'), stamp, stamp);
+    utimesSync(join(folder, 'b.native-ppt.json'), stamp, stamp);
+  };
+  const writeA = () => done('w1', 'write', { path: 'a.native-ppt.json', content: 'A' });
+  const writeB = () => done('w2', 'write', { path: 'b.native-ppt.json', content: 'B' });
+
+  it('⭐ 双文件同 mtime（数组两个方向都试）⇒ 仍明确歧义，不给"最近写"的假答案', () => {
+    tie();
+    expect(() => nativeInputFromCompletedWrites(folder, [writeA(), writeB()])).toThrow('native-input-ambiguous');
+    expect(() => nativeInputFromCompletedWrites(folder, [writeB(), writeA()])).toThrow('native-input-ambiguous');
+  });
+
+  it('⭐ 收包 completedAt 反序也不能消歧（收包时间不是执行序）', () => {
+    tie();
+    const a = done('w1', 'write', { path: 'a.native-ppt.json', content: 'A' }, '2026-10-13T00:00:02.000Z');
+    const b = done('w2', 'write', { path: 'b.native-ppt.json', content: 'B' }, '2026-10-13T00:00:01.000Z');
+    expect(() => nativeInputFromCompletedWrites(folder, [a, b])).toThrow('native-input-ambiguous');
+    expect(() => nativeInputFromCompletedWrites(folder, [b, a])).toThrow('native-input-ambiguous');
+  });
+
+  it('⭐ 显式目标（可信调用方指着并列里的哪一个）⇒ 只认它（相对/绝对拼写都行）', () => {
+    tie();
+    const tools = [writeA(), writeB()];
+    expect(nativeInputFromCompletedWrites(folder, tools, { target: 'b.native-ppt.json' })).toBe('b.native-ppt.json');
+    expect(nativeInputFromCompletedWrites(folder, tools, { target: 'a.native-ppt.json' })).toBe('a.native-ppt.json');
+    expect(nativeInputFromCompletedWrites(folder, tools, { target: join(folder, 'b.native-ppt.json') })).toBe(
+      'b.native-ppt.json',
+    );
+  });
+
+  it('⭐ 显式目标不在并列候选里（或文件本身没过守卫）⇒ 保持歧义，不猜', () => {
+    tie();
+    const tools = [writeA(), writeB()];
+    expect(() => nativeInputFromCompletedWrites(folder, tools, { target: 'c.native-ppt.json' })).toThrow(
+      'native-input-ambiguous',
+    );
+    expect(() => nativeInputFromCompletedWrites(folder, tools, { target: 'outside.native-ppt.json' })).toThrow(
+      'native-input-ambiguous',
+    );
+  });
+
+  it('⭐ 歧义错误给出具体下一步（并列候选名 + 可执行动作，不是裸码）', () => {
+    tie();
+    let message = '';
+    try {
+      nativeInputFromCompletedWrites(folder, [writeA(), writeB()]);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('native-input-ambiguous');
+    expect(message).toContain('a.native-ppt.json');
+    expect(message).toContain('b.native-ppt.json');
+    expect(message).toContain('指定目标文件'); // 具体下一步
+  });
+
+  it('负对照：mtime 不同 ⇒ 仍按 mtime 选最新；显式目标不改变非平局的裁决', () => {
+    writeFileSync(join(folder, 'older.native-ppt.json'), 'one');
+    writeFileSync(join(folder, 'newer.native-ppt.json'), 'two');
+    utimesSync(join(folder, 'older.native-ppt.json'), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    const tools = [
+      done('w1', 'write', { path: 'older.native-ppt.json', content: 'one' }),
+      done('w2', 'write', { path: 'newer.native-ppt.json', content: 'two' }),
+    ];
+    expect(nativeInputFromCompletedWrites(folder, tools)).toBe('newer.native-ppt.json');
+    expect(nativeInputFromCompletedWrites(folder, tools, { target: 'older.native-ppt.json' })).toBe(
+      'newer.native-ppt.json',
+    );
+  });
+});
