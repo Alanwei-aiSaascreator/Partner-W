@@ -6,6 +6,7 @@ import {
   classifyToolFailure,
   isOpaqueToolFailure,
   debugToolFailures,
+  latestDeclaredCall,
   latestRunningCall,
   markUnreportedCalls,
   maskLocalPaths,
@@ -522,6 +523,81 @@ describe('markUnreportedCalls（第三态：未收到结果）', () => {
     expect(calls[0].status, '原始调用一个字段都不许动').toBe('running');
     expect(calls[0].result).toBeUndefined();
     expect(shown[0]).not.toBe(calls[0]);
+  });
+});
+
+/**
+ * V1（2026-10-13 集中整改 step 1）：`declared`（模型声明）在展示层的投影。
+ *
+ * 三条纪律：
+ * ① **不算执行中**（`latestRunningCall` 不挑它、`runningCount` 不计它 —— 没有执行证据）；
+ * ② **不算完成也不算失败**（summary 单列 `declaredCount`，else 分支不得把新枚举吞成 completed）；
+ * ③ 消息定稿后由 `markUnreportedCalls` 投影为「未收到结果」（沿用既有第三态，不新造状态系统）。
+ */
+describe('V1 · declared（声明态）展示投影', () => {
+  const declaredCall = (id: string, name = 'exec'): ToolCall => ({
+    id,
+    name,
+    status: 'declared',
+    startedAt: '',
+  });
+
+  it('⭐ summary 单列 declared 数量：不算 running / completed / error', () => {
+    const summary = summarizeToolActivity([declaredCall('1', 'read_file')]);
+
+    expect(summary.declaredCount).toBe(1);
+    expect(summary.runningCount, '没有执行证据 ⇒ 不是"执行中"').toBe(0);
+    expect(summary.completedCount, '不能把新枚举算成完成').toBe(0);
+    expect(summary.errorCount).toBe(0);
+    expect(summary.unreportedCount).toBe(0);
+    expect(summary.durationMs, '声明无耗时').toBeNull();
+  });
+
+  it('⭐ 声明与已完成混合：计数各归各桶', () => {
+    const summary = summarizeToolActivity([
+      call('1', 'ls', 'done'),
+      declaredCall('2', 'exec'),
+      call('3', 'ls', 'error'),
+    ]);
+
+    expect(summary.declaredCount).toBe(1);
+    expect(summary.completedCount).toBe(2);
+    expect(summary.errorCount).toBe(1);
+    expect(summary.runningCount).toBe(0);
+  });
+
+  it('⭐ 定稿后 declared ⇒ unreported（沿用既有第三态，不是 error）', () => {
+    const shown = markUnreportedCalls([declaredCall('1')], true, 'toolActivity.noResult');
+
+    expect(shown[0].status).toBe('unreported');
+  });
+
+  it('⭐ 未定稿 declared ⇒ 原样保留声明态（不能提前说"没收到结果"）', () => {
+    const shown = markUnreportedCalls([declaredCall('1')], false, 'toolActivity.noResult');
+
+    expect(shown[0].status).toBe('declared');
+  });
+
+  it('⭐ 定稿后声明的空白 result 才补产品文案（有真值保留原文）', () => {
+    const blank = markUnreportedCalls([declaredCall('1')], true, 'toolActivity.noResult');
+    expect(blank[0].result).toBe('toolActivity.noResult');
+
+    const withMeta: ToolCall = { ...declaredCall('2'), result: 'read 42 files' };
+    expect(markUnreportedCalls([withMeta], true, 'toolActivity.noResult')[0].result).toBe('read 42 files');
+  });
+
+  it('⭐ `latestRunningCall` 不挑声明（"执行中"不许由声明驱动）', () => {
+    expect(latestRunningCall([declaredCall('1')])).toBeNull();
+    expect(latestRunningCall([call('1', 'ls', 'done'), declaredCall('2')])).toBeNull();
+  });
+
+  it('⭐ `latestDeclaredCall` 取最新一条声明（供"调用处理中"文案用）', () => {
+    const first = declaredCall('1', 'ls');
+    const second = declaredCall('2', 'exec');
+    expect(latestDeclaredCall([first, second])).toBe(second);
+    expect(latestDeclaredCall([call('1', 'ls', 'done'), call('2', 'exec', 'running'), first])).toBe(first);
+    expect(latestDeclaredCall([call('1', 'ls', 'running')])).toBeNull();
+    expect(latestDeclaredCall([])).toBeNull();
   });
 });
 

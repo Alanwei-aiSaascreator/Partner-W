@@ -41,6 +41,12 @@ export interface ToolActivitySummaryModel {
   errorCount: number;
   /** 「没收到结果」的条数（`unreported`）—— **不计入 `errorCount`**（没收到结果不是失败）。 */
   unreportedCount: number;
+  /**
+   * V1（2026-10-13）：**声明态**条数（模型声明了调用、还没有执行证据）。
+   * 单独一桶：不算 running（没证据说"在执行"）、不算 completed、不算 error ——
+   * 少了这一桶，else 分支会把新枚举吞成"已完成"。
+   */
+  declaredCount: number;
   durationMs: number | null;
   groups: ToolActivityGroup[];
 }
@@ -449,7 +455,9 @@ export function markUnreportedCalls(
 ): DisplayToolCall[] {
   if (!settled) return [...toolCalls];
   return toolCalls.map((call): DisplayToolCall => {
-    if (!isUnfinished(call.status)) return call;
+    // V1：`declared`（声明但无结果）与 running/awaitingApproval 一样，定稿后投影为
+    // 「未收到结果」——声明不伪造持久化 error，只在这个展示副本上如实呈现。
+    if (!isUnfinished(call.status) && call.status !== 'declared') return call;
     return {
       ...call,
       status: 'unreported',
@@ -484,15 +492,30 @@ export function latestAwaitingApproval(toolCalls: readonly DisplayToolCall[]): D
   return null;
 }
 
+/**
+ * 最新一条**声明态**调用（V1，2026-10-13）：模型声明了、还没有执行证据。
+ *
+ * ⚠️ 与 `latestRunningCall` **分开**：声明**不是**执行 —— 复用前者等于把
+ * 「调用处理中」说成「执行中」。调用方（`useTurnActivity`）用它出"调用处理中"类文案。
+ */
+export function latestDeclaredCall(toolCalls: readonly DisplayToolCall[]): DisplayToolCall | null {
+  for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
+    if (toolCalls[i].status === 'declared') return toolCalls[i];
+  }
+  return null;
+}
+
 export function summarizeToolActivity(toolCalls: readonly DisplayToolCall[]): ToolActivitySummaryModel {
   const groups = new Map<string, ToolActivityGroup>();
   let completedCount = 0;
   let runningCount = 0;
   let errorCount = 0;
   let unreportedCount = 0;
+  let declaredCount = 0;
 
   for (const call of toolCalls) {
     if (isUnfinished(call.status)) runningCount += 1;
+    else if (call.status === 'declared') declaredCount += 1;
     else if (call.status === 'unreported') unreportedCount += 1;
     else completedCount += 1;
     if (call.status === 'error') errorCount += 1;
@@ -506,12 +529,15 @@ export function summarizeToolActivity(toolCalls: readonly DisplayToolCall[]): To
 
   // ⚠️ 「未收到结果」**不进** `errorCount`（没收到结果不是失败，数错了会给用户假失败）；
   //    它同时也不进 `completedCount` —— 「已完成 N 个步骤」不能把没结果的那步算成做完了。
+  // ⚠️ V1：`declared`（声明）同理**单独一桶** —— 不进 running/completed/error，
+  //    否则 else 分支会把新枚举吞成"已完成"（这正是 V1 红例要防的）。
   return {
     totalCount: toolCalls.length,
     completedCount,
     runningCount,
     errorCount,
     unreportedCount,
+    declaredCount,
     durationMs: activityDuration(toolCalls, runningCount > 0),
     groups: [...groups.values()],
   };

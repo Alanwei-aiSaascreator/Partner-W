@@ -31,6 +31,11 @@ function StatusIcon({ status }: { status: ToolDisplayStatus }) {
         */}
         {status === 'running' && <Loader2 size={14} className="tool-icon-loading" />}
         {/*
+          ⭐ V1（2026-10-13）「声明态」：模型声明了调用、还没有执行证据 —— **不转圈**：
+          转圈/呼吸在说"在动"，而声明只是"已登记、待处理"（同一视觉纪律，见 A2）。
+        */}
+        {status === 'declared' && <Loader2 size={14} className="text-[var(--text-muted)]" />}
+        {/*
           ⭐ A2「等待批准」：**不转圈** —— 转圈说的"在动"，而这条恰恰是"没动，在等人"。
           用现成的 `Clock`（lucide 图标集里已有的，不是新造的视觉件）。
         */}

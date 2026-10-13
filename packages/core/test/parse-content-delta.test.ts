@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractDeltaText } from '../src/protocol/parse-content.js';
+import { extractDeltaText, extractToolCalls } from '../src/protocol/parse-content.js';
 
 /**
  * `chat` 的 delta 帧里**正文到底该追加还是该替换**。
@@ -79,5 +79,54 @@ describe('extractDeltaText —— 追加还是替换', () => {
     // `resolveBroadcastDelta` 里 `replace` 只在有文本时才给，但契约上要挡住：
     // 一次空的替换 = 用户眼看着已生成的内容消失。
     expect(extractDeltaText(p({ deltaText: '', replace: true }))).toEqual({ text: '', replace: false });
+  });
+});
+
+/**
+ * V1（2026-10-13 集中整改 step 1）：chat 帧里的 toolCall 块是**模型声明**，不是执行证据。
+ *
+ * 旧行为：`extractToolCalls` 把声明落成 `running` 并当场读时钟造 `startedAt` ——
+ * 一张**从未被确认执行**的卡片转圈 + 计时，是在编"正在执行"。
+ * 新语义：返回 `declared`（声明态）、`startedAt: ''`；解析器**不读时钟**。
+ * 真正的 running/done/error 只由 `agent/tool` 流（有执行证据）产生并覆盖声明。
+ */
+describe('extractToolCalls —— V1 模型声明 = declared，不造开始时间', () => {
+  it('⭐ toolCall 块 ⇒ declared + startedAt 空串（不得落 running）', () => {
+    const calls = extractToolCalls(
+      p({ message: { content: [{ type: 'toolCall', id: 'c1', name: 'read_file', arguments: '{"path":"a.txt"}' }] } }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ id: 'c1', name: 'read_file', status: 'declared', startedAt: '' });
+  });
+
+  it('⭐ 顶层 `content` 形状同样返回 declared', () => {
+    const calls = extractToolCalls(p({ content: [{ type: 'toolCall', id: 'c2', name: 'exec' }] }));
+
+    expect(calls[0]).toMatchObject({ id: 'c2', name: 'exec', status: 'declared', startedAt: '' });
+  });
+
+  it('⭐ 解析器不读时钟：声明没有开始时间（startedAt 恒为空串，不是某个时刻）', () => {
+    const before = Date.now();
+    const first = extractToolCalls(p({ message: { content: [{ type: 'toolCall', id: 'c3', name: 'ls' }] } }));
+    // 即使真的过了时间，声明也不会带上任何时间戳
+    expect(first[0].startedAt).toBe('');
+    expect(first[0].completedAt).toBeUndefined();
+    void before;
+  });
+
+  it('无 id / 无 name 的块不算工具调用（与既有三条件过滤一致）', () => {
+    expect(
+      extractToolCalls(
+        p({
+          message: {
+            content: [
+              { type: 'toolCall', name: 'no-id' },
+              { type: 'toolCall', id: 'no-name' },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import { useQuestionStore } from '@/stores/questionStore';
 import {
   classifyToolActivity,
   latestAwaitingApproval,
+  latestDeclaredCall,
   latestRunningCall,
   sanitizeToolTitle,
   type DisplayToolCall,
@@ -77,6 +78,11 @@ export interface TurnActivity {
   /** 是否有"正在执行"的工具（用于状态标识，不等于完成度）。 */
   running: boolean;
   /**
+   * V1（2026-10-13）：是否有**声明态**工具（模型声明了调用、还没有执行证据）。
+   * 与 `running` 互斥的语义：声明 ≠ 执行 —— 文案说"调用处理中"，不说"执行中"。
+   */
+  declared: boolean;
+  /**
    * 是否在**等人做决定**：有工具停在 `awaitingApproval`（A2：这一条排在 headline 最前）。
    * 界面据此把"正在动"的语言停掉（转圈/跳动条/扫光 → 静态图标 + 准确的等待文案）。
    */
@@ -141,11 +147,13 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
   //    各自再算一遍迟早漂成两个判据（"文案说在等人、图标还在转"就是这么来的）。
   const awaitingCall = latestAwaitingApproval(calls);
   const awaitingApproval = awaitingCall !== null;
+  // V1：声明态（模型声明、无执行证据）—— "调用处理中"，**不是**"执行中"。
+  const declaredCall = latestDeclaredCall(calls);
   // 已结束调用包含成功与错误，不代表成功步骤数或整个任务的完成度。
   const endedCallCount = calls.filter((call) => call.status === 'done' || call.status === 'error').length;
 
   // 主行要说的是"此刻在干什么"，优先级：**等人批准的工具** > **等人回答的提问** >
-  // 正在跑的工具 > 网关报的准备阶段 > 已结束工具调用计数 / 等待响应。
+  // 正在跑的工具 > 声明态工具（调用处理中）> 网关报的准备阶段 > 已结束工具调用计数 / 等待响应。
   // ⭐ 两类"等人"排在最前：它们才是"为什么没有进展"的答案（而且该谁动在用户那边）。
   let headline: string;
   const activityLabel = (call: DisplayToolCall): string => {
@@ -167,6 +175,11 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
     headline = t('chatInput.waiting.awaitingAnswer');
   } else if (runningCall) {
     headline = t('chatInput.waiting.runningTool', { what: activityLabel(runningCall) });
+  } else if (declaredCall) {
+    // ⭐ V1（2026-10-13）：声明 ≠ 执行 —— 模型宣布了调用、还没有执行证据，
+    //    用"调用处理中"类文案（新键 `chatInput.waiting.declaredTool`，由 I 汇总九语言），
+    //    绝不复用 `runningTool`（"执行中"是编造）。
+    headline = t('chatInput.waiting.declaredTool', { what: activityLabel(declaredCall) });
   } else if (compacting) {
     // ⭐ 压缩是**此刻系统在做的事**（与"正在跑的工具"同类：都是事实），而且它正是
     //    "界面为什么停住"的答案 ⇒ 排在模型**自述**的进度前面
@@ -201,5 +214,14 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
   //    这些文案会被判成 unused 然后 check:i18n 失败（真踩过）。
   const quip = t(`chatInput.waiting.line.${waitingLineSuffix(elapsedMs)}`);
 
-  return { active, elapsedMs, headline, quip, running: Boolean(runningCall), awaitingApproval, awaitingAnswer };
+  return {
+    active,
+    elapsedMs,
+    headline,
+    quip,
+    running: Boolean(runningCall),
+    declared: Boolean(declaredCall),
+    awaitingApproval,
+    awaitingAnswer,
+  };
 }

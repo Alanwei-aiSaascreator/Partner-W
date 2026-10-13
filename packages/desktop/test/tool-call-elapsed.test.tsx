@@ -95,4 +95,17 @@ describe('tool card elapsed waiting', () => {
     render({ ...running, status: 'done', completedAt: '2026-10-02T00:00:00.020Z' });
     expect(container.textContent).toContain('<0.1s');
   });
+
+  /**
+   * V1（2026-10-13）：`declared`（模型声明、无执行证据）**不显示等待耗时**——
+   * 计时器只在"确认在跑/等人"时挂；声明不是执行，计时就是在编开始时间。
+   */
+  it('⭐ declared（声明）不显示等待耗时，也不随时间走动', () => {
+    render({ id: 'call', name: 'exec', status: 'declared', startedAt: '' });
+
+    expect(waiting(), '声明无开始时间 ⇒ 无等待耗时').toBeNull();
+    act(() => vi.advanceTimersByTime(3000));
+    expect(waiting()).toBeNull();
+    expect(container.textContent).not.toMatch(/\d+\.\d+s/);
+  });
 });

@@ -26,6 +26,8 @@ import ToolCallCard from './ToolCallCard';
 
 function StatusIcon({ status }: { status: ToolDisplayStatus | 'warning' }) {
   if (status === 'running') return <Loader2 size={14} className="animate-spin text-[var(--accent)]" />;
+  // ⭐ V1（2026-10-13）「声明态」：静态图标 —— 声明不是执行，转圈是在编"正在执行"。
+  if (status === 'declared') return <Loader2 size={14} className="text-[var(--text-muted)]" />;
   // BUG-026：任务最终成功、只是中间有失败 ⇒ 中性提醒色，不是红色警报（失败不是主视觉）。
   if (status === 'warning') return <CircleAlert size={14} className="text-[var(--text-warning)]" />;
   if (status === 'error') return <CircleAlert size={14} className="text-[var(--danger)]" />;
@@ -129,15 +131,22 @@ function ToolCallSummary({ toolCalls, settled = false, onRetry, waitingForUser =
   */
   const softened = hasFailures && (acknowledged || (settled && doneCount > 0));
   const stopped = hasFailures && settled && !softened;
+  // V1：只有声明（declared）、没有确认执行的工具时，摘要如实标 `declared`（静态图标），
+  // 不借 !settled 落 running —— 声明不是"执行中"。settled 时 declared 已被
+  // `markUnreportedCalls` 投影成 unreported（上方分支先接住）。
   const status: ToolDisplayStatus | 'warning' = softened
     ? 'warning'
     : hasFailures
       ? 'error'
       : hasUnreported
         ? 'unreported'
-        : !settled || summary.runningCount > 0
+        : summary.runningCount > 0
           ? 'running'
-          : 'done';
+          : summary.declaredCount > 0
+            ? 'declared'
+            : !settled
+              ? 'running'
+              : 'done';
   /*
     ⭐ 2026-10-08 对话可视化改造（Codex 复审 v2 定稿）——**运行期强制平铺**：
     旧形态三层（摘要收起 → 组行收起 → 卡收起），运行中要点三次才看得到"在做什么"。

@@ -61,6 +61,14 @@ export function extractThinking(payload: ChatEventPayload): string {
     .join('');
 }
 
+/**
+ * chat 帧里的 toolCall 块 ⇒ **声明态** `declared`（V1，2026-10-13）。
+ *
+ * 模型在这里只是**宣布**要调用什么 —— 执行证据在 `agent/tool` 流
+ * （`start`/`update`/`result` 相位）里，由 dispatcher 据此落 `running`/`done`/`error`。
+ * 旧实现把声明写成 `running` 并当场读时钟造 `startedAt`：一张从未被确认执行的卡片
+ * 转圈 + 计时 = 编造"正在执行"。**解析器不读时钟**（纯投影），`startedAt` 恒为空串。
+ */
 export function extractToolCalls(payload: ChatEventPayload): ToolCall[] {
   const blocks = payload.message?.content ?? payload.content;
   if (!blocks) return [];
@@ -70,9 +78,9 @@ export function extractToolCalls(payload: ChatEventPayload): ToolCall[] {
       result.push({
         id: b.id,
         name: b.name,
-        status: 'running',
+        status: 'declared',
         args: parseToolArgs(b.arguments),
-        startedAt: new Date().toISOString(),
+        startedAt: '',
       });
     }
   }

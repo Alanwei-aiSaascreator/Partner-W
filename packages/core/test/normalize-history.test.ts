@@ -195,6 +195,29 @@ describe('normalizeAssistantTurns', () => {
     expect(turn.toolCalls[0].completedAt).toBe('1970-01-01T00:00:25.000Z');
   });
 
+  /**
+   * V1（2026-10-13 集中整改 step 1）：历史里的 toolCall **没有 result** 时，保留
+   * 「声明但无结果」的事实 ⇒ 状态 = `declared`（**不是** `running`、更不伪造 `error`）。
+   * 展示层（`markUnreportedCalls`）在消息定稿后把 `declared` 投影成「未收到结果」。
+   */
+  it('V1：历史 toolCall 缺 result ⇒ declared（不伪造 running/error，startedAt 为空）', () => {
+    const [turn] = normalizeAssistantTurns([
+      { role: 'assistant', timestamp: 1000, content: [{ type: 'toolCall', id: 't1', name: 'exec' }] },
+    ]);
+    expect(turn.toolCalls[0]).toMatchObject({ id: 't1', status: 'declared', startedAt: '' });
+    expect(turn.toolCalls[0].result).toBeUndefined();
+    expect(turn.toolCalls[0].completedAt).toBeUndefined();
+  });
+
+  it('V1：真实 result 到达 ⇒ declared 的事实让位给 done/error（不因声明态丢结果）', () => {
+    const [turn] = normalizeAssistantTurns([
+      { role: 'assistant', timestamp: 1000, content: [{ type: 'toolCall', id: 't1', name: 'exec' }] },
+      { role: 'toolResult', timestamp: 25000, content: [{ type: 'toolResult', id: 't1', result: 'ok' }] },
+    ]);
+    expect(turn.toolCalls[0].status).toBe('done');
+    expect(turn.toolCalls[0].result).toBe('ok');
+  });
+
   it.each([
     [0, '1970-01-01T00:00:00.000Z'],
     [Number.NaN, undefined],

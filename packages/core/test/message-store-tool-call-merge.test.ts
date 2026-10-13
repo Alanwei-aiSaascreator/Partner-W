@@ -177,6 +177,74 @@ describe('工具调用跨帧合并', () => {
   });
 });
 
+/**
+ * V1（2026-10-13 集中整改 step 1）：`declared`（模型在 chat 帧里声明的调用）权重**最低**——
+ * 它可以被任何有执行证据的状态覆盖，反过来它永远压不过任何已落状态：
+ * `done`/`error` 之后旧声明或 start 不许回退。
+ */
+describe('V1 · declared（声明态）跨帧合并', () => {
+  it('⭐ 声明先到 ⇒ declared；tool 流 start（running）到达 ⇒ 升为 running 并带真实起点', () => {
+    const store = makeStore();
+
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+    expect(stored(store, 'c1').status).toBe('declared');
+    expect(stored(store, 'c1').startedAt).toBe('');
+
+    upsert(store, { id: 'c1', status: 'running', startedAt: '2026-09-19T00:00:00.000Z' });
+    expect(stored(store, 'c1').status).toBe('running');
+    expect(stored(store, 'c1').startedAt).toBe('2026-09-19T00:00:00.000Z');
+  });
+
+  it('⭐ done 之后迟到的旧声明不许回退', () => {
+    const store = makeStore();
+
+    upsert(store, { id: 'c1', status: 'done', result: 'ok', completedAt: '2026-09-19T00:00:05.000Z' });
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+
+    expect(stored(store, 'c1').status, '声明权重最低，压不过 done').toBe('done');
+    expect(stored(store, 'c1').result).toBe('ok');
+    expect(stored(store, 'c1').completedAt).toBe('2026-09-19T00:00:05.000Z');
+  });
+
+  it('⭐ error 之后迟到的旧声明/start 同样不许回退', () => {
+    const store = makeStore();
+
+    upsert(store, { id: 'c1', status: 'error', result: 'timed out' });
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+    upsert(store, { id: 'c1', status: 'running' });
+
+    expect(stored(store, 'c1').status).toBe('error');
+  });
+
+  it('⭐ 迟到的声明不许抹掉已确认的起点（startedAt 不因 declared 帧回空）', () => {
+    const store = makeStore();
+
+    upsert(store, { id: 'c1', status: 'running', startedAt: '2026-09-19T00:00:00.000Z' });
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+
+    expect(stored(store, 'c1').status).toBe('running');
+    expect(stored(store, 'c1').startedAt).toBe('2026-09-19T00:00:00.000Z');
+  });
+
+  it('⭐ 声明可被 awaitingApproval 覆盖（审批帧有真实裁决证据）', () => {
+    const store = makeStore();
+
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+    upsert(store, { id: 'c1', status: 'awaitingApproval' });
+
+    expect(stored(store, 'c1').status).toBe('awaitingApproval');
+  });
+
+  it('声明重复投递幂等（同 declared 不翻新）', () => {
+    const store = makeStore();
+
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+    upsert(store, { id: 'c1', status: 'declared', startedAt: '' });
+
+    expect(stored(store, 'c1').status).toBe('declared');
+  });
+});
+
 describe('verified slide page metadata merge', () => {
   const progress = {
     schemaVersion: 1 as const,

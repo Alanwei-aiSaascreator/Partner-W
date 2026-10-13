@@ -447,6 +447,11 @@ function toolStatusRank(status: ToolCall['status']): number {
     case 'running':
     case 'awaitingApproval':
       return 1;
+    // ⭐ V1（2026-10-13）：`declared`（模型声明、无执行证据）权重**最低** ——
+    //    任何有执行证据的状态都能覆盖它；`done`/`error` 之后迟到的旧声明或
+    //    start 帧**不许回退**（rank 0 < 2/3，`preferIncoming` 判 false）。
+    case 'declared':
+      return 0;
   }
 }
 

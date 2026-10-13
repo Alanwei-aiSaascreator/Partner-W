@@ -318,6 +318,56 @@ describe('工具过程显示"做了什么操作"', () => {
   });
 });
 
+/**
+ * V1（2026-10-13 集中整改 step 1）：声明态在摘要组件上的投影。
+ * - 实时：只有声明（无执行证据）⇒ data-status `declared`（静态图标，不转圈）；
+ * - 定稿：声明 ⇒ 沿用第三态「未收到结果」（不是失败，无重试 CTA）；
+ * - 混合：有 running 时仍以 running 为准。
+ */
+describe('V1 · declared（声明态）摘要投影', () => {
+  const declaredCall = (id: string, name = 'exec'): ToolCall => ({
+    id,
+    name,
+    status: 'declared',
+    startedAt: '',
+  });
+
+  it('⭐ 实时只有声明 ⇒ 摘要 data-status=declared（不伪装"执行中"转圈）', () => {
+    const { container, unmount } = render(<ToolCallSummary toolCalls={[declaredCall('1', 'read_file')]} />);
+
+    const summary = container.querySelector('[data-testid="tool-activity-summary"]');
+    expect(summary?.getAttribute('data-status')).toBe('declared');
+    const card = container.querySelector('[data-testid="tool-call-card"][data-status="declared"]');
+    expect(card, '声明卡平铺可见，状态如实为 declared').not.toBeNull();
+    unmount();
+  });
+
+  it('⭐ 实时混合 [running, declared] ⇒ 摘要以 running 为准', () => {
+    const { container, unmount } = render(
+      <ToolCallSummary toolCalls={[call('1', 'ls', 'running'), declaredCall('2')]} />,
+    );
+
+    expect(container.querySelector('[data-testid="tool-activity-summary"]')?.getAttribute('data-status')).toBe(
+      'running',
+    );
+    unmount();
+  });
+
+  it('⭐ 定稿后的声明 ⇒ 「未收到结果」（不算失败、无重试 CTA）', () => {
+    const onRetry = vi.fn();
+    const { container, unmount } = render(
+      <ToolCallSummary settled onRetry={onRetry} toolCalls={[declaredCall('1', 'sessions_spawn')]} />,
+    );
+
+    const summary = container.querySelector('[data-testid="tool-activity-summary"]');
+    expect(summary?.getAttribute('data-status')).toBe('unreported');
+    expect(container.textContent).toContain('toolActivity.unreported:1');
+    expect(container.querySelector('[data-testid="tool-failure-cannot-continue"]')).toBeNull();
+    expect(container.querySelector('[data-testid="tool-failure-retry"]')).toBeNull();
+    unmount();
+  });
+});
+
 describe('AssistantBlock tool activity', () => {
   // ⚠️ 2026-10-08 平铺改造（有意改写）：流式期间工具行**平铺可见**（原断言 0 张单卡）。
   it('renders all streaming calls through one shared flat summary', () => {

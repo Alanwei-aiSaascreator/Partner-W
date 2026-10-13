@@ -526,13 +526,17 @@ export function normalizeAssistantTurns(rawMsgs: RawHistoryMessage[], httpBase?:
       normalizedContent.content,
       extractBlockThinking(msg.content ?? []),
     );
+    // V1（2026-10-13）：历史缺 result 的 toolCall ⇒ `declared`（保留"声明但无结果"的事实）。
+    // 旧实现落 `running` —— 历史是**已定稿**的，不会再有任何帧来收场，落 running 就是
+    // 让重启后的卡片永远转圈。展示层 `markUnreportedCalls` 把定稿后的 declared 投影成
+    // 「未收到结果」；这里**不伪造 error**（没收到结果 ≠ 失败）。
     const toolCalls = (msg.content ?? [])
       .filter((block: RawContentBlock) => block.type === 'toolCall' && block.id && block.name)
       .map(
         (block: RawContentBlock): ToolCall => ({
           id: block.id!,
           name: block.name!,
-          status: resultFor(msg, block.id!)?.status ?? 'running',
+          status: resultFor(msg, block.id!)?.status ?? 'declared',
           args:
             typeof block.arguments === 'object' && block.arguments !== null
               ? (block.arguments as Record<string, unknown>)

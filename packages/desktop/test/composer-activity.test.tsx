@@ -510,6 +510,42 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
     expect(q('composer-activity')?.getAttribute('data-status')).toBe('running-tool');
     expect(q('composer-activity')?.textContent).toContain('npm test');
   });
+
+  /**
+   * V1（2026-10-13 集中整改 step 1）：模型**声明**了调用、还没有执行证据。
+   * 活动条必须说"调用处理中"（`chatInput.waiting.declaredTool`），**不能说"执行中"**；
+   * data-status 如实标 `declared-tool`；真正的 running 到达后升级为"执行中"。
+   */
+  it('⭐ V1：只有声明（declared）⇒ "调用处理中"（不是"执行中"）；running 到达后升级', async () => {
+    const { store } = await mountLive();
+
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_declared',
+        name: 'read_file',
+        status: 'declared',
+        title: 'read_file 报告.docx',
+        startedAt: '',
+      });
+    });
+
+    expect(q('composer-activity')?.getAttribute('data-status')).toBe('declared-tool');
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.declaredTool');
+    expect(q('composer-activity')?.textContent).not.toContain('chatInput.waiting.runningTool');
+
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_declared',
+        name: 'read_file',
+        status: 'running',
+        title: 'read_file 报告.docx',
+        startedAt: new Date(T0).toISOString(),
+      });
+    });
+
+    expect(q('composer-activity')?.getAttribute('data-status'), '执行证据到达 ⇒ 升级"执行中"').toBe('running-tool');
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.runningTool');
+  });
 });
 
 /**

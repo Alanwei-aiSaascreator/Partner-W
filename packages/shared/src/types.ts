@@ -33,7 +33,15 @@ export type ArtifactSaveAsResult = { status: 'cancelled' } | { status: 'saved'; 
  *    它也能覆盖 `running`（帧序：tool 流的 result 先到落 running，approval 帧随后改判）。
  * 3. **不是**"失败"：审批还没结论时把它算成失败，是另一种撒谎。
  */
-export type ToolCallStatus = 'running' | 'done' | 'error' | 'awaitingApproval';
+/**
+ * `declared`（2026-10-13 V1）：模型在 chat 帧里**声明**了这次调用（toolCall 块），
+ * 但**没有任何执行证据** —— 不能显示成"执行中"，也不算成功或失败，不造开始时间。
+ * 权重**最低**：任何有执行证据的状态（`running`/`awaitingApproval`/`done`/`error`）
+ * 都能覆盖它；它永远压不过已落状态（`done`/`error` 之后迟到的旧声明/start 不许回退）。
+ * 消息定稿后仍缺 result 的声明由**展示层**投影为「未收到结果」（`unreported`，
+ * 见 renderer `tool-activity.ts` 的 `markUnreportedCalls`），不伪造持久化 error。
+ */
+export type ToolCallStatus = 'running' | 'done' | 'error' | 'awaitingApproval' | 'declared';
 
 import type { GatewayAuth } from './gateway-protocol.js';
 
