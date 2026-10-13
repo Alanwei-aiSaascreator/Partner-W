@@ -546,6 +546,7 @@
     "waiting": {
       "awaitingAnswer": "En attente de votre réponse",
       "awaitingApproval": "En attente d'approbation : {{what}}",
+      "declaredTool": "Appel en cours de traitement : {{what}}",
       "line": {
         "fresh0": "En attente d’une réponse",
         "fresh1": "Votre demande est en attente d’une réponse",

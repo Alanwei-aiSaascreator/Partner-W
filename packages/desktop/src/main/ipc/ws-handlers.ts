@@ -169,7 +169,9 @@ const RELATIVE_GATEWAY_MEDIA_PATH_RE = /^\/(?:api\/chat\/media\/outgoing\/|media
 interface ParsedToolCall {
   id: string;
   name: string;
-  status: 'running' | 'done' | 'error';
+  // ⭐ V1（2026-10-13）：`declared` = 模型在 chat 历史里声明了调用、但**没有执行证据**
+  //    （缺 result）——与 core `normalize-history` / `parse-content` 同口径。
+  status: 'running' | 'done' | 'error' | 'declared';
   args?: Record<string, unknown>;
   result?: string;
   startedAt: string;
@@ -541,7 +543,10 @@ export function registerWsHandlers(): void {
                     return {
                       id: tcId,
                       name: b.name!,
-                      status: (resultText !== undefined ? 'done' : 'running') as ParsedToolCall['status'],
+                      // ⭐ V1（2026-10-13）：历史缺 result ⇒ `declared`（"声明但无结果"的事实）。
+                      //    历史是已定稿的，不会再有任何帧来收场——落 running 就是让重启后的
+                      //    卡片永远转圈；展示层定稿后把 declared 投影为「未收到结果」。
+                      status: (resultText !== undefined ? 'done' : 'declared') as ParsedToolCall['status'],
                       args:
                         typeof b.arguments === 'object' && b.arguments !== null
                           ? (b.arguments as Record<string, unknown>)

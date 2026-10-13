@@ -546,6 +546,7 @@
     "waiting": {
       "awaitingAnswer": "回答を待っています",
       "awaitingApproval": "承認待ち：{{what}}",
+      "declaredTool": "呼び出しを処理中：{{what}}",
       "line": {
         "fresh0": "応答を待っています",
         "fresh1": "リクエストへの応答待ちです",

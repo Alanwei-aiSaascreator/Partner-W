@@ -1113,7 +1113,10 @@ function finalizeAssistantArtifacts(input: {
         'startedAt' in tool &&
         typeof tool.startedAt === 'string' &&
         'status' in tool &&
-        ['running', 'done', 'error', 'awaitingApproval'].includes(String(tool.status)) &&
+        // ⭐ V1（2026-10-13）：白名单加 `declared` —— 历史同步回来的"声明但无结果"调用
+        //    是被保留的既定事实；把新枚举挡掉=把事实静默丢弃（且 declared 无 result，
+        //    不影响下方收据确认链）。
+        ['running', 'done', 'error', 'awaitingApproval', 'declared'].includes(String(tool.status)) &&
         (!('result' in tool) || tool.result === undefined || typeof tool.result === 'string') &&
         (!('args' in tool) ||
           tool.args === undefined ||

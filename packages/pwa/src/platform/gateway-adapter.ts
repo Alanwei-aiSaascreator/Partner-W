@@ -47,7 +47,8 @@ interface ChatHistoryPayload {
 interface ParsedToolCall {
   id: string;
   name: string;
-  status: 'running' | 'done' | 'error';
+  // V1（2026-10-13）：与 core/desktop 同口径 —— 历史缺 result ⇒ declared（声明但无结果）。
+  status: 'running' | 'done' | 'error' | 'declared';
   args?: Record<string, unknown>;
   result?: string;
   startedAt: string;
@@ -234,7 +235,8 @@ export function createBrowserGatewayTransport(
                     return {
                       id: tcId,
                       name: b.name!,
-                      status: (resultText !== undefined ? 'done' : 'running') as ParsedToolCall['status'],
+                      // V1（2026-10-13）：历史缺 result ⇒ declared（与 ws-handlers 同旁路口径）。
+                      status: (resultText !== undefined ? 'done' : 'declared') as ParsedToolCall['status'],
                       args:
                         typeof b.arguments === 'object' && b.arguments !== null
                           ? (b.arguments as Record<string, unknown>)
