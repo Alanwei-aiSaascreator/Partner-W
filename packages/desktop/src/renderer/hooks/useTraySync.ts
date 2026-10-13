@@ -14,31 +14,52 @@ function formatDuration(updatedAt: string): string {
   return i18n.t('common.minAgo', { count: min });
 }
 
+/**
+ * ⭐ BUG-075 第二轮（2026-10-13）：**只订阅派生出的原始值，绝不再整表订阅**。
+ *
+ * 血案：原来这里 `useMessageStore((s) => s.activeTurnBySession)` 整表订阅 —— 而思考流
+ * **每个快照都换 `activeTurnBySession` 的引用**。本 hook 挂在 **`App`** 上 ⇒ 每个快照
+ * **整个应用树（左栏/输入框/右栏全线）重渲一遍**，是"越跑越卡"的最大单一放大器。
+ *
+ * 现在订阅面 = `runningTaskIdsKey`（运行中任务 id 的**字符串**，思考流期间恒定）+
+ * 未读数 —— 两者都是原始值，快照不会触发重渲。effect 里用 `getState()` 现取全量数据；
+ * 观察行为不变：托盘只在"运行状态 / 运行中任务集合"变化时收到一次 `updateTrayStatus`
+ *（原实现同样有 `prevRef` 去重，per-tick 的执行被去重挡在门外，只是重渲已经发生了）。
+ */
 export function useTraySync(): void {
-  const tasks = useTaskStore((s) => s.tasks);
-  const processingBySession = useMessageStore((s) => s.processingBySession);
-  const activeTurnBySession = useMessageStore((s) => s.activeTurnBySession);
-  const unreadTaskIds = useUiStore((s) => s.unreadTaskIds);
-  const rooms = useRoomStore((s) => s.rooms);
+  const runningTaskIdsKey = useMessageStore((s) => {
+    const tasks = useTaskStore.getState().tasks;
+    const rooms = useRoomStore.getState().rooms;
+    return tasks
+      .filter(
+        (task) =>
+          deriveSessionActivity(
+            getTaskSessionKeys(task, rooms[task.id]),
+            s.activeTurnBySession,
+            s.processingBySession,
+          ) !== 'idle',
+      )
+      .map((task) => task.id)
+      .join(',');
+  });
+  const unreadCount = useUiStore((s) => s.unreadTaskIds.size);
 
   const prevRef = useRef<{ status: string; taskIds: string }>({ status: '', taskIds: '' });
 
   useEffect(() => {
-    const runningTasks = tasks.filter(
-      (task) =>
-        deriveSessionActivity(getTaskSessionKeys(task, rooms[task.id]), activeTurnBySession, processingBySession) !==
-        'idle',
-    );
-    const isRunning = runningTasks.length > 0;
-    const hasUnread = unreadTaskIds.size > 0;
+    const tasks = useTaskStore.getState().tasks;
+    const rooms = useRoomStore.getState().rooms;
+    const activeTurnBySession = useMessageStore.getState().activeTurnBySession;
+
+    const activeIds = runningTaskIdsKey ? runningTaskIdsKey.split(',') : [];
+    const isRunning = activeIds.length > 0;
 
     let status: 'idle' | 'running' | 'unread';
     if (isRunning) status = 'running';
-    else if (hasUnread) status = 'unread';
+    else if (unreadCount > 0) status = 'unread';
     else status = 'idle';
 
-    const activeIds = runningTasks.map((t) => t.id);
-    const taskIdsKey = activeIds.join(',');
+    const taskIdsKey = runningTaskIdsKey;
 
     if (prevRef.current.status === status && prevRef.current.taskIds === taskIdsKey) return;
     prevRef.current = { status, taskIds: taskIdsKey };
@@ -58,5 +79,5 @@ export function useTraySync(): void {
     });
 
     window.clawwork.updateTrayStatus(status, activeTasks);
-  }, [tasks, processingBySession, activeTurnBySession, unreadTaskIds, rooms]);
+  }, [runningTaskIdsKey, unreadCount]);
 }
