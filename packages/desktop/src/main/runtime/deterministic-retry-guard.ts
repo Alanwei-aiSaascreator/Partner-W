@@ -20,25 +20,38 @@
  * 记录（after_tool_call）与拦截（before_tool_call）共用同一把键：
  *   `(agentId, sessionKey|sessionId, runId) + toolName + 规范化参数 sha256 + 失败类别`
  *
- * 白名单类别（只有这些会记录；其余一律放行）：
+ * 白名单类别（只有这些会记录；其余一律放行）——判据 = 该失败**不受状态变化影响**：
  *   - `parameter-validation`      内核参数校验族（"Supply correct parameters before retrying."，
  *                                 BUG-060 现场 `read {action,name}` 缺 path 的确切形状）；
- *   - `skill-workshop-ownership`  "Skill Workshop can only update skills it generated."（固定所有权）；
- *   - `skill-name-invalid`        "Skill name must contain at least one letter or number."；
- *   - `proposal-not-found`        "Skill proposal not found:" / "No pending skill proposal matched:"；
- *   - `proposal-not-pending`      "Only pending proposals can be revised."。
+ *   - `skill-name-invalid`        "Skill name must contain at least one letter or number."（名称语法）；
+ *   - `proposal-not-pending`      "Only pending proposals can be revised."（提案状态单向推进
+ *                                 pending → 终态，不会自行回到 pending）。
+ * 2026-10-14 E-R2 修正：`skill-workshop-ownership`（"Skill Workshop can only update skills it
+ * generated." 实为当前技能目录查找返回空，目标随后可被创建/恢复）与 `proposal-not-found`
+ * （同属"当前查找失败"）**移出白名单** —— 原生没有稳定拒绝原因码/epoch，就不做固定 TTL
+ * 缓存；这类失败既不记录也不拦截，目标状态变化后同参重投可真实执行。
  *
- * 稳定身份规则（与同参规则分开）：失败调用带 `proposal_id` 且类别 ∈
- * {ownership, not-found, not-pending} 时，按 `(scope, proposal_id, 类别)` 记录——
- * 之后凡是打向**同一 proposal_id** 的 skill_workshop 调用（哪怕换了 name）一律执行前拦下；
- * 其他 proposal_id / 其他目标不受影响。**无稳定身份的换名**（如 create 用了纯符号名）
- * 不做"同一候选"声称——那是 BUG-032 索引/合同面的职责，不在这里猜。
+ * 稳定身份规则（与同参规则分开）——只覆盖"同一可变更 action + 同一可信目标 + 相同拒绝前提
+ * 下的**纯换名重投**"：
+ *   - 只有 `tool === 'skill_workshop'`（记录入口核实工具身份：其他工具仅因参数带 proposal_id
+ *     不得入此规则）且 action ∈ {revise, apply, reject, quarantine}（提案生命周期写操作）
+ *     且类别 ∈ 稳定身份类别时才记录；
+ *   - 记录键 = `(scope, action, proposal_id)`，并保存除展示名 `name` 外的参数指纹；
+ *   - 拦截要求同 action、同 proposal_id、除 `name` 外参数指纹一致（参数语义有变化 =
+ *     另一次调用 ⇒ 放行）、工具身份一致、TTL 内；
+ *   - inspect / list / read / evaluate / history 等查询 action 永不记录、永不命中
+ *     （E-R1：revise 的失败不得吞掉合法查询）。
+ * **无稳定身份的换名**（如 create 用了纯符号名）不做"同一候选"声称——那是 BUG-032
+ * 索引/合同面的职责，不在这里猜。
  *
  * 缓存边界（"权限/工具面 epoch 变化即失效"）：
  *   - 作用域含 runId：新 run 从头开始，同 run 先拒后授权不受影响（权限/审批结果**不在**
  *     白名单 —— 它们不天然永久，从不记录，授权后同参可真实执行）；
- *   - 记录随宿主给出的 toolKind/toolInputKind 绑定，工具身份变化即不再命中；
- *   - 记录有 TTL 与容量上限（256 条，先入先出），只在网关进程内存里，不落盘；
+ *   - 记录随宿主给出的 toolKind/toolInputKind 绑定，**两个分支共用同一套 identityMatches**，
+ *     工具身份变化即不再命中（E-R3）；身份缺失按"缺 = 缺"严格比较，绝不与具体值万能匹配
+ *     （与 byCall 同向 fail-open）；
+ *   - 记录有 TTL 与容量上限（256 条，先入先出），只在网关进程内存里，不落盘；所有索引同一
+ *     生命周期（E-R4：曾有的 scope+tool 快路集合已移除，不再随 run 无界增长）；
  *   - 网络/超时/审批 pending/正常 polling 等文本不含白名单串 ⇒ 不记录、不误杀。
  *
  * ## 装载三条件（与收件箱守卫/搜索插件同一条路，少一条静默失效）
@@ -79,37 +92,34 @@ const NUL = '\\u0000';
 
 const CATEGORY_PATTERNS = [
   ['parameter-validation', ['Supply correct parameters before retrying.']],
-  ['skill-workshop-ownership', ['Skill Workshop can only update skills it generated.']],
   ['skill-name-invalid', ['Skill name must contain at least one letter or number.']],
-  ['proposal-not-found', ['Skill proposal not found:', 'No pending skill proposal matched:']],
   ['proposal-not-pending', ['Only pending proposals can be revised.']]
 ];
 
-const IDENTITY_CATEGORIES = {
-  'skill-workshop-ownership': true,
-  'proposal-not-found': true,
-  'proposal-not-pending': true
-};
+// 稳定身份类别：只有拒绝前提不随状态变化（提案状态单向推进）时才参与"同 action 换名重投"。
+const IDENTITY_CATEGORIES = { 'proposal-not-pending': true };
+
+// 可变更 action（提案生命周期写操作）。查询类（inspect/list/read/evaluate/history）永不参与。
+const MUTABLE_PROPOSAL_ACTIONS = { revise: true, apply: true, reject: true, quarantine: true };
+
+// 换名维度：仅展示名 name。其余任何参数变化 = 语义变化 = 另一次调用 ⇒ 不拦。
+const RENAME_KEYS = { name: true };
+
+const RETRY_GUARD_TOOL = 'skill_workshop';
 
 const ADVICE = {
   'parameter-validation':
     '先修正参数再重试：read 需要 path；技能正文按技能清单里的 <location> 用 read 读取；write 需要 path 与 content。',
-  'skill-workshop-ownership':
-    '该技能不在技能工坊生成范围内；请换用其他技能名，或按普通文件路径处理（该目标重复提交不会执行）。',
   'skill-name-invalid':
     '技能名必须包含字母或数字（中文名会自动派生安全键）；请修改名称后重试。',
-  'proposal-not-found':
-    '该提案不存在或不可见；请先用 action=list 重新获取提案 id，或换用其他提案。',
   'proposal-not-pending':
     '该提案已不在 pending 状态；请先 list 查看当前状态，再决定 inspect/revise。'
 };
 
 /** key: scope + NUL + tool + NUL + argsHash -> { category, at, excerpt, toolKind, toolInputKind } */
 const byCall = new Map();
-/** key: scope + NUL + proposalId -> { category, at } */
+/** key: scope + NUL + action + NUL + proposalId -> { category, at, excerpt, toolKind, toolInputKind, restHash } */
 const byProposal = new Map();
-/** scope + NUL + tool 快速存在性集合（避免每次调用都做参数规范化） */
-const recordedToolScopes = new Set();
 
 function trimStore(store, now) {
   for (const entry of store) {
@@ -194,6 +204,27 @@ function proposalIdOf(params) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function actionOf(params) {
+  if (!params || typeof params !== 'object') return '';
+  const value = params.action;
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/** 除换名维度（RENAME_KEYS）外的参数指纹：只有它一致才构成"纯换名重投"。 */
+function restHashOf(params) {
+  const rest = {};
+  for (const key of Object.keys(params)) {
+    if (RENAME_KEYS[key] === true) continue;
+    rest[key] = params[key];
+  }
+  return argsHashOf(rest);
+}
+
+/**
+ * 工具身份判据（byCall 与 byProposal 共用，E-R3）：
+ * 严格相等比较（缺身份 = undefined 只能与 undefined 匹配，绝不与具体值万能匹配）。
+ * 宿主 after 帧缺 toolKind 时记录为 undefined ⇒ 带身份的 before 帧不会命中（fail-open）。
+ */
 function identityMatches(record, ctx) {
   const toolKind = ctx && typeof ctx.toolKind === 'string' ? ctx.toolKind : undefined;
   const toolInputKind = ctx && typeof ctx.toolInputKind === 'string' ? ctx.toolInputKind : undefined;
@@ -213,16 +244,18 @@ function blockReasonFor(record) {
   );
 }
 
-function proposalBlockReason(category, proposalId) {
+function proposalBlockReason(category, action, proposalId) {
   return (
     MARKER +
     ' 已阻止重复提交：提案 ' +
     proposalId +
+    ' 的 ' +
+    action +
     ' 上一次已确定失败（类别：' +
     category +
-    '）。仅换名称重投同一提案不会执行；请改用其他提案 id，或先按建议修正：' +
+    '）。同一 action 仅换名称重投不会执行；请改用其他提案 id，或先按建议修正：' +
     (ADVICE[category] || '先 list 提案重取目标。') +
-    '（其他提案不受影响；新一轮运行不受影响。）'
+    '（inspect/list 等查询不受影响；其他 action 与其他提案不受影响；新一轮运行不受影响。）'
   );
 }
 
@@ -236,18 +269,33 @@ function afterToolCall(event, ctx) {
     const scope = scopeOf(ctx);
     const tool = toolNameOf(event.toolName);
     const params = event.params && typeof event.params === 'object' ? event.params : {};
-    const callKey = scope + NUL + tool + NUL + argsHashOf(params);
-    byCall.set(callKey, {
+    const toolKind = ctx && typeof ctx.toolKind === 'string' ? ctx.toolKind : undefined;
+    const toolInputKind = ctx && typeof ctx.toolInputKind === 'string' ? ctx.toolInputKind : undefined;
+    byCall.set(scope + NUL + tool + NUL + argsHashOf(params), {
       category,
       at: now,
       excerpt: text.slice(0, 240),
-      toolKind: ctx && typeof ctx.toolKind === 'string' ? ctx.toolKind : undefined,
-      toolInputKind: ctx && typeof ctx.toolInputKind === 'string' ? ctx.toolInputKind : undefined
+      toolKind,
+      toolInputKind
     });
-    recordedToolScopes.add(scope + NUL + tool);
+    // 稳定身份记录入口（三条件全过才记录）：工具身份 = skill_workshop；action = 可变更
+    // 生命周期写操作；类别 = 稳定身份类别。其他工具仅因参数带 proposal_id 不得入此规则。
+    const action = actionOf(params);
     const proposalId = proposalIdOf(params);
-    if (proposalId && IDENTITY_CATEGORIES[category] === true) {
-      byProposal.set(scope + NUL + proposalId, { category, at: now });
+    if (
+      tool === RETRY_GUARD_TOOL &&
+      proposalId &&
+      MUTABLE_PROPOSAL_ACTIONS[action] === true &&
+      IDENTITY_CATEGORIES[category] === true
+    ) {
+      byProposal.set(scope + NUL + action + NUL + proposalId, {
+        category,
+        at: now,
+        excerpt: text.slice(0, 240),
+        toolKind,
+        toolInputKind,
+        restHash: restHashOf(params)
+      });
     }
     trimStore(byCall, now);
     trimStore(byProposal, now);
@@ -264,18 +312,24 @@ function beforeToolCall(event, ctx) {
     const scope = scopeOf(ctx);
     const tool = toolNameOf(event.toolName);
     const params = event.params && typeof event.params === 'object' ? event.params : {};
-    if (recordedToolScopes.has(scope + NUL + tool)) {
-      const record = byCall.get(scope + NUL + tool + NUL + argsHashOf(params));
-      if (record && now - record.at <= RECORD_TTL_MS && identityMatches(record, ctx)) {
-        return { block: true, blockReason: blockReasonFor(record) };
-      }
+    const record = byCall.get(scope + NUL + tool + NUL + argsHashOf(params));
+    if (record && now - record.at <= RECORD_TTL_MS && identityMatches(record, ctx)) {
+      return { block: true, blockReason: blockReasonFor(record) };
     }
-    if (tool === 'skill_workshop') {
+    if (tool === RETRY_GUARD_TOOL) {
+      const action = actionOf(params);
       const proposalId = proposalIdOf(params);
-      if (proposalId) {
-        const record = byProposal.get(scope + NUL + proposalId);
-        if (record && now - record.at <= RECORD_TTL_MS) {
-          return { block: true, blockReason: proposalBlockReason(record.category, proposalId) };
+      // 稳定身份分支与 byCall 同一套 scope/工具身份/TTL 校验（E-R3）；
+      // 仅"同 action + 同提案 + 除 name 外参数指纹一致"（纯换名重投）才拦（E-R1）。
+      if (proposalId && MUTABLE_PROPOSAL_ACTIONS[action] === true) {
+        const identity = byProposal.get(scope + NUL + action + NUL + proposalId);
+        if (
+          identity &&
+          now - identity.at <= RECORD_TTL_MS &&
+          identityMatches(identity, ctx) &&
+          identity.restHash === restHashOf(params)
+        ) {
+          return { block: true, blockReason: proposalBlockReason(identity.category, action, proposalId) };
         }
       }
     }

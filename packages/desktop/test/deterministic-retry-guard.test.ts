@@ -119,7 +119,12 @@ class Session {
 const READ_MISSING_PATH =
   'Missing required parameter: path (received: action, name). Supply correct parameters before retrying.';
 const NAME_INVALID = 'Skill name must contain at least one letter or number.';
+/** 提案状态单向推进（pending → 终态），不会自行回到 pending ⇒ 保留在白名单的提案类失败。 */
+const PROPOSAL_NOT_PENDING = 'Only pending proposals can be revised. Current status: applied.';
+/** 资源/当前查找类失败（2026-10-14 E-R2 按同一标准移出白名单）：目标可随后创建/恢复。 */
 const PROPOSAL_NOT_FOUND = 'Skill proposal not found: skill-20261014-abcdef0123';
+const SKILL_NOT_OWNED =
+  'Skill Workshop can only update skills it generated. No Workshop-generated skill matched: new-skill. Create it as a new skill, or edit the file directly.';
 
 describe('deterministic-retry-guard plugin', () => {
   let guard: Awaited<ReturnType<typeof loadGuard>>;
@@ -253,31 +258,28 @@ describe('deterministic-retry-guard plugin', () => {
     expect(other.executions).toBe(1);
   });
 
-  it('⭐ 稳定身份：同一 proposal_id 失败后，纯换名重投被拦；另一合法候选不受影响', () => {
+  it('⭐ 稳定身份：同一可变更 action + 同一提案的纯换名（仅 name 变化）重投仍拦；另一合法候选不受影响', () => {
     const session = newSession();
     const failing = { action: 'revise', proposal_id: 'prop-1', name: '甲方案', proposal_content: 'x' };
-    expect(session.call('skill_workshop', failing, { error: PROPOSAL_NOT_FOUND })).toEqual({ blocked: false });
+    expect(session.call('skill_workshop', failing, { error: PROPOSAL_NOT_PENDING })).toEqual({ blocked: false });
 
-    // 纯换名（proposal_id 不变）⇒ 拦，且文案点名 proposal_id
-    const renamed = { action: 'revise', proposal_id: 'prop-1', name: '乙方案', proposal_content: 'y' };
-    const blocked = session.call('skill_workshop', renamed, { error: PROPOSAL_NOT_FOUND });
+    // 纯换名（proposal_id / action / 其余参数全同，仅 name 变化）⇒ 拦，且文案点名 proposal_id
+    const renamed = { ...failing, name: '乙方案' };
+    const blocked = session.call('skill_workshop', renamed, { error: PROPOSAL_NOT_PENDING });
     expect(blocked.blocked).toBe(true);
     expect(blocked.reason).toContain('prop-1');
     expect(session.executions).toBe(1);
 
     // 另一合法候选 ⇒ 放行
     expect(
-      session.call(
-        'skill_workshop',
-        { action: 'revise', proposal_id: 'prop-2', name: '丙方案' },
-        { error: PROPOSAL_NOT_FOUND },
-      ).blocked,
+      session.call('skill_workshop', { ...failing, proposal_id: 'prop-2' }, { error: PROPOSAL_NOT_PENDING }).blocked,
     ).toBe(false);
     expect(session.executions).toBe(2);
 
     // 换 run 后同一 proposal_id 重新尝试 ⇒ 放行
     session.setRun('run-2');
-    expect(session.call('skill_workshop', renamed, { error: PROPOSAL_NOT_FOUND }).blocked).toBe(false);
+    expect(session.call('skill_workshop', renamed, { error: PROPOSAL_NOT_PENDING }).blocked).toBe(false);
+    expect(session.executions).toBe(3);
   });
 
   it('无稳定身份：create 纯符号名同参重投拦，改名重投放行（不声称识别同一候选）', () => {
@@ -296,6 +298,128 @@ describe('deterministic-retry-guard plugin', () => {
     expect(session.call('read', params, { error: READ_MISSING_PATH }).blocked).toBe(true);
     session.setToolIdentity('other-kind');
     expect(session.call('read', params, { error: READ_MISSING_PATH }).blocked).toBe(false);
+  });
+
+  // ——— E-R1（P1）：稳定提案键不得把 revise/apply 的失败扩散到合法 inspect ———
+
+  it('E-R1：revise(non-pending) 失败后，同 proposal_id 的 inspect/list 查询必须执行', () => {
+    const session = newSession();
+    session.call(
+      'skill_workshop',
+      { action: 'revise', proposal_id: 'p1', name: '甲', proposal_content: 'x' },
+      { error: PROPOSAL_NOT_PENDING },
+    );
+    expect(session.call('skill_workshop', { action: 'inspect', proposal_id: 'p1' }, { ok: true }).blocked).toBe(false);
+    expect(session.call('skill_workshop', { action: 'list' }, { ok: true }).blocked).toBe(false);
+    expect(session.executions).toBe(3);
+  });
+
+  it('E-R1：变 action 放行 —— revise 的失败不推广到 apply 同一提案', () => {
+    const session = newSession();
+    session.call(
+      'skill_workshop',
+      { action: 'revise', proposal_id: 'p1', name: '甲', proposal_content: 'x' },
+      { error: PROPOSAL_NOT_PENDING },
+    );
+    expect(session.call('skill_workshop', { action: 'apply', proposal_id: 'p1' }, { ok: true }).blocked).toBe(false);
+    expect(session.executions).toBe(2);
+  });
+
+  it('E-R1：参数语义变化（name 之外）不泛化拦截 —— 同 action 同提案但正文不同的重投放行', () => {
+    const session = newSession();
+    const failed = { action: 'revise', proposal_id: 'p1', name: '甲', proposal_content: 'x' };
+    session.call('skill_workshop', failed, { error: PROPOSAL_NOT_PENDING });
+    expect(
+      session.call('skill_workshop', { ...failed, proposal_content: 'y' }, { error: PROPOSAL_NOT_PENDING }).blocked,
+    ).toBe(false);
+    expect(session.executions).toBe(2);
+  });
+
+  it('E-R1：记录入口核实工具身份 —— 其他工具即使参数带 proposal_id 也不得建立稳定身份', () => {
+    const session = newSession();
+    session.call('other_tool', { proposal_id: 'p1', name: '甲' }, { error: PROPOSAL_NOT_PENDING });
+    expect(
+      session.call(
+        'skill_workshop',
+        { action: 'revise', proposal_id: 'p1', name: '甲', proposal_content: 'x' },
+        { ok: true },
+      ).blocked,
+    ).toBe(false);
+    expect(session.executions).toBe(2);
+  });
+
+  // ——— E-R2（P1）：状态可变的失败不得按文本缓成"固定所有权失败" ———
+
+  it('E-R2：技能尚不存在（ownership 文本）后，目标被真实创建 ⇒ 同参 read 必须执行', () => {
+    const session = newSession();
+    const read = { action: 'read', skill_name: 'new-skill' };
+    expect(session.call('skill_workshop', read, { error: SKILL_NOT_OWNED })).toEqual({ blocked: false });
+    // scratch 侧真实创建/恢复合法 workshop skill（成功回执）
+    session.call(
+      'skill_workshop',
+      { action: 'create', name: 'new-skill', proposal_content: 'body' },
+      { result: { isError: false, details: { status: 'success' } } },
+    );
+    expect(session.call('skill_workshop', read, { ok: true }).blocked).toBe(false);
+    expect(session.executions).toBe(3);
+  });
+
+  it('E-R2：ownership 类失败不再按文本缓存 —— 同参 read 立即重复也执行（无可信拒绝码/epoch）', () => {
+    const session = newSession();
+    const read = { action: 'read', skill_name: 'new-skill' };
+    session.call('skill_workshop', read, { error: SKILL_NOT_OWNED });
+    expect(session.call('skill_workshop', read, { error: SKILL_NOT_OWNED }).blocked).toBe(false);
+    expect(session.executions).toBe(2);
+  });
+
+  it('E-R2：proposal-not-found 按同一标准 —— 资源缺失类失败不缓存（同参重投执行）', () => {
+    const session = newSession();
+    const revise = { action: 'revise', proposal_id: 'ghost-1', name: '甲', proposal_content: 'x' };
+    session.call('skill_workshop', revise, { error: PROPOSAL_NOT_FOUND });
+    expect(session.call('skill_workshop', revise, { error: PROPOSAL_NOT_FOUND }).blocked).toBe(false);
+    expect(session.executions).toBe(2);
+  });
+
+  it('E-R2：参数校验类保留 —— 参数缺 path 的重复调用仍被拦', () => {
+    const session = newSession();
+    const params = { action: 'read', name: '甲' };
+    session.call('read', params, { error: READ_MISSING_PATH });
+    expect(session.call('read', params, { error: READ_MISSING_PATH }).blocked).toBe(true);
+    expect(session.executions).toBe(1);
+  });
+
+  // ——— E-R3（P2）：稳定身份分支与 byCall 共用同一套工具身份校验/失效逻辑 ———
+
+  it('E-R3：切工具身份后稳定身份分支同样失效（不再绕过失效条件）', () => {
+    const session = new Session(guard.before, guard.after, {
+      agentId: 'main',
+      sessionKey: 'agent:main:web',
+      runId: 'run-1',
+      toolKind: 'code_mode_exec',
+    });
+    const failed = { action: 'revise', proposal_id: 'p1', name: '甲', proposal_content: 'x' };
+    session.call('skill_workshop', failed, { error: PROPOSAL_NOT_PENDING });
+    // 同一身份 + 纯换名 ⇒ 仍拦（前提未变）
+    expect(session.call('skill_workshop', { ...failed, name: '乙' }, { error: PROPOSAL_NOT_PENDING }).blocked).toBe(
+      true,
+    );
+    // 工具身份切换 ⇒ 稳定身份分支失效（与 byCall 同一判据）
+    session.setToolIdentity('other-kind');
+    expect(session.call('skill_workshop', { ...failed, name: '乙' }, { error: PROPOSAL_NOT_PENDING }).blocked).toBe(
+      false,
+    );
+    expect(session.executions).toBe(2);
+  });
+
+  it('E-R3：缺身份不扩大拦截 —— after 无身份、before 带身份同样失效（与 byCall 同向 fail-open）', () => {
+    const session = newSession();
+    const failed = { action: 'revise', proposal_id: 'p1', name: '甲', proposal_content: 'x' };
+    session.call('skill_workshop', failed, { error: PROPOSAL_NOT_PENDING });
+    session.setToolIdentity('code_mode_exec');
+    expect(session.call('skill_workshop', { ...failed, name: '乙' }, { error: PROPOSAL_NOT_PENDING }).blocked).toBe(
+      false,
+    );
+    expect(session.executions).toBe(2);
   });
 
   it('守卫自身的拦截结果不会再被当失败记录（标记过滤，无自反馈）', () => {
@@ -324,6 +448,52 @@ describe('deterministic-retry-guard plugin', () => {
     const before = session.executions;
     expect(session.call('t260', { i: 260 }, { error: READ_MISSING_PATH }).blocked).toBe(true);
     expect(session.executions).toBe(before);
+  });
+
+  it('E-R4：多 run 后全部缓存索引有界（同一容量/TTL 生命周期，无随 run 无界增长的结构）', async () => {
+    // 对**同一份生成插件代码**追加一个只读 size 探针（不改业务路径），验证索引容量。
+    const stateDir = tempDir('retry-guard-sizes-');
+    const pluginDir = ensureRetryGuardPolicy(stateDir);
+    const entry = readFileSync(path.join(pluginDir, 'index.mjs'), 'utf-8');
+    const probePath = path.join(pluginDir, 'index.sizes-probe.mjs');
+    writeFileSync(
+      probePath,
+      `${entry}\nexport function __sizes() {\n  return [\n    byCall.size,\n    byProposal.size,\n    typeof recordedToolScopes !== 'undefined' ? recordedToolScopes.size : 0,\n  ];\n}\n`,
+      'utf-8',
+    );
+    const probe = (await import(pathToFileURL(probePath).href)) as {
+      default: { register: (api: { on: (name: string, handler: unknown) => void }) => void };
+      __sizes: () => number[];
+    };
+    let before: ((event: BeforeEvent, ctx: ToolContext) => Decision) | null = null;
+    let after: ((event: AfterEvent, ctx: ToolContext) => unknown) | null = null;
+    probe.default.register({
+      on: (name, candidate) => {
+        if (name === 'before_tool_call') before = candidate as (event: BeforeEvent, ctx: ToolContext) => Decision;
+        if (name === 'after_tool_call') after = candidate as (event: AfterEvent, ctx: ToolContext) => unknown;
+      },
+    });
+    const session = new Session(before!, after!, { agentId: 'main', sessionKey: 's', runId: 'run-0' });
+    for (let i = 0; i < 300; i += 1) {
+      session.setRun(`run-${i}`);
+      session.call(
+        'skill_workshop',
+        { action: 'revise', proposal_id: `p-${i}`, name: `甲${i}`, proposal_content: 'x' },
+        { error: PROPOSAL_NOT_PENDING },
+      );
+      session.call('read', { i }, { error: READ_MISSING_PATH });
+    }
+    const first = probe.__sizes();
+    expect(first[0]).toBeGreaterThan(0);
+    expect(first[1]).toBeGreaterThan(0); // 非空断言：byProposal 确实有记录（有界性不是空洞成立）
+    for (const size of first) expect(size).toBeLessThanOrEqual(256);
+    // 再跑 100 个新 run：任何索引都不得继续增长
+    for (let i = 300; i < 400; i += 1) {
+      session.setRun(`run-${i}`);
+      session.call('read', { i }, { error: READ_MISSING_PATH });
+    }
+    const grown = probe.__sizes();
+    for (const size of grown) expect(size).toBeLessThanOrEqual(256);
   });
 
   it('坏事件 fail-open：不抛、不拦', () => {
