@@ -1115,8 +1115,9 @@ function finalizeAssistantArtifacts(input: {
         'status' in tool &&
         // ⭐ V1（2026-10-13）：白名单加 `declared` —— 历史同步回来的"声明但无结果"调用
         //    是被保留的既定事实；把新枚举挡掉=把事实静默丢弃（且 declared 无 result，
-        //    不影响下方收据确认链）。
-        ['running', 'done', 'error', 'awaitingApproval', 'declared'].includes(String(tool.status)) &&
+        //    不影响下方收据确认链）。V2（step 2）：再加 `dispatched`（tool/start、
+        //    item/running 的"调用处理中"同样是既有事实，且无 result，同不影响收据链）。
+        ['running', 'done', 'error', 'awaitingApproval', 'declared', 'dispatched'].includes(String(tool.status)) &&
         (!('result' in tool) || tool.result === undefined || typeof tool.result === 'string') &&
         (!('args' in tool) ||
           tool.args === undefined ||

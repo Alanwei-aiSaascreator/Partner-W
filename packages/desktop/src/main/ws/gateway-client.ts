@@ -358,6 +358,11 @@ export class GatewayClient {
   private configMutationTail: Promise<void> = Promise.resolve();
   /** 见 `APPROVAL_CHANNEL_CAPS`：这条连接只为了能被推 exec 审批。 */
   private approvalChannel = false;
+  /**
+   * ⭐ V2（2026-10-13 step 2）：本**连接实例**的传输纪元 —— 主/审批连接各自生成一次，
+   * 随每帧 `meta` 送往下游（renderer 不得猜 channel/epoch；重连 = 新实例 = 新纪元）。
+   */
+  private readonly connectionEpoch: string = randomUUID();
 
   constructor(config: GatewayClientConfig, opts?: GatewayClientOptions) {
     this.gatewayId = config.id;
@@ -631,6 +636,9 @@ export class GatewayClient {
       event: frame.event,
       payload: frame.payload,
       seq: frame.seq,
+      // ⭐ V2（2026-10-13 step 2）：可信 transport 元数据在**真实连接拥有者**（主进程连接
+      //    实例）生成：主/审批连接同 gatewayId 也各有 channel 与独立 epoch，重连即换新。
+      meta: { channel: this.approvalChannel ? 'approval' : 'main', connectionEpoch: this.connectionEpoch },
     });
   }
 
