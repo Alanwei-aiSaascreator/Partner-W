@@ -314,11 +314,16 @@ export interface MessageState {
    *    （见 `canHydrateExecution`）：现场已有**别的 run**（activeTurn 或投影）时，旧历史
    *    一律不灌入。
    */
+  /**
+   * ⭐ 第二轮（R2-8）：返回**真正被归约接受的条数**（0 = 全部被拒/等值吸收，投影未变）。
+   * 恢复接线据此决定是否登记 hydrate 静默标记（应用了旧证据才需要抑制那次通知；
+   * 零应用不登记，避免把后续 live 完成误静默）。
+   */
   applyExecutionEvents: (
     sessionKey: string,
     events: readonly ExecutionEvent[],
     options?: { mode?: 'live' | 'hydrate' },
-  ) => void;
+  ) => number;
   /**
    * R2：恢复（hydrate）适用性复核 —— hook/IPC 在应用旧历史**之前**调用。
    *
@@ -333,9 +338,11 @@ export interface MessageState {
    *
    * 背景：canonical 提升会把 activeTurn 摘掉，但执行投影留在旧 run 上 —— 下一轮的所有
    * 执行事件被归约器的跨 run 守卫整条拒收（投影不切换、历史记录为 0）。
-   * 语义：**投影已存在且属于不同 run** 时，按新 run 初始化投影（换出孤立旧投影）；
-   * 同 run 幂等（引用不变）；没有投影时什么都不做（不给"还没有执行证据"的会话造空状态，
-   * 首个事件会自然把 runId 绑上）。
+   * 语义：按新 run 建立/轮换投影；同 run 幂等（引用不变）。
+   * ⭐ 第二轮（R2-1）：**没有投影时也建立仅含 run 身份的空投影（身份屏障）** ——
+   * 可信回执已确认真实归属，此时若旧历史的恢复 Promise 先行返回，没有屏障就会灌入
+   * 旧投影、随后把新 run 的首帧挡在跨 run 守卫之外（首帧匹配旧投影会被拒）。
+   * 屏障不虚构任何执行事实（无步骤、无生命周期事件），只保留"这个 run 已确认"。
    * ⚠️ 只在可信边界调用（dispatcher 的 bindRun / 用户动作确认处），不放松归约器拒收。
    */
   beginExecutionRun: (sessionKey: string, runId: string) => void;
@@ -792,7 +799,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
     // （旧 run 晚包 / 无归属）时投影引用不变 ⇒ 不触发任何 set。
     // V4：被接受的状态边缘同时交给执行历史 writer（脱敏/合并后 fire-and-forget）。
     // R2：hydrate 模式 = 恢复应用（不重新 persist；应用前过 scope 复核）。
-    applyExecutionEvents: (sessionKey, events, options) =>
+    // ⭐ 第二轮（R2-8）：返回值 = 真正被归约接受的条数（0 = 全部被拒/等值吸收）。
+    applyExecutionEvents: (sessionKey, events, options) => {
+      let acceptedCount = 0;
       set((s) => {
         if (events.length === 0) return s;
         const hydrate = options?.mode === 'hydrate';
@@ -817,8 +826,11 @@ export function createMessageStore(deps: MessageStoreDeps) {
           if (selection.records.length > 0) deps.persistExecutionHistory?.(sessionKey, selection.records);
         }
         if (!changed) return s;
+        acceptedCount = accepted.length;
         return { executionBySession: { ...s.executionBySession, [sessionKey]: projection } };
-      }),
+      });
+      return acceptedCount;
+    },
 
     canHydrateExecution: (sessionKey, runId) => canHydrateInState(get(), sessionKey, runId),
 
@@ -827,9 +839,12 @@ export function createMessageStore(deps: MessageStoreDeps) {
       set((s) => {
         if (!runId) return s;
         const projection = s.executionBySession[sessionKey];
-        // 无投影：什么都不做 —— 不给"还没有任何执行证据"的会话造空状态；
-        // 首个事件会自然把 runId 绑上（归约器从 '' 接受）。要修的只是**孤立旧投影**。
-        if (!projection || projection.runId === runId) return s;
+        if (projection && projection.runId === runId) return s;
+        // ⭐ 第二轮（R2-1）：**身份屏障** —— 可信绑定（receipt/新轮确认）已确认真实归属，
+        //    哪怕尚无任何执行事件，也要同步保留 run 身份。没有它，旧历史的恢复 Promise
+        //    恰在"回执已到、首帧未到"的窗口返回时会成功灌入旧投影，随后新 run 的首帧
+        //    又因跨 run 拒收再也换不回来。屏障投影只带 run 身份（无步骤/无生命周期
+        //    事件——不虚构执行事实），旧 hydrate 的跨 run 守卫凭它拒灌。
         return {
           executionBySession: { ...s.executionBySession, [sessionKey]: createExecutionProjection(runId) },
         };

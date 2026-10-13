@@ -75,6 +75,7 @@ export type {
   RunCompletionStatus,
   RunCompletionVerdict,
   RunCompletionRequirementSet,
+  TurnRegistrationStatus,
 } from './stores/execution-projection.js';
 // V4（2026-10-13 step 5）：执行历史的事件选择 + 预算常量（main 侧 writer 共用同一常量）。
 export {

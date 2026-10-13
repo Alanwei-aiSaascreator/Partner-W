@@ -249,11 +249,16 @@ describe('run-promotion · canonical 提升后同会话下一轮的执行投影'
     expect(store.getState().executionBySession[SK]).toBeUndefined();
   });
 
-  it('⭐ beginExecutionRun 语义：不造空投影、同 run 幂等、异 run 才换 scope', () => {
+  it('⭐ beginExecutionRun 语义：可信绑定即建身份屏障（无事件也不丢身份）、同 run 幂等、异 run 换 scope', () => {
     const store = createMessageStore({ persistMessage: async () => ({ ok: true }) });
-    // 无投影：不新建（没有执行证据的会话不该被造出空状态）
+    // 第二轮 R2-1：可信绑定边界建立**仅含 run 身份**的屏障投影 —— 不虚构执行事实
+    //（无步骤/无生命周期/无交付），但身份已确认是事实，不能为避免"空投影"丢掉屏障。
     store.getState().beginExecutionRun(SK, 'run-x');
-    expect(store.getState().executionBySession[SK]).toBeUndefined();
+    const barrier = store.getState().executionBySession[SK];
+    expect(barrier?.runId).toBe('run-x');
+    expect(barrier?.modelPhase, '不虚构执行事实').toBe('idle');
+    expect(Object.keys(barrier?.steps ?? {}), '屏障无步骤').toHaveLength(0);
+    expect(Object.keys(barrier?.delivery.operations ?? {}), '屏障无交付证据').toHaveLength(0);
 
     store.getState().applyExecutionEvents(SK, [deliveryStarted('run-x')]);
     const first = store.getState().executionBySession[SK];
@@ -264,5 +269,39 @@ describe('run-promotion · canonical 提升后同会话下一轮的执行投影'
     const switched = store.getState().executionBySession[SK];
     expect(switched?.runId).toBe('run-y');
     expect(Object.keys(switched?.delivery.operations ?? {}), '旧 run 的作业不冒充新轮需求').toHaveLength(0);
+  });
+
+  it('⭐ 第二轮 R2-1：新 run 回执已确认、首帧未到 —— 旧 hydrate 被身份屏障拒绝，新首帧照常折入', async () => {
+    const h = harness();
+    // 旧轮先留下现场痕迹（activeTurn + 投影属于 run-old 之前的轮次按规则会被轮换）
+    h.lifecycle('run-old', 'start');
+    h.chat('run-old', 'delta', 'old answer');
+
+    // 可信绑定：dispatch 回执确认 run-new（此刻**还没有任何执行帧**）
+    const ticket = h.dispatcher.beginDispatch(task.gatewayId, SK);
+    h.dispatcher.settleDispatch(ticket, { sessionKey: SK, runId: 'run-new' });
+    expect(
+      h.store.getState().executionBySession[SK]?.runId,
+      '回执后身份屏障必须在（旧实现此处 projection 仍为旧 run / 无投影）',
+    ).toBe('run-new');
+
+    // 旧历史的恢复 Promise 恰在此刻返回：canHydrate 拒 + hydrate 模式零应用（不污染）
+    expect(h.store.getState().canHydrateExecution(SK, 'run-old')).toBe(false);
+    const applied = h.store.getState().applyExecutionEvents(SK, [deliveryStarted('run-old', 'op-old')], {
+      mode: 'hydrate',
+    });
+    expect(applied, '旧历史零应用（屏障拒绝灌入）').toBe(0);
+    expect(h.store.getState().executionBySession[SK]?.runId).toBe('run-new');
+
+    // 新 run 首帧（lifecycle.start + chat.delta）照常折入屏障投影、照常进历史
+    h.lifecycle('run-new', 'start');
+    h.chat('run-new', 'delta', 'new answer');
+    expect(h.store.getState().executionBySession[SK]?.runId).toBe('run-new');
+    expect(h.store.getState().executionBySession[SK]?.modelPhase).not.toBe('idle');
+    expect(h.store.getState().activeTurnBySession[SK]?.streamingText).toBe('new answer');
+    expect(h.historyRecordsFor('run-new').length, '新轮证据必须进历史（被旧投影挡住 ⇒ 0 条 = 缺陷）').toBeGreaterThan(
+      0,
+    );
+    expect(h.historyRecordsFor('run-old').filter((record) => record.eventId.includes('op-old')).length).toBe(0);
   });
 });

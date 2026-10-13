@@ -434,10 +434,24 @@ function foldDelivery(
  */
 export type RunCompletionStatus = 'complete' | 'partial' | 'failed' | 'unconfirmed' | 'not-complete';
 
+/**
+ * ⭐ 第二轮（R5 P1 收口）：**登记回执状态** —— 需求集合的可信来源，不再由
+ * "operations 恰好为空"反推普通聊天（promote 清 activeTurn 时持久化/登记尚未
+ * 返回，空 operations 只代表"登记证据未到"，不代表无需求）。
+ *
+ *  - `'unknown'`：尚无本 run 的登记回执（待登记/回执未达）⇒ 一律不得判 complete；
+ *  - `'registered'`：本轮交付登记已完成（operationId 已定号/作业已入交付通道）
+ *    ⇒ 需求 = 投影中已到达的 operations；它们全部结算前不得 complete；
+ *  - `'needs-review'`：已知文件需求存在但登记失败/上下文未确认（需求保留）
+ *    ⇒ 永远不得回退成"明确零需求"；已登记 operations 照常分档但 complete 降级 partial；
+ *  - `'none-expected'`：可信请求事实确认零需求（普通聊天）⇒ 模型 ended 即 complete。
+ */
+export type TurnRegistrationStatus = 'unknown' | 'registered' | 'needs-review' | 'none-expected';
+
 export interface RunCompletionRequirementSet {
   /**
    * 可信交付需求（operationKey = `gatewayId|operationId`，与投影 `delivery.operations`
-   * 的键同形）。空数组 = **明确普通聊天**（无可信交付需求）。
+   * 的键同形）。空数组单独看**不能**推"明确普通聊天" —— 必须配 `registration`。
    */
   operationKeys: readonly string[];
   /**
@@ -445,6 +459,10 @@ export interface RunCompletionRequirementSet {
    * 触发时机由可信边界给出（例如回合结束时的登记确认窗口）；未封口一律 not-complete。
    */
   sealed: boolean;
+  /**
+   * 登记回执（第二轮 R5 P1）。缺省 = `'unknown'`（保守：未拿到可信回执不得判 complete）。
+   */
+  registration?: TurnRegistrationStatus;
 }
 
 export interface RunCompletionVerdict {
@@ -454,9 +472,16 @@ export interface RunCompletionVerdict {
   idempotencyKey: string;
 }
 
-/** 便捷构造：需求集合 = 投影里**经可信登记**（delivery.started）的全部 operation。 */
-export function deliveryRequirementsOf(projection: ExecutionProjection, sealed: boolean): RunCompletionRequirementSet {
-  return { operationKeys: Object.keys(projection.delivery.operations), sealed };
+/**
+ * 便捷构造：需求集合 = 投影里**经可信登记**（delivery.started）的全部 operation，
+ * 配 `registration`（第二轮：由 main 登记回执提供，缺省 'unknown' 保守）。
+ */
+export function deliveryRequirementsOf(
+  projection: ExecutionProjection,
+  sealed: boolean,
+  registration: TurnRegistrationStatus = 'unknown',
+): RunCompletionRequirementSet {
+  return { operationKeys: Object.keys(projection.delivery.operations), sealed, registration };
 }
 
 export function evaluateRunCompletion(
@@ -474,8 +499,17 @@ export function evaluateRunCompletion(
   if (!requirements.sealed) return status('not-complete');
   if (projection.modelPhase === 'failed') return status('failed');
 
+  // ⭐ 第二轮（R5 P1）：登记回执是封口的**必要组成** —— activeTurn 被清（promote）只
+  //    代表"轮次关闭"，登记（finalizeAssistantArtifacts / 交付捕获）还可能在路上；
+  //    空 operations 在回执到达前不能当"普通聊天"。
+  const registration = requirements.registration ?? 'unknown';
+  if (registration === 'unknown') return status('not-complete');
+
   if (requirements.operationKeys.length === 0) {
-    return status(projection.modelPhase === 'ended' ? 'complete' : 'not-complete');
+    // 已知文件需求登记失败（需求保留）⇒ unconfirmed —— 不得回退成"明确零需求"。
+    if (registration === 'needs-review') return status('unconfirmed');
+    // 只有"确认零需求"才允许普通聊天完成；'registered' 而 ops 尚未到达 = 等登记证据。
+    return status(registration === 'none-expected' && projection.modelPhase === 'ended' ? 'complete' : 'not-complete');
   }
 
   const operations = requirements.operationKeys.map((key) => projection.delivery.operations[key]);
@@ -484,7 +518,10 @@ export function evaluateRunCompletion(
     return status('not-complete');
   }
   const outcomes = operations.map((operation) => operation!.outcome!);
-  if (outcomes.every((outcome) => outcome === 'complete')) return status('complete');
+  if (outcomes.every((outcome) => outcome === 'complete')) {
+    // needs-review = 还有"已知需求未见登记证据" ⇒ 不得整轮 complete（降级 partial）。
+    return status(registration === 'needs-review' ? 'partial' : 'complete');
+  }
   if (outcomes.some((outcome) => outcome === 'complete')) return status('partial');
   if (outcomes.some((outcome) => outcome === 'failed')) return status('failed');
   return status('unconfirmed');

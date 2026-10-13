@@ -88,25 +88,85 @@ function deliverySettled(
 }
 
 describe('R5 · evaluateRunCompletion —— 完成资格唯一真源', () => {
-  it('⭐ 明确普通聊天（无交付需求、已封口）+ 模型结束 ⇒ complete，并给 run 级幂等键', () => {
+  it('⭐ 明确普通聊天（无交付需求、已封口、确认零需求回执）+ 模型结束 ⇒ complete，并给 run 级幂等键', () => {
     const projection = fold(createExecutionProjection('run-a'), [started(), ended()]);
-    const verdict = evaluateRunCompletion(projection, { operationKeys: [], sealed: true });
+    const verdict = evaluateRunCompletion(projection, {
+      operationKeys: [],
+      sealed: true,
+      registration: 'none-expected',
+    });
     expect(verdict.status).toBe('complete');
     expect(verdict.runId).toBe('run-a');
     expect(verdict.idempotencyKey).toBe('run-a|complete');
   });
 
+  it('⭐ 第二轮（R5 P1）：登记回执是封口的必要组成 —— 缺省（unknown）一律不判 complete', () => {
+    const projection = fold(createExecutionProjection('run-a'), [started(), ended()]);
+    // 缺省 registration（调用方不给回执）⇒ 保守 not-complete（promote 清 activeTurn 时登记在路上）
+    expect(evaluateRunCompletion(projection, { operationKeys: [], sealed: true }).status).toBe('not-complete');
+    expect(evaluateRunCompletion(projection, { operationKeys: [], sealed: true, registration: 'unknown' }).status).toBe(
+      'not-complete',
+    );
+    // registered 而 ops 尚未到达 = 等登记证据（不得回退成普通聊天）
+    expect(
+      evaluateRunCompletion(projection, { operationKeys: [], sealed: true, registration: 'registered' }).status,
+    ).toBe('not-complete');
+    // needs-review（已知文件需求登记失败）：需求保留 ⇒ unconfirmed，不得 complete
+    expect(
+      evaluateRunCompletion(projection, { operationKeys: [], sealed: true, registration: 'needs-review' }).status,
+    ).toBe('unconfirmed');
+    // none-expected 但模型未结束 ⇒ 仍 not-complete
+    const mid = fold(createExecutionProjection('run-a'), [started()]);
+    expect(evaluateRunCompletion(mid, { operationKeys: [], sealed: true, registration: 'none-expected' }).status).toBe(
+      'not-complete',
+    );
+  });
+
+  it('⭐ needs-review 配已登记 operations：complete 降级 partial；failed 照常 failed', () => {
+    const settled = fold(createExecutionProjection('run-a'), [
+      started(),
+      deliveryStarted('run-a', 'op-1', 2),
+      ended(),
+      deliverySettled('run-a', 'op-1', 'complete', 3),
+    ]);
+    expect(
+      evaluateRunCompletion(settled, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' }).status,
+    ).toBe('complete');
+    expect(
+      evaluateRunCompletion(settled, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'needs-review' })
+        .status,
+      '有已知需求未见登记证据 ⇒ 不得整轮 complete',
+    ).toBe('partial');
+
+    const failedOp = fold(createExecutionProjection('run-a'), [
+      started(),
+      deliveryStarted('run-a', 'op-1', 2),
+      ended(),
+      deliverySettled('run-a', 'op-1', 'failed', 3),
+    ]);
+    expect(
+      evaluateRunCompletion(failedOp, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'needs-review' })
+        .status,
+    ).toBe('failed');
+  });
+
   it('⭐ 需求未封口 ⇒ not-complete（模型结束也不能证明整轮完成 —— 旁路三）', () => {
     const projection = fold(createExecutionProjection('run-a'), [started(), ended()]);
-    expect(evaluateRunCompletion(projection, { operationKeys: [], sealed: false }).status).toBe('not-complete');
+    expect(
+      evaluateRunCompletion(projection, { operationKeys: [], sealed: false, registration: 'none-expected' }).status,
+    ).toBe('not-complete');
   });
 
   it('⭐ 有交付需求：全部结算 complete ⇒ complete；未结算 ⇒ not-complete', () => {
     const live = fold(createExecutionProjection('run-a'), [started(), deliveryStarted('run-a', 'op-1'), ended()]);
-    expect(evaluateRunCompletion(live, { operationKeys: ['gw-1|op-1'], sealed: true }).status).toBe('not-complete');
+    expect(
+      evaluateRunCompletion(live, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' }).status,
+    ).toBe('not-complete');
 
     const settled = fold(live, [deliverySettled('run-a', 'op-1', 'complete')]);
-    expect(evaluateRunCompletion(settled, { operationKeys: ['gw-1|op-1'], sealed: true }).status).toBe('complete');
+    expect(
+      evaluateRunCompletion(settled, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' }).status,
+    ).toBe('complete');
   });
 
   it('⭐ failed / unconfirmed / partial 不得判全完成（旁路一）', () => {
@@ -117,19 +177,26 @@ describe('R5 · evaluateRunCompletion —— 完成资格唯一真源', () => {
       ended(),
     ]);
     const failed = fold(base, [deliverySettled('run-a', 'op-1', 'failed', 4)]);
-    expect(evaluateRunCompletion(failed, { operationKeys: ['gw-1|op-1'], sealed: true }).status).toBe('failed');
+    expect(
+      evaluateRunCompletion(failed, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' }).status,
+    ).toBe('failed');
 
     const unconfirmed = fold(base, [deliverySettled('run-a', 'op-1', 'unconfirmed', 5)]);
-    expect(evaluateRunCompletion(unconfirmed, { operationKeys: ['gw-1|op-1'], sealed: true }).status).toBe(
-      'unconfirmed',
-    );
+    expect(
+      evaluateRunCompletion(unconfirmed, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' })
+        .status,
+    ).toBe('unconfirmed');
 
     const partial = fold(base, [
       deliverySettled('run-a', 'op-1', 'complete', 6),
       deliverySettled('run-a', 'op-2', 'failed', 7),
     ]);
     expect(
-      evaluateRunCompletion(partial, { operationKeys: ['gw-1|op-1', 'gw-1|op-2'], sealed: true }).status,
+      evaluateRunCompletion(partial, {
+        operationKeys: ['gw-1|op-1', 'gw-1|op-2'],
+        sealed: true,
+        registration: 'registered',
+      }).status,
       '一项成功一项失败 ⇒ 只能部分完成',
     ).toBe('partial');
 
@@ -138,40 +205,54 @@ describe('R5 · evaluateRunCompletion —— 完成资格唯一真源', () => {
       deliverySettled('run-a', 'op-1', 'complete', 8),
       deliverySettled('run-a', 'op-2', 'complete', 9),
     ]);
-    expect(evaluateRunCompletion(both, { operationKeys: ['gw-1|op-1', 'gw-1|op-2'], sealed: true }).status).toBe(
-      'complete',
-    );
+    expect(
+      evaluateRunCompletion(both, {
+        operationKeys: ['gw-1|op-1', 'gw-1|op-2'],
+        sealed: true,
+        registration: 'registered',
+      }).status,
+    ).toBe('complete');
   });
 
   it('⭐ 需求集合里有一项在投影中无证据（登记异步未达）⇒ not-complete（旁路二 fail-closed）', () => {
     const projection = fold(createExecutionProjection('run-a'), [started(), ended()]);
     expect(
-      evaluateRunCompletion(projection, { operationKeys: ['gw-1|op-async'], sealed: true }).status,
+      evaluateRunCompletion(projection, {
+        operationKeys: ['gw-1|op-async'],
+        sealed: true,
+        registration: 'registered',
+      }).status,
       '看不到证据 ≠ 普通聊天',
     ).toBe('not-complete');
   });
 
   it('⭐ 模型失败 ⇒ failed（失败轮不得报完成，交付证据保留供展示）', () => {
     const projection = fold(createExecutionProjection('run-a'), [started(), failedModel()]);
-    expect(evaluateRunCompletion(projection, { operationKeys: [], sealed: true }).status).toBe('failed');
+    expect(
+      evaluateRunCompletion(projection, { operationKeys: [], sealed: true, registration: 'none-expected' }).status,
+    ).toBe('failed');
 
     const withDelivery = fold(projection, [deliveryStarted('run-a', 'op-1', 2)]);
-    expect(evaluateRunCompletion(withDelivery, { operationKeys: ['gw-1|op-1'], sealed: true }).status).toBe('failed');
+    expect(
+      evaluateRunCompletion(withDelivery, { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' })
+        .status,
+    ).toBe('failed');
   });
 
   it('⭐ 幂等：同投影重复评估同结果同键；结算推进后键随状态变化', () => {
     const live = fold(createExecutionProjection('run-a'), [started(), deliveryStarted('run-a', 'op-1')]);
-    const first = evaluateRunCompletion(live, { operationKeys: ['gw-1|op-1'], sealed: true });
-    const second = evaluateRunCompletion(live, { operationKeys: ['gw-1|op-1'], sealed: true });
+    const req = { operationKeys: ['gw-1|op-1'], sealed: true, registration: 'registered' } as const;
+    const first = evaluateRunCompletion(live, req);
+    const second = evaluateRunCompletion(live, req);
     expect(second).toEqual(first);
     expect(first.idempotencyKey).toBe('run-a|not-complete');
 
     const settled = fold(live, [deliverySettled('run-a', 'op-1', 'complete', 9)]);
-    const after = evaluateRunCompletion(settled, { operationKeys: ['gw-1|op-1'], sealed: true });
+    const after = evaluateRunCompletion(settled, req);
     expect(after.idempotencyKey).toBe('run-a|complete');
   });
 
-  it('⭐ deliveryRequirementsOf：需求键来自投影内的可信登记（delivery.started）', () => {
+  it('⭐ deliveryRequirementsOf：需求键来自投影内的可信登记（delivery.started）；回执缺省 unknown', () => {
     const projection = fold(createExecutionProjection('run-a'), [
       started(),
       deliveryStarted('run-a', 'op-1', 2),
@@ -179,11 +260,18 @@ describe('R5 · evaluateRunCompletion —— 完成资格唯一真源', () => {
     ]);
     const requirements = deliveryRequirementsOf(projection, true);
     expect(requirements.operationKeys).toEqual(['gw-1|op-1', 'gw-1|op-2']);
-    expect(evaluateRunCompletion(projection, requirements).status).toBe('not-complete'); // 都还没结算
+    expect(requirements.registration).toBe('unknown');
+    expect(evaluateRunCompletion(projection, requirements).status).toBe('not-complete'); // 都还没结算 + 无回执
+
+    const withAck = deliveryRequirementsOf(projection, true, 'registered');
+    expect(withAck.registration).toBe('registered');
+    expect(evaluateRunCompletion(projection, withAck).status).toBe('not-complete'); // 都还没结算
   });
 
   it('⭐ 未归属投影（runId 空）不得判完成：没有 run 身份就没有幂等依据', () => {
     const projection: ExecutionProjection = { ...createExecutionProjection(''), modelPhase: 'ended' };
-    expect(evaluateRunCompletion(projection, { operationKeys: [], sealed: true }).status).toBe('not-complete');
+    expect(
+      evaluateRunCompletion(projection, { operationKeys: [], sealed: true, registration: 'none-expected' }).status,
+    ).toBe('not-complete');
   });
 });

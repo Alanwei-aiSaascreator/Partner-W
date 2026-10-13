@@ -229,7 +229,11 @@ describe('V2 · 旁路映射：真实 dispatcher + 真实 store', () => {
     expect(h.reportDebugEvent).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'renderer.agent.dropped.invalid_task' }),
     );
-    expect(h.projection(), 'cron 帧不得给主会话造出投影').toBeUndefined();
+    // 第二轮 R2-1：主会话在可信回执（primeTurn 的 dispatch）后已有**身份屏障**投影
+    //（无步骤/无执行证据）—— cron 帧的判据是"不往主会话投影里加任何东西"。
+    expect(h.projection()?.runId, '主会话投影（可信回执身份屏障）不受 cron 帧影响').toBe(FIXTURE.parentRunId);
+    expect(Object.keys(h.projection()?.steps ?? {}), 'cron 帧不得给主会话造出步骤').toHaveLength(0);
+    expect(h.projection()?.modelPhase, 'cron 帧不得推动主会话模型相位').toBe('idle');
   });
 
   it('⭐ 后台合法任务照收：performer 子会话帧归属任务、按 child run 隔离 step', () => {
