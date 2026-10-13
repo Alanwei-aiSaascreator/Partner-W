@@ -316,6 +316,31 @@ describe('V2 · reduceExecutionProjection —— 状态归约', () => {
       expect(after.steps).toEqual({});
     });
 
+    it('⭐ V4 修正：unconfirmed → confirmed（同 ticket）升级（重连补发的真实确认）', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, base({ type: 'cancel.requested', payload: { stopTicketId: 't-1' } }));
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'cancel.unconfirmed', payload: { stopTicketId: 't-1', reason: 'timeout' } }),
+      );
+      expect(p.stop.state).toBe('unconfirmed');
+
+      p = reduceExecutionProjection(p, base({ type: 'cancel.confirmed', payload: { stopTicketId: 't-1' } }));
+      expect(p.stop.state, '重连补发的确认必须把临时态拨回已停止').toBe('confirmed');
+    });
+
+    it('⭐ V4 修正：confirmed 后迟到的 unconfirmed 仍拒收（终态不回退）', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, base({ type: 'cancel.requested', payload: { stopTicketId: 't-1' } }));
+      p = reduceExecutionProjection(p, base({ type: 'cancel.confirmed', payload: { stopTicketId: 't-1' } }));
+
+      const after = reduceExecutionProjection(
+        p,
+        base({ type: 'cancel.unconfirmed', payload: { stopTicketId: 't-1', reason: 'timeout' } }),
+      );
+      expect(after.stop.state, 'confirmed 不回退').toBe('confirmed');
+    });
+
     it('⭐ 旧 ticket 确认不清新 run：runId 守卫整条拒收', () => {
       const p = createExecutionProjection('run-new');
       const after = reduceExecutionProjection(
@@ -407,6 +432,28 @@ describe('V2 · reduceExecutionProjection —— 状态归约', () => {
       expect(ops[0]).toMatchObject({ operationId: 'op-1', requested: true, started: true, outcome: 'complete' });
       expect(ops[1]).toMatchObject({ operationId: 'op-2', requested: true, started: false, outcome: 'failed' });
       expect(p.delivery.outcome).toBe('partial');
+    });
+
+    it('⭐ V4 修正：settled 之后新 operation 登记 ⇒ phase 拨回 pending（新作业未结算不得当已交付）', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, deliveryBase());
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-1', outcome: 'complete' } }),
+      );
+      expect(p.delivery.phase).toBe('settled');
+
+      // 同 run 后到的第二个 operation（例如模型先 final 后补的视频请求）
+      p = reduceExecutionProjection(p, deliveryBase({ payload: { operationId: 'op-2', kind: 'video' } }));
+      expect(p.delivery.phase, '新 operation 未结算 ⇒ 回到交付中').toBe('pending');
+      expect(p.delivery.operations['gw-1|op-1'].outcome, '已结算 op 的结果保留').toBe('complete');
+
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-2', outcome: 'complete' } }),
+      );
+      expect(p.delivery.phase, '全部结算后重算').toBe('settled');
+      expect(p.delivery.outcome).toBe('complete');
     });
 
     it('⭐ 旧 run 的交付结算不写新 run（runId 守卫）', () => {

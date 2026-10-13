@@ -408,17 +408,15 @@ describe('V3 · 交付完成门（chat.final 不再直接弹"任务完成"）', 
     h.primeTurn();
 
     // P 侧把可信生成请求折进投影（delivery.started）后，chat.final 的通知被交付门拦下
-    h.store
-      .getState()
-      .applyExecutionEvents(FIXTURE.taskSessionKey, [
-        deliveryEvent({
-          eventId: 'f#0',
-          seq: 0,
-          receivedAt: 1,
-          type: 'delivery.started',
-          payload: { operationId: 'op-video', kind: 'video' },
-        }),
-      ] as never);
+    h.store.getState().applyExecutionEvents(FIXTURE.taskSessionKey, [
+      deliveryEvent({
+        eventId: 'f#0',
+        seq: 0,
+        receivedAt: 1,
+        type: 'delivery.started',
+        payload: { operationId: 'op-video', kind: 'video' },
+      }),
+    ] as never);
 
     h.emit(chatFinalFrame([{ type: 'text', text: '生成中…' }]));
     expect(h.sendNotification).not.toHaveBeenCalledWith(expect.objectContaining({ body: FIXTURE.taskId }));
@@ -427,18 +425,60 @@ describe('V3 · 交付完成门（chat.final 不再直接弹"任务完成"）', 
     );
 
     // 交付结算（P 侧证据）到达后投影 settled —— 通知由 P 的结算路径发（本包不再发）
+    h.store.getState().applyExecutionEvents(FIXTURE.taskSessionKey, [
+      deliveryEvent({
+        eventId: 'f#1',
+        seq: 1,
+        receivedAt: 2,
+        type: 'delivery.settled',
+        payload: { operationId: 'op-video', outcome: 'complete' },
+      }),
+    ] as never);
+    expect(h.projection()?.delivery).toMatchObject({ phase: 'settled', outcome: 'complete' });
+  });
+
+  it('⭐ V4 修正：settled 之后新 operation ⇒ 交付门重新拦截 chat.final 通知', async () => {
+    const h = createHarness();
+    h.primeTurn();
     h.store
       .getState()
       .applyExecutionEvents(FIXTURE.taskSessionKey, [
+        deliveryEvent({
+          eventId: 'f#0',
+          seq: 0,
+          receivedAt: 1,
+          type: 'delivery.started',
+          payload: { operationId: 'op-1', kind: 'ppt' },
+        }),
         deliveryEvent({
           eventId: 'f#1',
           seq: 1,
           receivedAt: 2,
           type: 'delivery.settled',
-          payload: { operationId: 'op-video', outcome: 'complete' },
+          payload: { operationId: 'op-1', outcome: 'complete' },
         }),
       ] as never);
-    expect(h.projection()?.delivery).toMatchObject({ phase: 'settled', outcome: 'complete' });
+    expect(h.projection()?.delivery.phase).toBe('settled');
+
+    // 同 run 后到的新作业
+    h.store
+      .getState()
+      .applyExecutionEvents(FIXTURE.taskSessionKey, [
+        deliveryEvent({
+          eventId: 'f#2',
+          seq: 2,
+          receivedAt: 3,
+          type: 'delivery.started',
+          payload: { operationId: 'op-2', kind: 'video' },
+        }),
+      ] as never);
+    expect(h.projection()?.delivery.phase, '新 operation 未结算 ⇒ 回到交付中').toBe('pending');
+
+    h.emit(chatFinalFrame([{ type: 'text', text: '主体完成，视频生成中…' }]));
+    await vi.waitFor(() => expect(h.sendNotification).not.toHaveBeenCalled());
+    expect(h.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.chat.task_complete_deferred' }),
+    );
   });
 
   it('⭐ 普通聊天（无 operation 登记）⇒ chat.final 照旧弹任务完成（不用等文件）', async () => {
