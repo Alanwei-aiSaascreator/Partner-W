@@ -15,6 +15,7 @@ import {
   reduceExecutionProjection,
   type ExecutionProjection,
 } from './execution-projection.js';
+import { selectHistoryEvents } from './execution-history.js';
 import type { ExecutionEvent } from '../protocol/execution-events.js';
 
 const EMPTY_MESSAGES: Message[] = [];
@@ -395,6 +396,14 @@ export interface MessageState {
 }
 
 export interface MessageStoreDeps {
+  /**
+   * V4（2026-10-13 step 5）：把**被投影接受**的执行事件（经 `selectHistoryEvents`
+   * 脱敏/合并后的状态边缘）交给执行历史 writer（main 侧，fire-and-forget）。
+   * 可选：测试/旧接线不传即不启用历史持久化（投影行为完全不变）。
+   */
+  persistExecutionHistory?: (sessionKey: string, records: readonly ExecutionEvent[]) => void;
+  /** 历史摘要的公共脱敏（`sanitizeForLog`）；缺省 = 原样（调用方注入）。 */
+  sanitizeHistoryText?: (text: string) => string;
   persistMessage: (msg: {
     id: string;
     taskId: string;
@@ -725,17 +734,26 @@ export function createMessageStore(deps: MessageStoreDeps) {
 
     // V2：纯归约（`reduceExecutionProjection`）的 store 挂载点。事件被归约层拒收
     // （旧 run 晚包 / 无归属）时投影引用不变 ⇒ 不触发任何 set。
+    // V4：被接受的状态边缘同时交给执行历史 writer（脱敏/合并后 fire-and-forget）。
     applyExecutionEvents: (sessionKey, events) =>
       set((s) => {
         if (events.length === 0) return s;
         let projection = s.executionBySession[sessionKey] ?? createExecutionProjection('');
         let changed = false;
+        const accepted: ExecutionEvent[] = [];
         for (const event of events) {
           const next = reduceExecutionProjection(projection, event);
           if (next !== projection) {
             projection = next;
             changed = true;
+            accepted.push(event);
           }
+        }
+        if (changed) {
+          const selection = selectHistoryEvents(accepted, {
+            sanitize: deps.sanitizeHistoryText ?? ((text: string) => text),
+          });
+          if (selection.records.length > 0) deps.persistExecutionHistory?.(sessionKey, selection.records);
         }
         if (!changed) return s;
         return { executionBySession: { ...s.executionBySession, [sessionKey]: projection } };

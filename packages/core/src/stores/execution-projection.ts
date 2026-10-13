@@ -295,8 +295,13 @@ function foldStop(stop: ExecutionStop, event: ExecutionEvent): { stop: Execution
     };
   }
   if (event.type === 'cancel.confirmed' || event.type === 'cancel.unconfirmed') {
-    // 没有 requested 的回执是噪音；ticket 不匹配的旧回执不清新请求。
-    if (stop.state !== 'requested') return { stop, changed: false };
+    const incoming = event.type === 'cancel.confirmed' ? 'confirmed' : 'unconfirmed';
+    // 同状态重复回执幂等；confirmed 后迟到的 unconfirmed 拒收（终态不回退）。
+    // ⭐ V4 修正（P 第二轮）：允许 unconfirmed → confirmed（ticket 匹配）升级 ——
+    // 重连补发的"确认真成功"必须能把超时/拒绝的临时态拨回已停止。
+    if (stop.state === incoming) return { stop, changed: false };
+    const allowed = stop.state === 'requested' || (stop.state === 'unconfirmed' && incoming === 'confirmed');
+    if (!allowed) return { stop, changed: false };
     if (
       event.payload.stopTicketId !== undefined &&
       stop.stopTicketId !== undefined &&
@@ -352,9 +357,12 @@ function foldDelivery(
         lastObservedAt: event.receivedAt,
       },
     };
+    // ⭐ V4 修正（P 第二轮）：settled 之后同 run 后到的第二个 operation 登记 ⇒ phase 必须
+    // 拨回 pending —— 新作业未结算期间整轮仍在交付中（否则被当成已交付）。
+    // outcome 保留最后值，待全部结算时重算。
     return {
       delivery: {
-        phase: delivery.phase === 'none' ? 'pending' : delivery.phase,
+        phase: 'pending',
         operations,
         ...(delivery.outcome !== undefined ? { outcome: delivery.outcome } : {}),
       },

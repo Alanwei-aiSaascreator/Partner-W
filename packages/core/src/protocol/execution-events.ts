@@ -118,6 +118,8 @@ export type ExecutionEvent = ExecutionEventBase &
         type: 'delivery.settled';
         payload: { operationId: string; outcome: 'complete' | 'failed' | 'unconfirmed' };
       }
+    // ── V4 · 证据缺口（由执行历史 writer 合成；映射器不产生）──
+    | { type: 'evidence.gap'; payload: { reason: string; dropped?: number } }
   );
 
 export type ExecutionEventType = ExecutionEvent['type'];

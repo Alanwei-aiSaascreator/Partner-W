@@ -68,6 +68,19 @@ export type {
   ExecutionStepState,
   ExecutionModelPhase,
 } from './stores/execution-projection.js';
+// V4（2026-10-13 step 5）：执行历史的事件选择 + 预算常量（main 侧 writer 共用同一常量）。
+export {
+  selectHistoryEvents,
+  executionEventPriority,
+  EXECUTION_HISTORY_ENTRY_BUDGET_BYTES,
+  EXECUTION_HISTORY_SUMMARY_LIMIT,
+  EXECUTION_HISTORY_RUN_BUDGET_BYTES,
+  EXECUTION_HISTORY_QUEUE_LIMIT_ENTRIES,
+  EXECUTION_HISTORY_QUEUE_BUDGET_BYTES,
+  EXECUTION_HISTORY_DIR_BUDGET_BYTES,
+  EXECUTION_HISTORY_RETENTION_DAYS,
+} from './stores/execution-history.js';
+export type { HistorySelection, SelectHistoryOptions, ExecutionHistoryPriority } from './stores/execution-history.js';
 
 export {
   createMessageStore,
