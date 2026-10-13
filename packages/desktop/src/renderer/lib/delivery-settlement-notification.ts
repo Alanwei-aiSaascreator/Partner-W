@@ -19,11 +19,12 @@
  * ## 历史恢复静默（旁路三半 / 第二轮 R2-8 收口）
  *
  * 恢复应用（hydrate）会往投影里安装**旧**终态。三层判据保证不误报：
- *  - `execution-hydration-registry`：恢复接线在**确实应用了旧证据**（接受数>0）时打标；
- *    本 hook **一次性消费**该标记 —— 只抑制"历史应用直接产生的那次状态变化"，
- *    并把当时的定格终态按已通知入册（幂等键）。**不做永久 run 黑名单**：运行中 run
- *    打开历史后，后续真实 live 完成仍按资格通知一次；历史已 complete 后重复 live
- *    终态由幂等键挡住、不重报；
+ *  - `execution-hydration-registry`：恢复接线在**确实应用了旧证据**（接受数>0）时打标，
+ *    标记**绑定当时被恢复的投影对象引用**（⭐ 第三轮 I-3：不再是一次性裸 run 集合）。
+ *    本 hook 仅当**当前投影仍 === 该历史版本引用**时才按历史处理：不发通知、把该历史
+ *    定格终态按已通知入册（幂等键）；引用不一致（live 已推进，含恢复与真实完成同批到达）
+ *    ⇒ 照常走 live 评估。**不做永久 run 黑名单**：运行中 run 打开历史后，后续真实 live
+ *    完成仍按资格通知一次；历史已 complete 后重复 live 终态由幂等键挡住、不重报；
  *  - **现场目击**（first-sight）：本 hook 只为"封口之前亲眼见过"的 run 发通知 ——
  *    挂载时就已经是封口态的 run 一律按历史处理。
  *
@@ -42,7 +43,7 @@ import { deliveryRequirementsOf, evaluateRunCompletion } from '@clawwork/core';
 import { parseTaskIdFromSessionKey } from '@clawwork/shared';
 import { useMessageStore } from '../stores/messageStore';
 import { useTaskStore } from '../stores/taskStore';
-import { consumeRunHydrated } from './execution-hydration-registry';
+import { getRunHydratedSnapshot } from './execution-hydration-registry';
 import { getTurnRegistration, getTurnRegistrationVersion, subscribeTurnRegistration } from './turn-registration';
 
 export type SettlementNotificationKind = 'complete' | 'partial';
@@ -116,10 +117,16 @@ export function useDeliverySettlementNotification(): void {
       const sealed = isRunSealed({ modelPhase: projection.modelPhase, turnOpen: Boolean(activeTurns[sessionKey]) });
       // 现场目击登记：一旦在未封口状态见过就永久为 true；从未见过（挂载即封口）保持 false。
       witnessed.current.set(runKey, witnessed.current.get(runKey) === true || !sealed);
-      // ⭐ 第二轮（R2-8）：一次性消费恢复标记 —— 只抑制"历史应用直接产生的这次状态变化"，
-      //    并把当时的定格终态按已通知入册；不做永久 run 黑名单（后续 live 完成照常评估）。
-      if (consumeRunHydrated(sessionKey, runId)) {
-        const historicalKind = historicalSettledNotificationKind({ projection, sealed });
+      // ⭐ 第三轮（I-3）：恢复静默**绑定被恢复的投影版本** —— 仅当当前投影仍是登记时的
+      //    那个历史对象引用（`getRunHydratedSnapshot` 的不可变引用比较）才按历史处理：
+      //    不发通知、把该历史定格终态按已通知入册。引用不一致（live 已推进，例如恢复与
+      //    真实完成落在同一 React 批次）⇒ 不当历史，照常走 live 评估（复审反例的修复点）。
+      const hydration = getRunHydratedSnapshot(sessionKey, runId);
+      if (hydration && hydration.projection === projection) {
+        const historicalKind = historicalSettledNotificationKind({
+          projection,
+          sealed: isRunSealed({ modelPhase: projection.modelPhase, turnOpen: hydration.turnOpen }),
+        });
         if (historicalKind) notified.current.add(`${sessionKey}|${runId}|${historicalKind}`);
         continue;
       }

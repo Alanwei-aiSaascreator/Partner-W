@@ -238,6 +238,52 @@ describe('useExecutionEventsSubscription · IPC 在途来源校验', () => {
     expect(messageScope.apply, 'flush 恰一次（不得重复折入）').toHaveBeenCalledTimes(1);
   });
 
+  it('⭐ I-1（复审实跑反例）：活动帧 record 填出的相等 owner 不得越过权威屏障 —— started 暂存期 phase/settled 不提前折入，就绪后按序一次折入', () => {
+    act(() => root.render(<Host />));
+    const started = { type: 'delivery.started', payload: { operationId: 'op-a' } };
+    const phase = { type: 'delivery.phase', payload: { operationId: 'op-a', phase: 'validating' } };
+    const settled = { type: 'delivery.settled', payload: { operationId: 'op-a', outcome: 'complete' } };
+    // 真实生产顺序：execution started → activity begin（record）→ phase/settled。
+    act(() => {
+      captured?.({ sessionKey: 'sk-1', events: [started], workspaceScope: 'ws-A', workspaceRevision: 3 });
+    });
+    act(() => {
+      useDeliveryActivityStore.getState().record(
+        {
+          operationId: 'act-a',
+          workspaceScope: 'ws-A',
+          workspaceRevision: 3,
+          sequence: 1,
+          status: 'active',
+          startedAt: 1,
+          updatedAt: 1,
+        } as never,
+        0,
+      );
+    });
+    // record 把 owner 填成了 ws-A/3（看似匹配），但权威屏障未就绪。
+    expect(useDeliveryActivityStore.getState().owner).toEqual({ scope: 'ws-A', revision: 3 });
+    expect(useDeliveryActivityStore.getState().ownerReady).toBe(false);
+    act(() => {
+      captured?.({ sessionKey: 'sk-1', events: [phase], workspaceScope: 'ws-A', workspaceRevision: 3 });
+      captured?.({ sessionKey: 'sk-1', events: [settled], workspaceScope: 'ws-A', workspaceRevision: 3 });
+    });
+    expect(
+      messageScope.apply,
+      '未经权威屏障 ⇒ 三条全部暂存、零 apply（提前折入会被 reducer 丢弃终态）',
+    ).toHaveBeenCalledTimes(0);
+    // 权威快照就绪 ⇒ 按到达顺序一次折入。
+    act(() => {
+      useDeliveryActivityStore.getState().setOwner({ scope: 'ws-A', revision: 3 }, 0);
+    });
+    expect(messageScope.apply).toHaveBeenCalledTimes(3);
+    expect(messageScope.apply.mock.calls.map((call) => (call[1] as Array<{ type: string }>)[0]?.type)).toEqual([
+      'delivery.started',
+      'delivery.phase',
+      'delivery.settled',
+    ]);
+  });
+
   it('⭐ 第二轮（R2-4）：快照为空/失败（ownerReady 永不置位）⇒ 暂存不折入（fail-closed），不猜 owner', () => {
     act(() => root.render(<Host />));
     const frame = { type: 'delivery.started', payload: { operationId: 'op-lost' } };

@@ -61,28 +61,33 @@ function Harness(): ReactElement | null {
   return null;
 }
 
-/** 装一条执行投影 + 轮次开关（模块级 store：用例间由 beforeEach 复位）。 */
-function setRuntime(input: {
+/** 装一条执行投影 + 轮次开关（raw：不开 act，供合批用例包进同一个 act）。 */
+function setRuntimeRaw(input: {
   runId?: string;
   modelPhase?: 'active' | 'ended' | 'failed';
   turnOpen?: boolean;
   operations?: Record<string, { outcome?: 'complete' | 'partial' | 'failed' | 'unconfirmed' }>;
 }): void {
-  act(() => {
-    useMessageStore.setState({
-      executionBySession: {
-        [session]: {
-          runId: input.runId ?? 'run-1',
-          modelPhase: input.modelPhase ?? 'active',
-          steps: {},
-          approvals: {},
-          stop: { state: 'none', lastObservedAt: -1 },
-          delivery: { phase: 'pending', operations: input.operations ?? {} },
-          lastSeq: 3,
-        },
+  useMessageStore.setState({
+    executionBySession: {
+      [session]: {
+        runId: input.runId ?? 'run-1',
+        modelPhase: input.modelPhase ?? 'active',
+        steps: {},
+        approvals: {},
+        stop: { state: 'none', lastObservedAt: -1 },
+        delivery: { phase: 'pending', operations: input.operations ?? {} },
+        lastSeq: 3,
       },
-      activeTurnBySession: input.turnOpen === false ? {} : { [session]: { runId: input.runId ?? 'run-1' } },
-    } as never);
+    },
+    activeTurnBySession: input.turnOpen === false ? {} : { [session]: { runId: input.runId ?? 'run-1' } },
+  } as never);
+}
+
+/** 装一条执行投影 + 轮次开关（模块级 store：用例间由 beforeEach 复位）。 */
+function setRuntime(input: Parameters<typeof setRuntimeRaw>[0]): void {
+  act(() => {
+    setRuntimeRaw(input);
   });
 }
 
@@ -234,7 +239,7 @@ describe('统一完成资格通知（封口后判定）', () => {
     expect(sendNotification, '失败轮不得发"任务完成"').not.toHaveBeenCalled();
   });
 
-  it('⭐ 旁路三：挂载即封口（历史注入）⇒ 静默；hydrate 标记 ⇒ 静默且定格终态入册', async () => {
+  it('⭐ 旁路三/I-3：历史恢复（投影+标记同批、标记绑该版本）⇒ 静默且定格终态入册；重复 live 终态不重报', async () => {
     // 历史注入：hook 只知道这条 run 已封口（从未在未封口状态出现过）。
     setRuntime({
       runId: 'old-1',
@@ -245,19 +250,21 @@ describe('统一完成资格通知（封口后判定）', () => {
     await flush();
     expect(sendNotification, '历史注入（挂载即封口）⇒ 不发').not.toHaveBeenCalled();
 
-    // 现场目击过、但被标记为 hydrate（本地恢复应用）⇒ 静默；随后重复 live 终态不重报。
+    // 现场目击过该 run（未封口），随后恢复应用落定 complete —— 真实恢复接线顺序：
+    // **先 apply、后 mark**（标记因此绑定"被恢复的那个投影版本"）。
     setRuntime({ runId: 'run-3', turnOpen: true, operations: { 'gw|op-1': {} } });
     await flush();
-    markRunHydrated(session, 'run-3');
     setRuntime({
       runId: 'run-3',
       modelPhase: 'ended',
       turnOpen: false,
       operations: { 'gw|op-1': { outcome: 'complete' } },
     });
+    markRunHydrated(session, 'run-3');
     await flush();
-    expect(sendNotification, 'hydrate 标记 ⇒ 不发').not.toHaveBeenCalled();
-    // 重复 live 终态（幂等重放）⇒ 定格终态已在恢复时入册 ⇒ 不重报。
+    expect(sendNotification, '历史版本（引用相等）⇒ 不发、定格终态按已通知入册').not.toHaveBeenCalled();
+    // 重复 live 终态（等价新对象）+ 回执 ⇒ 幂等键已入册 ⇒ 不重报。
+    register('run-3');
     setRuntime({
       runId: 'run-3',
       modelPhase: 'ended',
@@ -272,9 +279,9 @@ describe('统一完成资格通知（封口后判定）', () => {
     // 现场目击运行中的 run-4（未封口）。
     setRuntime({ runId: 'run-4', modelPhase: 'active', turnOpen: true, operations: { 'gw|op-1': {} } });
     await flush();
-    // 打开历史：恢复应用（中间态：模型还在跑）——一次性消费，不入册（未定格）。
-    markRunHydrated(session, 'run-4');
+    // 打开历史：恢复应用（中间态：模型还在跑）——apply 后 mark：绑中间态版本（未定格，不入册）。
     setRuntime({ runId: 'run-4', modelPhase: 'active', turnOpen: true, operations: { 'gw|op-1': {} } });
+    markRunHydrated(session, 'run-4');
     await flush();
     expect(sendNotification, '恢复应用本身不得发现场通知').not.toHaveBeenCalled();
     // 后续真实 live 完成：登记回执 + 结算到达 ⇒ 必须仍能通知一次。
@@ -287,6 +294,34 @@ describe('统一完成资格通知（封口后判定）', () => {
     });
     await flush();
     expect(sendNotification, 'live 完成仍按资格通知一次（永久 run 黑名单是缺陷）').toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ I-3 反例（复审实跑）：恢复中间态与真实 live 完成落在同一 React 批次 ⇒ live 完成必须通知一次', async () => {
+    setRuntime({ runId: 'run-5', modelPhase: 'active', turnOpen: true, operations: { 'gw|op-1': {} } });
+    await flush();
+    // 同一 act：恢复应用（中间态）→ mark 绑该版本 → 同批真实 live 完成 + 回执到达。
+    act(() => {
+      setRuntimeRaw({ runId: 'run-5', modelPhase: 'active', turnOpen: true, operations: { 'gw|op-1': {} } });
+      markRunHydrated(session, 'run-5');
+      noteTurnRegistration({
+        taskId: 'task-1',
+        sessionKey: session,
+        runId: 'run-5',
+        status: 'registered',
+        expectedKinds: [],
+      });
+      setRuntimeRaw({
+        runId: 'run-5',
+        modelPhase: 'ended',
+        turnOpen: false,
+        operations: { 'gw|op-1': { outcome: 'complete' } },
+      });
+    });
+    await flush();
+    expect(sendNotification, '同批 live 完成不得被历史静默误吞（旧一次性 Set 误入册 ⇒ 0）').toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'notifications.taskComplete', taskId: 'task-1' }),
+    );
   });
 
   it('聚焦且正在看这个任务 ⇒ 不打扰（封口完成也不发）', async () => {

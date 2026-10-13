@@ -92,11 +92,16 @@ const OWNER_INIT_STAGE_LIMIT = 64;
  * 边界（沿用主进程出口的文件头口径）：渲染层缺席/关闭时事件丢失是已知边界——
  * 投影终态不依赖单帧到达（终态不回退 + 结算事件各自幂等），这里**不重放、不补造**。
  *
- * ⭐ 第二轮（R2-4）· owner 初始化屏障前的有界暂存：
+ * ⭐ 第二轮（R2-4）· owner 初始化屏障前的有界暂存；⭐ 第三轮（I-1/I-2，2026-10-14）收口：
  *  - delivery-activity store 的权威 owner 由 scope-changed 事件/活动快照异步建立；
  *    在此之前（初始哨兵 `{scope:null,revision:-1}`），合法的当前代帧会被来源校验
  *    整条拒掉且 main 无 journal 可补。凡在**权威 owner 就绪前**到达的帧，进入
  *    本 epoch 实例的**有界暂存**（≤64 帧，溢出如实告警丢弃）；
+ *  - **ownerReady 判定必须在任何 apply 之前**（I-1）：活动帧的 `record` 会填 owner 但
+ *    不置 ownerReady —— "看似匹配"的 owner 不得越过权威屏障（否则 started 暂存、
+ *    phase/settled 提前折入被 reducer 丢弃 ⇒ 结算永久 pending）；
+ *  - **登记回执走同一个有界队列**（I-2）：owner 前到达的合法回执不再直接丢弃，
+ *    与执行帧同一屏障、同一到达顺序折入；
  *  - 权威 owner 就绪（`ownerReady`）后，按**原始 scope/revision** 逐条过滤、按接收
  *    顺序折入（不匹配 ⇒ 丢弃；每条至多折一次）；
  *  - **不把第一帧当权威 owner**（暂存帧自带的 scope 永远不被采纳为 owner）；
@@ -104,7 +109,7 @@ const OWNER_INIT_STAGE_LIMIT = 64;
  *    不折入（fail-closed），只是如实丢弃。
  *
  * ⭐ 第二轮（R5 P1）：同通道接收 main 的**轮次登记回执**（turn-registration）——
- * 完成资格不再由"投影里恰好没有 operation"反推；本 hook 只做归属校验与落表。
+ * 完成资格不再由"投影里恰好没有 operation"反推；本 hook 做归属校验与落表。
  */
 export function useExecutionEventsSubscription(): void {
   const epoch = useTaskStore((state) => state.workspaceEpoch);
@@ -114,30 +119,69 @@ export function useExecutionEventsSubscription(): void {
       const owner = useDeliveryActivityStore.getState().owner;
       return owner.scope === scope && owner.revision === revision;
     };
-    const applyFrame = (payload: {
+    type ExecutionFrame = {
+      kind: 'executions';
       sessionKey: string;
       events: ExecutionEvent[];
-      workspaceScope: string | null;
+      workspaceScope: string;
       workspaceRevision: number;
-    }): boolean => {
-      if (!payload.workspaceScope || !ownerMatches(payload.workspaceScope, payload.workspaceRevision)) return false;
-      if (!payload.sessionKey || !Array.isArray(payload.events) || payload.events.length === 0) return true;
-      useMessageStore.getState().applyExecutionEvents(payload.sessionKey, payload.events);
-      return true;
     };
-    // 本 epoch 实例的初始化屏障暂存（卸载即销毁；溢出如实丢弃）。
-    let stage: Array<{
+    type RegistrationFrame = {
+      kind: 'registration';
+      taskId: string;
       sessionKey: string;
-      events: ExecutionEvent[];
-      workspaceScope: string | null;
+      runId: string;
+      status: 'registered' | 'needs-review' | 'none-expected';
+      expectedKinds: string[];
+      workspaceScope: string;
       workspaceRevision: number;
-    }> = [];
+    };
+    type StagedFrame = ExecutionFrame | RegistrationFrame;
+    const applyStaged = (frame: StagedFrame): void => {
+      if (!ownerMatches(frame.workspaceScope, frame.workspaceRevision)) return; // 原 scope/revision 过滤（不匹配即丢）
+      if (frame.kind === 'executions') {
+        useMessageStore.getState().applyExecutionEvents(frame.sessionKey, frame.events);
+        return;
+      }
+      noteTurnRegistration({
+        taskId: frame.taskId,
+        sessionKey: frame.sessionKey,
+        runId: frame.runId,
+        status: frame.status,
+        expectedKinds: frame.expectedKinds,
+      });
+    };
+    // 本 epoch 实例的初始化屏障暂存（卸载即销毁；溢出如实丢弃）。执行帧与登记回执
+    // 走**同一个**有界队列，保持接收顺序（I-1/I-2）。
+    let stage: StagedFrame[] = [];
     let overflowed = 0;
+    const stageOrApply = (frame: StagedFrame): void => {
+      // ⭐ 第三轮收尾（I-1，2026-10-14）：**ownerReady 判定必须在任何 apply 之前** ——
+      //    活动帧的 `record` 会填 owner（但不置 ownerReady），"看似匹配"的 owner 不得
+      //    越过权威屏障：否则 delivery.started 还在暂存，delivery.phase/settled 已按
+      //    record 出来的 owner 提前折入，reducer 对**尚未登记**的 operation 直接丢弃，
+      //    权威快照到达后只补 started ⇒ 终态永久 pending、结算丢失。
+      if (useDeliveryActivityStore.getState().ownerReady) {
+        applyStaged(frame);
+        return;
+      }
+      if (stage.length >= OWNER_INIT_STAGE_LIMIT) {
+        overflowed += 1;
+        if (overflowed === 1 || overflowed % 16 === 0) {
+          console.warn(
+            `[execution-events] owner-before-init stage overflow, dropping frame(s) (overflowed=${overflowed})`,
+          );
+        }
+        return;
+      }
+      stage.push(frame);
+    };
     const flushStage = (): void => {
       if (stage.length === 0) return;
       if (!useDeliveryActivityStore.getState().ownerReady) return;
-      for (const frame of stage) applyFrame(frame);
+      const pending = stage;
       stage = [];
+      for (const frame of pending) applyStaged(frame); // 严格到达顺序、恰一次
     };
     const unsubscribeStore = useDeliveryActivityStore.subscribe(() => {
       if (!ownsEpoch()) return;
@@ -150,34 +194,31 @@ export function useExecutionEventsSubscription(): void {
       //    通过后发出、到达前用户换区"的在途帧在此被拒；无 scope 帧一律拒
       //    （fail-closed）——不从当前 workspace 补 owner。
       if (!payload.workspaceScope || !Array.isArray(payload.events) || payload.events.length === 0) return;
-      if (applyFrame(payload)) return;
-      // R2-4：权威 owner 未就绪 ⇒ 初始化屏障内有界暂存；已就绪而不同代 ⇒ 在途旧帧，拒。
-      if (useDeliveryActivityStore.getState().ownerReady) return;
-      if (stage.length >= OWNER_INIT_STAGE_LIMIT) {
-        overflowed += 1;
-        if (overflowed === 1 || overflowed % 16 === 0) {
-          console.warn(
-            `[execution-events] owner-before-init stage overflow, dropping frame(s) (overflowed=${overflowed})`,
-          );
-        }
-        return;
-      }
-      stage.push(payload);
+      stageOrApply({
+        kind: 'executions',
+        sessionKey: payload.sessionKey,
+        events: payload.events,
+        workspaceScope: payload.workspaceScope,
+        workspaceRevision: payload.workspaceRevision,
+      });
     });
     const unsubscribeRegistration = window.clawwork.onTurnRegistration?.((payload) => {
       if (!ownsEpoch()) return;
-      // 登记回执与执行事件同款归属纪律：无 scope / 不同代 ⇒ 拒（回执按 session|run 落表，
-      // 不补 owner、不暂存——初始化窗口后的首轮远晚于快照，丢失只是 fail-closed 不通知）。
-      if (!payload?.workspaceScope || !ownerMatches(payload.workspaceScope, payload.workspaceRevision)) return;
-      if (!payload.sessionKey || !payload.runId) return;
+      // 登记回执与执行事件同款归属纪律（I-2：**同一初始化屏障/队列**，不在 owner 前
+      // 直接丢弃）：无 scope / 无归属 / 未知 status 一律拒；合法回执进同一有界队列，
+      // 权威 owner 就绪后按原 scope/revision、按接收顺序折入。
+      if (!payload?.workspaceScope || !payload.sessionKey || !payload.runId) return;
       if (payload.status !== 'registered' && payload.status !== 'needs-review' && payload.status !== 'none-expected')
         return;
-      noteTurnRegistration({
+      stageOrApply({
+        kind: 'registration',
         taskId: payload.taskId,
         sessionKey: payload.sessionKey,
         runId: payload.runId,
         status: payload.status,
         expectedKinds: Array.isArray(payload.expectedKinds) ? payload.expectedKinds : [],
+        workspaceScope: payload.workspaceScope,
+        workspaceRevision: payload.workspaceRevision,
       });
     });
     return () => {
