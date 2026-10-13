@@ -263,6 +263,48 @@ function mapAgentItemFrame(
   return [event];
 }
 
+function mapAgentApprovalFrame(
+  context: ExecutionMapContext,
+  frame: GatewayEvent,
+  payload: Record<string, unknown>,
+): ExecutionEvent[] {
+  const data = readRecord(payload.data);
+  if (!data) return [];
+  const phase = typeof data.phase === 'string' ? data.phase : undefined;
+  const approvalId = typeof data.approvalId === 'string' ? data.approvalId : undefined;
+  if (!approvalId) return [];
+  const toolCallId = typeof data.toolCallId === 'string' ? data.toolCallId : undefined;
+  const base = makeBase(context, frame, payload, 0);
+  if (toolCallId !== undefined) base.stepId = toolCallId;
+
+  if (phase === 'requested') {
+    const event: ExecutionEvent = {
+      ...base,
+      type: 'approval.requested',
+      payload: {
+        approvalId,
+        ...(toolCallId !== undefined ? { toolCallId } : {}),
+        ...(typeof data.kind === 'string' ? { name: data.kind } : {}),
+        status: typeof data.status === 'string' ? data.status : '(missing)',
+      },
+    };
+    return [event];
+  }
+  if (phase === 'resolved') {
+    const event: ExecutionEvent = {
+      ...base,
+      type: 'approval.resolved',
+      payload: {
+        approvalId,
+        ...(toolCallId !== undefined ? { toolCallId } : {}),
+        decision: typeof data.status === 'string' ? data.status : '(missing)',
+      },
+    };
+    return [event];
+  }
+  return []; // 其余相位由原 handler 的护栏负责（不在这里重复记日志）
+}
+
 function mapAgentLifecycleFrame(
   context: ExecutionMapContext,
   frame: GatewayEvent,
@@ -296,7 +338,10 @@ export function mapNativeToExecution(frame: GatewayEvent, context: ExecutionMapC
       return mapAgentItemFrame(context, frame, payload);
     case 'lifecycle':
       return mapAgentLifecycleFrame(context, frame, payload);
+    // V3：审批流（approvalId 独立归并；原 handler 仍负责工具卡状态与遥测护栏）。
+    case 'approval':
+      return mapAgentApprovalFrame(context, frame, payload);
     default:
-      return []; // thinking/text/approval/error/assistant/compaction/run_status…：原路径处理
+      return []; // thinking/text/error/assistant/compaction/run_status…：原路径处理
   }
 }

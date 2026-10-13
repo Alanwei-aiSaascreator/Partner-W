@@ -192,7 +192,16 @@ describe('T2 · result(isError:false) 先于 approval/pending —— 不许提�
     h.emit(approvalRequestedFrame());
     expect(h.onApprovalResolved).not.toHaveBeenCalled();
     h.emit(approvalResolvedFrame('ap-1'));
-    expect(h.onApprovalResolved).toHaveBeenCalledExactlyOnceWith('ap-1');
+    // 【V3 白名单】resolved 回调从"只给 id"扩为类型化结论（gateway/decision/源 request）——
+    // 渲染层按 gatewayId+id 索引审批。
+    expect(h.onApprovalResolved).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        id: 'ap-1',
+        gatewayId: FIXTURE.gatewayId,
+        decision: 'allow-once',
+        request: expect.objectContaining({ toolCallId: 'tc-exec-1', runId: FIXTURE.parentRunId }),
+      }),
+    );
     let call = h.calls().find((c) => c.id === 'tc-exec-1')!;
     expect(call.status, 'allow ≠ 开始执行；resolved 回调不推进 tool 状态').toBe('awaitingApproval');
     // 允许后仍可能被中止（evidence: bash-tools:327-338 run-aborted），以真实结果帧收场：

@@ -552,6 +552,49 @@ describe('进行中反馈的四个相位（§7/§12）', () => {
    * 活动条说「调用处理中」（复用 declaredTool 键），**不说"执行中"**；data-status 标
    * `dispatched-tool`；真实执行证据（running）到达后升级。
    */
+  /**
+   * V3（2026-10-13 step 3）：另有活跃工具时**不能说整轮都在等批准** ——
+   * 等待批准 + 并行步骤 ⇒ 并行文案如实报活跃数量（新键 awaitingApprovalParallel）。
+   */
+  it('⭐ V3：等待批准 + 另有活跃步骤 ⇒ 并行文案（不是"整轮都在等批准"）', async () => {
+    const { store } = await mountLive();
+
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_wait',
+        name: 'bash',
+        status: 'awaitingApproval',
+        title: 'bash npm publish',
+        startedAt: new Date(T0).toISOString(),
+      });
+      store.upsertToolCall(SK, TID, {
+        id: 'call_active',
+        name: 'read_file',
+        status: 'dispatched',
+        title: 'read_file 报告.docx',
+        startedAt: new Date(T0).toISOString(),
+      });
+    });
+
+    expect(q('composer-activity')?.getAttribute('data-status')).toBe('awaiting-approval');
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.awaitingApprovalParallel');
+    expect(q('composer-activity')?.textContent).toContain('npm publish');
+
+    // 活跃步骤收掉后 ⇒ 回到单数"等待批准"文案（不残留并行说法）
+    act(() => {
+      store.upsertToolCall(SK, TID, {
+        id: 'call_active',
+        name: 'read_file',
+        status: 'done',
+        title: 'read_file 报告.docx',
+        startedAt: new Date(T0).toISOString(),
+        completedAt: new Date(T0 + 1000).toISOString(),
+      });
+    });
+    expect(q('composer-activity')?.textContent).toContain('chatInput.waiting.awaitingApproval(');
+    expect(q('composer-activity')?.textContent).not.toContain('chatInput.waiting.awaitingApprovalParallel');
+  });
+
   it('⭐ V2：进入处理（dispatched）⇒ "调用处理中"；running 到达后升级"执行中"', async () => {
     const { store } = await mountLive();
 
@@ -668,8 +711,10 @@ describe('模型自述进度', () => {
       ⚠️ 区1 体检 P3-8：POSIX 绝对路径现在与 Windows 盘符路径**同一套遮蔽**（`/tmp/x` → `x`）——
       活动条只是"此刻在干什么"的环境提示，本地目录结构不上屏；
       真正要用户做决定的那个面是 `ApprovalDialog`（它显示 `request.command` 原文）。
+      【V3 白名单】另有活跃工具（running）时走并行文案 `awaitingApprovalParallel` ——
+      优先级不变（等待批准仍排最前），只是**不说"整轮都在等批准"**（05 §4 状态归约）。
     */
-    expect(text).toContain('chatInput.waiting.awaitingApproval(rm -rf x)');
+    expect(text).toContain('chatInput.waiting.awaitingApprovalParallel(rm -rf x)');
     expect(text, '被"执行中"抢了头条就等于没说').not.toContain('chatInput.waiting.runningTool');
   });
 });

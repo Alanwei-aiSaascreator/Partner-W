@@ -176,7 +176,17 @@ export function useTurnActivity(sessionKey: string | null, fallbackSessionKeys?:
   if (awaitingCall) {
     // ⚠️ **不复用 `runningTool`**："执行中：X" 说的是"在动"，而这条要说的是"没动，在等人"
     //    —— 复用就等于什么都没说（A2 的口径就是不让复用）。
-    headline = t('chatInput.waiting.awaitingApproval', { what: activityLabel(awaitingCall) });
+    // V3（2026-10-13 step 3）：另有活跃步骤（running/dispatched）时**不能说整轮都在等批准**
+    //    —— 用并行文案如实报活跃数量（新键 `chatInput.waiting.awaitingApprovalParallel`，
+    //    由 I 汇总九语言）。
+    const otherActiveCount = calls.filter((call) => call.status === 'running' || call.status === 'dispatched').length;
+    headline =
+      otherActiveCount > 0
+        ? t('chatInput.waiting.awaitingApprovalParallel', {
+            what: activityLabel(awaitingCall),
+            count: otherActiveCount,
+          })
+        : t('chatInput.waiting.awaitingApproval', { what: activityLabel(awaitingCall) });
   } else if (awaitingAnswer) {
     // ⭐ P1-3：提问挂起时**模型在等用户**，工具的"在跑"根本不是此刻的实情
     //    （用户在 `QuestionPanel` 里答完，这一轮才会继续）⇒ 排在 `runningTool` 前面。

@@ -167,6 +167,33 @@ describe('V2 · mapNativeToExecution —— 事件身份与派生', () => {
     expect(mapNativeToExecution(frame('error'), ctx())[0].type).toBe('model.failed');
   });
 
+  it('⭐ V3 · approval 流：requested/resolved 映射审批事件族（approvalId 独立）', () => {
+    const approvalFrame = (phase: string, approvalId: string, status?: string): GatewayEvent =>
+      ({
+        event: 'agent',
+        gatewayId: 'gw-1',
+        payload: {
+          sessionKey: 'agent:main:clawwork:task:task-1',
+          runId: 'run-a',
+          stream: 'approval',
+          data: { phase, kind: 'exec', status, toolCallId: 'tc-exec-1', approvalId },
+        },
+      }) as GatewayEvent;
+
+    const [requested] = mapNativeToExecution(approvalFrame('requested', 'ap-1', 'pending'), ctx());
+    expect(requested.type).toBe('approval.requested');
+    if (requested.type === 'approval.requested') {
+      expect(requested.payload).toMatchObject({ approvalId: 'ap-1', toolCallId: 'tc-exec-1', status: 'pending' });
+    }
+    expect(requested.stepId).toBe('tc-exec-1');
+
+    const [resolved] = mapNativeToExecution(approvalFrame('resolved', 'ap-1', 'denied'), ctx());
+    expect(resolved.type).toBe('approval.resolved');
+    if (resolved.type === 'approval.resolved') {
+      expect(resolved.payload).toMatchObject({ approvalId: 'ap-1', decision: 'denied' });
+    }
+  });
+
   it('⭐ 子会话帧携带自己的 nativeSessionKey/nativeRunId（不被父回合身份覆盖）', () => {
     const child = {
       event: 'agent',

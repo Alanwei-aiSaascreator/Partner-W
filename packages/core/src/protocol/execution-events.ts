@@ -90,6 +90,34 @@ export type ExecutionEvent = ExecutionEventBase &
           completedAtMs?: number;
         };
       }
+    // ── V3 · 审批族（approvalId 独立归并；allow ≠ 开始执行；deny ≠ 全程零修改）──
+    | {
+        type: 'approval.requested';
+        payload: { approvalId: string; toolCallId?: string; name?: string; status: string };
+      }
+    | {
+        type: 'approval.resolved';
+        payload: {
+          approvalId: string;
+          toolCallId?: string;
+          decision: string;
+          resolvedBy?: string;
+          /** RPC 层结论：resolve 调用失败/过期/重复到达都要能说清。 */
+          rpcError?: boolean;
+          expired?: boolean;
+        };
+      }
+    // ── V3 · 取消族（复用既有 stop ticket：requested → confirmed / unconfirmed）──
+    | { type: 'cancel.requested'; payload: { stopTicketId?: string; reason?: string } }
+    | { type: 'cancel.confirmed'; payload: { stopTicketId?: string } }
+    | { type: 'cancel.unconfirmed'; payload: { stopTicketId?: string; reason?: string } }
+    // ── V3 · 交付族（operation 来自可信生成请求登记；settle 由交付证据驱动）──
+    | { type: 'delivery.started'; payload: { operationId: string; kind?: string } }
+    | { type: 'delivery.phase'; payload: { operationId: string; phase: string } }
+    | {
+        type: 'delivery.settled';
+        payload: { operationId: string; outcome: 'complete' | 'failed' | 'unconfirmed' };
+      }
   );
 
 export type ExecutionEventType = ExecutionEvent['type'];

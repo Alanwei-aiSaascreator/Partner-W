@@ -45,6 +45,7 @@ import type {
   RuntimeStatusEvent,
 } from '../ports/gateway-transport.js';
 import { mapNativeToExecution, type ExecutionMapContext } from '../protocol/map-execution-event.js';
+import type { ExecutionChannel, ExecutionEvent } from '../protocol/execution-events.js';
 
 type AgentEventStream = 'lifecycle' | 'tool' | 'assistant' | 'thinking' | 'error' | 'compaction';
 
@@ -273,6 +274,27 @@ interface ErrorCorrelation {
 
 type NotificationSettingKey = 'taskComplete' | 'approvalRequest' | 'gatewayDisconnect';
 
+/**
+ * V3（2026-10-13 step 3）：`exec.approval.resolved` 的类型化结论 ——
+ * 由 dispatcher 从原始帧构造（**不猜**字段），渲染层（I）按 `gatewayId + id` 索引审批。
+ * `rpcError`：resolve RPC 调用本身失败；`expired`：审批已过期 —— 二者都不是"已批准"。
+ */
+export interface ApprovalResolvedConclusion {
+  id: string;
+  gatewayId: string;
+  decision?: string | null;
+  resolvedBy?: string | null;
+  request?: {
+    sessionKey?: string | null;
+    runId?: string | null;
+    toolCallId?: string | null;
+    command?: string | null;
+  } | null;
+  /** 客户端侧的 RPC 结论（由发起方补充；缺省 = 没有本地 RPC 失败信息）。 */
+  rpcError?: boolean;
+  expired?: boolean;
+}
+
 export interface GatewayDispatcherDeps {
   gateway: GatewayTransportPort;
   getSettings: () => Promise<{
@@ -309,6 +331,8 @@ export interface GatewayDispatcherDeps {
     | 'sealTurnActivity'
     // V2：执行投影的写入动作（旁路映射折叠点）。
     | 'applyExecutionEvents'
+    // V3：读取交付投影（chat.final 的"任务完成"通知是否被交付门拦下）。
+    | 'executionBySession'
   >;
 
   getActiveTaskId: () => string | null;
@@ -385,7 +409,13 @@ export interface GatewayDispatcherDeps {
   lookupTaskIdBySubagentKey?: (subagentKey: string) => string | undefined;
   onSubagentCandidate?: (sessionKey: string, gatewayId: string) => void;
   onApprovalRequested?: (gatewayId: string, approval: unknown) => void;
-  onApprovalResolved?: (id: string) => void;
+  /**
+   * V3（2026-10-13 step 3）：resolved 回调从"只给 id"扩为**类型化结论** ——
+   * 携带 gateway、decision 与源 request：审批索引/定时器/移除按 **gateway+id** 匹配
+   * （相同 approvalId 来自不同 gateway 不串）；来自点击请求与远端确认分开；
+   * RPC 失败/过期/重复 resolved 都有可分辨的结论。渲染层（I）据此迁移 removeApproval。
+   */
+  onApprovalResolved?: (conclusion: ApprovalResolvedConclusion) => void;
   /**
    * 网关结构化提问（`ask_user`）。**必须接**：不接的话问题一直 pending，
    * 而网关会把该 session 里用户发的任何消息当成「答案」吞掉（见 question-flow.ts）。
@@ -808,19 +838,24 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
    * store 的执行投影。纯映射 + 纯归约，不改写任何既有写入路径 —— 逐事件族接管是后续步骤
    *（同一路径只允许一个写入者）。
    */
-  function mapAndFoldExecution(sessionKey: string, frame: GatewayEvent, taskId: string, logicalRunId: string): void {
-    const counterKey = sessionKey;
-    if (sessionSeqCounters.size >= SESSION_SEQ_COUNTER_LIMIT && !sessionSeqCounters.has(counterKey)) {
+  /** 分配一帧的事件预算（localFrameId / receivedAt / seq）—— 映射与顶层审批折叠共用。 */
+  function nextFrameBudget(sessionKey: string): { localFrameId: string; receivedAt: number; seq: number } {
+    if (sessionSeqCounters.size >= SESSION_SEQ_COUNTER_LIMIT && !sessionSeqCounters.has(sessionKey)) {
       const oldest = sessionSeqCounters.keys().next().value;
       if (oldest !== undefined) sessionSeqCounters.delete(oldest);
     }
-    const seq = (sessionSeqCounters.get(counterKey) ?? -1) + 1;
-    sessionSeqCounters.set(counterKey, seq);
+    const seq = (sessionSeqCounters.get(sessionKey) ?? -1) + 1;
+    sessionSeqCounters.set(sessionKey, seq);
     localFrameCounter += 1;
+    return { localFrameId: String(localFrameCounter), receivedAt: Date.now(), seq };
+  }
+
+  function mapAndFoldExecution(sessionKey: string, frame: GatewayEvent, taskId: string, logicalRunId: string): void {
+    const budget = nextFrameBudget(sessionKey);
     const context: ExecutionMapContext = {
-      localFrameId: String(localFrameCounter),
-      receivedAt: Date.now(),
-      seq,
+      localFrameId: budget.localFrameId,
+      receivedAt: budget.receivedAt,
+      seq: budget.seq,
       taskId,
       logicalRunId,
       channel: frame.meta?.channel ?? 'unknown',
@@ -832,6 +867,62 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     // ⚠️ 可选调用（与 `bindActiveRun?.` 同纪律）：真实 store 有该动作；测试/旧接线的手写
     // mock store 没有它 —— 旁路映射缺了它只影响投影，不打断任何既有写入路径。
     if (events.length > 0) deps.getMessageStore().applyExecutionEvents?.(sessionKey, events);
+  }
+
+  /**
+   * V3：顶层 `exec.approval.requested/resolved` 事件（无 session 守卫链）—— 从
+   * payload.request 解析归属（sessionKey/runId/toolCallId），归属可解析时折进该会话的
+   * 执行投影；不可解析则只留遥测（cron/陌生 session 不归前台）。
+   */
+  function foldApprovalTopLevel(frame: GatewayEvent, kind: 'requested' | 'resolved'): void {
+    const payload = frame.payload as Record<string, unknown>;
+    const request = payload.request as Record<string, unknown> | null | undefined;
+    const sessionKey = request && typeof request.sessionKey === 'string' ? request.sessionKey : undefined;
+    if (!sessionKey) return;
+    const taskId = resolveTaskId(sessionKey);
+    if (!taskId) return;
+    const logicalRunId = request && typeof request.runId === 'string' ? request.runId : '';
+    const toolCallId = request && typeof request.toolCallId === 'string' ? request.toolCallId : undefined;
+    const approvalId = typeof payload.id === 'string' ? payload.id : undefined;
+    if (!approvalId) return;
+
+    const budget = nextFrameBudget(sessionKey);
+    const base = {
+      schemaVersion: 1 as const,
+      eventId: `${budget.localFrameId}#0`,
+      seq: budget.seq,
+      runId: logicalRunId,
+      taskId,
+      source: {
+        gatewayId: frame.gatewayId,
+        channel: (frame.meta?.channel ?? 'unknown') as ExecutionChannel,
+        ...(frame.meta?.connectionEpoch !== undefined ? { connectionEpoch: frame.meta.connectionEpoch } : {}),
+        nativeSessionKey: sessionKey,
+        ...(logicalRunId !== '' ? { nativeRunId: logicalRunId } : {}),
+        event: frame.event,
+        derivedIndex: 0,
+      },
+      ...(toolCallId !== undefined ? { stepId: toolCallId } : {}),
+      evidence: 'observed' as const,
+      receivedAt: budget.receivedAt,
+    };
+    const event: ExecutionEvent =
+      kind === 'requested'
+        ? {
+            ...base,
+            type: 'approval.requested',
+            payload: { approvalId, ...(toolCallId !== undefined ? { toolCallId } : {}), status: 'pending' },
+          }
+        : {
+            ...base,
+            type: 'approval.resolved',
+            payload: {
+              approvalId,
+              ...(toolCallId !== undefined ? { toolCallId } : {}),
+              decision: typeof payload.decision === 'string' ? payload.decision : '(missing)',
+            },
+          };
+    deps.getMessageStore().applyExecutionEvents?.(sessionKey, [event]);
   }
 
   function acceptsRun(sessionKey: string, runId: string | undefined, start = false): boolean {
@@ -1352,13 +1443,20 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       // 那正是"没采纳的答案自己跑进对话里"的路径。
       if (!ephemeral) {
         autoTitleIfNeeded(taskId, sessionKey, deps.getTaskStore, deps.getMessageStore);
-        if (!deps.isWindowFocused() || deps.getActiveTaskId() !== taskId) {
+        // V3（2026-10-13 step 3 交付门）：chat.final **不再直接**弹"任务完成" ——
+        // 交付投影里有活动作业（delivery.phase === 'pending'）时通知延后，由交付结算
+        // （P 侧 turn-lifecycle/delivery-activity 的完整/部分失败/未确认证据）决定；
+        // 普通聊天（无 operation 登记，phase === 'none'）照旧 —— 不用等文件。
+        const deliveryPending = deps.getMessageStore().executionBySession?.[sessionKey]?.delivery.phase === 'pending';
+        if ((!deps.isWindowFocused() || deps.getActiveTaskId() !== taskId) && !deliveryPending) {
           const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
           maybeNotify('taskComplete', {
             title: deps.translate('notifications.taskComplete'),
             body: task?.title || taskId,
             taskId,
           });
+        } else if (deliveryPending) {
+          debugEvent('renderer.chat.task_complete_deferred', { taskId, sessionKey });
         }
         deps.syncSessionMessages(taskId, sessionKey).catch((err) => {
           debugEvent('renderer.sync.post-final.failed', {
@@ -2636,8 +2734,30 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         handleCanonicalMediaMessage(data.payload, data.gatewayId);
       } else if (data.event === 'exec.approval.requested') {
         deps.onApprovalRequested?.(data.gatewayId, data.payload);
+        foldApprovalTopLevel(data, 'requested');
       } else if (data.event === 'exec.approval.resolved') {
-        deps.onApprovalResolved?.((data.payload as { id: string }).id);
+        foldApprovalTopLevel(data, 'resolved');
+        // V3：类型化结论 —— 渲染层（I）按 gatewayId+id 索引/移除审批；
+        // 来源字段只透传帧里的原值，不猜。
+        const payload = data.payload as Record<string, unknown>;
+        const request = payload.request as Record<string, unknown> | null | undefined;
+        const conclusion: ApprovalResolvedConclusion = {
+          id: typeof payload.id === 'string' ? payload.id : '',
+          gatewayId: data.gatewayId,
+          ...(payload.decision !== undefined ? { decision: String(payload.decision) } : {}),
+          ...(payload.resolvedBy !== undefined ? { resolvedBy: String(payload.resolvedBy) } : {}),
+          ...(request
+            ? {
+                request: {
+                  ...(typeof request.sessionKey === 'string' ? { sessionKey: request.sessionKey } : {}),
+                  ...(typeof request.runId === 'string' ? { runId: request.runId } : {}),
+                  ...(typeof request.toolCallId === 'string' ? { toolCallId: request.toolCallId } : {}),
+                  ...(typeof request.command === 'string' ? { command: request.command } : {}),
+                },
+              }
+            : {}),
+        };
+        deps.onApprovalResolved?.(conclusion);
       } else if (data.event === 'question.requested') {
         deps.onQuestionRequested?.(data.gatewayId, data.payload);
       } else if (data.event === 'question.resolved') {

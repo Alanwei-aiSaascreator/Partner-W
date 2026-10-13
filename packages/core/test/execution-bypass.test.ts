@@ -31,6 +31,8 @@ function createHarness(options: { lookupChildTasks?: boolean } = {}) {
   const reportDebugEvent = vi.fn();
   const onSubagentCandidate = vi.fn();
   const syncSessionMessages = vi.fn(async () => {});
+  const sendNotification = vi.fn(async () => {});
+  const onApprovalResolved = vi.fn();
 
   const deps: GatewayDispatcherDeps = {
     gateway: {
@@ -58,7 +60,7 @@ function createHarness(options: { lookupChildTasks?: boolean } = {}) {
       createSession: async () => ({ ok: true }),
     } as unknown as GatewayDispatcherDeps['gateway'],
     getSettings: async () => null,
-    sendNotification: async () => {},
+    sendNotification,
     getTaskStore: () =>
       ({
         tasks: [FIXTURE_TASK],
@@ -92,6 +94,7 @@ function createHarness(options: { lookupChildTasks?: boolean } = {}) {
     syncSessionMessages,
     retrySyncPending: vi.fn(),
     onSubagentCandidate,
+    onApprovalResolved,
     // 后台合法任务（performer 子会话 ⇒ 已知任务）的归属查询。
     ...(options.lookupChildTasks
       ? {
@@ -120,6 +123,8 @@ function createHarness(options: { lookupChildTasks?: boolean } = {}) {
     onSubagentCandidate,
     reportDebugEvent,
     syncSessionMessages,
+    sendNotification,
+    onApprovalResolved,
   };
 }
 
@@ -276,5 +281,174 @@ describe('V2 · 旁路映射：真实 dispatcher + 真实 store', () => {
     h.primeTurn();
     h.emit(thinkingAccumFrame('思考一'));
     expect(h.projection()?.steps ?? {}).toEqual({});
+  });
+});
+
+/**
+ * V3（2026-10-13 step 3）· 审批/交付门（真实 dispatcher + store 接线，不只纯函数）。
+ */
+describe('V3 · 审批投影接线', () => {
+  const approvalFrame = (phase: string, approvalId: string, status?: string): GatewayEvent =>
+    ({
+      event: 'agent',
+      gatewayId: FIXTURE.gatewayId,
+      payload: {
+        sessionKey: FIXTURE.taskSessionKey,
+        runId: FIXTURE.parentRunId,
+        stream: 'approval',
+        data: { phase, kind: 'exec', status, toolCallId: 'tc-exec-1', approvalId },
+      },
+    }) as GatewayEvent;
+
+  it('⭐ result(held)→requested→deny→abort：审批投影逐帧、allow 不推进步骤、真结果收场', () => {
+    const h = createHarness();
+    h.primeTurn();
+    h.emit(toolStartFrame({ toolCallId: 'tc-exec-1', name: 'bash' }));
+    h.emit(heldResultFrame());
+
+    h.emit(approvalFrame('requested', 'ap-1', 'pending'));
+    expect(Object.values(h.projection()?.approvals ?? {})[0]?.state).toBe('requested');
+    expect(h.calls()[0].status, '等待批准的工具卡（V2 语义保持）').toBe('awaitingApproval');
+
+    h.emit(approvalFrame('resolved', 'ap-1', 'denied'));
+    expect(Object.values(h.projection()?.approvals ?? {})[0]?.state).toBe('denied');
+    // 既有语义：approval 流 denied ⇒ 工具卡落 error（"被拦下 = 没跑成"，
+    // 由 handleAgentApprovalStream 收场）——投影按 approvalId 独立记录终态。
+    expect(h.calls()[0].status, '拒绝后卡片如实收场为 error（既有收场语义）').toBe('error');
+
+    h.emit(
+      toolResultFrame({
+        toolCallId: 'tc-exec-1',
+        name: 'bash',
+        isError: true,
+        result: { content: [{ type: 'text', text: 'aborted' }] },
+      }),
+    );
+    expect(h.calls()[0].status).toBe('error');
+    expect(Object.values(h.projection()?.steps ?? {})[0]?.state, '步骤终态随真结果落 error').toBe('error');
+  });
+
+  it('⭐ 两个审批并行：解决一个不清另一个（投影按 approvalId 独立）', () => {
+    const h = createHarness();
+    h.primeTurn();
+    h.emit(toolStartFrame({ toolCallId: 'tc-exec-1', name: 'bash' }));
+    h.emit(approvalFrame('requested', 'ap-1', 'pending'));
+    h.emit(approvalFrame('requested', 'ap-2', 'pending'));
+    h.emit(approvalFrame('resolved', 'ap-1', 'allow-once'));
+
+    const states = Object.values(h.projection()?.approvals ?? {}).sort((a, b) =>
+      a.approvalId.localeCompare(b.approvalId),
+    );
+    expect(states.map((a) => a.state)).toEqual(['resolved', 'requested']);
+  });
+
+  it('⭐ 顶层 exec.approval.resolved ⇒ 类型化结论（gateway/decision/request）且投影落账', () => {
+    const h = createHarness();
+    h.primeTurn();
+    h.emit({
+      event: 'exec.approval.resolved',
+      gatewayId: FIXTURE.gatewayId,
+      payload: {
+        id: 'ap-9',
+        decision: 'allow-once',
+        resolvedBy: null,
+        ts: Date.parse('2026-10-13T00:00:01.000Z'),
+        request: {
+          command: 'echo hi',
+          sessionKey: FIXTURE.taskSessionKey,
+          runId: FIXTURE.parentRunId,
+          toolCallId: 'tc-exec-1',
+        },
+      },
+    } as GatewayEvent);
+
+    expect(h.onApprovalResolved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'ap-9',
+        gatewayId: FIXTURE.gatewayId,
+        decision: 'allow-once',
+        request: expect.objectContaining({
+          sessionKey: FIXTURE.taskSessionKey,
+          runId: FIXTURE.parentRunId,
+          toolCallId: 'tc-exec-1',
+        }),
+      }),
+    );
+    expect(Object.values(h.projection()?.approvals ?? {})[0]).toMatchObject({
+      approvalId: 'ap-9',
+      state: 'resolved',
+      decision: 'allow-once',
+    });
+  });
+});
+
+describe('V3 · 交付完成门（chat.final 不再直接弹"任务完成"）', () => {
+  const deliveryEvent = (over: Record<string, unknown>): unknown => ({
+    schemaVersion: 1,
+    eventId: over.eventId,
+    seq: over.seq,
+    runId: FIXTURE.parentRunId,
+    taskId: FIXTURE.taskId,
+    source: {
+      gatewayId: FIXTURE.gatewayId,
+      channel: 'local',
+      nativeSessionKey: FIXTURE.taskSessionKey,
+      nativeRunId: FIXTURE.parentRunId,
+      event: 'local',
+      derivedIndex: 0,
+    },
+    evidence: 'observed',
+    receivedAt: over.receivedAt,
+    type: over.type,
+    payload: over.payload,
+  });
+
+  it('⭐ 活动作业未结算 ⇒ chat.final 不弹任务完成；普通聊天照旧', async () => {
+    const h = createHarness();
+    h.primeTurn();
+
+    // P 侧把可信生成请求折进投影（delivery.started）后，chat.final 的通知被交付门拦下
+    h.store
+      .getState()
+      .applyExecutionEvents(FIXTURE.taskSessionKey, [
+        deliveryEvent({
+          eventId: 'f#0',
+          seq: 0,
+          receivedAt: 1,
+          type: 'delivery.started',
+          payload: { operationId: 'op-video', kind: 'video' },
+        }),
+      ] as never);
+
+    h.emit(chatFinalFrame([{ type: 'text', text: '生成中…' }]));
+    expect(h.sendNotification).not.toHaveBeenCalledWith(expect.objectContaining({ body: FIXTURE.taskId }));
+    expect(h.reportDebugEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'renderer.chat.task_complete_deferred' }),
+    );
+
+    // 交付结算（P 侧证据）到达后投影 settled —— 通知由 P 的结算路径发（本包不再发）
+    h.store
+      .getState()
+      .applyExecutionEvents(FIXTURE.taskSessionKey, [
+        deliveryEvent({
+          eventId: 'f#1',
+          seq: 1,
+          receivedAt: 2,
+          type: 'delivery.settled',
+          payload: { operationId: 'op-video', outcome: 'complete' },
+        }),
+      ] as never);
+    expect(h.projection()?.delivery).toMatchObject({ phase: 'settled', outcome: 'complete' });
+  });
+
+  it('⭐ 普通聊天（无 operation 登记）⇒ chat.final 照旧弹任务完成（不用等文件）', async () => {
+    const h = createHarness();
+    h.primeTurn();
+    h.emit(chatFinalFrame([{ type: 'text', text: '答案是 42。' }]));
+    // maybeNotify 经 getSettings().then(...) 异步发通知 ⇒ 等微任务拍完
+    await vi.waitFor(() => expect(h.sendNotification).toHaveBeenCalled());
+    expect(h.sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'notifications.taskComplete', taskId: FIXTURE.taskId }),
+    );
   });
 });

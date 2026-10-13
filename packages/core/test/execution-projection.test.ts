@@ -174,6 +174,252 @@ describe('V2 · reduceExecutionProjection —— 状态归约', () => {
     expect(after.lastSeq, '晚到低 seq 不回拨').toBe(5);
   });
 
+  /**
+   * V3（2026-10-13 step 3）· 审批/取消/交付三个事件族的归约红例（05 §4 状态归约规则）。
+   */
+  describe('V3 · 审批投影', () => {
+    const approvalBase = (over: Partial<ExecutionEvent> = {}): ExecutionEvent =>
+      ({
+        ...base(),
+        type: 'approval.requested',
+        payload: { approvalId: 'ap-1', toolCallId: 'tc-1', name: 'bash', status: 'pending' },
+        ...over,
+      }) as ExecutionEvent;
+
+    it('⭐ result(held)→pending→allow→abort：allow 不推进工具状态，abort 真结果收场', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(
+        p,
+        base({
+          type: 'step.result',
+          payload: { toolCallId: 'tc-1', name: 'bash', isError: false, heldByApproval: true },
+        }),
+      );
+      expect(Object.values(p.steps)[0].state).toBe('awaitingApproval');
+
+      p = reduceExecutionProjection(p, approvalBase());
+      expect(Object.values(p.approvals)[0].state).toBe('requested');
+
+      p = reduceExecutionProjection(
+        p,
+        base({
+          type: 'approval.resolved',
+          payload: { approvalId: 'ap-1', toolCallId: 'tc-1', decision: 'allow-once' },
+        }),
+      );
+      expect(Object.values(p.approvals)[0].state, 'allow 只是解除阻塞').toBe('resolved');
+      expect(Object.values(p.steps)[0].state, 'allow ≠ 开始执行 ⇒ 步骤仍等待批准').toBe('awaitingApproval');
+
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'step.result', payload: { toolCallId: 'tc-1', name: 'bash', isError: true } }),
+      );
+      expect(Object.values(p.steps)[0].state, '中止/失败的真结果收场').toBe('error');
+    });
+
+    it('⭐ 两个审批并行：解决一个不能清另一个', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, approvalBase());
+      p = reduceExecutionProjection(
+        p,
+        approvalBase({ payload: { approvalId: 'ap-2', toolCallId: 'tc-2', name: 'bash', status: 'pending' } }),
+      );
+      p = reduceExecutionProjection(
+        p,
+        base({
+          type: 'approval.resolved',
+          payload: { approvalId: 'ap-1', toolCallId: 'tc-1', decision: 'allow-once' },
+        }),
+      );
+
+      const states = Object.values(p.approvals).sort((a, b) => a.approvalId.localeCompare(b.approvalId));
+      expect(states.map((a) => a.state)).toEqual(['resolved', 'requested']);
+    });
+
+    it('⭐ 相同 approvalId 来自不同 gateway 不串（键含 gatewayId）', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, approvalBase());
+      p = reduceExecutionProjection(
+        p,
+        approvalBase({
+          source: { ...(base() as ExecutionEvent).source, gatewayId: 'gw-2' },
+        }),
+      );
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'approval.resolved', payload: { approvalId: 'ap-1', toolCallId: 'tc-1', decision: 'deny' } }),
+      );
+
+      const states = Object.values(p.approvals).sort((a, b) => a.approvalKey.localeCompare(b.approvalKey));
+      expect(states, '两条独立审批记录').toHaveLength(2);
+      expect(states.map((a) => a.state)).toEqual(['denied', 'requested']);
+    });
+
+    it('⭐ RPC 失败 / 过期 / 重复 resolved 均有明确投影', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, approvalBase());
+      p = reduceExecutionProjection(
+        p,
+        base({
+          type: 'approval.resolved',
+          payload: { approvalId: 'ap-1', toolCallId: 'tc-1', decision: 'allow-once', rpcError: true },
+        }),
+      );
+      expect(Object.values(p.approvals)[0].state, 'resolve 调用失败 ≠ 已批准').toBe('failed');
+
+      p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, approvalBase());
+      p = reduceExecutionProjection(
+        p,
+        base({
+          type: 'approval.resolved',
+          payload: { approvalId: 'ap-1', toolCallId: 'tc-1', decision: 'allow-once', expired: true },
+        }),
+      );
+      expect(Object.values(p.approvals)[0].state, '过期审批有明确投影').toBe('expired');
+
+      p = reduceExecutionProjection(
+        p,
+        base({
+          type: 'approval.resolved',
+          payload: { approvalId: 'ap-1', toolCallId: 'tc-1', decision: 'allow-once' },
+        }),
+      );
+      expect(Object.values(p.approvals)[0].state, '终态后重复 resolved 不回退').toBe('expired');
+    });
+  });
+
+  describe('V3 · 取消投影', () => {
+    it('⭐ requested → confirmed；超时/RPC reject ⇒ unconfirmed（不显示"已停止"）', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, base({ type: 'cancel.requested', payload: { stopTicketId: 't-1' } }));
+      expect(p.stop.state).toBe('requested');
+
+      p = reduceExecutionProjection(p, base({ type: 'cancel.confirmed', payload: { stopTicketId: 't-1' } }));
+      expect(p.stop.state, '网关确认后才是"已停止"').toBe('confirmed');
+
+      p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, base({ type: 'cancel.requested', payload: { stopTicketId: 't-2' } }));
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'cancel.unconfirmed', payload: { stopTicketId: 't-2', reason: 'timeout' } }),
+      );
+      expect(p.stop.state, '超时不得显示"已停止"').toBe('unconfirmed');
+    });
+
+    it('⭐ 没有 requested 的 confirmed/unconfirmed 是噪音 ⇒ 拒收（不凭空造停止态）', () => {
+      const p = createExecutionProjection('run-a');
+      const after = reduceExecutionProjection(p, base({ type: 'cancel.confirmed', payload: { stopTicketId: 't-1' } }));
+      // 语义拒收：停止投影零变化（lastSeq 如实前进属正常记账，不断言引用同一）。
+      expect(after.stop).toEqual(p.stop);
+      expect(after.stop.state).toBe('none');
+      expect(after.steps).toEqual({});
+    });
+
+    it('⭐ 旧 ticket 确认不清新 run：runId 守卫整条拒收', () => {
+      const p = createExecutionProjection('run-new');
+      const after = reduceExecutionProjection(
+        p,
+        base({ runId: 'run-old', type: 'cancel.confirmed', payload: { stopTicketId: 't-old' } }),
+      );
+      expect(after).toBe(p);
+      expect(after.stop.state).toBe('none');
+    });
+  });
+
+  describe('V3 · 交付投影', () => {
+    const deliveryBase = (over: Partial<ExecutionEvent> = {}): ExecutionEvent =>
+      ({
+        ...base(),
+        type: 'delivery.started',
+        payload: { operationId: 'op-1', kind: 'video' },
+        ...over,
+      }) as ExecutionEvent;
+
+    it('⭐ 模型先 final、视频后完成：模型结束不结算交付，活动作业保持交付中', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, deliveryBase());
+      p = reduceExecutionProjection(p, base({ type: 'model.ended', payload: { reason: 'final' } }));
+
+      expect(p.modelPhase).toBe('ended');
+      expect(p.delivery.phase, '模型结束 ≠ 交付结算').toBe('pending');
+
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-1', outcome: 'complete' } }),
+      );
+      expect(p.delivery.phase).toBe('settled');
+      expect(p.delivery.outcome).toBe('complete');
+    });
+
+    it('⭐ PPT+视频一成一败 ⇒ partial（不得判整轮成功）', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, deliveryBase());
+      p = reduceExecutionProjection(p, deliveryBase({ payload: { operationId: 'op-2', kind: 'ppt' } }));
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-1', outcome: 'complete' } }),
+      );
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-2', outcome: 'failed' } }),
+      );
+
+      expect(p.delivery.phase).toBe('settled');
+      expect(p.delivery.outcome, '一成一败 ≠ 整轮成功').toBe('partial');
+    });
+
+    it('⭐ 同消息两个同格式产物仅一个成功 ⇒ partial', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, deliveryBase());
+      p = reduceExecutionProjection(p, deliveryBase({ payload: { operationId: 'op-2', kind: 'ppt' } }));
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-1', outcome: 'complete' } }),
+      );
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-2', outcome: 'unconfirmed' } }),
+      );
+
+      expect(p.delivery.outcome, '一个成功 + 一个未确认 ⇒ 不得整轮成功').toBe('partial');
+    });
+
+    it('⭐ 两项已请求、仅一项进入 activity（另一项启动失败）：两条 operation 都保留', () => {
+      let p = createExecutionProjection('run-a');
+      p = reduceExecutionProjection(p, deliveryBase());
+      p = reduceExecutionProjection(p, deliveryBase({ payload: { operationId: 'op-2', kind: 'ppt' } }));
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.phase', payload: { operationId: 'op-1', phase: 'running' } }),
+      );
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-1', outcome: 'complete' } }),
+      );
+      p = reduceExecutionProjection(
+        p,
+        base({ type: 'delivery.settled', payload: { operationId: 'op-2', outcome: 'failed' } }),
+      );
+
+      const ops = Object.values(p.delivery.operations).sort((a, b) => a.operationId.localeCompare(b.operationId));
+      expect(ops).toHaveLength(2);
+      expect(ops[0]).toMatchObject({ operationId: 'op-1', requested: true, started: true, outcome: 'complete' });
+      expect(ops[1]).toMatchObject({ operationId: 'op-2', requested: true, started: false, outcome: 'failed' });
+      expect(p.delivery.outcome).toBe('partial');
+    });
+
+    it('⭐ 旧 run 的交付结算不写新 run（runId 守卫）', () => {
+      const p = createExecutionProjection('run-new');
+      const after = reduceExecutionProjection(
+        p,
+        base({ runId: 'run-old', type: 'delivery.settled', payload: { operationId: 'op-x', outcome: 'complete' } }),
+      );
+      expect(after).toBe(p);
+      expect(after.delivery.phase).toBe('none');
+    });
+  });
+
   it('⭐ held result ⇒ awaitingApproval；随后真实 error 收场（审批不是终态）', () => {
     let p = createExecutionProjection('run-a');
     p = reduceExecutionProjection(p, base());
