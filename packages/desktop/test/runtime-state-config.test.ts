@@ -69,9 +69,11 @@ import {
   hasInboxReadonlyGuard,
   hasMemoryToolsDenied,
   hasRelaySearchProvider,
+  hasRetryGuardPolicy,
   hasStaleExecKeys,
   hasToolGuard,
   mergeInboxReadonlyGuard,
+  mergeRetryGuardPolicy,
   readMemorySearchProvider,
   STATE_CONFIG_FILE,
   STATE_DIR_NAME,
@@ -84,6 +86,7 @@ import {
 } from '../src/main/runtime/state-config.js';
 import { INBOX_READONLY_PLUGIN_ID, inboxReadonlyPolicyDir } from '../src/main/guard/inbox-readonly.js';
 import { relaySearchPluginDir } from '../src/main/runtime/relay-search-plugin.js';
+import { RETRY_GUARD_PLUGIN_ID, retryGuardPolicyDir } from '../src/main/runtime/deterministic-retry-guard.js';
 import { authStorePath } from '../src/main/runtime/token-store.js';
 
 let tmpRoot: string;
@@ -136,13 +139,16 @@ describe('ensureStateConfig', () => {
     expect(raw).toEqual({
       gateway: { auth: { mode: 'token', token: res.token } },
       memory: { search: { provider: 'none' } },
-      // 收件箱只读守卫（P3-1）+ 联网搜索 provider 插件（2026-10-12）：插件的**目录**
-      // 与显式启用，见下面 inbox guard / relay-search 两组用例
+      // 收件箱只读守卫（P3-1）+ 联网搜索 provider 插件（2026-10-12）+ 重复失败守卫
+      // （2026-10-13）：插件的**目录**与显式启用，见下面各自配置侧用例
       plugins: {
-        load: { paths: [inboxPolicyDir(res.stateDir), relaySearchPluginDir(res.stateDir)] },
+        load: {
+          paths: [inboxPolicyDir(res.stateDir), relaySearchPluginDir(res.stateDir), retryGuardPolicyDir(res.stateDir)],
+        },
         entries: {
           'rongying-inbox-readonly': { enabled: true },
           'rongying-search': { enabled: true },
+          'rongying-retry-guard': { enabled: true },
         },
       },
       tools: {
@@ -991,9 +997,14 @@ describe('导入收件箱只读守卫（P3-1 · inbox guard 的配置侧）', ()
     }
     const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
     expect(hasInboxReadonlyGuard(raw, dir)).toBe(true);
-    // 2026-10-12 起 load.paths 里还有搜索插件目录（providers/rongying-search）：
-    // 守卫断言按"含它"写，搜索插件的完整断言见下方 relay-search 一组用例。
-    expect(raw.plugins.load.paths).toEqual([dir, relaySearchPluginDir(res.stateDir)]);
+    // 2026-10-12 起 load.paths 里还有搜索插件目录（providers/rongying-search）、
+    // 2026-10-13 起还有重复失败守卫目录（policies/rongying-retry-guard）：
+    // 守卫断言按"含它"写，其余插件的完整断言见下方各自用例。
+    expect(raw.plugins.load.paths).toEqual([
+      dir,
+      relaySearchPluginDir(res.stateDir),
+      retryGuardPolicyDir(res.stateDir),
+    ]);
     expect(raw.plugins.entries[INBOX_READONLY_PLUGIN_ID]).toEqual({ enabled: true });
   });
 
@@ -1054,8 +1065,14 @@ describe('导入收件箱只读守卫（P3-1 · inbox guard 的配置侧）', ()
     const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
     expect(raw.plugins.load.paths).toContain('D:\\somewhere\\their-own-plugin');
     expect(raw.plugins.load.paths).toContain(inboxPolicyDir(stateDir));
-    // allow 是白名单：不加进去 = 守卫/搜索插件被静默挡在门外（假装在跑的保护 / 搜索不出现）。
-    expect(raw.plugins.allow).toEqual(['their-own-plugin', INBOX_READONLY_PLUGIN_ID, 'rongying-search']);
+    // allow 是白名单：不加进去 = 守卫/搜索/重复失败守卫插件被静默挡在门外
+    // （假装在跑的保护 / 搜索不出现 / 重复失败不拦）。
+    expect(raw.plugins.allow).toEqual([
+      'their-own-plugin',
+      INBOX_READONLY_PLUGIN_ID,
+      'rongying-search',
+      RETRY_GUARD_PLUGIN_ID,
+    ]);
     expect(raw.plugins.entries['their-own-plugin']).toEqual({ enabled: true, config: { a: 1 } });
   });
 
@@ -1166,6 +1183,95 @@ describe('导入收件箱只读守卫（P3-1 · inbox guard 的配置侧）', ()
       expect(raw.plugins?.load?.paths ?? []).not.toContain(relaySearchPluginDir(stateDir));
       expect(warn).toHaveBeenCalled();
       warn.mockRestore();
+    });
+  });
+
+  describe('重复失败守卫插件（2026-10-13 · retry-guard 的配置侧）', () => {
+    /**
+     * 判定逻辑在插件里（`test/deterministic-retry-guard.test.ts` 直接跑那份生成代码）；
+     * 这里钉的是**装载条件**（与 inbox guard/relay-search 同一组装载三条件）。
+     */
+    const GUARD_PLUGIN_FILES = ['openclaw.plugin.json', 'package.json', 'index.mjs'];
+
+    it('首跑：三件套落盘，load.paths 指向目录且显式启用', () => {
+      const res = ensureStateConfig(userDataDir);
+      const dir = retryGuardPolicyDir(res.stateDir);
+      for (const name of GUARD_PLUGIN_FILES) {
+        expect(fs.existsSync(path.join(dir, name)), name).toBe(true);
+      }
+      const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+      expect(hasRetryGuardPolicy(raw, dir)).toBe(true);
+      expect(raw.plugins.entries[RETRY_GUARD_PLUGIN_ID]).toEqual({ enabled: true });
+    });
+
+    it('存量用户：plugins 段被删后下次启动补回（提前返回不能漏了它）', () => {
+      const stateDir = stateDirFor(userDataDir);
+      fs.mkdirSync(stateDir, { recursive: true });
+      const first = ensureStateConfig(userDataDir);
+      const cfg = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+      delete cfg.plugins;
+      fs.writeFileSync(stateConfigPath(stateDir), JSON.stringify(cfg));
+
+      ensureStateConfig(userDataDir);
+
+      const raw = JSON.parse(fs.readFileSync(stateConfigPath(stateDir), 'utf-8'));
+      expect(raw.gateway.auth.token).toBe(first.token);
+      expect(hasRetryGuardPolicy(raw, retryGuardPolicyDir(stateDir))).toBe(true);
+    });
+
+    it('插件目录写不进去 ⇒ 不把配置指过去，也不影响启动', () => {
+      const stateDir = stateDirFor(userDataDir);
+      fs.mkdirSync(stateDir, { recursive: true });
+      // 把 `policies` 占成**文件**：mkdir 必失败，模拟只读/占位等落盘失败。
+      fs.writeFileSync(path.join(stateDir, 'policies'), 'not-a-dir', 'utf-8');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const res = ensureStateConfig(userDataDir);
+
+      expect(res.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8'));
+      expect(raw.plugins?.load?.paths ?? []).not.toContain(retryGuardPolicyDir(stateDir));
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('合并保留其他条目（不动搜索插件的 config，不碰别人的路径）', () => {
+      const merged = mergeRetryGuardPolicy(
+        {
+          plugins: {
+            load: { paths: ['D:\\somewhere\\their-own-plugin'] },
+            entries: {
+              'rongying-search': {
+                enabled: true,
+                config: { webSearch: { baseUrl: 'http://127.0.0.1:8791', apiKey: 'relay-fixture' } },
+              },
+            },
+          },
+        },
+        'E:\\rundata\\state\\abc\\policies\\rongying-retry-guard',
+      ) as {
+        load: { paths: string[] };
+        entries: Record<string, unknown>;
+      };
+      expect(merged.load.paths).toEqual([
+        'D:\\somewhere\\their-own-plugin',
+        'E:\\rundata\\state\\abc\\policies\\rongying-retry-guard',
+      ]);
+      expect(merged.entries['rongying-search']).toEqual({
+        enabled: true,
+        config: { webSearch: { baseUrl: 'http://127.0.0.1:8791', apiKey: 'relay-fixture' } },
+      });
+      expect(merged.entries[RETRY_GUARD_PLUGIN_ID]).toEqual({ enabled: true });
+    });
+
+    it('换盘符残留（同插件旧盘符死条目）⇒ 判「未就绪」并清除', () => {
+      const current = 'E:\\rundata\\state\\abc\\policies\\rongying-retry-guard';
+      const stale = 'G:\\rundata\\state\\abc\\policies\\rongying-retry-guard';
+      const raw = { plugins: { load: { paths: [stale] }, entries: {} } };
+      expect(hasRetryGuardPolicy(raw, current)).toBe(false);
+      const merged = mergeRetryGuardPolicy(raw, current) as { load: { paths: string[] } };
+      expect(merged.load.paths).toEqual([current]);
+      expect(hasRetryGuardPolicy({ plugins: merged }, current)).toBe(true);
     });
   });
 

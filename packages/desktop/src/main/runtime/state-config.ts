@@ -34,6 +34,7 @@ import { readConfig, updateConfig } from '../workspace/config.js';
 import type { AppConfig, GatewayServerConfig } from '../workspace/config.js';
 import { INBOX_READONLY_PLUGIN_ID, ensureInboxReadonlyPolicy } from '../guard/inbox-readonly.js';
 import { RELAY_SEARCH_PLUGIN_ID, ensureRelaySearchPlugin } from './relay-search-plugin.js';
+import { RETRY_GUARD_PLUGIN_ID, ensureRetryGuardPolicy } from './deterministic-retry-guard.js';
 import { ensureLocalGatewayToken } from './token-store.js';
 import { preparePortableState } from './portable-state-migration.js';
 
@@ -742,6 +743,70 @@ export function mergeRelaySearchProvider(
   };
 }
 
+/**
+ * 重复失败守卫插件的**配置侧**（插件文件本体在 `runtime/deterministic-retry-guard.ts`，
+ * BUG-060 剩余项 (c) + BUG-032 稳定身份子项）。
+ *
+ * 与收件箱守卫/搜索插件同一条"每次启动对齐"的路径、同一组装载三条件
+ * （load.paths + 插件文件 + entries.enabled；少一条静默失效）——理由见
+ * `mergeInboxReadonlyGuard` 的注释：`ensureStateConfig` 的提前返回是存量用户的
+ * 必经之路，只在新装时写 = 对老用户不存在。
+ */
+function isRetryGuardPolicyPath(candidate: string): boolean {
+  const normalized = candidate.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized === RETRY_GUARD_PLUGIN_ID || normalized.endsWith(`/${RETRY_GUARD_PLUGIN_ID}`);
+}
+
+/** 守卫插件条目是不是已经完整（load 路径 + 显式启用；有 allow 名单时必须含它）。 */
+export function hasRetryGuardPolicy(raw: unknown, policyDir: string): boolean {
+  if (!isRecord(raw)) return false;
+  const plugins = raw.plugins;
+  if (!isRecord(plugins)) return false;
+  const paths = readPluginsLoadPaths(raw);
+  if (!paths || !paths.some((path) => isSamePolicyPath(path, policyDir))) return false;
+  // 同插件的**异路径**（旧盘符残留）同样判「未就绪」（网关侧"任一 load path 不存在
+  // ⇒ 整份配置非法 ⇒ 拒启"，提前返回会让死条目永远留下）。
+  if (paths.some((path) => isRetryGuardPolicyPath(path) && !isSamePolicyPath(path, policyDir))) return false;
+  const entries = plugins.entries;
+  if (!isRecord(entries)) return false;
+  const entry = entries[RETRY_GUARD_PLUGIN_ID];
+  if (!isRecord(entry) || entry.enabled !== true) return false;
+  if (Array.isArray(plugins.allow)) {
+    return (plugins.allow as unknown[]).includes(RETRY_GUARD_PLUGIN_ID);
+  }
+  return true;
+}
+
+/**
+ * plugins 段合并（纯函数）：**并进**守卫插件的 load 路径与显式启用，不动别的插件条目。
+ * 与 `mergeRelaySearchProvider` 同形（允许已存在 entry 的其他字段原样保留）。
+ */
+export function mergeRetryGuardPolicy(
+  existing: Record<string, unknown> | null,
+  policyDir: string,
+): Record<string, unknown> {
+  const plugins = existing && isRecord(existing.plugins) ? existing.plugins : {};
+  const load = isRecord(plugins.load) ? plugins.load : {};
+  const paths = readPluginsLoadPaths(existing) ?? [];
+  const pruned = paths.filter((path) => !isRetryGuardPolicyPath(path) || isSamePolicyPath(path, policyDir));
+  const nextPaths = pruned.some((path) => isSamePolicyPath(path, policyDir)) ? pruned : [...pruned, policyDir];
+  const entries = isRecord(plugins.entries) ? plugins.entries : {};
+  const pluginEntry = isRecord(entries[RETRY_GUARD_PLUGIN_ID]) ? entries[RETRY_GUARD_PLUGIN_ID] : {};
+  const allow = Array.isArray(plugins.allow)
+    ? plugins.allow.filter((value): value is string => typeof value === 'string')
+    : null;
+  return {
+    ...plugins,
+    load: { ...load, paths: nextPaths },
+    entries: { ...entries, [RETRY_GUARD_PLUGIN_ID]: { ...pluginEntry, enabled: true } },
+    ...(allow && !allow.includes(RETRY_GUARD_PLUGIN_ID)
+      ? { allow: [...allow, RETRY_GUARD_PLUGIN_ID] }
+      : allow
+        ? { allow }
+        : {}),
+  };
+}
+
 /** 从（任意的）已有配置里挖出 token；没有则 null。 */
 export function readStateToken(raw: unknown): string | null {
   if (!isRecord(raw)) return null;
@@ -842,6 +907,18 @@ export function ensureStateConfig(
     );
   }
 
+  // ①d 重复失败守卫插件（2026-10-13，BUG-060(c)/BUG-032）：同款三条件装载；
+  //     写失败 ⇒ 本次不装载（下次启动重试）。未装 = 退回无守卫行为，不影响启动。
+  let retryGuardDir: string | null = null;
+  try {
+    retryGuardDir = ensureRetryGuardPolicy(stateDir);
+  } catch (error) {
+    console.warn(
+      '[runtime] runtime.retry-guard-unavailable：重复失败守卫插件未能写入状态目录，本次不装载（不影响启动）',
+      error,
+    );
+  }
+
   // ② 已经一致 ⇒ 一个字节都不写（不每次启动都重写别人的文件）
   //
   // ⚠️ "一致"必须**含**记忆默认值：这条提前返回是存量用户的必经之路（他们的 token
@@ -860,22 +937,26 @@ export function ensureStateConfig(
     !hasStaleExecKeys(existing) &&
     (!inboxGuardDir || hasInboxReadonlyGuard(existing, inboxGuardDir)) &&
     (!searchPluginDir || hasRelaySearchProvider(existing, searchPluginDir)) &&
+    (!retryGuardDir || hasRetryGuardPolicy(existing, retryGuardDir)) &&
     (!splitState || hasPortableAgentDefaults(existing, portableWorkspacePath))
   ) {
     return { token: store.token, created: false, configPath, stateDir };
   }
 
   const gateway = existing && isRecord(existing.gateway) ? existing.gateway : {};
-  // plugins 段：守卫与搜索插件各自"并进"自己的条目，先守卫后搜索（互不覆盖对方的
-  // entry/路径——两个 merge 都以"合并前的现有段"为底、只动自己那一项）。
+  // plugins 段：守卫/搜索/重复失败守卫三个插件各自"并进"自己的条目，互不覆盖对方的
+  // entry/路径——每个 merge 都以"合并前的现有段"为底、只动自己那一项。
   const pluginsAfterInbox: Record<string, unknown> | null = inboxGuardDir
     ? mergeInboxReadonlyGuard(existing, inboxGuardDir)
     : existing && isRecord(existing.plugins)
       ? existing.plugins
       : null;
-  const pluginsFinal: Record<string, unknown> | null = searchPluginDir
+  const pluginsAfterSearch: Record<string, unknown> | null = searchPluginDir
     ? mergeRelaySearchProvider({ plugins: pluginsAfterInbox ?? {} }, searchPluginDir)
     : pluginsAfterInbox;
+  const pluginsFinal: Record<string, unknown> | null = retryGuardDir
+    ? mergeRetryGuardPolicy({ plugins: pluginsAfterSearch ?? {} }, retryGuardDir)
+    : pluginsAfterSearch;
   const merged: Record<string, unknown> = {
     ...(existing ?? {}),
     gateway: { ...gateway, auth: { mode: 'token', token: store.token } },

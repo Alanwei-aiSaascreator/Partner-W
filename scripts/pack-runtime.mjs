@@ -41,6 +41,13 @@ import {
   PROVIDER_CAPABILITY_ENTRY,
   PROVIDER_CAPABILITY_PATCH_ID,
 } from './lib/provider-capability-runtime.mjs';
+import {
+  patchSkillProposalTargetRuntime,
+  patchSkillProposalDraftNameRuntime,
+  SKILL_PROPOSAL_TARGET_ENTRY,
+  SKILL_PROPOSAL_DRAFT_ENTRY,
+  SKILL_PROPOSAL_NAME_PATCH_ID,
+} from './lib/skill-proposal-name-runtime.mjs';
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
@@ -327,6 +334,18 @@ async function main() {
     providerCapabilityRuntime,
     patchProviderCapabilityRuntime(fs.readFileSync(providerCapabilityRuntime, 'utf8')),
   );
+  // rongying-skill-proposal-name-v1（BUG-032）：中文技能名在 proposal 边界派生安全 ASCII 键
+  // （normalizeSkillIndexName 本体与 filters/commands 协议面不动；纯空/纯分隔符仍拒绝）
+  const skillProposalTargetRuntime = path.join(stage, SKILL_PROPOSAL_TARGET_ENTRY);
+  fs.writeFileSync(
+    skillProposalTargetRuntime,
+    patchSkillProposalTargetRuntime(fs.readFileSync(skillProposalTargetRuntime, 'utf8')),
+  );
+  const skillProposalDraftRuntime = path.join(stage, SKILL_PROPOSAL_DRAFT_ENTRY);
+  fs.writeFileSync(
+    skillProposalDraftRuntime,
+    patchSkillProposalDraftNameRuntime(fs.readFileSync(skillProposalDraftRuntime, 'utf8')),
+  );
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
   const debugSkillsPatch = bundleWindowsDebugSkills(stage);
@@ -384,6 +403,7 @@ async function main() {
       searchPlugin.patchId,
       WEB_SEARCH_AVAILABILITY_PATCH_ID,
       PROVIDER_CAPABILITY_PATCH_ID,
+      SKILL_PROPOSAL_NAME_PATCH_ID,
       nativePatch,
       videoFramesPatch,
       debugSkillsPatch,
