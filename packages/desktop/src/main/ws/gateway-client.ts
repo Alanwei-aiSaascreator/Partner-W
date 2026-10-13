@@ -614,16 +614,24 @@ export class GatewayClient {
     //      自动重发只等 ~1.5 秒，宽限来不及）。
     //    审批连接只转发审批事件，不参与这个软状态（避免双份 start/end）。
     if (!this.approvalChannel && sessionKey) {
+      // ⭐ B1：随帧带上归属网关 —— 这个网关被永久移除/失败终结时只释放**自己**的记录。
+      // ⭐ P-R2-1（2026-10-14 第二轮）：终态路由**带原生 run 身份**（帧带才有）——
+      //    turn-lifecycle 据此核对"这一帧说的是不是这张停止票据的 run"：
+      //    本 run 明确 aborted ⇒ 票据收口 confirmed；普通 end/error ⇒ 只折
+      //    cancel.unconfirmed{run-terminated}（"该 run 已结束"≠"已执行停止请求"）；
+      //    身份对不上/缺失 ⇒ 一个事件都不发（不把别的 run 的终态算到本票据头上）。
+      //    ⚠️ chat `aborted` 不再折成 'error'：两者对票据的语义不同（见上）。
+      const nativeRunId = typeof frame.payload.runId === 'string' ? frame.payload.runId : undefined;
       if (frame.event === 'agent' && frame.payload.stream === 'lifecycle') {
         const phase = (frame.payload.data as { phase?: unknown } | undefined)?.phase;
         if (phase === 'start' || phase === 'end' || phase === 'error') {
-          // ⭐ B1：随帧带上归属网关 —— 这个网关被永久移除/失败终结时只释放**自己**的记录。
-          noteGatewayTurnLifecycle(phase, sessionKey, this.gatewayId);
+          noteGatewayTurnLifecycle(phase, sessionKey, this.gatewayId, nativeRunId);
         }
       } else if (frame.event === 'chat') {
         const state = frame.payload.state;
-        if (state === 'error' || state === 'aborted') noteGatewayTurnLifecycle('error', sessionKey, this.gatewayId);
-        else if (state === 'final') noteGatewayTurnLifecycle('end', sessionKey, this.gatewayId);
+        if (state === 'aborted') noteGatewayTurnLifecycle('aborted', sessionKey, this.gatewayId, nativeRunId);
+        else if (state === 'error') noteGatewayTurnLifecycle('error', sessionKey, this.gatewayId, nativeRunId);
+        else if (state === 'final') noteGatewayTurnLifecycle('end', sessionKey, this.gatewayId, nativeRunId);
       }
     }
 

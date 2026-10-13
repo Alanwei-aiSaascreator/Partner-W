@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
 }));
 
 import {
+  isLiveTurnSession,
   noteGatewayTurnLifecycle,
   noteGatewayTurnStop,
   noteGatewayTurnStopRejected,
@@ -272,4 +273,170 @@ it('⭐ P-3：无有效 workspace scope（库已关）⇒ 取消族同样零广�
   expect(noteGatewayTurnStopRejected(session, ticket, 'timeout', context)).toBe(true);
   releaseGatewayTurnSessions('gw-1', 'destroyed');
   expect(emittedEvents(), '无捕获 scope ⇒ 一帧不发（fail-closed）').toHaveLength(0);
+});
+
+// ───────────── ⭐ P-R2（2026-10-14 第二轮）：终态身份核验 + 再停止复用票据 ─────────────
+
+const run2Context = { runId: 'run-2' };
+
+it('⭐ P-R2-1①：本 run 的 aborted 终态先于成功 RPC ⇒ 票据先收口为 confirmed（恰一次，身份核过）', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const ticket = noteGatewayTurnStop(session, false, undefined, context)!;
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'requested' });
+
+  // 网关**先**发本 run 的真实终态（aborted，带原生 run 身份）—— 修复前：票据被删、零事件。
+  noteGatewayTurnLifecycle('aborted', session, 'gw-1', 'run-1');
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'confirmed' });
+
+  // 后到的成功 RPC 回执（携带同一 t1）：票据已终结 ⇒ 不再产出第二次确认。
+  expect(noteGatewayTurnStop(session, true, ticket, context)).toBeUndefined();
+  const confirmed = emittedEvents().filter((event) => event.type === 'cancel.confirmed');
+  expect(confirmed, '确认恰一次').toHaveLength(1);
+  expect(confirmed[0]).toMatchObject({ runId: 'run-1', taskId: 'task-1', source: { gatewayId: 'gw-1' } });
+  expect((confirmed[0]!.payload as { stopTicketId: string }).stopTicketId).toBe(ticket.stopTicketId);
+});
+
+it('⭐ P-R2-1②a：首次超时（unconfirmed）后 aborted 终态才到 ⇒ 拨回 confirmed（同一票据升级恰一次）', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const ticket = noteGatewayTurnStop(session, false, undefined, context)!;
+  expect(noteGatewayTurnStopRejected(session, ticket, 'timeout', context)).toBe(true);
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'unconfirmed', reason: 'timeout' });
+
+  noteGatewayTurnLifecycle('aborted', session, 'gw-1', 'run-1');
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'confirmed' });
+  expect(emittedEvents().filter((event) => event.type === 'cancel.confirmed')).toHaveLength(1);
+});
+
+it('⭐ P-R2-1②b：普通 end（run 身份核过）⇒ 如实 unconfirmed{run-terminated}，绝不冒充"已停止"', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const ticket = noteGatewayTurnStop(session, false, undefined, context)!;
+
+  // lifecycle `error` 与 `end` 同分支（都不是"已执行停止请求"的证据）。
+  noteGatewayTurnLifecycle('end', session, 'gw-1', 'run-1');
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({
+    state: 'unconfirmed',
+    reason: 'run-terminated',
+  });
+  expect(
+    emittedEvents().filter((event) => event.type === 'cancel.confirmed'),
+    '不许冒充"已停止"',
+  ).toHaveLength(0);
+  const unconfirmed = emittedEvents().filter((event) => event.type === 'cancel.unconfirmed');
+  expect(unconfirmed).toHaveLength(1);
+  expect((unconfirmed[0]!.payload as { stopTicketId: string }).stopTicketId).toBe(ticket.stopTicketId);
+});
+
+it('⭐ P-R2-1③：旧 run 终态迟到（新 run 已起）⇒ 零事件，新 run 与它的票据不受影响', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  noteGatewayTurnStop(session, false, undefined, context); // 旧 run 的停止（会被新一轮作废）
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-2'); // 新一轮
+  const t2 = noteGatewayTurnStop(session, false, undefined, run2Context)!;
+  const before = emittedEvents().length;
+
+  // 旧 run（run-1）的终态迟到 —— 修复前：新 run 的软状态与票据被一起删掉。
+  noteGatewayTurnLifecycle('end', session, 'gw-1', 'run-1');
+  expect(emittedEvents(), '旧 run 的迟到终态不许产出任何确认/未确认').toHaveLength(before);
+  expect(isLiveTurnSession(session), '新 run 仍在跑').toBe(true);
+  expect(noteGatewayTurnStop(session, true, t2, run2Context), 't2 照常确认').toBe(t2);
+
+  store.getState().beginExecutionRun(session, 'run-2');
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'confirmed' });
+  const confirmed = emittedEvents().filter((event) => event.type === 'cancel.confirmed');
+  expect(confirmed).toHaveLength(1);
+  expect(confirmed[0]!.runId, '确认落在新 run 上').toBe('run-2');
+});
+
+it('⭐ P-R2-1④：另一 gateway 的同会话字符串终态 ⇒ 拒（不消费本网关键票据、不落软状态）', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const ticket = noteGatewayTurnStop(session, false, undefined, context)!;
+  const before = emittedEvents().length;
+
+  noteGatewayTurnLifecycle('error', session, 'gw-2', 'run-1');
+  expect(emittedEvents(), '另一网关的终态一个事件都不许产出').toHaveLength(before);
+  expect(isLiveTurnSession(session), '本网关键的一轮不许被另一个网关的终态清掉').toBe(true);
+  expect(noteGatewayTurnStop(session, true, ticket, context), '原票据仍可确认').toBe(ticket);
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'confirmed' });
+});
+
+it('⭐ P-R2-1⑤：连接终结仍只折 unconfirmed{gateway-terminated} —— 断线不许被冒充成"已停止"', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const ticket = noteGatewayTurnStop(session, false, undefined, context)!;
+  releaseGatewayTurnSessions('gw-1', 'destroyed');
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({
+    state: 'unconfirmed',
+    reason: 'gateway-terminated',
+  });
+  expect(emittedEvents().filter((event) => event.type === 'cancel.confirmed')).toHaveLength(0);
+  const unconfirmed = emittedEvents().filter((event) => event.type === 'cancel.unconfirmed');
+  expect(unconfirmed).toHaveLength(1);
+  expect((unconfirmed[0]!.payload as { stopTicketId: string }).stopTicketId).toBe(ticket.stopTicketId);
+});
+
+it('⭐ P-R2-1⑥：终态身份不匹配（帧无 runId / runId 不同）⇒ 不核对到票据上（不冒充收口）', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const ticket = noteGatewayTurnStop(session, false, undefined, context)!;
+
+  // 帧不带原生身份：无法核对 ⇒ 不冒充收口（只有 requested 那一条事件）。
+  noteGatewayTurnLifecycle('aborted', session, 'gw-1');
+  expect(
+    emittedEvents().filter((event) => event.type === 'cancel.confirmed'),
+    '无身份核实的终态拒不冒充收口',
+  ).toHaveLength(0);
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'requested' });
+
+  // runId 不同（别的 run 的 aborted）：同样不得算到本票据头上。
+  const before = emittedEvents().length;
+  noteGatewayTurnLifecycle('aborted', session, 'gw-1', 'run-other');
+  expect(emittedEvents()).toHaveLength(before);
+  void ticket;
+});
+
+it('⭐ P-R2-2①：同一 live run 再次点击停止 ⇒ 复用原 ticket/id（确认升级恰一次、id 全程一致）', () => {
+  const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const t1 = noteGatewayTurnStop(session, false, undefined, context)!;
+  expect(noteGatewayTurnStopRejected(session, t1, 'timeout', context)).toBe(true);
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'unconfirmed', reason: 'timeout' });
+
+  // 用户再点一次"停止"（同一 live run）—— 修复前会造 t2：投影忽略新 requested、又拒收 confirmed(t2)。
+  const t2 = noteGatewayTurnStop(session, false, undefined, context)!;
+  expect(t2, '同一 live run 的再次停止必须复用原票据').toBe(t1);
+  expect(noteGatewayTurnStop(session, true, t2, context), '重试的成功回执能收口').toBe(t1);
+  foldInto(store);
+  expect(store.getState().executionBySession[session]!.stop).toMatchObject({ state: 'confirmed' });
+
+  const requested = emittedEvents().filter((event) => event.type === 'cancel.requested');
+  const confirmed = emittedEvents().filter((event) => event.type === 'cancel.confirmed');
+  expect(requested, '复用不重发 requested（同一次操作）').toHaveLength(1);
+  expect(confirmed, '确认恰一次').toHaveLength(1);
+  expect((confirmed[0]!.payload as { stopTicketId: string }).stopTicketId).toBe(t1.stopTicketId);
+});
+
+it('⭐ P-R2-2②：新一轮必须换 ticket（start 之后再次停止不复用旧票据）', () => {
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-1');
+  const t1 = noteGatewayTurnStop(session, false, undefined, context)!;
+  noteGatewayTurnLifecycle('start', session, 'gw-1', 'run-2');
+  const t2 = noteGatewayTurnStop(session, false, undefined, run2Context)!;
+  expect(t2).not.toBe(t1);
+  expect(t2.stopTicketId).not.toBe(t1.stopTicketId);
+  // 旧票据的迟到确认一个字节都不动；新票据自己的确认照常落地。
+  expect(noteGatewayTurnStop(session, true, t1, context)).toBeUndefined();
+  expect(noteGatewayTurnStop(session, true, t2, run2Context)).toBe(t2);
 });
