@@ -1,14 +1,14 @@
 /**
  * step 0 · 原生帧夹具（只动测试：本文件与 `native-frame-fixtures.test.ts`、docs 06）。
  *
- * 全部形状**逐字段取证自部署 runtime**：openclaw `2026.9.3`
+ * 按部署 runtime 源码派生的最小测试投影（ID/文本为测试占位值）：openclaw `2026.9.3`
  * （`…/@clawwork/desktop/runtime/deployed/2026.9.3-win32-x64-7311f155544a/node_modules/openclaw/dist/`）。
  * 每条夹具的 `evidence` 注释给出 dist 文件与行号；完整对照见
  * `D:\claude\mofang\exec-visualization-20261013\06-STEP0-原生帧证据表.md`。
  *
- * ⚠️ 本夹具不是"应当如何"的规范，而是"线上真实长什么样"的采样：
- * 它用于把**现有 dispatcher/store 的真实行为**钉住（pin），并在测试里用
- * `【step 1 靶点】` 标注与 05 修订稿目标语义的差异——step 0 不改产品行为。
+ * 这些是源码派生夹具，不是线上捕获帧；省略不影响本用例的 envelope/可选字段。
+ * 用于钉住现有 dispatcher/store 行为；后续差异按 05 的步骤归属标注。
+ * step 0 不改产品行为，也不证明 UI 或远端执行结果。
  */
 import type { GatewayEvent } from '../../src/ports/gateway-transport.js';
 
@@ -19,12 +19,12 @@ export const NATIVE_RUNTIME = {
     'C:/Users/digua/AppData/Roaming/@clawwork/desktop/runtime/deployed/2026.9.3-win32-x64-7311f155544a/node_modules/openclaw/dist',
 } as const;
 
-/** 夹具用会话/run（父子两套；形状参照 agent-events 的 sessionKey 富化与子代理会话命名）。 */
+/** 测试会话/run；子会话格式见 subagent-spawn-ownership-CkpJQc5G.mjs:203-205。 */
 export const FIXTURE = {
   gatewayId: 'gw-fixture',
   taskId: 'fixture-task-1',
   taskSessionKey: 'agent:main:clawwork:task:fixture-task-1',
-  childSessionKey: 'agent:worker:clawwork:subagent:fixture-child-1',
+  childSessionKey: 'agent:worker:subagent:11111111-1111-4111-8111-111111111111',
   parentRunId: 'run-fixture-parent',
   childRunId: 'run-fixture-child',
 } as const;
@@ -43,7 +43,7 @@ export const FIXTURE_TASK = {
 //       agent-core-D3iHCNOc.mjs:1339-1360（completeUnstartedToolCall：admission/steering/
 //       中止的**未执行**调用同样补发 start，结果 isError:true + executionStarted:false）
 // 线上投影：builtin-openclaw-FlPOnMHc.mjs:2961-2984（tool/start + item/running）
-// ⚠️ wire 结果帧（builtin-openclaw:3495-3507）**不携带 executionStarted** —— 「开始过」
+// ⚠️ wire 结果帧（builtin-openclaw:3463-3475）**不携带 executionStarted** —— 「开始过」
 //    不等于「执行过」；这是 F1 的最强证据。
 // ---------------------------------------------------------------------------
 
@@ -68,7 +68,7 @@ export function toolStartFrame(
   } as GatewayEvent;
 }
 
-/** agent 流 tool/result（builtin-openclaw:3495-3507；isError 显式、无 executionStarted）。 */
+/** agent 流 tool/result（builtin-openclaw:3463-3475；含 result，无 executionStarted）。 */
 export function toolResultFrame(
   overrides: {
     toolCallId?: string;
@@ -98,7 +98,7 @@ export function toolResultFrame(
 
 /** item kind:'tool' 的 start（builtin-openclaw:2972-2984：title/status/startedAt 齐全）。 */
 export function toolItemStartFrame(
-  overrides: { toolCallId?: string; title?: string; startedAt?: string } = {},
+  overrides: { toolCallId?: string; title?: string; startedAt?: number } = {},
 ): GatewayEvent {
   return {
     event: 'agent',
@@ -115,7 +115,7 @@ export function toolItemStartFrame(
         status: 'running',
         name: 'read',
         toolCallId: overrides.toolCallId ?? 'tc-1',
-        startedAt: overrides.startedAt ?? '2026-10-13T00:00:00.000Z',
+        startedAt: overrides.startedAt ?? Date.parse('2026-10-13T00:00:00.000Z'),
       },
     },
   } as GatewayEvent;
@@ -123,7 +123,7 @@ export function toolItemStartFrame(
 
 // ---------------------------------------------------------------------------
 // T2 · result 先于 approval-pending（审批挂起路径）
-// 取证：builtin-openclaw-FlPOnMHc.mjs:3495-3540 —— exec 工具先发 phase:'result'
+// 取证：builtin-openclaw-FlPOnMHc.mjs:3463-3540 —— exec 工具先发 phase:'result'
 //       （isError:false），**随后**才发 stream:'approval'（status:'pending'）。
 //       客户端现状：parse-content.ts:179-185 isExecHeldByApproval 用
 //       result.details.status ∈ {approval-pending, approval-unavailable} 保持 running，
@@ -177,24 +177,23 @@ export function approvalRequestedFrame(
   } as GatewayEvent;
 }
 
-/** approval resolved（客户端消费形状：status 取值见 dispatcher handleAgentApprovalStream）。 */
-export function approvalResolvedFrame(
-  status: 'approved' | 'denied',
-  overrides: { toolCallId?: string; approvalId?: string } = {},
-): GatewayEvent {
+/** 原生 exec.approval.resolved：approval-shared-1gFEjucV.mjs:273-284,481-487。
+ * request 仅保留 exec-approval-B0MHHes6.mjs:256-282 的关联字段投影。
+ */
+export function approvalResolvedFrame(approvalId = 'ap-1'): GatewayEvent {
   return {
-    event: 'agent',
+    event: 'exec.approval.resolved',
     gatewayId: FIXTURE.gatewayId,
     payload: {
-      sessionKey: FIXTURE.taskSessionKey,
-      runId: FIXTURE.parentRunId,
-      stream: 'approval',
-      data: {
-        phase: 'resolved',
-        kind: 'exec',
-        status,
-        toolCallId: overrides.toolCallId ?? 'tc-exec-1',
-        approvalId: overrides.approvalId ?? 'ap-1',
+      id: approvalId,
+      decision: 'allow-once',
+      resolvedBy: null,
+      ts: Date.parse('2026-10-13T00:00:01.000Z'),
+      request: {
+        command: 'echo hi',
+        sessionKey: FIXTURE.taskSessionKey,
+        runId: FIXTURE.parentRunId,
+        toolCallId: 'tc-exec-1',
       },
     },
   } as GatewayEvent;
@@ -288,7 +287,7 @@ export function thinkingAccumFrame(text: string, delta: string | undefined = und
   } as GatewayEvent;
 }
 
-/** 完整取证索引（docs 06 的机器可读版；测试失败信息里引用它）。 */
+/** 源码取证索引（docs 06 的机器可读版；不代表每项都有运行时断言）。 */
 export const FIXTURE_EVIDENCE = {
   'tool-start-before-prepare': {
     file: 'agent-core-D3iHCNOc.mjs',
@@ -307,7 +306,7 @@ export const FIXTURE_EVIDENCE = {
   },
   'result-before-approval': {
     file: 'builtin-openclaw-FlPOnMHc.mjs',
-    lines: '3495-3540',
+    lines: '3463-3540',
     note: '先 tool/result 再 stream:approval(pending)',
   },
   'thinking-no-identity': {
@@ -329,6 +328,11 @@ export const FIXTURE_EVIDENCE = {
     file: 'exec-approval-B0MHHes6.mjs',
     lines: '277-286',
     note: 'approval 载荷含 sessionKey/runId/toolCallId',
+  },
+  'approval-native-resolved': {
+    file: 'approval-shared-1gFEjucV.mjs',
+    lines: '273-284,481-487',
+    note: 'exec.approval.resolved；id/decision/resolvedBy/ts/request',
   },
   'outer-seq-per-client': {
     file: 'server-start-BB-IxTAg.mjs',

@@ -23,9 +23,9 @@ import {
  * 目的（05 §5 step 0 验收出口）：让 `start-before-approval`、**同 seq 多事件**、
  * "跳过也发 start"、子代理原生 run、thinking 无段身份等反例**在测试里显式存在**。
  *
- * 结构：每个用例 = 【真实 dispatcher + 真实 message-store】吃一段逐字取证的原生帧
+ * 结构：每个用例 = 【真实 dispatcher + 真实 message-store】吃源码派生的最小原生帧投影
  * （见 fixtures 注释与 docs 06 证据表），把**现状行为**钉住；与 05 目标语义有差异处
- * 用 `【step 1 靶点】` 标注——这些标注是 step 1 的修复清单，不是本文件要修的东西。
+ * 按 05 步骤标注；源码事实、单测覆盖与 UI/远端验收分开记录。
  */
 
 type EventListener = (data: GatewayEvent) => void;
@@ -35,6 +35,7 @@ function createHarness() {
   const store = createMessageStore({ persistMessage: vi.fn().mockResolvedValue(undefined) });
   const reportDebugEvent = vi.fn();
   const onSubagentCandidate = vi.fn();
+  const onApprovalResolved = vi.fn();
 
   const deps: GatewayDispatcherDeps = {
     gateway: {
@@ -96,6 +97,7 @@ function createHarness() {
     syncSessionMessages: vi.fn(async () => {}),
     retrySyncPending: vi.fn(),
     onSubagentCandidate,
+    onApprovalResolved,
   };
 
   const dispatcher = createGatewayDispatcher(deps);
@@ -107,7 +109,7 @@ function createHarness() {
   const turn = () => store.getState().activeTurnBySession[FIXTURE.taskSessionKey];
   const calls = () => turn()?.toolCalls ?? [];
 
-  return { emit, primeTurn, turn, calls, store, reportDebugEvent, onSubagentCandidate };
+  return { emit, primeTurn, turn, calls, store, reportDebugEvent, onSubagentCandidate, onApprovalResolved };
 }
 
 describe('T1 · tool start 先于准备；跳过/未执行也发 start（wire 无 executionStarted）', () => {
@@ -127,7 +129,7 @@ describe('T1 · tool start 先于准备；跳过/未执行也发 start（wire �
     h.emit(toolStartFrame());
     // completeUnstartedToolCall 的线上投影：start（若未发过）→ result(isError:true)；
     // 真实上游对象里的 executionStarted:false **不会**出现在 wire 上（evidence: agent-core:1339-1360、
-    // builtin-openclaw:3495-3507）。
+    // builtin-openclaw:3463-3475）。
     h.emit(toolResultFrame({ isError: true, result: { content: [{ type: 'text', text: 'Operation aborted' }] } }));
     const call = h.calls().find((c) => c.id === 'tc-1')!;
     expect(call.status).toBe('error');
@@ -136,27 +138,27 @@ describe('T1 · tool start 先于准备；跳过/未执行也发 start（wire �
     // 上层若要显式区分，须依赖源端补字段（独立工作，第四次复审 §2 同口径）。
   });
 
-  it('item/start 的 title 写入；但真实 startedAt 在已有 tool/start 记录时**不回填**（现状）', () => {
+  it('item/start 的毫秒 startedAt 在已有记录和仅 item 建记录两路都转为精确 ISO', () => {
     const h = createHarness();
     h.primeTurn();
     h.emit(toolStartFrame());
-    h.emit(toolItemStartFrame({ title: 'read a.txt', startedAt: '2026-10-13T08:00:00.000Z' }));
+    h.emit(toolItemStartFrame({ title: 'read a.txt', startedAt: Date.parse('2026-10-13T08:00:00.000Z') }));
     const call = h.calls().find((c) => c.id === 'tc-1')!;
     expect(call.title).toBe('read a.txt');
-    // 现状（首跑实测）：startedAt 保持 tool/start 到达时的客户端时钟，item 的**真实 startedAt 不回填**。
-    expect(call.startedAt).not.toBe('2026-10-13T08:00:00.000Z');
-    // 【step 1 靶点】上游给过真实 startedAt（builtin-openclaw:2982）但合并不采用 ⇒ 耗时口径=客户端首次
-    // 看到；05 要求"真实 startedAt 优先、未知不伪造"，属 step 1 的合并优先级调整范围。
+    // runtime 用 Date.now()（builtin-openclaw:2904,2982）；不是 ISO string。
+    // 这是上游调用开始时间，不代表底层命令已实际执行。
+    expect(call.startedAt).toBe('2026-10-13T08:00:00.000Z');
 
-    // 仅 item 帧（无 tool/start）建记录（实测第二轮）：真实 startedAt **同样不采用**——
-    // ToolCall.startedAt 一律为客户端时钟（两路都不回填上游真实值）。
+    // 仅 item 帧（无 tool/start）也采用上游毫秒值。
     h.emit(
-      toolItemStartFrame({ toolCallId: 'tc-item-only', title: 'webSearch x', startedAt: '2026-10-13T07:00:00.000Z' }),
+      toolItemStartFrame({
+        toolCallId: 'tc-item-only',
+        title: 'webSearch x',
+        startedAt: Date.parse('2026-10-13T07:00:00.000Z'),
+      }),
     );
     const second = h.calls().find((c) => c.id === 'tc-item-only')!;
-    expect(second.startedAt).not.toBe('2026-10-13T07:00:00.000Z');
-    // 【step 1 靶点】上游 item 帧带真实 startedAt/endedAt（builtin-openclaw:2982），现状两路都不采用 ⇒
-    // 耗时展示口径=客户端首次看到；05 要求"有真实值用真实值、未知不伪造" ⇒ step 1 合并优先级调整点（本步不修）。
+    expect(second.startedAt).toBe('2026-10-13T07:00:00.000Z');
   });
 });
 
@@ -171,18 +173,20 @@ describe('T2 · result(isError:false) 先于 approval/pending —— 不许提�
     h.emit(approvalRequestedFrame());
     call = h.calls().find((c) => c.id === 'tc-exec-1')!;
     expect(call.status).toBe('awaitingApproval');
-    // 【step 1 靶点】05：approval.requested 独立归并（approvalId），等待态不转圈文案。
+    // 【05 step 3】approval.requested 独立归并（approvalId），等待态不转圈文案。
   });
 
-  it('allow 只解除阻塞：approved 帧不推进状态（仍是 awaitingApproval），随后 abort 型 error 结果如实收场', () => {
+  it('原生 resolved 按 id 通知审批回调；不凭 allow 确认执行，随后 error 如实收场', () => {
     const h = createHarness();
     h.primeTurn();
     h.emit(toolStartFrame({ toolCallId: 'tc-exec-1', name: 'bash' }));
     h.emit(heldResultFrame());
     h.emit(approvalRequestedFrame());
-    h.emit(approvalResolvedFrame('approved'));
+    expect(h.onApprovalResolved).not.toHaveBeenCalled();
+    h.emit(approvalResolvedFrame('ap-1'));
+    expect(h.onApprovalResolved).toHaveBeenCalledExactlyOnceWith('ap-1');
     let call = h.calls().find((c) => c.id === 'tc-exec-1')!;
-    expect(call.status, 'allow ≠ 开始执行；现状 approved 帧仅留日志').toBe('awaitingApproval');
+    expect(call.status, 'allow ≠ 开始执行；resolved 回调不推进 tool 状态').toBe('awaitingApproval');
     // 允许后仍可能被中止（evidence: bash-tools:327-338 run-aborted），以真实结果帧收场：
     h.emit(
       toolResultFrame({
@@ -194,14 +198,16 @@ describe('T2 · result(isError:false) 先于 approval/pending —— 不许提�
     );
     call = h.calls().find((c) => c.id === 'tc-exec-1')!;
     expect(call.status).toBe('error');
-    // 【step 1 靶点】05：allow 仅解除对应审批阻塞；这一步现状已正确，保持。
+    // 【05 step 3】本例只证明 resolved 回调路由与 tool 状态；不证明弹窗/UI 或远端解除阻塞。
   });
 });
 
-describe('A1/A2 · seq 域：同 seq 的 delta+final 都不得被吞；连接域 seq 互不碰撞', () => {
+describe('A1/S1 · 同 seq 多事件与子代理候选路由（连接级 seq 隔离另待测）', () => {
   it('chat delta 与 final 复用同一 seq ⇒ 两帧都生效（final 照常收口）', () => {
     const h = createHarness();
     h.emit(chatDeltaFrame([{ type: 'text', text: '答案前半' }], { seq: 7 }));
+    expect(h.turn()?.streamingText, 'final 不能掩盖 delta 被吞').toBe('答案前半');
+    expect(h.turn()?.finalized).toBe(false);
     h.emit(chatFinalFrame([{ type: 'text', text: '答案前半，完整收尾。' }], { seq: 7, stopReason: 'end_turn' }));
     const t = h.turn()!;
     expect(t.finalized).toBe(true);
@@ -217,8 +223,8 @@ describe('A1/A2 · seq 域：同 seq 的 delta+final 都不得被吞；连接域
     const after = h.turn()!;
     expect(after, '父轮次对象未被子会话帧触碰').toBe(before);
     expect(after.runId).toBe(FIXTURE.parentRunId);
-    // 现状去向：child 帧走子代理候选/丢弃路径（见 reportDebugEvent 与 onSubagentCandidate）。
-    // 【step 1 靶点】05：UI 聚合为一个用户回合，但原生 session/run 必须保留并各自归属。
+    expect(h.onSubagentCandidate).toHaveBeenCalledExactlyOnceWith(FIXTURE.childSessionKey, FIXTURE.gatewayId);
+    // 【05 step 2】候选回调只带 session/gateway，本例不证明完整 child run 树或 UI 归属。
   });
 });
 
@@ -229,7 +235,7 @@ describe('K1 · thinking 外发无段身份（text/delta 两条字段，无 segm
     h.emit(thinkingAccumFrame('思考一'));
     h.emit(thinkingAccumFrame('思考一继续', '继续'));
     expect(h.turn()!.streamingThinking).toBe('思考一继续');
-    // 【step 1 靶点】跨通道"回声 vs 新段同文"的无损判据在源端（无段身份字段可借）；
+    // 【独立源端工作，非 step 1】跨通道"回声 vs 新段同文"的无损判据在源端（无段身份字段可借）；
     // 本用例只钉"无身份字段下的现状合并"，不表达无法无损消歧的部分。
   });
 });
