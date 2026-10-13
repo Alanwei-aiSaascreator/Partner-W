@@ -296,6 +296,84 @@ describe('统一完成资格通知（封口后判定）', () => {
     expect(sendNotification, 'live 完成仍按资格通知一次（永久 run 黑名单是缺陷）').toHaveBeenCalledTimes(1);
   });
 
+  it('⭐ I-3 收尾（Codex 5 例探针同例）：历史已 complete 与重复 live 终态同一批次到达（归约换引用）⇒ 不重报', async () => {
+    setRuntime({ runId: 'run-6', turnOpen: true, operations: { 'gw|op-1': {} } });
+    await flush();
+    // 历史恢复：complete 落定 → mark 绑该版本；**同一 act 内**随即到达语义重复的
+    // model.ended（真实归约因 seq 推进产生新引用——此处以等价新对象模拟）与登记回执。
+    act(() => {
+      setRuntimeRaw({
+        runId: 'run-6',
+        modelPhase: 'ended',
+        turnOpen: false,
+        operations: { 'gw|op-1': { outcome: 'complete' } },
+      });
+      markRunHydrated(session, 'run-6');
+      noteTurnRegistration({
+        taskId: 'task-1',
+        sessionKey: session,
+        runId: 'run-6',
+        status: 'registered',
+        expectedKinds: [],
+      });
+      setRuntimeRaw({
+        runId: 'run-6',
+        modelPhase: 'ended',
+        turnOpen: false,
+        operations: { 'gw|op-1': { outcome: 'complete' } },
+      });
+    });
+    await flush();
+    expect(
+      sendNotification,
+      '历史快照已达 complete ⇒ 资格键须按历史快照本身入册；重复 live 终态无新增完成事实，不得冒充新完成',
+    ).not.toHaveBeenCalled();
+    // 重复回放（再换引用）仍不重报。
+    act(() => {
+      setRuntimeRaw({
+        runId: 'run-6',
+        modelPhase: 'ended',
+        turnOpen: false,
+        operations: { 'gw|op-1': { outcome: 'complete' } },
+      });
+    });
+    await flush();
+    expect(sendNotification).not.toHaveBeenCalled();
+  });
+
+  it('⭐ I-3 收尾对照：历史 partial → 同批 live complete 属资格升级 ⇒ 仍通知一次', async () => {
+    setRuntime({ runId: 'run-7', turnOpen: true, operations: { 'gw|op-1': {}, 'gw|op-2': {} } });
+    await flush();
+    act(() => {
+      setRuntimeRaw({
+        runId: 'run-7',
+        modelPhase: 'ended',
+        turnOpen: false,
+        operations: { 'gw|op-1': { outcome: 'complete' }, 'gw|op-2': { outcome: 'failed' } },
+      });
+      markRunHydrated(session, 'run-7');
+      noteTurnRegistration({
+        taskId: 'task-1',
+        sessionKey: session,
+        runId: 'run-7',
+        status: 'registered',
+        expectedKinds: [],
+      });
+      // 同批：另一项真实也完成 ⇒ complete 升级（新资格键）。
+      setRuntimeRaw({
+        runId: 'run-7',
+        modelPhase: 'ended',
+        turnOpen: false,
+        operations: { 'gw|op-1': { outcome: 'complete' }, 'gw|op-2': { outcome: 'complete' } },
+      });
+    });
+    await flush();
+    expect(sendNotification, '历史 partial 入册 partial；complete 是新资格 ⇒ 升级通知一次').toHaveBeenCalledTimes(1);
+    expect(sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'notifications.taskComplete', taskId: 'task-1' }),
+    );
+  });
+
   it('⭐ I-3 反例（复审实跑）：恢复中间态与真实 live 完成落在同一 React 批次 ⇒ live 完成必须通知一次', async () => {
     setRuntime({ runId: 'run-5', modelPhase: 'active', turnOpen: true, operations: { 'gw|op-1': {} } });
     await flush();

@@ -117,18 +117,22 @@ export function useDeliverySettlementNotification(): void {
       const sealed = isRunSealed({ modelPhase: projection.modelPhase, turnOpen: Boolean(activeTurns[sessionKey]) });
       // 现场目击登记：一旦在未封口状态见过就永久为 true；从未见过（挂载即封口）保持 false。
       witnessed.current.set(runKey, witnessed.current.get(runKey) === true || !sealed);
-      // ⭐ 第三轮（I-3）：恢复静默**绑定被恢复的投影版本** —— 仅当当前投影仍是登记时的
-      //    那个历史对象引用（`getRunHydratedSnapshot` 的不可变引用比较）才按历史处理：
-      //    不发通知、把该历史定格终态按已通知入册。引用不一致（live 已推进，例如恢复与
-      //    真实完成落在同一 React 批次）⇒ 不当历史，照常走 live 评估（复审反例的修复点）。
+      // ⭐ 第三轮（I-3）：恢复静默**绑定被恢复的投影版本**；⭐ I-3 收尾（06:0x）：
+      //    资格入册**按历史快照本身**，与当前引用是否已变化**无关** ——
+      //    ① 先从 hydration.projection（历史快照）算它已达的 complete/partial 定格资格，
+      //       把该去重键入册：即使同批到达的语义重复终态经真实归约换了引用（seq 推进、
+      //       无新增完成事实），重复 live 也不会冒充新完成；
+      //    ② 再看当前投影是否仍是该历史版本：是 ⇒ 这次评估就是历史回放，静默跳过；
+      //       否 ⇒（live 已推进，含同批真实完成）落到下面 live 评估——历史中间态无定格
+      //       资格 ⇒ 不预屏蔽未来完成；历史 partial → live complete 是新键 ⇒ 升级仍通知。
       const hydration = getRunHydratedSnapshot(sessionKey, runId);
-      if (hydration && hydration.projection === projection) {
+      if (hydration) {
         const historicalKind = historicalSettledNotificationKind({
-          projection,
-          sealed: isRunSealed({ modelPhase: projection.modelPhase, turnOpen: hydration.turnOpen }),
+          projection: hydration.projection,
+          sealed: isRunSealed({ modelPhase: hydration.projection.modelPhase, turnOpen: hydration.turnOpen }),
         });
         if (historicalKind) notified.current.add(`${sessionKey}|${runId}|${historicalKind}`);
-        continue;
+        if (hydration.projection === projection) continue;
       }
       if (!sealed) continue;
       if (witnessed.current.get(runKey) !== true) continue; // 历史注入（挂载即封口）⇒ 静默
