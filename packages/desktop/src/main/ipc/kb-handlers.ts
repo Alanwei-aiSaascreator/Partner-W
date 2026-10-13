@@ -17,6 +17,7 @@ import { extname, resolve } from 'node:path';
 import { classifyTier } from '../context/file-types.js';
 import { getKbRuntime } from '../kb/runtime.js';
 import { getWorkspacePath } from '../workspace/config.js';
+import { getWorkspaceScope, subscribeWorkspaceScope } from '../workspace/scope.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
   return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
@@ -32,17 +33,25 @@ const NOT_READY = { ok: false as const, code: 'not-ready' as const };
  * 但"能发 IPC"这件事本身不该等于"能让应用替你读任意文件建索引" —— 合法的来源
  * 只有一条：**用户刚在系统选择框里亲自选过**。
  *
- * 一次 pick 建立一条 grant，绑三样东西：
+ * 一次 pick 建立一条 grant，绑四样东西：
  *   · **sender / frame**：A 窗口（或另一个子帧）选的，B 窗口用不了；
  *   · **canonical path 集合**：入库前重新 realpath，选择之后被换成指向别处的链接
  *     （canonical 变了）⇒ 拒绝；
- *   · **当前工作区**：工作区切换 ⇒ 立即失效并清理（切回来也不复活）。
+ *   · **工作区路径**：与 add 时刻不一致 ⇒ 拒绝并清理；
+ *   · **工作区代次（scope + revision，见 `workspace/scope.ts`）**：picker **打开前**捕获，
+ *     结果回来时和 add 时都比一遍仍是同一代；换代（关库/开库/换盘）⇒ 旧 grant 立即清掉，
+ *     "切回原路径"也是新一代，不复活（S-R1）。
+ *
+ * picker 还有**自己的代次**（S-R2）：每个 sender/frame 单调推进，**每次打开选择框
+ * （含取消）都推进**。await 回来的结果只有"仍是该窗口最后一次打开"的才可能建立 grant ——
+ * 较旧选择框的迟到结果既不能写回授权，也不能覆盖/清掉较新一次的授权。
  *
  * 消耗与重试的**明确语义**（测试逐条钉住）：
  *   · 取消 dialog ⇒ 该窗口 grant 归零（旧的一并作废）；
  *   · grant 过期（{@link KB_FILE_GRANT_TTL_MS}）⇒ 拒绝；
  *   · 入库**成功**后该路径**一次性消耗**（同路径重放拒绝）；
- *   · 服务抛错（库锁/磁盘）⇒ 授权**不消耗**，同一条路径可安全重试；
+ *   · 服务抛错（库锁/磁盘）⇒ 授权**不消耗**，同一条路径可安全重试
+ *     （仅当这条 grant 仍是当前代、未被替换时才放回）；
  *   · 校验失败（不是选出来的 / 格式 / 形态）⇒ 不消耗（挡的是请求，不是这条授权）。
  *
  * ⚠️ 其他"把文件塞进资料库"的入口只有模型产物沉淀（`addArtifact`/`addNote` 走各自
@@ -51,8 +60,11 @@ const NOT_READY = { ok: false as const, code: 'not-ready' as const };
 export const KB_FILE_GRANT_TTL_MS = 5 * 60_000;
 
 interface KbFileGrant {
-  /** pick 时刻的工作区（canonical）；与 add 时刻不一致 ⇒ 该 grant 立即作废并清理。 */
+  /** pick 打开时刻的工作区（canonical）；与 add 时刻不一致 ⇒ 该 grant 立即作废并清理。 */
   workspace: string | null;
+  /** pick 打开时刻的工作区代次（scope UUID + revision）；任何一项变了 ⇒ 立即作废并清理。 */
+  scope: string | null;
+  revision: number;
   /** pick 时刻的 canonical 目标集合；每条成功入库就删掉（一次性消耗）。 */
   paths: Set<string>;
   expiresAt: number;
@@ -60,6 +72,24 @@ interface KbFileGrant {
 
 /** 每窗口（sender+frame）一条。窗口关掉不清理也没关系：过期即被清（无定时器，惰性）。 */
 const fileGrants = new Map<string, KbFileGrant>();
+
+/** 每窗口（sender+frame）的 picker 代次：每次打开选择框（含取消）都推进。 */
+const pickerGenerations = new Map<string, number>();
+
+/**
+ * 工作区换代 ⇒ 所有旧 grant 立即清掉（与其他 IPC 模块同款：模块加载时注册一次）。
+ * 这是"即刻失效"；add 路径自己还会再比一次代次（防通知丢失/顺序变化），两层都要在。
+ */
+subscribeWorkspaceScope(() => {
+  fileGrants.clear();
+});
+
+function sameScopeGeneration(
+  a: { scope: string | null; revision: number },
+  b: { scope: string | null; revision: number },
+): boolean {
+  return a.scope === b.scope && a.revision === b.revision;
+}
 
 /** 谁在说话：webContents id + 顶层帧 routingId（拿不到就用 -1 哨兵，仍按窗口隔离）。 */
 function senderIdentity(event: IpcMainInvokeEvent): string {
@@ -122,9 +152,21 @@ export function registerKbHandlers(): void {
    *
    * ⚠️ 每次 pick 用**本次结果**替换该窗口的 grant（取消 ⇒ 归零）：授权永远只对
    *    "用户刚看到的那一次选择框"有效，不是一扇长期开的门。
+   *
+   * ⚠️ 结果回来要过两道**代次**校验（S-R1/S-R2），任何一道不过 ⇒ 不写 grant、不把
+   *    paths 交回界面（回空结果，与"取消"在渲染层等价，用户重新选一次即可）：
+   *      1. picker 代次仍是该窗口最后一次打开的那次（较旧的迟到结果整体作废）；
+   *      2. 打开前捕获的工作区代次（scope+revision）与现在仍是同一代（await 期间换库 ⇒ 作废）。
+   *    add 侧没 grant 必然拒绝 —— 界面不会拿到"看起来可用其实不能用"的授权。
    */
   ipcMain.handle('kb:pick-files', async (event: IpcMainInvokeEvent) => {
     const key = senderIdentity(event);
+    // 打开前捕获：工作区路径 + 工作区代次（关库/开库/换盘都会推进 revision/换 scope）
+    const openedWorkspace = canonicalWorkspace();
+    const openedAt = getWorkspaceScope();
+    // 本次打开的 picker 代次：取消也算一次（推进在打开时，不在结果返回时）
+    const generation = (pickerGenerations.get(key) ?? 0) + 1;
+    pickerGenerations.set(key, generation);
     fileGrants.delete(key);
     pruneExpiredGrants();
 
@@ -132,6 +174,15 @@ export function registerKbHandlers(): void {
     const result = await (win
       ? dialog.showOpenDialog(win, KB_PICK_FILE_DIALOG_OPTIONS)
       : dialog.showOpenDialog(KB_PICK_FILE_DIALOG_OPTIONS));
+
+    // 校验 1：是否已被本窗口后面打开的 picker 顶掉（S-R2）
+    if (pickerGenerations.get(key) !== generation) {
+      return { ok: true, paths: [], stale: 'picker-superseded' as const };
+    }
+    // 校验 2：工作区是否仍是打开 picker 时的那一代（S-R1）
+    if (!sameScopeGeneration(openedAt, getWorkspaceScope())) {
+      return { ok: true, paths: [], stale: 'workspace-changed' as const };
+    }
     if (result.canceled) return { ok: true, paths: [] };
 
     const granted = new Set<string>();
@@ -141,7 +192,9 @@ export function registerKbHandlers(): void {
     }
     if (granted.size > 0) {
       fileGrants.set(key, {
-        workspace: canonicalWorkspace(),
+        workspace: openedWorkspace,
+        scope: openedAt.scope,
+        revision: openedAt.revision,
         paths: granted,
         expiresAt: Date.now() + KB_FILE_GRANT_TTL_MS,
       });
@@ -167,7 +220,9 @@ export function registerKbHandlers(): void {
     if (!grant) {
       return denied('这个文件不是从「添加文件」选择框里选出来的（或选择已过期）：请重新选择');
     }
-    if (!samePath(grant.workspace, canonicalWorkspace())) {
+    // 同代校验：路径 + scope/revision **都要**与 pick 打开时刻一致（S-R1）。
+    // 订阅清理是"即刻失效"，这里是"亲自再比一次" —— 两层都要，缺一会给未来改动留复活口。
+    if (!samePath(grant.workspace, canonicalWorkspace()) || !sameScopeGeneration(grant, getWorkspaceScope())) {
       fileGrants.delete(key); // 切 scope 即清理 —— 不是"离开冻结、回来复活"
       return denied('工作区已切换，上次选择的文件已作废：请重新选择');
     }
@@ -190,12 +245,15 @@ export function registerKbHandlers(): void {
     const runtime = getKbRuntime();
     if (!runtime) return NOT_READY;
 
-    // 一次性消耗：先摘掉授权再调服务；服务抛错时**放回**（失败安全重试）
+    // 一次性消耗：先摘掉授权再调服务；服务抛错时**放回**（失败安全重试）——
+    // 只放回给"仍是当前代的那条 grant"：调用期间被换掉/清理掉/过期清理的，不许复活。
     grant.paths.delete(canonical);
     try {
       return { ok: true, outcome: await runtime.service.addFile(canonical, { title: params.title }) };
     } catch (err) {
-      grant.paths.add(canonical);
+      if (fileGrants.get(key) === grant && sameScopeGeneration(grant, getWorkspaceScope())) {
+        grant.paths.add(canonical);
+      }
       return ipcError(err);
     }
   });
