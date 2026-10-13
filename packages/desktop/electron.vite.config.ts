@@ -3,6 +3,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { buildSlidegenPreflight } from './scripts/build-slidegen-preflight.mjs';
+import { PROD_CSP, rendererDevCsp } from './scripts/lib/renderer-csp.mjs';
 
 export default defineConfig({
   main: {
@@ -36,7 +37,29 @@ export default defineConfig({
     css: {
       transformer: 'lightningcss',
     },
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      // ⭐ BUG-056②（S 包 patch，I 接线）：按实际面列白的 CSP 以 <meta> 注入应用自己的两份
+      //    文档（index + quick-launch）；dev 只多 dev 源与 HMR 的 ws；隐藏窗口不走这里。
+      {
+        name: 'rongying-renderer-csp',
+        transformIndexHtml(html: string, ctx: { server?: { resolvedUrls?: { local?: string[] } | null } | null }) {
+          const devOrigin = ctx?.server?.resolvedUrls?.local?.[0] ?? null;
+          const policy = devOrigin ? rendererDevCsp(devOrigin) : PROD_CSP;
+          return {
+            html,
+            tags: [
+              {
+                tag: 'meta',
+                attrs: { 'http-equiv': 'Content-Security-Policy', content: policy },
+                injectTo: 'head-prepend',
+              },
+            ],
+          };
+        },
+      },
+    ],
     build: {
       rollupOptions: {
         input: {

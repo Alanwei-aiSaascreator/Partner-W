@@ -18,6 +18,7 @@ import { registerSearchHandlers } from './ipc/search-handlers.js';
 import { registerDataHandlers } from './ipc/data-handlers.js';
 import { registerTeamMeetingHandlers } from './ipc/team-meeting-handlers.js';
 import { registerStatsHandlers } from './ipc/stats-handlers.js';
+import { installNavigationGuards } from './security/navigation-guard.js';
 import { registerUpdateHandlers } from './ipc/update-handlers.js';
 import { runUpdaterStartupHousekeeping } from './auto-updater.js';
 import { registerDebugHandlers } from './ipc/debug-handlers.js';
@@ -259,6 +260,13 @@ function createWindow(): BrowserWindow {
       }
     } catch {}
     return { action: 'deny' };
+  });
+
+  // ⭐ BUG-056②（S 包 patch，I 接线）：主框架导航守卫 —— 只许应用自己的页面；
+  //    外链交给系统浏览器；will-navigate/will-redirect 双钩（服务器跳转也不许把主框架带出去）。
+  installNavigationGuards(win.webContents, {
+    devOrigin: is.dev ? (process.env['ELECTRON_RENDERER_URL'] ?? null) : null,
+    appRendererDir: join(import.meta.dirname, '../renderer'),
   });
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

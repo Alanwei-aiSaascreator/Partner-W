@@ -5,6 +5,7 @@ import { readConfig, updateConfig } from './workspace/config.js';
 import type { QuickLaunchConfig } from './workspace/config.js';
 import { getDebugLogger } from './debug/index.js';
 import { getMainWindow } from './window-manager.js';
+import { installNavigationGuards } from './security/navigation-guard.js';
 
 let quickLaunchWindow: BrowserWindow | null = null;
 let registeredShortcut: string | null = null;
@@ -43,6 +44,13 @@ function createQuickLaunchWindow(): BrowserWindow {
   });
 
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  // ⭐ BUG-056②（S 包 patch，I 接线）：快速启动窗同为主应用文档（同 preload）——同样只许在
+  //    渲染目录内导航；与主窗同一安全口径。
+  installNavigationGuards(win.webContents, {
+    devOrigin: is.dev ? (process.env['ELECTRON_RENDERER_URL'] ?? null) : null,
+    appRendererDir: join(import.meta.dirname, '../renderer'),
+  });
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/quick-launch.html`);
