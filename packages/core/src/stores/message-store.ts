@@ -347,6 +347,17 @@ export interface MessageState {
    */
   beginExecutionRun: (sessionKey: string, runId: string) => void;
   bulkLoad: (taskId: string, msgs: Message[]) => void;
+  /**
+   * 给一条消息盖上"交付可信成功过"的最小标记（r7-1 / BUG-026 跨重开残余）。
+   *
+   * 为什么写在消息对象上（而不是另开一份"成功账本"）：失败去重周期以可信成功为边界
+   * （`useClaimGuardToast`），而边界必须能从**既有消息**恢复 —— 这条消息本身带标记，
+   * 水合/重灌（`bulkLoad`）时随消息一起回来，不新增平行状态。
+   * 与主进程 `messages.delivery_succeeded`（`main/artifact/delivery-settlement.ts`）同一语义：
+   * 渲染层内存态 + 库行，两层各管一段（现场判定 / 跨重开恢复）。
+   * ⚠️ 只置位、不清除（"这条消息的交付在某一刻可信成功过"）；标不中消息时原样返回。
+   */
+  markDeliverySucceeded: (taskId: string, messageId: string) => void;
   appendStreamDelta: (sessionKey: string, delta: string) => void;
   bindActiveRun: (sessionKey: string, runId: string) => void;
   /**
@@ -865,6 +876,21 @@ export function createMessageStore(deps: MessageStoreDeps) {
           }),
         },
       })),
+
+    // r7-1：交付成功的最小标记打在**消息对象本身**上（见接口注释）。只置位、不清除；
+    // 消息不在（还没落进这个 task 的消息流）时连 state 都不动。
+    markDeliverySucceeded: (taskId, messageId) =>
+      set((s) => {
+        const messages = s.messagesByTask[taskId];
+        if (!messages?.length) return s;
+        let changed = false;
+        const next = messages.map((message) => {
+          if (message.id !== messageId || message.deliverySucceeded === true) return message;
+          changed = true;
+          return { ...message, deliverySucceeded: true };
+        });
+        return changed ? { messagesByTask: { ...s.messagesByTask, [taskId]: next } } : s;
+      }),
 
     bindActiveRun: (sessionKey, runId) =>
       set((state) => {

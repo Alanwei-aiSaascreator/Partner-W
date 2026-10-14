@@ -91,7 +91,8 @@ CREATE TABLE IF NOT EXISTS messages (
   timestamp TEXT NOT NULL,
   image_attachments TEXT,
   tool_calls TEXT,
-  model TEXT
+  model TEXT,
+  delivery_succeeded INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -161,6 +162,10 @@ function openAndMigrate(dbPath: string): void {
   // 这条回复**实际**是哪个模型生成的（逐条来自网关 transcript）。
   // 老数据留空 —— 不 backfill、也不拿会话级模型兜底（那是"选中的"不是"生成它的"）。
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN model TEXT');
+  // 交付成功的最小持久化标记（r7-1 / BUG-026 跨重开残余）：main 在产物交付可信结算为
+  // `succeeded` 时置位。老行留 NULL —— 语义是"没有可恢复的成功证据"，不 backfill
+  // （见 `@clawwork/shared` 的 `Message.deliverySucceeded` 与 `useClaimGuardToast` 的恢复路径）。
+  migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN delivery_succeeded INTEGER');
 
   for (const col of ['session_key TEXT', 'agent_id TEXT', 'run_id TEXT']) {
     migrateAddColumn(sqlite, `ALTER TABLE messages ADD COLUMN ${col}`);

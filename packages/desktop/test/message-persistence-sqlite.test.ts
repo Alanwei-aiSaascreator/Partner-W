@@ -48,6 +48,9 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 '../artifact/delivery-activity.js',
                 '../artifact/delivery-operation.js',
                 '../artifact/workspace-owner.js',
+                // r7-1（2026-10-15）：交付结算出口（`succeeded` 落最小成功标记）——真实模块
+                // 只依赖 db/drizzle（同上面两个），让探针用**真实现**，不另造一份桩。
+                '../artifact/delivery-settlement.js',
                 '../slidegen/tool-receipts.js',
               ].includes(source) &&
               (source.startsWith('../artifact/') ||

@@ -35,6 +35,8 @@ export interface PersistedMessage {
   thinkingContent?: string;
   /** 实际生成这条回复的模型 id（逐条来自网关）。老行为 `null`。 */
   model?: string | null;
+  /** 交付成功的最小持久化标记（r7-1）。老行/老调用方没有它 ⇒ `null`/`undefined`。 */
+  deliverySucceeded?: boolean | null;
 }
 
 export interface ListResult<T> {

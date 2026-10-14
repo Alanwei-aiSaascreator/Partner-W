@@ -92,6 +92,11 @@ export const messages = sqliteTable('messages', {
   toolCalls: text('tool_calls'),
   thinkingContent: text('thinking_content'),
   model: text('model'),
+  /**
+   * 交付成功的最小持久化标记（r7-1 / BUG-026 跨重开残余）。
+   * NULL = 老行 / 还没有可信成功结算；语义见 `@clawwork/shared` 的 `Message.deliverySucceeded`。
+   */
+  deliverySucceeded: integer('delivery_succeeded', { mode: 'boolean' }),
 });
 
 export const taskRooms = sqliteTable('task_rooms', {

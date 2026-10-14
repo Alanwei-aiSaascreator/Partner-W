@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { Message } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
 import { slidegenFailureToastBody, slidegenFailureToastTitle } from '@/lib/slidegen-copy';
 import { docgenFailureMessage } from '@/lib/docgen-failure-copy';
@@ -12,6 +13,46 @@ import { useArtifactDeliveryStore } from '@/stores/artifactDeliveryStore';
 /** 失败去重周期的作用域键：同一 task 且同一 session 才算同一个周期。 */
 function failureEpisodeKey(taskId: string, sessionKey: string): string {
   return `${taskId}\n${sessionKey}`;
+}
+
+/**
+ * 这条系统便签是否属于**已关闭的失败周期**（成功边界之前）—— 边界的三层可恢复证据：
+ *
+ * ① **持久化最小成功标记**：同会话里、位于该便签**之后**的任意一条 `deliverySucceeded === true`
+ *    消息（main 在 `succeeded` 结算时就地写库，随消息水合回来）。这是**不设窗口**的那一份：
+ *    不再受 hook 内存上限、也不再受交付活动表 256 条上限影响。
+ * ② **成功消息 id**：现场结算（`onArtifactDeliverySettled`）与挂载时从
+ *    `getArtifactDeliveryActivitySnapshot().completedActivities` 恢复的 `succeeded` 终态。
+ *    覆盖"消息刚重灌、标记还没水合"以及"升级前发生、库里没有标记"的成功。
+ * ③ **结算时刻的便签快照**：只为**无法按消息锚定**的成功兜底（成功引用的消息不在本地
+ *    消息流里）—— 与 r6 行为逐字相同。
+ *
+ * ⚠️ 只回答"便签在不在成功之前"：不猜成功、不删历史便签、不缓存失败判定；找不到任何证据
+ *    ⇒ 回退旧行为（便签算当前周期 ⇒ 全量去重），不把"查不到"解释成"没成功"。
+ * ⚠️ 三层都按 task/session 隔离（`episodeKey` 含 session；① 比对同会话消息）。
+ */
+function isClosedEpisodeNote(input: {
+  note: Message;
+  noteIndex: number;
+  messages: readonly Message[];
+  sessionKey: string;
+  episodeKey: string;
+  successMessageIds: ReadonlyMap<string, ReadonlySet<string>>;
+  closedEpisodeNotes: ReadonlyMap<string, ReadonlySet<string>>;
+}): boolean {
+  const { note, noteIndex, messages, sessionKey, episodeKey, successMessageIds, closedEpisodeNotes } = input;
+  // ① 持久化最小成功标记。
+  for (let index = noteIndex + 1; index < messages.length; index += 1) {
+    const candidate = messages[index]!;
+    if (candidate.sessionKey === sessionKey && candidate.deliverySucceeded === true) return true;
+  }
+  // ② 成功消息 id（现场 + 快照恢复）。
+  for (const messageId of successMessageIds.get(episodeKey) ?? []) {
+    const anchorIndex = messages.findIndex((message) => message.id === messageId && message.sessionKey === sessionKey);
+    if (anchorIndex > noteIndex) return true;
+  }
+  // ③ 结算时刻快照（无法锚定的成功）。
+  return closedEpisodeNotes.get(episodeKey)?.has(note.id) ?? false;
 }
 
 export function useClaimGuardToast(): void {
@@ -28,31 +69,101 @@ export function useClaimGuardToast(): void {
     记为"上一段周期已上过屏"；去重只对**不在该集合里**（= 当前周期新增）的便签生效。
     · 历史便签不删：模型上下文（`artifactFailureContext`）照旧拿得到；
     · 不加永久失败缓存：判定仍由主进程每轮重新做出，这里只划分"当前周期"；
-    · 命中不到边界（本进程还没见过这个 task/session 的成功）⇒ 一切照旧全量扫描
-      （应用重启后不因丢失内存态而重复刷屏）。
     · 非成功 settled（failed / needs-review / canceled）**不**结束周期：needs-review 是
       "未确认"，不是可信成功；把它当边界会让未解决的同一失败在中段重新刷屏。
 
-    ⚠️ 键含 sessionKey（task/session 隔离）；条目按插入序封顶，只保存"哪几张便签属于上一周期"，
-    不保存失败本身。
+    ⭐ r7-1（2026-10-15，**跨重开残余**）：上面那份便签快照只是 hook 内存 ref —— 应用重开后
+    便签会按原 id/session 水合回来（`message-store.ts` 持久化 → `session-sync.ts` bulkLoad →
+    新 root 重挂本 hook），边界却没了，于是成功前的历史便签又被当成当前失败周期，
+    同因新失败被吞（独立复审反例：期待 2 次通知、实际 1 次）。
+    修法（本文件）：边界改成**可从既有持久化证据重建**，按 `isClosedEpisodeNote` 的三层证据
+    （持久化最小成功标记 → 成功消息 id + 交付活动快照恢复 → 结算时刻便签快照兜底）判定；
+    身份幂等：同一 `(task,session,messageId)` 的重复/迟到 `succeeded` 回执不再重拍当前便签
+    （复审观察序列「失败A→成功S→失败B→重复S→失败C」期待 2 次、旧实现 3 次）。
+    三层证据各自的窗口/缺口见 `isClosedEpisodeNote` 与本文件两处 ref 的注释；
+    全部找不到 ⇒ 回退旧行为（全量去重），只降能力、不误报成功。
   */
+  /** ③ 结算时刻的便签快照 —— 只服务"无法按消息锚定的成功"（见 `isClosedEpisodeNote`）。 */
   const closedEpisodeNotes = useRef(new Map<string, Set<string>>());
+  /**
+   * ② 可信成功绑定的消息 id（现场结算 + 挂载时从交付活动快照恢复）。
+   * ⚠️ **刻意不设上限**：旧实现的 128 条淘汰与交接的 256 条交付活动窗口是同一根因
+   *   （边界被丢、历史便签还在）—— 换另一份有上限的缓存不能闭合它。这里的条目是
+   *   "一个成功 = 一个 id"，量级远小于消息本身；真正的持久真相在消息行的
+   *   `deliverySucceeded`（①，随消息水合）与交付活动表。
+   */
+  const successMessageIds = useRef(new Map<string, Set<string>>());
+
+  /**
+   * ⭐ r7-1 恢复（挂载一次）：重开后成功边界不能只靠内存态。
+   * `artifact_delivery_activities` 里 `status === 'succeeded'` 的终态（用户/组织/许可绑定过的
+   * 真实结算，经 `artifact:get-delivery-activity-snapshot` 读出）在这里折进 ② 号证据。
+   * 限制如实保留：该表只留最近 256 条、没走到 phase 的操作可能没有活动 —— "查不到"≠"未成功"，
+   * 那些成功靠 ① 号持久化标记兜（这也是为什么标记必须落库而不是再开一份内存缓存）。
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const load = window.clawwork?.getArtifactDeliveryActivitySnapshot;
+    if (typeof load !== 'function') return;
+    void load()
+      .then((snapshot) => {
+        if (cancelled || !snapshot) return;
+        const map = successMessageIds.current;
+        for (const activity of snapshot.completedActivities ?? []) {
+          if (activity.status !== 'succeeded') continue;
+          if (!activity.taskId || !activity.sessionKey || !activity.messageId) continue;
+          const key = failureEpisodeKey(activity.taskId, activity.sessionKey);
+          const ids = map.get(key) ?? new Set<string>();
+          ids.add(activity.messageId);
+          map.set(key, ids);
+        }
+      })
+      .catch((error: unknown) => {
+        console.debug('[claim-guard] delivery success recovery unavailable', error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(
     () =>
       window.clawwork.onArtifactDeliverySettled?.((result) => {
         useArtifactDeliveryStore.getState().record(result);
         if (result.status === 'succeeded') {
-          const baseline = new Set(
-            (useMessageStore.getState().messagesByTask[result.taskId] ?? [])
-              .filter((message) => message.role === 'system' && message.sessionKey === result.sessionKey)
-              .map((message) => message.id),
-          );
           const key = failureEpisodeKey(result.taskId, result.sessionKey);
-          const map = closedEpisodeNotes.current;
-          map.delete(key);
-          map.set(key, baseline);
-          if (map.size > 128) map.delete(map.keys().next().value!);
+          const ids = successMessageIds.current.get(key) ?? new Set<string>();
+          /*
+            ⭐ r7-1 身份幂等：同一 `(task,session,messageId)` 的成功**只处理一次**。
+            重复/迟到回执（如 `data-handlers` 媒体补发的成功重放）不得再拍一次当前便签 ——
+            否则刚开启的新失败周期会被旧成功重新"闭合"，下一轮同失败又弹一次。
+            已恢复（②）或已水合带标记（①）的成功同样按"已知"处理（跨重开的重放）。
+          */
+          const alreadyKnown =
+            ids.has(result.messageId) ||
+            (useMessageStore.getState().messagesByTask[result.taskId] ?? []).some(
+              (message) => message.id === result.messageId && message.deliverySucceeded === true,
+            );
+          if (!alreadyKnown) {
+            ids.add(result.messageId);
+            successMessageIds.current.set(key, ids);
+            const baseline = new Set(
+              (useMessageStore.getState().messagesByTask[result.taskId] ?? [])
+                .filter((message) => message.role === 'system' && message.sessionKey === result.sessionKey)
+                .map((message) => message.id),
+            );
+            const map = closedEpisodeNotes.current;
+            map.delete(key);
+            map.set(key, baseline);
+            if (map.size > 128) map.delete(map.keys().next().value!);
+          }
+          /*
+            ⭐ r7-1 ① 号证据就地置位（幂等）：把"这条消息交付成功过"写进**消息对象本身** ——
+            它随消息一起水合/重灌（`bulkLoad`），重开后边界照样判得出；库行那份
+            （`messages.delivery_succeeded`，main 在结算出口写）管真正的进程重启。
+            重复回执只是把同一个 true 再写一遍；标不中消息（还没落进消息流）由 ② 号证据兜。
+          */
+          useMessageStore.getState().markDeliverySucceeded(result.taskId, result.messageId);
         }
         if (result.status === 'canceled' || !result.slideWarnings?.length) return;
         const store = useMessageStore.getState();
@@ -190,15 +301,25 @@ export function useClaimGuardToast(): void {
       */
       const note = lines.join('\n');
       const existingNotes = useMessageStore.getState().messagesByTask[violation.taskId] ?? [];
-      const closedNotes = closedEpisodeNotes.current.get(failureEpisodeKey(violation.taskId, violation.sessionKey));
+      const episodeKey = failureEpisodeKey(violation.taskId, violation.sessionKey);
       if (
         existingNotes.some(
-          (message) =>
+          (message, index) =>
             message.role === 'system' &&
             message.sessionKey === violation.sessionKey &&
             message.content === note &&
             // 成功边界之前的老便签 = 上一段周期：不再压当前周期的通知。
-            !closedNotes?.has(message.id),
+            // ⭐ r7-1：边界按**可恢复证据**判定（见 `isClosedEpisodeNote`）——
+            //    重开/重灌后照样判得出，不再只认本进程见过的便签 id 集合。
+            !isClosedEpisodeNote({
+              note: message,
+              noteIndex: index,
+              messages: existingNotes,
+              sessionKey: violation.sessionKey,
+              episodeKey,
+              successMessageIds: successMessageIds.current,
+              closedEpisodeNotes: closedEpisodeNotes.current,
+            }),
         )
       ) {
         console.debug(

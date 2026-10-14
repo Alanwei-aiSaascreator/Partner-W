@@ -22,6 +22,9 @@ import {
 } from '../artifact/turn-lifecycle.js';
 import { saveArtifact } from '../artifact/save.js';
 import { forgetTaskDeliveryActivities } from '../artifact/delivery-activity.js';
+// ⭐ r7-1：交付结算的唯一出口 —— `succeeded` 先落消息级最小成功标记（跨重开恢复失败周期边界），
+//    再广播；所有结算来源（主链/历史提取/媒体补发）都从这里出去。
+import { sendArtifactDeliverySettled } from '../artifact/delivery-settlement.js';
 import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
 import { emitTurnRegistration } from '../artifact/turn-registration.js';
 import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
@@ -1041,7 +1044,7 @@ function finalizeAssistantArtifacts(input: {
         },
       });
       for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('artifact:delivery-settled', {
+        sendArtifactDeliverySettled(win, {
           taskId: input.taskId,
           sessionKey: input.sessionKey,
           messageId: input.messageId,
@@ -2311,7 +2314,8 @@ function finalizeAssistantArtifacts(input: {
             };
           for (const win of BrowserWindow.getAllWindows()) {
             if (!canceledAfterContinuation && hasWarnings) win.webContents.send('slidegen:warned', slideWarnings);
-            win.webContents.send('artifact:delivery-settled', settlement);
+            // ⭐ r7-1：`succeeded` 在这里落最小成功标记（跨重开恢复失败周期边界的可恢复证据）。
+            sendArtifactDeliverySettled(win, settlement);
           }
           if (
             !isArtifactRunCanceled(run) &&
@@ -2653,7 +2657,7 @@ export function registerDataHandlers(): void {
                 },
               });
               for (const win of BrowserWindow.getAllWindows()) {
-                win.webContents.send('artifact:delivery-settled', {
+                sendArtifactDeliverySettled(win, {
                   taskId: msg.taskId,
                   sessionKey: resolvedSessionKey,
                   messageId: persistedMessageId,
@@ -2761,7 +2765,7 @@ export function registerDataHandlers(): void {
                   }
                   if (completed && !completed.mediaRetrySettlement) return;
                   for (const win of BrowserWindow.getAllWindows()) {
-                    win.webContents.send('artifact:delivery-settled', {
+                    sendArtifactDeliverySettled(win, {
                       taskId: msg.taskId,
                       sessionKey: resolvedSessionKey,
                       messageId: persistedMessageId,
@@ -2812,7 +2816,7 @@ export function registerDataHandlers(): void {
                   });
                 for (const win of BrowserWindow.getAllWindows()) {
                   win.webContents.send('artifact:claim-violation', failure);
-                  win.webContents.send('artifact:delivery-settled', {
+                  sendArtifactDeliverySettled(win, {
                     taskId: msg.taskId,
                     sessionKey: resolvedSessionKey,
                     messageId: persistedMessageId,

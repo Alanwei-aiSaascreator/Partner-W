@@ -74,6 +74,11 @@ beforeAll(async () => {
             ![
               '../artifact/delivery-activity.js',
               '../artifact/delivery-operation.js',
+              // r7-1：data-handlers 的交付结算改走唯一出口 `delivery-settlement.js`
+              // （`sendArtifactDeliverySettled` 内联标记+广播）；探针白名单必须跟着长，
+              // 否则它被当"无关生成器"桩掉、缺导出 ⇒ RollupError（与
+              // message-persistence-sqlite 探针同一条纪律）。
+              '../artifact/delivery-settlement.js',
               '../artifact/workspace-owner.js',
               '../slidegen/tool-receipts.js',
             ].includes(source) &&
