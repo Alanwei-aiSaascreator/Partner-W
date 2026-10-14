@@ -16,6 +16,7 @@ import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import { getActiveLocalGatewayStateDir } from '../runtime/index.js';
 import { hasInstalledSearchProvider } from '../runtime/bundled-search.js';
 import { advanceLicenseGeneration, getLicenseGeneration } from './license-generation.js';
+import { setActiveRelayKey } from './relay-key.js';
 
 export interface LicenseStatus {
   configured: boolean;
@@ -576,8 +577,26 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
   return result.configured;
 }
 
+/**
+ * 作废本地全部商业凭证（**账户边界**：登录成功 / 登出 / 手动清卡）。
+ *
+ * 三件事，顺序即纪律：
+ *   ① 代次 +1 —— 在途的 license 读取/激活/恢复立刻作废（见 `license-generation.ts`）；
+ *   ② **先清内存里那把活体 relay key** —— 它不依赖任何 I/O，必须在任何可能抛错
+ *      的写盘之前落定（只读盘上也能作废）；
+ *   ③ 再清盘上的 `licenseKey` / `licenseBinding`。
+ *
+ * ⚠️ 为什么必须带上 ②（2026-10-15 便携硬合同 P-C 的实测缺口）：
+ *    `relay-key.ts` 的那把 key 是**上个账号**的凭证（`applyRelayConfig` 写进网关的
+ *    那把就是它，视频那条直呼 relay 的通道只用它）。账户边界之后到"新账号的配置
+ *    真正落进网关"之前有一段窗口（清理 pending、等网关、等授权恢复）——
+ *    少了 ②，这段窗口里主进程会拿**旧账号的 key** 出站，正是合同点名禁止的
+ *    「沿用上个账号授权发起新请求」；登出之后更不该留着它等下一个账号。
+ *    新账号就绪时 `applyRelayConfig` 会重新写回它的 key（同一个漏斗）。
+ */
 export function clearLicense(): IpcResult {
   nextLicenseGeneration();
+  setActiveRelayKey(null);
   const current = readConfig()?.commercial;
   if (current) {
     updateConfig({ commercial: { ...current, licenseKey: undefined, licenseBinding: undefined } });
