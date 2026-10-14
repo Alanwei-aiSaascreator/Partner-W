@@ -10,8 +10,26 @@ import {
   INBOX_TRUSTED_CWD_SOURCE_SHA256,
   patchInboxTrustedCwdRuntime,
 } from './inbox-trusted-cwd-runtime.mjs';
+import {
+  INBOX_EXECUTOR_PATH_CONTEXT_ANCHOR,
+  INBOX_EXECUTOR_PATH_CONTEXT_ANCHOR_PATCHED,
+  INBOX_EXECUTOR_PATH_IMPORT_ANCHOR,
+  INBOX_EXECUTOR_PATH_IMPORT_ANCHOR_PATCHED,
+} from './inbox-executor-path-runtime.mjs';
 
 const sha256Hex = (value) => createHash('sha256').update(value).digest('hex');
+
+/**
+ * 链式还原（r7 起）：同一 dist 模块上还叠着更下游的 rongying-inbox-executor-path-v1
+ * （`scripts/lib/inbox-executor-path-runtime.mjs`，F1 残余修复）。按字节反向剥下游补丁
+ * 再走本模块的反向映射 —— 任一环节对不上仍然 fail-closed。
+ */
+function stripExecutorPathPatch(source) {
+  if (!source.includes(INBOX_EXECUTOR_PATH_CONTEXT_ANCHOR_PATCHED)) return source;
+  return source
+    .replace(INBOX_EXECUTOR_PATH_CONTEXT_ANCHOR_PATCHED, INBOX_EXECUTOR_PATH_CONTEXT_ANCHOR)
+    .replace(INBOX_EXECUTOR_PATH_IMPORT_ANCHOR_PATCHED, INBOX_EXECUTOR_PATH_IMPORT_ANCHOR);
+}
 
 /**
  * 源码 fixture = 冻结运行时 `agent-tools.before-tool-call-CHXgDzUI.mjs` 里
@@ -146,7 +164,7 @@ test('real module: 冻结模块字节与锚点 hash 一致，补丁可实打且�
     return;
   }
   const modulePath = path.join(distDir, 'agent-tools.before-tool-call-CHXgDzUI.mjs');
-  const source = fs.readFileSync(modulePath, 'utf-8');
+  const source = stripExecutorPathPatch(fs.readFileSync(modulePath, 'utf-8'));
   const alreadyPatched = source.includes(INBOX_TRUSTED_CWD_ANCHOR_PATCHED);
   const original = alreadyPatched ? source.replace(INBOX_TRUSTED_CWD_ANCHOR_PATCHED, INBOX_TRUSTED_CWD_ANCHOR) : source;
   assert.equal(sha256Hex(original), INBOX_TRUSTED_CWD_SOURCE_SHA256, '冻结模块字节与锚点 hash 不一致（fail-closed）');
@@ -154,5 +172,5 @@ test('real module: 冻结模块字节与锚点 hash 一致，补丁可实打且�
   const patched = patchInboxTrustedCwdRuntime(source);
   assert.equal(patched.split(INBOX_TRUSTED_CWD_ANCHOR_PATCHED).length, 2);
   assert.equal(patchInboxTrustedCwdRuntime(patched), patched, '幂等');
-  if (alreadyPatched) assert.equal(patched, source, '已打补丁的冻结模块必须原样返回');
+  if (alreadyPatched) assert.equal(patched, source, '已打补丁（v1 面）的冻结模块必须原样返回');
 });

@@ -55,6 +55,15 @@
  *    （`codingRoot = sandboxRoot ?? runtimeRoot`：执行器拿它当 cwd，钩子 ctx 也拿它当 cwd；
  *    不读模型 `params.cwd`、不猜 `process.cwd()`）。补丁缺席（旧运行时 / 未接线）：ctx
  *    不带 cwd ⇒ 第 3 层自动退回"只做字面判定"的既有行为，不放宽也不额外收紧。
+ * 4. **执行器同源终解路径**（`ctx.executorPath`）：相对 cwd 之外，执行器还会先做
+ *    `@` 前缀归一（字面 `@` 名字存在 → 当文件名；否则当"提及符号"剥掉）再把 `path`
+ *    解析成绝对路径 —— 守卫在原始参数字符串上**无法**复现这层语义（自己剥 `@`
+ *    会误杀真实 `@report.docx` 这类名字）。所以由配对补丁
+ *    `rongying-inbox-executor-path-v1`（`scripts/lib/inbox-executor-path-runtime.mjs`）
+ *    在钩子 ctx 放入执行器**同一段解析**（`normalizeFileToolPathParam` +
+ *    `resolveToCwd`，均为内核里 write/edit 执行器实际调用的函数）算出的绝对落点；
+ *    守卫把该落点作为**附加目标**做同一 canonical 判定（只认绝对路径；缺席/畸形 ⇒
+ *    逐字退回既有判定）。插件侧禁止任何自行剥 `@` 的字符串规则。
  *
  * 读工具（read / ls）不受影响；正常输出路径（任务根、out/、生成目录）不含 `inbox` 段，
  * 不受影响。
@@ -94,6 +103,10 @@ export const INBOX_READONLY_PLUGIN_ENTRY = `// 荣盈魔方 · 导入收件箱�
 // ③相对路径只在宿主提供可信 cwd（event.cwd / ctx.cwd）时按它解析 ——
 //   没有可信 cwd 就只做①，绝不拿 process.cwd 去猜。
 //   随包 runtime 补丁 rongying-inbox-trusted-cwd-v1 把「执行器同源 cwd」放进 ctx.cwd。
+// ④执行器同源终解路径：write/edit 执行器还会做前导 @ 归一（字面 @ 名字存在当文件名、
+//   否则当提及符号剥掉）再解析成绝对路径 —— 插件在原始字符串上无法自己复现。
+//   随包 runtime 补丁 rongying-inbox-executor-path-v1 把执行器同源解析后的绝对落点
+//   放进 ctx.executorPath（只认绝对路径；缺席/畸形 = 退回①②③，插件绝不自行剥 @）。
 import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 
@@ -169,6 +182,19 @@ function trustedCwdOf(event, context) {
   return null;
 }
 
+/**
+ * 执行器同源**终解路径**（runtime 补丁 rongying-inbox-executor-path-v1 放进 ctx）：
+ * write/edit 的 path 参数经执行器同一段解析（@ 前缀归一 + 相对路径按执行器 cwd）
+ * 后的真实落点。只认绝对路径；缺席/畸形 ⇒ 不作数（退回既有判定）。
+ * ⚠️ 不要在这里自己剥 @：真实文件名可以以 @ 开头（字面 @ 名字存在时执行器把 @ 当名字、
+ *    不存在时当提及符号剥掉）—— 这段语义只由 runtime 侧与执行器同源实现。
+ */
+function executorPathOf(context) {
+  const candidate = context && context.executorPath;
+  if (typeof candidate !== 'string' || !candidate.trim() || !isAbsolute(candidate.trim())) return null;
+  return candidate.trim();
+}
+
 function targetIsReadonlyInbox(rawTarget, trustedCwd) {
   if (typeof rawTarget !== 'string' || !rawTarget.trim()) return false;
   if (hasInboxSegment(splitSegments(rawTarget))) return true;
@@ -201,9 +227,10 @@ const handler = (event, context) => {
   if (!event || !WRITE_TOOLS.has(event.toolName)) return undefined;
   const params = event.params && typeof event.params === 'object' ? event.params : {};
   const trustedCwd = trustedCwdOf(event, context);
-  const hit = writeTargetsOf(params, event.derivedPaths).find((target) =>
-    targetIsReadonlyInbox(target, trustedCwd),
-  );
+  const targets = writeTargetsOf(params, event.derivedPaths);
+  const executorPath = executorPathOf(context);
+  if (executorPath) targets.push(executorPath);
+  const hit = targets.find((target) => targetIsReadonlyInbox(target, trustedCwd));
   if (!hit) return undefined;
   return { block: true, blockReason: BLOCK_REASON };
 };

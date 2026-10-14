@@ -41,6 +41,13 @@ interface BeforeToolCallEvent {
 /** 钩子第二参数（内核 ctx）：runtime 补丁落地后由它携带执行器同源 cwd。 */
 interface BeforeToolCallContext {
   cwd?: string;
+  /**
+   * 执行器同源**终解路径**（write/edit 的 `path` 参数经执行器同一段解析后的真实落点；
+   * `@` 前缀归一 + 相对路径按执行器 cwd 解析）。由配对 runtime 补丁
+   * `rongying-inbox-executor-path-v1` 放进钩子 ctx（`buildToolContext` 返回对象带
+   * `executorPath`）；缺席/畸形 ⇒ 守卫不作数（退回既有判定，不自行剥 `@`）。
+   */
+  executorPath?: string;
   agentId?: string;
   sessionKey?: string;
   runId?: string;
@@ -311,6 +318,18 @@ describe('inbox-readonly policy plugin (BUG-030 P3-1)', () => {
     }
   }
 
+  /** 建一个指向任意目录的链接（同上语义）。 */
+  function linkTo(name: string, targetDir: string): string | null {
+    mkdirSync(targetDir, { recursive: true });
+    const linkPath = path.join(stateDir, 'task-1', name);
+    try {
+      symlinkSync(targetDir, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+      return linkPath;
+    } catch {
+      return null; // 环境不允许建链接 ⇒ 该用例跳过（不假装通过）
+    }
+  }
+
   /**
    * BUG-056①（联审）：相对路径变体绕过 —— `inbox.`（Win32 段尾点归一后就是 `inbox`）
    * 走字面段判定时曾经**不命中**（段必须精确等于 `inbox`）。
@@ -480,5 +499,109 @@ describe('inbox-readonly policy plugin (BUG-030 P3-1)', () => {
       { cwd: stateDir },
     );
     expect(result.blocked).toBe(true);
+  });
+
+  /**
+   * BUG-056① 残余（F1）：执行器还会把前导 `@` 当「提及符号」剥掉再解析
+   * （`@alias/at.txt` → `alias/at.txt`；字面 `@` 名字存在时则保留为文件名）。
+   * 守卫的原始参数层看不到这层语义 —— 判定必须来自**执行器同源的终解路径**：
+   * 配对 runtime 补丁 `rongying-inbox-executor-path-v1` 把执行器解析后的绝对落点
+   * 放进钩子 ctx 的 `executorPath`（与 write/edit 执行器同一次 `path` 归一 + 解析）。
+   * ⚠️ 插件**不得**在这里自行剥 `@`（真实文件名可以以 `@` 开头）—— executorPath
+   *    缺席/畸形时按既有判定逐字退回，不收紧也不放宽。
+   */
+  it('⭐ ctx.executorPath（runtime 补丁来源）指向经 junction 的 inbox ⇒ 拒绝且原字节不变（@ 别名改写）', () => {
+    const linkPath = linkToInbox('exec-link');
+    if (!linkPath) return;
+    const inboxFile = path.join(stateDir, 'task-1', 'inbox', 'exec.docx');
+    writeFileSync(inboxFile, 'ORIGINAL', 'utf-8');
+
+    let executed = false;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', params: { path: '@exec-link/exec.docx', content: 'HACKED' } },
+      () => {
+        executed = true;
+        writeFileSync(inboxFile, 'HACKED', 'utf-8');
+      },
+      { cwd: stateDir, executorPath: path.join(linkPath, 'exec.docx') },
+    );
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toBe(INBOX_READONLY_BLOCK_REASON);
+    expect(executed).toBe(false);
+    expect(readFileSync(inboxFile, 'utf-8')).toBe('ORIGINAL');
+  });
+
+  it('缺 executorPath 时 `@…` 原始参数不自行剥 `@`（字面/canonical 逐字判定，不收紧）', () => {
+    const linkPath = linkToInbox('exec-gap');
+    if (!linkPath) return;
+    // raw `@exec-gap/x.docx`：既无字面 inbox 段，canonical 解析的也是「@exec-gap」这个不存在的名字。
+    // 判定只信执行器同源身份；插件不发明剥 `@` 的字符串规则（否则真实 @ 文件名会被误杀）。
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', params: { path: '@exec-gap/x.docx', content: 'x' } },
+      () => {},
+      { cwd: stateDir },
+    );
+    expect(result.blocked).toBe(false);
+  });
+
+  it('⭐ 真实 `@` 文件名不被误拒：executorPath 含 `@` 名字且落 out ⇒ 放行', () => {
+    const outDir = path.join(stateDir, 'task-1', 'out');
+    const linkPath = linkTo('@lit-link', outDir);
+    if (!linkPath) return;
+    let executed = false;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', params: { path: '@lit-link/@report.docx', content: 'x' } },
+      () => {
+        executed = true;
+      },
+      { cwd: stateDir, executorPath: path.join(linkPath, '@report.docx') },
+    );
+    expect(result.blocked).toBe(false);
+    expect(executed).toBe(true);
+  });
+
+  it('executorPath 非绝对路径 / 非字符串 / 空 ⇒ 不作数（只认执行器绝对终解）', () => {
+    const linkPath = linkToInbox('exec-bogus');
+    if (!linkPath) return;
+    const bogusValues: unknown[] = ['task-1/exec-bogus/x.docx', 'inbox/x.docx', 42, '', '   ', null, undefined];
+    for (const bogus of bogusValues) {
+      const result = runThroughGuard(
+        handler,
+        { toolName: 'write', params: { path: '@exec-bogus/x.docx', content: 'x' } },
+        () => {},
+        { cwd: stateDir, executorPath: bogus as string | undefined },
+      );
+      expect(result.blocked, `executorPath=${JSON.stringify(bogus)} 不得参与判定`).toBe(false);
+    }
+  });
+
+  it('executorPath 判据只走 ctx 通道：伪造 params.cwd 不改决策', () => {
+    const linkPath = linkToInbox('exec-forged');
+    if (!linkPath) return;
+    const result = runThroughGuard(
+      handler,
+      {
+        toolName: 'write',
+        params: { path: '@exec-forged/x.docx', content: 'x', cwd: path.join(stateDir, 'decoy') },
+      },
+      () => {
+        throw new Error('must not execute');
+      },
+      { cwd: stateDir, executorPath: path.join(linkPath, 'x.docx') },
+    );
+    expect(result.blocked).toBe(true);
+  });
+
+  it('read 工具带 executorPath 也不拦（只拦写）', () => {
+    const linkPath = linkToInbox('exec-read');
+    if (!linkPath) return;
+    const result = runThroughGuard(handler, { toolName: 'read', params: { path: '@exec-read/x.md' } }, () => {}, {
+      cwd: stateDir,
+      executorPath: path.join(linkPath, 'x.md'),
+    });
+    expect(result.blocked).toBe(false);
   });
 });

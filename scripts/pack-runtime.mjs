@@ -53,6 +53,7 @@ import {
   INBOX_TRUSTED_CWD_ENTRY,
   INBOX_TRUSTED_CWD_PATCH_ID,
 } from './lib/inbox-trusted-cwd-runtime.mjs';
+import { patchInboxExecutorPathRuntime, INBOX_EXECUTOR_PATH_PATCH_ID } from './lib/inbox-executor-path-runtime.mjs';
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
@@ -359,6 +360,14 @@ async function main() {
     inboxTrustedCwdRuntime,
     patchInboxTrustedCwdRuntime(fs.readFileSync(inboxTrustedCwdRuntime, 'utf8')),
   );
+  // rongying-inbox-executor-path-v1（BUG-056① 残余 · F1）：钩子 ctx 增加执行器同源终解路径
+  // （write/edit 的 @ 前缀归一 + 相对路径解析，复用内核同一对函数），`@alias/...` 别名改写
+  // 由此闭合。必须**紧跟** trusted-cwd 补丁之后（同一文件、链式 hash：输入 = v1 后字节），
+  // 漂移 fail-closed。
+  fs.writeFileSync(
+    inboxTrustedCwdRuntime,
+    patchInboxExecutorPathRuntime(fs.readFileSync(inboxTrustedCwdRuntime, 'utf8')),
+  );
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
   const debugSkillsPatch = bundleWindowsDebugSkills(stage);
@@ -418,6 +427,7 @@ async function main() {
       PROVIDER_CAPABILITY_PATCH_ID,
       SKILL_PROPOSAL_NAME_PATCH_ID,
       INBOX_TRUSTED_CWD_PATCH_ID,
+      INBOX_EXECUTOR_PATH_PATCH_ID,
       nativePatch,
       videoFramesPatch,
       debugSkillsPatch,
