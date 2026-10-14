@@ -71,7 +71,9 @@ export type DebugDomain =
   | 'privacy'
   | 'avatar'
   /** 资料库：索引流水线、嵌入引擎、检索（T6）。 */
-  | 'kb';
+  | 'kb'
+  /** 画像持久化刷新（BUG-034 / M3）：保存成功后 / 退出前的 DOMStorage 落盘请求。 */
+  | 'profile-storage';
 
 export interface DebugError {
   name?: string;

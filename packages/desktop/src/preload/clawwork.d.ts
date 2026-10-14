@@ -1099,6 +1099,13 @@ export interface ClawWorkAPI {
     props?: Record<string, string | number | boolean>;
   }) => Promise<IpcResult<null>>;
 
+  // ── 画像持久化（BUG-034 / M3）────────────────────────────────────────
+  // 请求把 sender 所属 session 的 DOMStorage 落盘（无参；目标由主进程解析）。
+  // `requested:true` 仅为"已发起刷新请求"，不是物理落盘确认（Electron 34 无回执）。
+  // 非受信页面来源 → `{ok:false, errorCode:'profile-flush-untrusted-sender'}`；
+  // 发起失败 → `{ok:false, errorCode:'profile-flush-failed'}`。
+  requestProfileStorageFlush: () => Promise<IpcResult<{ requested: true }>>;
+
   // ── 隐私与数据（P4）──────────────────────────────────────────────────
   // 状态已过 core 的 `normalizePrivacyState`：camelCase + 数字字节 + 真布尔。
   // 导出的结果 = 服务端快照 + 本地数据合成**一个** JSON；成功时回落盘路径，

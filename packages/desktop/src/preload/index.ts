@@ -818,6 +818,12 @@ function buildApi(): ClawWorkAPI {
     analyticsTrack: (payload: { event: string; props?: Record<string, string | number | boolean> }) =>
       ipcRenderer.invoke('analytics:track', payload),
 
+    // ── 画像持久化（BUG-034 / M3）────────────────────────────────────
+    // 保存成功后请求把 sender 所属 session 的 DOMStorage 落盘：**无参**（目标 session
+    // 由主进程从 sender 解析，渲染层不得传 partition/path）；返回的 `requested:true`
+    // 只表示"已发起刷新请求"——Electron 34 该 API 无完成回执，不是物理落盘确认。
+    requestProfileStorageFlush: () => ipcRenderer.invoke('profile:flush-storage'),
+
     // ── 资料库（T6c）────────────────────────────────────────────────
     // ⚠️ 这里**只做管道**：哪些块该嵌、能不能搜、降级成什么，全在 `kb/service.ts`。
     //    唯一需要渲染层理解的是 `{ ok:false, code:'not-ready' }` —— 运行时是工作区就绪后

@@ -714,6 +714,139 @@ export function saveOnboardingProfile(
   if (diagnostics) reportOnboardingProfileSave({ ok: true, keyKind }, profile.userId, diagnostics);
 }
 
+/* ────────────────────── 保存成功后的刷新请求（BUG-034，2026-10-14 · M3） ────────────────────── */
+
+/**
+ * `profile:flush-storage` 回执的**最小投影**（与 shared `IpcResult<{ requested: true }>` 结构同形）：
+ * 不引跨包类型 —— 宿主/测试桩只要形状对得上就能注入。
+ *
+ * ⚠️ `requested: true` 只代表主进程**已发起** `session.flushStorageData()`；Electron 34 该 API
+ *    是 void、没有完成回执 —— 它**不是**物理落盘确认，不许被当成 durability 保证。
+ *    正常退出另有主进程侧的尽力刷新（`main/index.ts` before-quit）；强关/断电无任何保证。
+ */
+export interface ProfileStorageFlushReply {
+  ok: boolean;
+  result?: { requested: true } | undefined;
+  error?: string;
+  errorCode?: string;
+}
+
+/** 刷新请求口：**无参数**（渠道不收 partition/path；目标 session 由主进程从 sender 解析）。 */
+export type ProfileStorageFlushRequest = () => Promise<ProfileStorageFlushReply>;
+
+/** 诊断闭集结果：`ok` 只由"回执明确说 `requested:true`"决定，其余一律失败（绝不冒充成功）。 */
+export type OnboardingProfileFlushOutcome =
+  | { ok: true; requested: true }
+  | { ok: false; errorCode: string; errorKind?: string };
+
+export interface OnboardingProfileFlushOptions {
+  /** 调用点标签（与 load/save 诊断同一口径，如 `'entry-complete'`）。 */
+  source?: string;
+  /** 注入诊断出口；缺省用默认出口（桥不存在时静默跳过）。 */
+  report?: OnboardingProfileLoadReporter | null;
+  /** 注入刷新请求口（测试/其它宿主用）；缺省用 `window.clawwork.requestProfileStorageFlush`。 */
+  request?: ProfileStorageFlushRequest | null;
+}
+
+/**
+ * 取默认请求口：老 preload / 测试桩 / node 环境没有桥都返回 `null`（**绝不抛**）——
+ * 与 `defaultOnboardingDiagnosticReporter` 同一纪律：宿主缺桥 = 静默降级，不是失败。
+ */
+function defaultProfileStorageFlushRequest(): ProfileStorageFlushRequest | null {
+  if (typeof window === 'undefined') return null;
+  const bridge = (window as unknown as { clawwork?: { requestProfileStorageFlush?: unknown } }).clawwork;
+  const request = bridge?.requestProfileStorageFlush;
+  // 绑定 bridge 为 this：preload 里它是对象方法，裸取引用会丢 this。
+  return typeof request === 'function' ? (request as ProfileStorageFlushRequest).bind(bridge) : null;
+}
+
+/**
+ * 记录一次刷新请求的结果（BUG-034 的第三条对账线：load / save / flush）：只报结构事实
+ * （成败、错误码、异常名），**不记录画像内容**，账号只落匿名指纹。
+ * 返回是否真的报了出去（桥不可用/上报抛错时为 `false`，且绝不把调用点带崩）。
+ */
+export function reportOnboardingProfileFlush(
+  outcome: OnboardingProfileFlushOutcome,
+  userId: string,
+  diagnostics?: Pick<OnboardingProfileFlushOptions, 'source' | 'report'>,
+): boolean {
+  const sink = diagnostics?.report ?? defaultOnboardingDiagnosticReporter();
+  if (!sink) return false;
+  try {
+    sink({
+      domain: 'renderer',
+      event: 'onboarding.profile.flush',
+      data: {
+        ok: outcome.ok,
+        ...(outcome.ok
+          ? { requested: true }
+          : { errorCode: outcome.errorCode, ...(outcome.errorKind ? { errorKind: outcome.errorKind } : {}) }),
+        account: anonymousAccountFingerprint(userId),
+        ...(diagnostics?.source ? { source: diagnostics.source } : {}),
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 请求刷新**当前 sender 所属 session** 的 DOMStorage（BUG-034 · M3 的 renderer 侧入口）。
+ *
+ * 纪律（与主进程 `profile:flush-storage` 合同配套）：
+ *  - **调用时机**：只在 `saveOnboardingProfile` **成功之后**由调用方发起（保存失败不请求）；
+ *  - **fire-and-forget**：`requested:true` 不是落盘回执 —— 调用方**不许 await 它做任何决定**
+ *    （尤其不许把它当"可以进工作台"的条件）；请求失败/异常只留诊断，不改保存结论；
+ *  - **无参数**：不收 partition/path；目标 session 由主进程从 `event.sender` 解析（非受信来源
+ *    会被主进程拒绝，错误码原样透传进诊断）；
+ *  - **绝不抛**：同步异常与 promise 拒绝都在这里收口（调用方仍可照常推进）。
+ */
+export function requestOnboardingProfileStorageFlush(userId: string, options?: OnboardingProfileFlushOptions): void {
+  const request = options?.request ?? defaultProfileStorageFlushRequest();
+  if (!request) return;
+  let reply: Promise<ProfileStorageFlushReply>;
+  try {
+    reply = request();
+  } catch (failure) {
+    reportOnboardingProfileFlush(
+      {
+        ok: false,
+        errorCode: 'profile-flush-request-threw',
+        errorKind: failure instanceof Error ? failure.name : 'unknown',
+      },
+      userId,
+      options,
+    );
+    return;
+  }
+  void Promise.resolve(reply).then(
+    (value) => {
+      const replyValue = value as Partial<ProfileStorageFlushReply> | null | undefined;
+      const requested = !!replyValue && replyValue.ok === true && replyValue.result?.requested === true;
+      let errorCode = 'profile-flush-failed';
+      if (typeof replyValue?.errorCode === 'string' && replyValue.errorCode) errorCode = replyValue.errorCode;
+      else if (replyValue?.ok === true) errorCode = 'profile-flush-not-requested';
+      reportOnboardingProfileFlush(
+        requested ? { ok: true, requested: true } : { ok: false, errorCode },
+        userId,
+        options,
+      );
+    },
+    (failure) => {
+      reportOnboardingProfileFlush(
+        {
+          ok: false,
+          errorCode: 'profile-flush-rejected',
+          errorKind: failure instanceof Error ? failure.name : 'unknown',
+        },
+        userId,
+        options,
+      );
+    },
+  );
+}
+
 /* ────────────────────────── 首跑草稿（2026-10-07 体检问题 7） ────────────────────────── */
 
 /**

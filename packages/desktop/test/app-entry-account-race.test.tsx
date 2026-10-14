@@ -188,6 +188,7 @@ import App from '../src/renderer/App';
 import {
   loadOnboardingProfile,
   loadOnboardingProfileResult,
+  requestOnboardingProfileStorageFlush,
   saveOnboardingProfile,
 } from '../src/renderer/lib/user-onboarding';
 
@@ -213,6 +214,8 @@ vi.mock('../src/renderer/lib/user-onboarding', () => {
     reportOnboardingProfileLoad,
     reportOnboardingProfileSave,
     saveOnboardingProfile: vi.fn(),
+    // M3（BUG-034）：保存成功后的 session 刷新请求（App 完成回执接线点）。
+    requestOnboardingProfileStorageFlush: vi.fn(),
   };
 });
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -233,6 +236,7 @@ beforeEach(() => {
   // 断言会被上一个用例污染。
   vi.mocked(loadOnboardingProfileResult).mockClear();
   vi.mocked(saveOnboardingProfile).mockReset();
+  vi.mocked(requestOnboardingProfileStorageFlush).mockReset();
 });
 afterEach(() => vi.useRealTimers());
 
@@ -770,6 +774,122 @@ it.each([1, 2, 3] as const)(
     }
   },
 );
+
+/**
+ * M3（BUG-034）：完成回调在**保存成功之后**发起一次 session 刷新请求 —— fire-and-forget，
+ * 回执不参与推进（因此不存在"异步等待期间旧回执把新账号/新工作区送进工作台"的窗口），
+ * 失败/异常只留诊断。反例矩阵：成功恰一次 / 保存失败不发起且可重试 / 重复回执不重发 /
+ * 越界回执不发起 / 回执永不落地也不卡首跑页 / 请求自身抛错照常进工作台。
+ */
+it('requests exactly one session flush after a successful save (no args, same source as the save)', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  const profile = onboardingProfileFor('account-A');
+  try {
+    await continueToOnboarding(ui);
+    act(() => entryFactsFixture.onboardingProps!.onComplete(profile));
+    expect(saveOnboardingProfile).toHaveBeenCalledExactlyOnceWith(profile, undefined, { source: 'entry-complete' });
+    // 渠道无参数：渲染层不收分区/路径，目标 session 由主进程从 sender 解析。
+    expect(requestOnboardingProfileStorageFlush).toHaveBeenCalledExactlyOnceWith('account-A', {
+      source: 'entry-complete',
+    });
+    expect(ui.container.querySelector('[data-workspace-profile="account-A"]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('does not request a flush when storage throws, and the retry still requests exactly one', async () => {
+  const original = { ...onboardingProfileFor('account-A'), version: 3 as const };
+  vi.mocked(loadOnboardingProfile).mockReturnValue(original);
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  const updated = { ...original, nickname: 'Edited nickname' };
+  try {
+    await ui.render();
+    await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-entry-continue]')?.click());
+    entryFactsFixture.settingsOpen = true;
+    await ui.render();
+    act(() => ui.container.querySelector<HTMLButtonElement>('[data-edit-profile]')?.click());
+    const complete = entryFactsFixture.onboardingProps!.onComplete;
+    vi.mocked(saveOnboardingProfile).mockImplementationOnce(() => {
+      throw new DOMException('Storage unavailable', 'QuotaExceededError');
+    });
+    act(() => expect(() => complete(updated)).toThrow('Storage unavailable'));
+    // 没保存成功 ⇒ 不许发刷新请求、不许推进；编辑页留住（可重试）。
+    expect(requestOnboardingProfileStorageFlush).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-workspace-profile]')).toBeNull();
+    expect(ui.container.querySelector('[data-onboarding-instance]')).not.toBeNull();
+    act(() => entryFactsFixture.onboardingProps!.onComplete(updated));
+    expect(requestOnboardingProfileStorageFlush).toHaveBeenCalledTimes(1);
+    expect(ui.container.querySelector('[data-profile-nickname="Edited nickname"]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('accepts a completion once: replaying the identical callback re-saves nothing and re-requests nothing', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  const profile = onboardingProfileFor('account-A');
+  try {
+    await continueToOnboarding(ui);
+    const complete = entryFactsFixture.onboardingProps!.onComplete;
+    act(() => complete(profile));
+    expect(saveOnboardingProfile).toHaveBeenCalledTimes(1);
+    act(() => complete(profile)); // 重复回执：同一账号/代次/工作区代次/档案逐字
+    expect(saveOnboardingProfile).toHaveBeenCalledTimes(1);
+    expect(requestOnboardingProfileStorageFlush).toHaveBeenCalledTimes(1);
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('never requests a flush for a completion refused at the boundary (other account profile)', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  try {
+    await continueToOnboarding(ui);
+    act(() => entryFactsFixture.onboardingProps!.onComplete(onboardingProfileFor('account-B')));
+    expect(saveOnboardingProfile).not.toHaveBeenCalled();
+    expect(requestOnboardingProfileStorageFlush).not.toHaveBeenCalled();
+    expect(ui.container.querySelector('[data-account="account-A"]')).not.toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('does not await the flush receipt: a never-settling request cannot hold the workspace transition', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  try {
+    await continueToOnboarding(ui);
+    // 永不落地的回执：App 若 await 它，本用例会卡在首跑页（断言立即现形）。
+    vi.mocked(requestOnboardingProfileStorageFlush).mockReturnValueOnce(new Promise(() => {}) as unknown as void);
+    act(() => entryFactsFixture.onboardingProps!.onComplete(onboardingProfileFor('account-A')));
+    expect(ui.container.querySelector('[data-workspace-profile="account-A"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+    expect(requestOnboardingProfileStorageFlush).toHaveBeenCalledTimes(1);
+  } finally {
+    ui.unmount();
+  }
+});
+
+it('still enters the workspace when the flush request itself throws (best effort, no stuck page)', async () => {
+  installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });
+  const ui = mountEntry();
+  try {
+    await continueToOnboarding(ui);
+    vi.mocked(requestOnboardingProfileStorageFlush).mockImplementationOnce(() => {
+      throw new Error('bridge exploded');
+    });
+    act(() => entryFactsFixture.onboardingProps!.onComplete(onboardingProfileFor('account-A')));
+    expect(ui.container.querySelector('[data-workspace-profile="account-A"]')).not.toBeNull();
+    expect(ui.container.querySelector('[data-account]')).toBeNull();
+  } finally {
+    ui.unmount();
+  }
+});
 
 it('refuses a profile belonging to another account at the final App save boundary', async () => {
   installEntryBridge({ commercialLicenseStatus: vi.fn(async () => ({ ok: true, result: activeLicense })) });

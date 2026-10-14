@@ -42,7 +42,12 @@ import { useAutoRetryFailedTurn } from './hooks/useAutoRetryFailedTurn';
 import { cn } from '@/lib/utils';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { LEFT_NAV_RAIL_WIDTH, motionDuration, motionEase } from '@/styles/design-tokens';
-import { loadOnboardingProfileResult, saveOnboardingProfile, type OnboardingProfile } from '@/lib/user-onboarding';
+import {
+  loadOnboardingProfileResult,
+  requestOnboardingProfileStorageFlush,
+  saveOnboardingProfile,
+  type OnboardingProfile,
+} from '@/lib/user-onboarding';
 import {
   AUTH_CHECK_FALLBACK_MS,
   entryAccountFromSession,
@@ -540,6 +545,12 @@ export default function App() {
     setPreparationRetry((value) => value + 1);
     await startupReadiness.retry();
   };
+  /**
+   * BUG-034 · M3：完成回执的**一次性接纳闸**。同一 (账号, 认证代次, 工作区代次, 档案逐字)
+   * 只接纳一次 —— 重复/滞留的回调不再重写存储、不再重发刷新请求（真编辑必带新的
+   * `completedAt`/字段 ⇒ 新键照常放行）。只在保存**成功**后记录：保存失败不占位，可直接重试。
+   */
+  const acceptedOnboardingCompletion = useRef<string | null>(null);
   const handleOnboardingComplete = useCallback(
     (profile: OnboardingProfile) => {
       if (
@@ -552,10 +563,25 @@ export default function App() {
         useTaskStore.getState().workspaceEpoch !== workspaceEpoch
       )
         return;
+      const completionKey = JSON.stringify([onboardingAccount.userId, onboardingGeneration, workspaceEpoch, profile]);
+      if (acceptedOnboardingCompletion.current === completionKey) return;
       // BUG-034（2026-10-13）：失败照旧向上抛（编辑页留住）；成功/失败各留一条诊断（不含画像内容）。
       saveOnboardingProfile(profile, undefined, { source: 'entry-complete' });
+      acceptedOnboardingCompletion.current = completionKey;
       setOnboardingProfile(profile);
       setEditingOnboardingProfile(false);
+      /**
+       * BUG-034 · M3：**保存成功之后**才请求刷新 sender 所属 session 的 DOMStorage。
+       * fire-and-forget：`requested:true` 只代表"已发起刷新请求"（Electron 34 该 API 是 void，
+       * 没有物理落盘回执），所以**不 await、不参与推进** —— 旧回执天然不可能把新账号/新工作区
+       * 送进工作台；请求失败/异常只留诊断，照常进工作台。try/catch 是最后一层保险：
+       * 刷新是尽力而为，任何异常都不许改写"已保存并已推进"的结论。
+       */
+      try {
+        requestOnboardingProfileStorageFlush(onboardingAccount.userId, { source: 'entry-complete' });
+      } catch {
+        /* 已保存并已推进：刷新请求自身的异常到此为止 */
+      }
     },
     [authState, onboardingAccount, onboardingGeneration, workspaceEpoch],
   );
