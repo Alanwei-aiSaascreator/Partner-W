@@ -22,6 +22,8 @@ export interface CommercialAccessCleanupResult {
    * - 没有这个字段（`pending` 但无 errorCode）⇒ 网关还没连上，**等一等会好**；
    * - `rejected` / `verify-failed` ⇒ 确定性失败（补丁本身不合法 / 网关说写了却没生效），
    *   重试一万次也一样 —— 调用方**不该**继续轮询，那只会把网关打到限流。
+   *   （`rejected` 里含"分段收缩之后仍救不回"的 `size-drop` 守卫拒绝 ——
+   *   2026-10-14 BUG-080，收缩逻辑在 `relay-config.ts#removeRelayConfig`。）
    */
   errorCode?: 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed';
 }

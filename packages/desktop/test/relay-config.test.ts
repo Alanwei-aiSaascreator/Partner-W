@@ -5,6 +5,7 @@ import {
   RELAY_PROVIDER_ID,
   applyRelayConfig,
   buildRelayRemovalPatch,
+  buildRelayRemovalShrinkPatch,
   buildRelayPatch,
   removeRelayConfig,
   type ApplyRelayConfigDeps,
@@ -548,6 +549,124 @@ describe('relay credential removal', () => {
       raw: JSON.stringify({ models: { providers: { oldRelayName: null } } }),
       replacePaths: [],
     });
+  });
+});
+
+/**
+ * 2026-10-14 实机（BUG-080）：网关的 `size-drop` 写守卫把**合法清账**当成
+ * "疑似误删整份配置"拒掉 —— openclaw.json 20901B，删掉带模型目录快照的
+ * clawrouter 后剩 8542B（40.9% < 50% 阈值）。拒绝是确定性的（重试无用），
+ * 但**分段收缩**可以过：先按条数减半大数组，再整删。
+ */
+describe('relay credential removal · size-drop 分段收缩（BUG-080）', () => {
+  const sizeDropError = () =>
+    new Error(
+      'Config write rejected: /tmp/openclaw.json (size-drop:20901->8542). ' +
+        'Rejected payload saved to /tmp/openclaw.json.rejected.2026-10-14T10-14-45-773Z.: code=CONFIG_WRITE_REJECTED',
+    );
+
+  const models16 = Array.from({ length: 16 }, (_, i) => ({ id: `m${i}` }));
+  const relayWithModels = (models: unknown[]) => ({
+    baseUrl: `${RELAY_BASE_URL}/`,
+    apiKey: '__OPENCLAW_REDACTED__',
+    models,
+  });
+
+  it('整体删除被 size-drop 拒 → 先把 models 减半（16→8）→ 再整删成功', async () => {
+    const s1 = snapshot({ models: { providers: { clawrouter: relayWithModels(models16) } } }, 'h1');
+    const s2 = snapshot({ models: { providers: { clawrouter: relayWithModels(models16.slice(0, 8)) } } }, 'h2');
+    const s3 = snapshot({ models: { providers: {} } }, 'h3');
+    const getConfig = vi.fn().mockResolvedValueOnce(s1).mockResolvedValueOnce(s2).mockResolvedValueOnce(s3);
+    const patchConfig = vi.fn().mockRejectedValueOnce(sizeDropError()).mockResolvedValue({ ok: true });
+
+    const result = await removeRelayConfig({ getConfig, patchConfig });
+
+    expect(result).toEqual({ ok: true, cleaned: true });
+    expect(patchConfig).toHaveBeenCalledTimes(3);
+    // 第 2 次 = 减半补丁：保留前 8 条 + 声明 replacePaths（replace 语义，否则按 id 合并无效）
+    expect(patchConfig.mock.calls[1]![0]).toEqual({
+      baseHash: 'h1',
+      raw: JSON.stringify({ models: { providers: { clawrouter: { models: models16.slice(0, 8) } } } }),
+      replacePaths: ['models.providers.clawrouter.models'],
+    });
+    // 第 3 次 = 收缩后的快照上做整删
+    expect(patchConfig.mock.calls[2]![0].baseHash).toBe('h2');
+    expect(JSON.parse(patchConfig.mock.calls[2]![0].raw as string)).toEqual({
+      models: { providers: { clawrouter: null } },
+    });
+  });
+
+  it('收缩写也被拒（非 size-drop）→ fail-closed 返回 rejected，不再循环', async () => {
+    const s1 = snapshot({ models: { providers: { clawrouter: relayWithModels(models16) } } }, 'h1');
+    const getConfig = vi.fn().mockResolvedValue(s1);
+    const patchConfig = vi
+      .fn()
+      .mockRejectedValueOnce(sizeDropError())
+      .mockRejectedValueOnce(new Error('invalid config: unknown key "models.providers.clawrouter.models"'));
+
+    const result = await removeRelayConfig({ getConfig, patchConfig });
+
+    expect(result.ok).toBe(false);
+    expect(result.cleaned).toBe(false);
+    expect(result.errorCode).toBe('rejected');
+    expect(patchConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it('没有可收缩的大数组时 size-drop 直接返回 rejected（保持原语义）', async () => {
+    const s1 = snapshot({ models: { providers: { clawrouter: { baseUrl: `${RELAY_BASE_URL}/` } } } }, 'h1');
+    const getConfig = vi.fn().mockResolvedValue(s1);
+    const patchConfig = vi.fn().mockRejectedValue(sizeDropError());
+
+    const result = await removeRelayConfig({ getConfig, patchConfig });
+
+    expect(result.errorCode).toBe('rejected');
+    expect(patchConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('非 size-drop 的 rejected 不触发收缩（schema 拒绝仍是死路）', async () => {
+    const s1 = snapshot({ models: { providers: { clawrouter: relayWithModels(models16) } } }, 'h1');
+    const getConfig = vi.fn().mockResolvedValue(s1);
+    const patchConfig = vi.fn().mockRejectedValue(new Error('invalid config: duplicated id'));
+
+    const result = await removeRelayConfig({ getConfig, patchConfig });
+
+    expect(result.errorCode).toBe('rejected');
+    expect(patchConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('buildRelayRemovalShrinkPatch：16→8，5→2（floor），1→null 删键', () => {
+    const shrink = (n: number) => {
+      const models = Array.from({ length: n }, (_, i) => ({ id: `m${i}` }));
+      return buildRelayRemovalShrinkPatch(snapshot({ models: { providers: { clawrouter: relayWithModels(models) } } }));
+    };
+
+    expect(shrink(16)?.patch).toEqual({
+      models: {
+        providers: { clawrouter: { models: Array.from({ length: 16 }, (_, i) => ({ id: `m${i}` })).slice(0, 8) } },
+      },
+    });
+    expect(shrink(5)?.patch).toEqual({
+      models: { providers: { clawrouter: { models: [{ id: 'm0' }, { id: 'm1' }] } } },
+    });
+    expect(shrink(1)?.patch).toEqual({ models: { providers: { clawrouter: { models: null } } } });
+    expect(shrink(16)?.replacePaths).toEqual(['models.providers.clawrouter.models']);
+  });
+
+  it('buildRelayRemovalShrinkPatch：不碰用户自己的 provider；无料可收时返回 null', () => {
+    // 用户自己的 openai（baseUrl 不是我们的）—— 即便有 models 数组也不许动
+    expect(
+      buildRelayRemovalShrinkPatch(
+        snapshot({
+          models: {
+            providers: {
+              openai: { baseUrl: 'https://api.openai.com/v1', models: [{ id: 'gpt-image-1' }, { id: 'x' }] },
+            },
+          },
+        }),
+      ),
+    ).toBeNull();
+    expect(buildRelayRemovalShrinkPatch(snapshot({ models: { providers: {} } }))).toBeNull();
+    expect(buildRelayRemovalShrinkPatch(snapshot({}))).toBeNull();
   });
 });
 

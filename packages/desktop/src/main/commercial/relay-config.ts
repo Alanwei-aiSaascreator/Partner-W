@@ -516,19 +516,28 @@ function pointsAtRelay(modelRef: string, providerIds: Set<string>): boolean {
   return providerIds.has(providerName) || providerName === RELAY_PROVIDER_ID;
 }
 
-export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPatch | null {
-  const config = configOf(configSnapshot);
-  if (!config) return null;
-
+/**
+ * 「可以删」的 relay provider 名集合 —— 本文件删除判据的**唯一源**。
+ *
+ * `openai` / `xai` 是运行时的公共 provider 名，不能只凭 baseUrl 删除；必须同时
+ * 命中我们写入的 media model ref，避免清掉用户自己配置的同名 provider。
+ */
+function removableRelayProviderIds(configSnapshot: unknown): Set<string> {
   const providerIds = relayProviderIds(configSnapshot);
-  // `openai` / `xai` 是运行时的公共 provider 名，不能只凭 baseUrl 删除；必须同时
-  // 命中我们写入的 media model ref，避免清掉用户自己配置的同名 provider。
   if (providerIds.has(OPENAI_IMAGE_PROVIDER_ID) && !ownsOpenAIImageConfig(configSnapshot)) {
     providerIds.delete(OPENAI_IMAGE_PROVIDER_ID);
   }
   if (providerIds.has(XAI_VIDEO_PROVIDER_ID) && !ownsXaiVideoConfig(configSnapshot)) {
     providerIds.delete(XAI_VIDEO_PROVIDER_ID);
   }
+  return providerIds;
+}
+
+export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPatch | null {
+  const config = configOf(configSnapshot);
+  if (!config) return null;
+
+  const providerIds = removableRelayProviderIds(configSnapshot);
   const patch: RelayConfigPatch = {};
   const replacePaths: string[] = [];
 
@@ -600,6 +609,49 @@ export function buildRelayRemovalPatch(configSnapshot: unknown): RelayRemovalPat
   }
 
   return Object.keys(patch).length > 0 ? { patch, replacePaths } : null;
+}
+
+/**
+ * 构造**分段收缩**补丁：把 relay provider 里的大数组按**条数减半**。
+ *
+ * ⚠️ 为什么需要它（2026-10-14 实机，BUG-080）：
+ *    网关（openclaw 2026.9.3 `dist/config-path-mutation-*.mjs`）有一个 `size-drop`
+ *    写守卫 —— 新配置字节数 < 旧配置的一半（且旧配置 ≥512B）就**整条拒写**并留档
+ *    `.rejected`。而我们的清账补丁要删的 `models.providers.clawrouter`（内含
+ *    **模型目录静态快照**）在我们的配置里恰好体积过半：实测 20901B → 8542B（40.9%），
+ *    于是"正确的清理"被守卫当成"疑似误删整份配置"拦下，且拒绝是**确定性**的
+ *    （重试一万次也一样）—— 用户表现为登录后永远卡在"服务准备"。
+ *
+ * 解法：删之前先把大数组**减半**（16 条 → 8 条），让每一次写入的缩减都远小于 50%；
+ * 循环几轮后整棵 provider 的删除自然落进守卫阈值内（实测 1 轮减半 + 1 轮删除即过）。
+ * 数组用前缀保留 + 在 `replacePaths` 声明该路径（replace 语义，而不是按 id 合并），
+ * 与 `buildRelayRemovalPatch` 的数组路径纪律逐字同源。
+ *
+ * 返回 null = 没有可收缩的大数组（调用方应就此放弃，保持 fail-closed）。
+ */
+export function buildRelayRemovalShrinkPatch(configSnapshot: unknown): RelayRemovalPatch | null {
+  const config = configOf(configSnapshot);
+  if (!config) return null;
+
+  const providerIds = removableRelayProviderIds(configSnapshot);
+  if (providerIds.size === 0) return null;
+  const providers = (config.models as { providers?: unknown } | undefined)?.providers;
+  if (!providers || typeof providers !== 'object') return null;
+
+  const shrunkProviders: Record<string, unknown> = {};
+  const replacePaths: string[] = [];
+  for (const id of providerIds) {
+    const models = ((providers as Record<string, unknown>)[id] as { models?: unknown } | null)?.models;
+    if (!Array.isArray(models) || models.length === 0) continue;
+    const kept = models.slice(0, Math.floor(models.length / 2));
+    shrunkProviders[id] = { models: kept.length > 0 ? kept : null };
+    // 声明 replacePaths：数组按整段替换（否则 id 键数组会按 id 合并、收缩无效），
+    // 同时也满足网关对"会丢 base 条目的数组补丁"的报备要求。
+    replacePaths.push(`models.providers.${id}.models`);
+  }
+  if (Object.keys(shrunkProviders).length === 0) return null;
+
+  return { patch: { models: { providers: shrunkProviders } }, replacePaths };
 }
 
 /** 取 catalog 的超时。catalog 是纯内存查询，正常在百毫秒级。 */
@@ -851,6 +903,20 @@ function classifyWriteError(error: unknown): 'hash-conflict' | 'transport' | 're
   return 'rejected';
 }
 
+/**
+ * 是不是网关的 `size-drop` 写守卫拒绝（2026-10-14，BUG-080）。
+ *
+ * 消息形状由网关固定：`Config write rejected: <path> (size-drop:<old>-><new>). …`
+ * （`code=CONFIG_WRITE_REJECTED`）。它**不是普通的 rejected** —— 补丁本身合法、
+ * 只是"一次删太多"，分段收缩后可以过。普通 rejected 仍在上面直接返回。
+ */
+function isConfigSizeDropRejection(error: unknown): boolean {
+  return /\(size-drop:\d+->\d+\)/.test(messageOf(error));
+}
+
+/** 分段收缩的轮数上限：按条数减半，8 轮足够把任何现实规模的数组收进守卫阈值。 */
+const MAX_SIZE_DROP_SHRINKS = 8;
+
 export interface RemoveRelayConfigDeps {
   getConfig: () => Promise<unknown>;
   patchConfig: (params: { baseHash: string; raw: string; replacePaths?: string[] }) => Promise<unknown>;
@@ -864,10 +930,22 @@ export interface RemoveRelayResult {
   errorCode?: 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed';
 }
 
+/**
+ * 从网关移除商业中转凭证（清账）。
+ *
+ * 常规路径：读快照 → 构造最窄删除补丁 → 写 → 回读校验。两类可恢复失败会重试：
+ *   · 乐观锁冲突（`hash-conflict`）→ 重读快照再来（原逻辑，预算 `MAX_HASH_RETRIES`）；
+ *   · `size-drop` 守卫拒绝（2026-10-14，BUG-080）→ 先把 relay provider 的大数组
+ *     **按条数减半**再重试（`buildRelayRemovalShrinkPatch`），几轮后整棵删除即过。
+ * 其余失败（含"收缩也救不了"的 size-drop）保持 fail-closed，返回 `rejected`。
+ */
 export async function removeRelayConfig(deps: RemoveRelayConfigDeps): Promise<RemoveRelayResult> {
   const log = deps.log ?? ((): void => {});
+  let hashConflictsUsed = 0;
+  let shrinksUsed = 0;
 
-  for (let attempt = 1; attempt <= MAX_HASH_RETRIES; attempt += 1) {
+  // 轮数上限 = 乐观锁重试预算 + 收缩预算；两个分支都各自设限（见下），这里只是防呆。
+  for (let attempt = 1; attempt <= MAX_HASH_RETRIES + MAX_SIZE_DROP_SHRINKS; attempt += 1) {
     let snapshot: unknown;
     try {
       snapshot = await deps.getConfig();
@@ -892,7 +970,43 @@ export async function removeRelayConfig(deps: RemoveRelayConfigDeps): Promise<Re
     } catch (error) {
       const kind = classifyWriteError(error);
       log('relay.config-remove-failed', { attempt, kind, message: messageOf(error) });
-      if (kind === 'hash-conflict' && attempt < MAX_HASH_RETRIES) continue;
+
+      if (kind === 'hash-conflict') {
+        hashConflictsUsed += 1;
+        if (hashConflictsUsed < MAX_HASH_RETRIES) continue;
+        return { ok: false, cleaned: false, errorCode: 'hash-conflict', error: messageOf(error) };
+      }
+
+      // ⭐ 2026-10-14（BUG-080）：`size-drop` 守卫拒绝（一次删太多）不是死路 ——
+      //    先把 relay provider 里的大数组减半再重试；被拒的写没落盘，快照 hash 仍然有效。
+      if (isConfigSizeDropRejection(error) && shrinksUsed < MAX_SIZE_DROP_SHRINKS) {
+        const shrink = buildRelayRemovalShrinkPatch(snapshot);
+        if (shrink) {
+          try {
+            await deps.patchConfig({
+              baseHash,
+              raw: JSON.stringify(shrink.patch),
+              replacePaths: shrink.replacePaths,
+            });
+          } catch (shrinkError) {
+            const shrinkKind = classifyWriteError(shrinkError);
+            log('relay.config-remove-shrink-failed', {
+              attempt,
+              kind: shrinkKind,
+              message: messageOf(shrinkError),
+            });
+            if (shrinkKind === 'hash-conflict') {
+              hashConflictsUsed += 1;
+              if (hashConflictsUsed < MAX_HASH_RETRIES) continue;
+            }
+            return { ok: false, cleaned: false, errorCode: shrinkKind, error: messageOf(shrinkError) };
+          }
+          shrinksUsed += 1;
+          log('relay.config-remove-shrunk', { attempt, round: shrinksUsed });
+          continue;
+        }
+      }
+
       return { ok: false, cleaned: false, errorCode: kind, error: messageOf(error) };
     }
 
