@@ -13,7 +13,7 @@ import {
 import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
 import { probeWorkspaceFsIdentity } from '../workspace/fs-identity.js';
 import { clearWorkspaceStartupNotice, readWorkspaceStartupNotice } from '../workspace/startup-notice.js';
-import { workspaceLocationPatch } from '../workspace/portable.js';
+import { bindingForPickedDirectory, workspaceLocationPatch } from '../workspace/portable.js';
 import { refreshRemovableDrives } from '../workspace/removable-drives.js';
 import { reinitDatabase, closeDatabase, getSqlite } from '../db/index.js';
 import { buildKbRuntime, ensureKbRuntime, resetKbRuntime } from '../kb/runtime.js';
@@ -60,16 +60,23 @@ function locationPatch(workspacePath: string): {
   volumeMarker?: string;
   workspaceBinding?: 'app-volume' | 'explicit-path';
 } {
+  // 程序自己所在的那块盘（盘上形态才有）：`DriveType=3` 的盘不在可移动盘列表里，
+  // 少了这一条，用户把工作区设到那块盘上时一条线索都记不上（换口就丢）。
+  const runVolumeRoot = getPortableWorkspaceRoot();
   return workspaceLocationPatch({
     workspacePath,
     removableDrives: refreshRemovableDrives(),
     exists: existsSync,
-    // 程序自己所在的那块盘（盘上形态才有）：`DriveType=3` 的盘不在可移动盘列表里，
-    // 少了这一条，用户把工作区设到那块盘上时一条线索都记不上（换口就丢）。
-    runVolumeRoot: getPortableWorkspaceRoot(),
-    // 这两个入口（workspace:setup / workspace:change）都是**用户主动选择** ⇒ explicit-path
-    // （B1：显式选择遵从用户，不按"跟盘"解析）。
-    binding: 'explicit-path',
+    runVolumeRoot,
+    /**
+     * 归属（2026-10-15 首次启动硬合同 P-A，收窄 B1 的原判据）：
+     * - 选在**当前运行卷**（程序自己所在的那块盘）上的目录 ⇒ `app-volume` 同族：
+     *   换机器/换盘符后按"运行卷 + 相对路径"同盘自愈，不再要求用户重选；
+     * - 别的卷（真外部目录）/ 本机安装形态（运行卷未知）⇒ `explicit-path`：
+     *   显式选择遵从用户，恢复时仍按 R1 询问。
+     * 旧行为一律 explicit-path ⇒ 同盘手选过的目录在换盘符后被当成"外部路径"问人。
+     */
+    binding: bindingForPickedDirectory(workspacePath, runVolumeRoot),
   });
 }
 

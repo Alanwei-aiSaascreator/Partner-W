@@ -882,3 +882,169 @@ describe('R1 边界：归属与路径线索（真实启动入口）', () => {
     expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 便携首次启动硬合同（2026-10-15）P-A —— **真实启动入口**：同盘工作区的保存与恢复。
+ *
+ * 事故（合同 §3 P-A / 用户反馈）：正式交付盘换电脑/换盘符后仍被要求"选择新工作区"。
+ * 两条代码链都要收口：
+ *   ① 启动页 browse（startup.ts:392 旧行为）选**当前运行卷**上的目录也写 explicit-path
+ *      ⇒ 换盘符后旧绝对路径失效 ⇒ 直接 ask-user；
+ *   ② 旧 1.0.6 配置里已经写下的显式归属（同盘手选目录也会是 explicit-path）——
+ *      迁移**不得只凭目录同名或盘符**，必须凭**目录级可信身份**（工作区自身标记）。
+ *
+ * 保留的控制项：真外部目录仍 explicit-path 且恢复时仍询问；缺可信身份仍问人；
+ * 缺失对话框"当前卷恢复候选"（startup.ts:372）的 app-volume 记账路径不变。
+ */
+describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => {
+  const DELIVERY_DIR = '荣盈魔方U盘交付-0.0.24';
+  const deliveryExeOn = (drive: string): string => win32.join(drive, DELIVERY_DIR, '荣盈魔方', '荣盈魔方.exe');
+  const deliveryResourcesOn = (drive: string): string => win32.join(drive, DELIVERY_DIR, '荣盈魔方', 'resources');
+  const bundledManifestOn = (drive: string): string => win32.join(deliveryResourcesOn(drive), 'runtime', MANIFEST);
+  /** 同一份交付包挂在任意盘符上的启动参数（枚举空数组：DriveType=3 的盘不在列表里）。 */
+  const deliveryOn = (drive: string): Partial<Parameters<typeof prepareWorkspaceAtStartup>[0]> => ({
+    exePath: deliveryExeOn(drive),
+    resourcesPath: deliveryResourcesOn(drive),
+    removableDrives: [],
+  });
+
+  const PICKED = '我的工作区';
+  const MARKER_IN = (dir: string): string => win32.join(dir, WORKSPACE_MARKER_FILE);
+
+  it('⭐ B：启动页 browse 选**当前运行卷**上的目录 ⇒ 记可重定位绑定；换盘符后自愈、不再问人', async () => {
+    // 第一次启动：记录的旧工作区整盘不在（R: 没插）⇒ 只能询问；用户点「选择其它目录」，
+    // 在**运行卷 Q:** 上选了/建了一个目录。
+    seedConfig({ workspacePath: win32.join('R:\\', WS_NAME), workspaceRelPath: WS_NAME, volumeMarker: MANIFEST });
+    const first = makeHarness({ exePath: EXE_ON('Q:\\'), removableDrives: ['Q:'] });
+    seedVirtual(first, win32.join('Q:\\', MANIFEST));
+    first.dialogs.askForMissingWorkspace.mockResolvedValue({ kind: 'browse' });
+    const pickedOnQ = win32.join('Q:\\', PICKED);
+    first.dialogs.browseForDirectory.mockResolvedValue(pickedOnQ);
+
+    const firstRun = await first.run();
+    expect(firstRun.kind).toBe('ready');
+    if (firstRun.kind !== 'ready') throw new Error('unreachable');
+    expect(firstRun.path).toBe(pickedOnQ);
+    expect(first.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+
+    const afterPick = readConfig();
+    expect(afterPick?.workspacePath).toBe(pickedOnQ);
+    expect(afterPick?.workspaceRelPath).toBe(PICKED);
+
+    // 同一支盘换到别的电脑、拿到新盘符（Q: → S:）。目录还在、身份（工作区标记）还在
+    // ⇒ 下一次启动必须自己找回它，不许再问人、不许要求重选。
+    const second = makeHarness(deliveryOn('F:\\'));
+    seedVirtual(second, bundledManifestOn('F:\\'), win32.join('F:\\', PICKED), MARKER_IN(win32.join('F:\\', PICKED)));
+
+    const secondRun = await second.run();
+
+    expect(secondRun.kind, '换盘符后应直接可用，不能落到对话框').toBe('ready');
+    if (secondRun.kind !== 'ready') throw new Error('unreachable');
+    expect(secondRun.path).toBe(win32.join('F:\\', PICKED));
+    expect(second.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+    expect(second.dialogs.browseForDirectory).not.toHaveBeenCalled();
+    expect(second.quit).not.toHaveBeenCalled();
+    expect(secondRun.decision.kind).toBe('healed');
+
+    // 根因：选的是**当前运行卷**上的目录 ⇒ 保存时就该记"随盘"归属（app-volume 同族）
+    expect(afterPick?.workspaceBinding).toBe('app-volume');
+    expect(readConfig()?.workspaceBinding).toBe('app-volume');
+    expect(readConfig()?.workspacePath).toBe(win32.join('F:\\', PICKED));
+  });
+
+  it('⭐ C1：旧 1.0.6 explicit-path 记录 + 当前卷上**可信同身份**目录 ⇒ 自动恢复（不再问人）', async () => {
+    // 1.0.6 把"同盘手选目录"也记成了 explicit-path（事故链）。
+    seedConfig({
+      workspacePath: win32.join('E:\\', PICKED),
+      workspaceRelPath: PICKED,
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'explicit-path',
+    });
+    const h = makeHarness(deliveryOn('F:\\'));
+    seedVirtual(h, bundledManifestOn('F:\\'), win32.join('F:\\', PICKED), MARKER_IN(win32.join('F:\\', PICKED)));
+
+    const result = await h.run();
+
+    expect(h.dialogs.askForMissingWorkspace, '唯一可信候选就在当前盘上，不该再问人').not.toHaveBeenCalled();
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(result.path).toBe(win32.join('F:\\', PICKED));
+    expect(result.decision.kind).toBe('healed');
+    expect(h.events.map((e) => e.event)).toContain('workspace.healed');
+    // 静默重定位后按随盘语义记账（下次不再依赖这条迁移例外）
+    expect(readConfig()?.workspaceBinding).toBe('app-volume');
+    expect(h.quit).not.toHaveBeenCalled();
+  });
+
+  it('⭐ C1b：盘根 marker 也在场（候选 evidence 会是 volume-marker）⇒ 仍按**目录级身份**恢复', async () => {
+    // 关键区别：候选构造里 `volume-marker` 优先于 `workspace-marker` 被判出来 ——
+    // 判据必须看"目录里有没有我们自己的工作区标记"，不能看 evidence 枚举值。
+    seedConfig({
+      workspacePath: win32.join('E:\\', PICKED),
+      workspaceRelPath: PICKED,
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'explicit-path',
+    });
+    const h = makeHarness(deliveryOn('F:\\'));
+    seedVirtual(
+      h,
+      bundledManifestOn('F:\\'),
+      win32.join('F:\\', MANIFEST),
+      win32.join('F:\\', PICKED),
+      MARKER_IN(win32.join('F:\\', PICKED)),
+    );
+
+    const result = await h.run();
+
+    expect(h.dialogs.askForMissingWorkspace).not.toHaveBeenCalled();
+    expect(result.kind).toBe('ready');
+    if (result.kind !== 'ready') throw new Error('unreachable');
+    expect(result.path).toBe(win32.join('F:\\', PICKED));
+  });
+
+  it('⚠️ C2 控制：旧 explicit-path 记录 + 同名目录**没有**目录级身份 ⇒ 仍必须询问（不许静默改指）', async () => {
+    seedConfig({
+      workspacePath: win32.join('E:\\', PICKED),
+      workspaceRelPath: PICKED,
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'explicit-path',
+    });
+    const h = makeHarness(deliveryOn('F:\\'));
+    // 目录同名、盘根也有 marker —— 但没有 `.clawwork-workspace.json`（可能是别人的目录）。
+    seedVirtual(h, bundledManifestOn('F:\\'), win32.join('F:\\', MANIFEST), win32.join('F:\\', PICKED));
+
+    const result = await h.run();
+
+    expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+    const asked = h.dialogs.askForMissingWorkspace.mock.calls[0][0] as { candidates: string[] };
+    expect(asked.candidates).toEqual([win32.join('F:\\', PICKED)]);
+    // 台账默认应答 = quit ⇒ 证明没有被静默决定；配置（含归属）原样不动
+    expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
+    expect(readConfig()?.workspaceBinding).toBe('explicit-path');
+    expect(readConfig()?.workspacePath).toBe(win32.join('E:\\', PICKED));
+  });
+
+  it('⚠️ C3 控制：真外部目录（别的卷）的 explicit-path 记录 ⇒ 即便带标记也不许跨卷静默', async () => {
+    seedConfig({
+      workspacePath: win32.join('Z:\\', PICKED),
+      workspaceRelPath: PICKED,
+      volumeMarker: MANIFEST,
+      workspaceBinding: 'explicit-path',
+    });
+    const h = makeHarness({ exePath: EXE_ON('F:\\'), removableDrives: ['E:'] });
+    seedVirtual(
+      h,
+      win32.join('F:\\', MANIFEST), // 程序自己在 F: 上（运行卷 = F:）
+      win32.join('E:\\', MANIFEST),
+      win32.join('E:\\', PICKED),
+      MARKER_IN(win32.join('E:\\', PICKED)), // 别的卷上有同名、带标记的候选
+    );
+
+    const result = await h.run();
+
+    expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+    const asked = h.dialogs.askForMissingWorkspace.mock.calls[0][0] as { candidates: string[] };
+    expect(asked.candidates).toEqual([win32.join('E:\\', PICKED)]);
+    expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
+  });
+});

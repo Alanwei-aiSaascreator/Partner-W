@@ -612,3 +612,116 @@ describe('R1 —— 归属与路径线索边界（集中终审）', () => {
     ).toEqual({ kind: 'configured', path: F_WS });
   });
 });
+
+/**
+ * 便携首次启动硬合同（2026-10-15）P-A —— 旧 1.0.6 `explicit-path` 记录的**迁移边界**。
+ *
+ * 1.0.6 把"同盘（当前运行卷）手选目录"也记成了 explicit-path（workspace:setup/change
+ * 与启动页 browse 的旧行为），换盘符后旧绝对路径失效 ⇒ 一律 ask-user = 用户事故。
+ *
+ * 迁移例外**必须窄**：唯一候选在**当前运行卷**上、且带**目录级可信身份**
+ * （`.clawwork-workspace.json` —— 我们自己写的"这个目录是那份工作区"标记）。
+ * 目录同名但没有标记（R1-② 的形状）、候选在别的卷、多候选 —— 一律保持询问。
+ *
+ * ⚠️ 判据是"目录里有没有工作区自身标记"，**不是**候选的 `evidence` 枚举值：
+ *    盘根 marker 在场时 `evidenceOf` 会先把 candidate 记成 `volume-marker`。
+ */
+describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const BASE = { defaultPath: WIN.join('C:\\', 'Users', 'u', 'ClawWork-Workspace') };
+  const PICKED = '我的工作区';
+  const F_PICKED = WIN.join('F:\\', PICKED);
+  const markerIn = (dir: string): string => WIN.join(dir, WORKSPACE_MARKER);
+
+  it('⭐ 唯一候选在运行卷 + 带工作区自身标记 ⇒ healed（同盘手选目录的迁移）', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: WIN.join('E:\\', PICKED),
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, markerIn(F_PICKED)),
+    });
+
+    expect(decision).toEqual({
+      kind: 'healed',
+      path: F_PICKED,
+      from: WIN.join('E:\\', PICKED),
+      via: { path: F_PICKED, origin: 'run-volume', evidence: 'workspace-marker' },
+    });
+  });
+
+  it('⭐ 盘根 marker 也在（evidence 会是 volume-marker）⇒ 判据仍按目录级身份 healed', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: WIN.join('E:\\', PICKED),
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, markerIn(F_PICKED), WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(decision.kind).toBe('healed');
+    if (decision.kind !== 'healed') throw new Error('unreachable');
+    expect(decision.path).toBe(F_PICKED);
+  });
+
+  it('⚠️ 控制：同名目录 + 盘根 marker、**没有**目录级身份 ⇒ 仍 ask-user（缺可信身份仍问人）', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: WIN.join('E:\\', PICKED),
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    expect(candidatePaths(decision.candidates)).toEqual([F_PICKED]);
+    expect(decision.recordedPath).toBe(WIN.join('E:\\', PICKED));
+  });
+
+  it('⚠️ 控制：唯一可信候选在**别的卷**上 ⇒ 仍 ask-user（绝不跨卷静默）', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: WIN.join('Z:\\', PICKED),
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['E:'],
+      exists: vfs(WIN.join('E:\\', PICKED), markerIn(WIN.join('E:\\', PICKED)), WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    expect(candidatePaths(decision.candidates)).toEqual([WIN.join('E:\\', PICKED)]);
+  });
+
+  it('⚠️ 控制：app-volume 与无归属记录的既有行为不变（运行卷候选仍静默 healed）', () => {
+    // 老记录（没有 binding 字段、记过盘上相对路径）按 app-volume 保守处理 —— 不变。
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: WIN.join('E:\\', PICKED),
+      recordedRelPath: PICKED,
+      volumeMarker: MANIFEST,
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, WIN.join('F:\\', MANIFEST)),
+    });
+    expect(decision.kind).toBe('healed');
+  });
+});

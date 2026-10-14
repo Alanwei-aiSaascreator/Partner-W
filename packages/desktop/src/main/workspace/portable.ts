@@ -293,6 +293,27 @@ export function describeWorkspaceLocation(input: {
 }
 
 /**
+ * 用户**手选**一个目录后该记什么归属（2026-10-15 首次启动硬合同 P-A，单点判据）。
+ *
+ * - 选的是**当前运行卷**（程序自己所在的那块盘）上的目录 ⇒ `app-volume` 同族语义：
+ *   按"运行卷 + 相对路径"解析，换机器/换盘符后同盘自愈（与 `auto-portable`、
+ *   缺失对话框"使用当前卷候选"（startup.ts）同一条信任基线）；
+ * - 别的卷（真外部目录）、本机安装形态（运行卷 unknown）⇒ `explicit-path`：
+ *   遵从用户选择，恢复时按 R1 询问（保护不放松）。
+ *
+ * ⚠️ 这条判据只在**保存**时用；恢复端不要复算 —— 归属已经写进配置了。
+ * ⚠️ 为什么必须是"当前运行卷"而不是"某个可移动卷"：`app-volume` 在判定端会按
+ *    **运行卷**解析（`decideWorkspaceStartup`），选别的盘上的目录却记 app-volume
+ *    反而会让恢复端拿错误的卷去比（旧行为只把显式选择记 explicit-path 的另一半理由）。
+ */
+export function bindingForPickedDirectory(
+  pickedPath: string,
+  runVolumeRoot: string | null,
+): 'app-volume' | 'explicit-path' {
+  return sameVolumeRoot(volumeRootOf(pickedPath), runVolumeRoot) ? 'app-volume' : 'explicit-path';
+}
+
+/**
  * 写进配置的那一小块（`updateConfig`/`writeConfig` 的补丁）。
  *
  * ⚠️ 两个键**总是显式出现**（没有线索时是 `undefined`）：工作区从 U 盘换到本机目录时，
@@ -495,7 +516,9 @@ export type WorkspaceStartupDecision =
  * ```
  * 有记录：
  *   exists(记录) 且（非 app-volume，或记录卷 == 当前运行卷）⇒ configured
- *   explicit-path 且记录不存在           ⇒ ask-user（绝不静默跨卷自愈/改归属，R1）
+ *   explicit-path 且记录不存在：
+ *     唯一候选在当前运行卷上且有目录级身份（工作区自身标记）⇒ healed（1.0.6 迁移例外，P-A）
+ *     否则                                  ⇒ ask-user（绝不静默跨卷自愈/改归属，R1）
  *   候选 === 1 且（非 app-volume，或候选在运行卷上，或运行卷未知）⇒ healed（静默）
  *   候选 === 1 但 app-volume 候选在别的卷 ⇒ ask-user（唯一候选不许从旧卷静默胜出，R1）
  *   候选 > 1                            ⇒ ask-user（多命中不许猜）
@@ -545,11 +568,35 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
     });
 
     /**
-     * R1（2026-10-10 集中终审 §3）：explicit-path 的原始目录不在了 ⇒ 一律 ask-user。
+     * R1（2026-10-10 集中终审 §3）：explicit-path 的原始目录不在了 ⇒ 默认 ask-user。
      * 候选照摆（用户可以从里面确认一个），但**未经确认不跨卷、不改归属** ——
      * 旧行为会静默 opened(F) 并把归属改记成 app-volume，等于替用户换掉了工作区。
+     *
+     * ⚠️ 2026-10-15 首次启动硬合同（P-A）的**唯一例外**：旧 1.0.6 把"同盘（当前运行卷）
+     *    手选目录"也记成了 explicit-path（workspace:setup/change 与启动页 browse 的旧
+     *    行为），换机器/换盘符后旧绝对路径失效 ⇒ 用户被要求重选——而目录就在**当前
+     *    运行卷**上、带着我们自己的工作区标记（`.clawwork-workspace.json`，目录级身份）。
+     *    这种记录按 app-volume 同族语义静默重定位一次（`startup.ts` 的 healed 分支会
+     *    把归属改成 app-volume，之后按正常随盘语义走）。
+     *
+     *    例外**必须窄**（控制项）：
+     *    - 候选必须恰好一个、必须落在**当前运行卷**上（别的卷 = 真外部目录，仍问）；
+     *    - 必须有**目录级身份**：目录里存在我们自己的工作区标记。只凭目录同名、或只凭
+     *      盘根 marker（"这块盘是我们的"证明不了"这个目录是那份工作区"）、或盘符巧合，
+     *      一律仍问人（R1-② 的形状原样保留）；
+     *    - 判据看的是**文件在不在**，不是候选的 `evidence` 枚举值 —— 盘根 marker 在场时
+     *      `evidenceOf` 会把候选记成 `volume-marker`（先判盘根），那样会漏掉这里的身份。
      */
     if (explicitPath && !recordedExists) {
+      const onlyCandidate = candidates.length === 1 ? candidates[0] : null;
+      if (
+        onlyCandidate !== null &&
+        runVolume !== null &&
+        sameVolumeRoot(volumeRootOf(onlyCandidate.path), runVolume) &&
+        input.exists(P().join(onlyCandidate.path, WORKSPACE_MARKER_FILE))
+      ) {
+        return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
+      }
       return { kind: 'ask-user', recordedPath: recorded, candidates };
     }
 

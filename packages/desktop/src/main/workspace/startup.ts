@@ -18,6 +18,7 @@ import { closeDatabase, initDatabase } from '../db/index.js';
 import { initWorkspace } from './init.js';
 import { removableDrives, setRemovableDrives } from './removable-drives.js';
 import {
+  bindingForPickedDirectory,
   decideWorkspaceStartup,
   detectPortableRun,
   sameVolumeRoot,
@@ -322,6 +323,17 @@ function locationOf(
 }
 
 /**
+ * 用户**手选**目录（browse / 最后一问）的归属（2026-10-15 首次启动硬合同 P-A）。
+ *
+ * 选在**当前运行卷**上的目录 ⇒ `app-volume` 同族（换盘符后同盘自愈、不再问人）；
+ * 别的卷 / 本机安装形态 ⇒ `explicit-path`（真外部目录，保护不变）。
+ * 判据在 `portable.ts` 的 `bindingForPickedDirectory`（单点，与 workspace:setup/change 共用）。
+ */
+function pickedBindingOf(ctx: StartupContext, pickedPath: string): 'app-volume' | 'explicit-path' {
+  return bindingForPickedDirectory(pickedPath, ctx.portableRoot);
+}
+
+/**
  * 建目录 + 放工作区标记（失败不抛：让 `initDatabase` 的错误统一走三选一对话框）。
  *
  * 返回值 = "这个位置真的能写"。写不进去时**不要**把配置改到这儿来 ——
@@ -368,16 +380,14 @@ async function resolveMissingWorkspace(
          * 只有**当前运行卷上**的候选才算"跟着盘走"（app-volume）；用户确认的是别的卷
          * 上的精确位置 ⇒ explicit-path。旧行为把任何选中的候选都记成 app-volume：
          * 选完旧卷上的目录，下次启动又会因"记录卷 ≠ 运行卷"再问一遍，且归属是假话。
+         * （2026-10-15 P-A 起与手选目录共用同一条判据 `bindingForPickedDirectory`。）
          */
-        const onRunVolume = sameVolumeRoot(volumeRootOf(choice.path), ctx.portableRoot);
+        const binding = pickedBindingOf(ctx, choice.path);
         updateConfig({
           workspacePath: choice.path,
-          ...locationOf(ctx, choice.path, onRunVolume ? 'app-volume' : 'explicit-path'),
+          ...locationOf(ctx, choice.path, binding),
         });
-        ctx.log('workspace.missing.picked', {
-          path: choice.path,
-          binding: onRunVolume ? 'app-volume' : 'explicit-path',
-        });
+        ctx.log('workspace.missing.picked', { path: choice.path, binding });
         return choice.path;
       }
       recorded = choice.path;
@@ -388,9 +398,14 @@ async function resolveMissingWorkspace(
       const picked = await ctx.dialogs.browseForDirectory(recorded);
       if (!picked) continue; // 取消了就再问一次（对话框里始终有「退出」）
       if (await ensureWorkspace(ctx, picked)) {
-        // 用户手选目录 = 他明确要的位置 ⇒ explicit-path（B1：显式选择遵从用户）
-        updateConfig({ workspacePath: picked, ...locationOf(ctx, picked, 'explicit-path') });
-        ctx.log('workspace.missing.browsed', { path: picked });
+        /**
+         * 用户手选目录（2026-10-15 首次启动硬合同 P-A）：选在**当前运行卷**上 ⇒ 随盘
+         * 语义（app-volume，换盘符后同盘自愈）；别的卷 ⇒ explicit-path（B1：显式选择
+         * 遵从用户）。旧行为一律 explicit-path ⇒ 同一支盘换台电脑/换个盘符就被要求重选。
+         */
+        const binding = pickedBindingOf(ctx, picked);
+        updateConfig({ workspacePath: picked, ...locationOf(ctx, picked, binding) });
+        ctx.log('workspace.missing.browsed', { path: picked, binding });
         return picked;
       }
       recorded = picked;
@@ -424,9 +439,10 @@ async function resolveMissingWorkspace(
   //    最后一轮仍要留一个「选择其它目录」的出口，只有真的选不出来才退出。
   const rescued = await lastChanceDirectory(ctx, recorded);
   if (rescued) {
-    // 最后一问同样是用户手选目录 ⇒ explicit-path（B1）
-    updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued, 'explicit-path') });
-    ctx.log('workspace.missing.last-chance', { path: rescued });
+    // 最后一问同样是用户手选目录 ⇒ 同一条归属判据（P-A：同盘随盘、别卷显式）
+    const binding = pickedBindingOf(ctx, rescued);
+    updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued, binding) });
+    ctx.log('workspace.missing.last-chance', { path: rescued, binding });
     return rescued;
   }
 
@@ -476,8 +492,9 @@ async function openWorkspaceDatabase(initialPath: string, ctx: StartupContext): 
     const picked = await ctx.dialogs.browseForDirectory(workspacePath);
     if (!picked) continue;
     if (await ensureWorkspace(ctx, picked)) {
-      // 用户手选目录 ⇒ explicit-path（B1）
-      updateConfig({ workspacePath: picked, ...locationOf(ctx, picked, 'explicit-path') });
+      // 用户手选目录 ⇒ 同一条归属判据（P-A：同盘随盘、别卷显式）
+      const binding = pickedBindingOf(ctx, picked);
+      updateConfig({ workspacePath: picked, ...locationOf(ctx, picked, binding) });
     }
     workspacePath = picked;
   }
@@ -488,9 +505,10 @@ async function openWorkspaceDatabase(initialPath: string, ctx: StartupContext): 
   if (rescued) {
     const failure = tryOpen(rescued, ctx.database);
     if (!failure) {
-      // 最后一问同样是用户手选目录 ⇒ explicit-path（B1）
-      updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued, 'explicit-path') });
-      ctx.log('workspace.db.last-chance', { workspacePath: rescued });
+      // 最后一问同样是用户手选目录 ⇒ 同一条归属判据（P-A：同盘随盘、别卷显式）
+      const binding = pickedBindingOf(ctx, rescued);
+      updateConfig({ workspacePath: rescued, ...locationOf(ctx, rescued, binding) });
+      ctx.log('workspace.db.last-chance', { workspacePath: rescued, binding });
       return rescued;
     }
     ctx.log('workspace.db.last-chance.failed', { workspacePath: rescued, message: failure });
