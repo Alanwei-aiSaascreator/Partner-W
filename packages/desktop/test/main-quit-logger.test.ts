@@ -28,6 +28,8 @@ function loadQuitHandler(close: () => Promise<void>) {
     teardownAnalytics: vi.fn(),
     // V4（2026-10-14）：执行历史 writer 停表 —— 同"显式依赖白名单"（不推 order）。
     stopExecutionHistory: vi.fn(),
+    // M3（2026-10-14）：画像持久化退出刷新（BUG-034）—— 同"显式依赖白名单"（不推 order）。
+    requestQuitStorageFlush: vi.fn(),
     shutdownLocalGatewayRuntime: () => Promise.resolve(),
     destroyAllGateways: () => order.push('gateways'),
     destroyTray: () => order.push('tray'),

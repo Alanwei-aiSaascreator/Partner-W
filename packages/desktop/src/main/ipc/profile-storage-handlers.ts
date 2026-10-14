@@ -8,7 +8,7 @@
  *  2. 目标 session **只从 `event.sender` 解析**，渲染层不传任何参数（不收 partition/path）；
  *     非受信应用页面来源一律拒绝。
  */
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { join } from 'node:path';
 import type { IpcMainInvokeEvent } from 'electron';
 import { isAllowedAppNavigation } from '../security/navigation-guard.js';
@@ -86,4 +86,38 @@ export function registerProfileStorageHandlers(options?: ProfileFlushOptions): v
       return { ok: false, error: 'flush request failed', errorCode: 'profile-flush-failed' };
     }
   });
+}
+
+/**
+ * 退出路径参与者（M3 / BUG-034）：对全部存活窗口的 session 尽力请求 DOMStorage 落盘。
+ * 返回发起请求的窗口数（仅用于诊断日志）；**绝不抛、不阻塞退出**。
+ *
+ * ⚠️ 单独命名 = 让 `main/index.ts` 的退出链对屏障测试**只多一个显式参与者**
+ * （`test/main-quit-logger.test.ts` 的依赖白名单同款纪律：退出链新参与者必须在
+ * 白名单里显式补桩）。强关/断电不会走 before-quit，本函数不承诺任何 durability。
+ */
+export function requestQuitStorageFlush(): number {
+  let requested = 0;
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      try {
+        if (requestSessionFlushBestEffort(win.webContents.session)) requested += 1;
+      } catch {
+        /* 半销毁窗口：忽略 */
+      }
+    }
+  } catch {
+    /* 窗口枚举失败：忽略，绝不挡退出 */
+  }
+  try {
+    getDebugLogger().info({
+      domain: 'profile-storage',
+      event: 'profile-storage.flush-requested',
+      data: { source: 'quit', windows: requested },
+    });
+  } catch {
+    /* 诊断失败同样不挡退出 */
+  }
+  return requested;
 }

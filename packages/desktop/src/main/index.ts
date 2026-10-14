@@ -18,7 +18,7 @@ import { registerWorkspaceHandlers } from './ipc/workspace-handlers.js';
 import { registerSettingsHandlers } from './ipc/settings-handlers.js';
 import { registerSearchHandlers } from './ipc/search-handlers.js';
 import { registerDataHandlers } from './ipc/data-handlers.js';
-import { registerProfileStorageHandlers, requestSessionFlushBestEffort } from './ipc/profile-storage-handlers.js';
+import { registerProfileStorageHandlers, requestQuitStorageFlush } from './ipc/profile-storage-handlers.js';
 import { registerTeamMeetingHandlers } from './ipc/team-meeting-handlers.js';
 import { registerStatsHandlers } from './ipc/stats-handlers.js';
 import { installNavigationGuards } from './security/navigation-guard.js';
@@ -839,23 +839,11 @@ app.on('before-quit', (event) => {
   // ⭐ V4（I 接线）：执行历史 writer 停表收尾（不阻塞退出 —— close 内部按 writer 纪律吞错）。
   stopExecutionHistory();
 
-  // ⭐ M3（BUG-034）：退出前对每个存活窗口的 session 尽力请求 DOMStorage 落盘。
-  //    Electron 34 flushStorageData 是 void —— 只代表"已发起刷新请求"，失败只留诊断；
-  //    强关/断电仍无保证（口径见 BUG-034，不许诺零丢失）。
-  let flushRequested = 0;
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (win.isDestroyed()) continue;
-    try {
-      if (requestSessionFlushBestEffort(win.webContents.session)) flushRequested += 1;
-    } catch {
-      /* 半销毁窗口：忽略，绝不挡退出 */
-    }
-  }
-  logger.info({
-    domain: 'profile-storage',
-    event: 'profile-storage.flush-requested',
-    data: { source: 'quit', windows: flushRequested },
-  });
+  // ⭐ M3（BUG-034）：退出前对存活窗口 session 尽力请求 DOMStorage 落盘。
+  //    细节收敛在 `profile-storage-handlers.requestQuitStorageFlush()`（单一具名参与者，
+  //    绝不抛、不阻塞退出——Electron 34 flushStorageData 是 void，只代表"已发起请求"；
+  //    强关/断电无保证，口径见 BUG-034）。
+  requestQuitStorageFlush();
 
   // Flush pending debug log writes before exit, then complete shutdown
   logger

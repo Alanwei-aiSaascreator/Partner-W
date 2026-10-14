@@ -15,6 +15,9 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
+// ⚠️ 必须走 `vi.hoisted`：`vi.fn()` 形式不会被 vi.mock 工厂的提升机制带上，
+//    直接顶层声明会在工厂执行时 TDZ（ReferenceError: Cannot access before initialization）。
+const getAllWindowsMock = vi.hoisted(() => vi.fn((): unknown[] => []));
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -23,6 +26,7 @@ vi.mock('electron', () => ({
     }),
   },
   shell: { openExternal: vi.fn() },
+  BrowserWindow: { getAllWindows: getAllWindowsMock },
 }));
 
 const loggerInfo = vi.fn();
@@ -33,6 +37,7 @@ vi.mock('../src/main/debug/index.js', () => ({
 
 import {
   registerProfileStorageHandlers,
+  requestQuitStorageFlush,
   requestSessionFlushBestEffort,
 } from '../src/main/ipc/profile-storage-handlers.js';
 
@@ -44,6 +49,8 @@ beforeEach(() => {
   handleMap.clear();
   loggerInfo.mockClear();
   loggerWarn.mockClear();
+  getAllWindowsMock.mockReset();
+  getAllWindowsMock.mockReturnValue([]);
   root = mkdtempSync(join(tmpdir(), 'profile-flush-'));
   rendererDir = join(root, 'renderer');
   mkdirSync(rendererDir, { recursive: true });
@@ -167,5 +174,31 @@ describe('requestSessionFlushBestEffort（退出路径 helper）', () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe('requestQuitStorageFlush（退出路径参与者，M3）', () => {
+  it('存活窗口逐个尽力刷新、已销毁窗口跳过、刷不动的吞掉；返回计数并落诊断', () => {
+    const flushA = vi.fn();
+    const flushDestroyed = vi.fn();
+    const flushThrows = vi.fn(() => {
+      throw new Error('x');
+    });
+    getAllWindowsMock.mockReturnValue([
+      { isDestroyed: () => false, webContents: { session: { flushStorageData: flushA } } },
+      { isDestroyed: () => true, webContents: { session: { flushStorageData: flushDestroyed } } },
+      { isDestroyed: () => false, webContents: { session: { flushStorageData: flushThrows } } },
+    ]);
+    expect(requestQuitStorageFlush()).toBe(1);
+    expect(flushA).toHaveBeenCalledTimes(1);
+    expect(flushDestroyed).not.toHaveBeenCalled();
+    expect(loggerInfo).toHaveBeenCalled();
+  });
+
+  it('窗口枚举抛错 → 返回 0，绝不外抛、绝不挡退出', () => {
+    getAllWindowsMock.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    expect(requestQuitStorageFlush()).toBe(0);
   });
 });
