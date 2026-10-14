@@ -1063,7 +1063,10 @@
       "stream": "Stream",
       "sync": "Sync"
     },
-    "unknown": "Unbekannter Fehler"
+    "unknown": "Unbekannter Fehler",
+    "wrapper": {
+      "providerRequestRejected": "Der Dienst ist vorübergehend nicht verfügbar. Versuchen Sie es mit einem anderen Modell oder später erneut."
+    }
   },
   "export": {
     "exportedToFiles": "In Dateien exportiert"

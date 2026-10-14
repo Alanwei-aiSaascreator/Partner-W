@@ -4034,6 +4034,40 @@ describe('chat 错误的 errorKind 一路传到文案', () => {
     expect(h.systemMessages[0]!.content).toContain('SomeBrandNewProviderError');
     expect(h.systemMessages[0]!.content).not.toContain('errors.kind.');
   });
+
+  /**
+   * BUG-077（2026-10-14 真实用户 1.0.6 截图：「推流: LLM request failed: provider rejected
+   * the request schema or tool payload.」英文上屏）——**真实错误帧端到端回归**。
+   *
+   * 单测过了不等于接线过了：这里必须走真 dispatcher 的 `chat` error 帧把整条链跑通
+   * （payload → buildAppError → formatErrorForUser → displayMessage → system 消息）。
+   * 同时钉两条：①一条错误帧只展示一条消息；②英文原文**仍保留在诊断事件里**
+   * （上屏产品化 ≠ 把安全关联证据删掉）。
+   */
+  it('⭐ BUG-077 真实错误帧：包装句产品化上屏，原文保留在诊断事件里', () => {
+    const h = createHarness();
+    h.deps.translate = (key: string, opts?: Record<string, unknown>) =>
+      key.startsWith('errors.wrapper.') || key.startsWith('errors.kind.')
+        ? `«${key}»`
+        : ((opts?.defaultValue as string) ?? key);
+
+    const raw = 'LLM request failed: provider rejected the request schema or tool payload.';
+    // `unknown` 是这条帧最可能的真实形态（类别认不出才会走文案兜底）—— 它必须**不挡**
+    // 包装句映射，否则修了个寂寞。
+    emitChatError(h, { errorMessage: raw, errorKind: 'unknown' });
+
+    expect(h.systemMessages, '一条错误帧只展示一条消息').toHaveLength(1);
+    const content = h.systemMessages[0]!.content;
+    expect(content, '必须选到产品化 key，而不是把整句英文摆给用户').toContain('errors.wrapper.providerRequestRejected');
+    expect(content, '英文原文不许上屏').not.toContain('provider rejected');
+
+    expect(h.deps.reportDebugEvent, 'rawMessage 仍要进诊断事件（安全关联证据不删）').toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'renderer.chat.error',
+        data: expect.objectContaining({ rawMessage: raw }),
+      }),
+    );
+  });
 });
 
 /**

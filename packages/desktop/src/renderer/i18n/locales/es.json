@@ -1063,7 +1063,10 @@
       "stream": "Transmisión",
       "sync": "Sincronización"
     },
-    "unknown": "Error desconocido"
+    "unknown": "Error desconocido",
+    "wrapper": {
+      "providerRequestRejected": "El servicio no está disponible temporalmente. Prueba con otro modelo o inténtalo de nuevo más tarde."
+    }
   },
   "export": {
     "exportedToFiles": "Exportado a archivos"

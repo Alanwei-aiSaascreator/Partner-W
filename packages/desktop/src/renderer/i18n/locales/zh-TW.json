@@ -1063,7 +1063,10 @@
       "stream": "串流",
       "sync": "同步"
     },
-    "unknown": "未知錯誤"
+    "unknown": "未知錯誤",
+    "wrapper": {
+      "providerRequestRejected": "服務暫時無法使用。可以換一個模型再試，或稍後重試。"
+    }
   },
   "export": {
     "exportedToFiles": "已匯出為檔案"

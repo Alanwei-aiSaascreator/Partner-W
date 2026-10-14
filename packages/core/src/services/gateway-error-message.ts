@@ -149,6 +149,45 @@ const TRANSLATORS = [
   translateFrameTooLarge,
 ];
 
+/**
+ * 已知的**英文包装句** → i18n key（九语言文案走 locales，**不在本文件硬塞中文**）。
+ *
+ * 为什么这几位不走上面的 `TRANSLATORS`：那句话不是"漏了一个中文翻译"，而是
+ * **所有语言**的用户都会看到英文原文（BUG-077：2026-10-14 真实用户 1.0.6 截图
+ * 「推流: LLM request failed: provider rejected the request schema or tool payload.」，
+ * 客户端只加了「推流: 」前缀）。硬塞一句中文只有中文用户受益；返回 key 交给
+ * `error-classify` 的 `displayMessage` 走统一 `t()`，9 个语言各拿自己的产品文案
+ * （真实文案由 desktop 的 `gateway-copy-coverage.test.ts` 钉住）。
+ *
+ * ⚠️ 只认**确切措辞**（大小写不敏感）——不许写成 `/schema|tool/` 这类宽匹配：
+ *    这句话背后可能是 404 模型下架（BUG-078 就是实例）、400 参数错误或工具载荷问题；
+ *    把"句子里出现 schema/tool"的其它错误一起吞掉，等于替用户编一个错的原因。
+ *    也不许把它解释成"必然是你的工具参数写错了"。
+ *
+ * ⚠️ 优先级：在 `displayMessage` 里排在**结构化 kind 之后** —— 限流/超时/拒绝/上下文
+ *    这类明确类别照旧先行，泛化包装文案不盖过它们（同处见该文件注释）。
+ */
+const KNOWN_WRAPPER_MESSAGE_KEYS: ReadonlyArray<{ readonly test: RegExp; readonly key: string }> = [
+  {
+    // `LLM request failed: ` 前缀由运行时加、「推流: 」由客户端加 —— 都可变，
+    // 所以只匹配这句独有的措辞本身。
+    test: /provider rejected the request schema or tool payload/i,
+    key: 'errors.wrapper.providerRequestRejected',
+  },
+];
+
+/**
+ * 已知英文包装句 → i18n key；认不出来返回 `null`（调用方回退原文，纪律同
+ * `translateGatewayError`）。与那条的区别：那条返回**中文**，这条返回**key**（九语言）。
+ */
+export function translateGatewayErrorKey(raw: string | undefined): string | null {
+  if (!raw) return null;
+  for (const { test, key } of KNOWN_WRAPPER_MESSAGE_KEYS) {
+    if (test.test(raw)) return key;
+  }
+  return null;
+}
+
 /** 命中已知错误返回中文；认不出来返回 null（调用方应回退到网关原文）。 */
 export function translateGatewayError(raw: string | undefined): string | null {
   if (!raw) return null;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { describeGatewayError, translateGatewayError } from '../src/services/gateway-error-message.js';
+import {
+  describeGatewayError,
+  translateGatewayError,
+  translateGatewayErrorKey,
+} from '../src/services/gateway-error-message.js';
 
 describe('translateGatewayError —— 已知错误翻中文', () => {
   it('思考档位不支持（带 use 提示）', () => {
@@ -174,5 +178,60 @@ describe('单帧超限断连（close code 1009）', () => {
 
   it('普通断线的 "connection closed" 不吃这条（那还是通用失败）', () => {
     expect(translateGatewayError('connection closed')).toBeNull();
+  });
+});
+
+/**
+ * BUG-077（2026-10-14 真实用户 1.0.6 现场）：运行时把"上游判请求不合法"统一成
+ * `LLM request failed: provider rejected the request schema or tool payload.`，
+ * 客户端只加「推流: 」前缀 —— 用户看到的就是整句英文（截图证据在 BUGS）。
+ *
+ * ⚠️ 这一句**不能**只在中文字符串翻译器里硬塞一句中文：那样只有中文用户受益，
+ *    英文/日文……用户照样看到原文。所以出口是**返回 i18n key**，由 `error-classify`
+ *    走统一 `t()`；九语言文案在 desktop 的 locale 里（`gateway-copy-coverage.test.ts` 钉住）。
+ *
+ * ⚠️ 匹配**只认这一句的确切措辞**（大小写不敏感），不许用 `/schema|tool/` 这类宽匹配：
+ *    这句话背后可能是 404 模型下架（BUG-078 就是实例）、400 参数错误或工具载荷问题，
+ *    把"句子里出现 schema/tool"的其它错误一并吞掉 = 编一句错的中文，违反本文件第一条纪律。
+ *
+ * ⚠️ 也**不许**把这句话解释成"必然是你的工具参数写错了"——原因只在上游拒绝的具体码里。
+ */
+describe('BUG-077：已知英文包装句 → i18n key（不在这里硬塞中文）', () => {
+  const RAW = 'LLM request failed: provider rejected the request schema or tool payload.';
+  const KEY = 'errors.wrapper.providerRequestRejected';
+
+  it('⭐ 原句命中（大小写变体同样命中）', () => {
+    expect(translateGatewayErrorKey(RAW)).toBe(KEY);
+    expect(translateGatewayErrorKey('Provider rejected the request schema or tool payload')).toBe(KEY);
+    expect(translateGatewayErrorKey(RAW.toUpperCase())).toBe(KEY);
+  });
+
+  it('⭐ 客户端「推流: 」前缀 / 其它包装前缀不挡命中（BUG-077 截图形态）', () => {
+    expect(translateGatewayErrorKey(`推流: ${RAW}`)).toBe(KEY);
+    expect(translateGatewayErrorKey(`⚠️ ${RAW}`)).toBe(KEY);
+    expect(translateGatewayErrorKey(`GatewayClientRequestError: ${RAW}`)).toBe(KEY);
+  });
+
+  it('窄匹配：只有 schema / 只有 tool payload 的其它原文一律不吞', () => {
+    expect(translateGatewayErrorKey('tool payload schema mismatch in report.json')).toBeNull();
+    expect(translateGatewayErrorKey('provider rejected the request')).toBeNull();
+    expect(translateGatewayErrorKey('the request schema was rejected by our validator')).toBeNull();
+  });
+
+  it('限流/额度（429/402 家族）的措辞不吃这条 —— 它们各自的明确文案照旧先行', () => {
+    // 审计硬约束：不得让泛化包装文案盖过既有 429/402/context/timeout/拒绝类别
+    expect(translateGatewayErrorKey('LLM request failed: insufficient_quota (kind=arrears)')).toBeNull();
+    expect(translateGatewayErrorKey('request failed (HTTP 429) rate limit exceeded')).toBeNull();
+    expect(translateGatewayErrorKey('insufficient balance: 402')).toBeNull();
+  });
+
+  it('未知原文 / 空 → null（调用方回退原文）', () => {
+    expect(translateGatewayErrorKey('some brand new gateway wording')).toBeNull();
+    expect(translateGatewayErrorKey('')).toBeNull();
+    expect(translateGatewayErrorKey(undefined)).toBeNull();
+  });
+
+  it('它**不**走中文硬编码翻译器（否则只有中文语言受益）', () => {
+    expect(translateGatewayError(RAW)).toBeNull();
   });
 });

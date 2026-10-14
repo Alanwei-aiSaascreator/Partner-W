@@ -1063,7 +1063,10 @@
       "stream": "Flux",
       "sync": "Synchroniser"
     },
-    "unknown": "Erreur inconnue"
+    "unknown": "Erreur inconnue",
+    "wrapper": {
+      "providerRequestRejected": "Le service est temporairement indisponible. Essayez un autre modèle ou réessayez plus tard."
+    }
   },
   "export": {
     "exportedToFiles": "Exporté vers Fichiers"

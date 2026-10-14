@@ -1063,7 +1063,10 @@
       "stream": "ストリーム",
       "sync": "同期"
     },
-    "unknown": "不明なエラー"
+    "unknown": "不明なエラー",
+    "wrapper": {
+      "providerRequestRejected": "サービスが一時的に利用できません。別のモデルに切り替えるか、しばらくしてからもう一度お試しください。"
+    }
   },
   "export": {
     "exportedToFiles": "ファイルにエクスポートしました"

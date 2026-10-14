@@ -102,6 +102,42 @@ describe('网关 id 的文案覆盖', () => {
 });
 
 /**
+ * BUG-077（2026-10-14 真实用户 1.0.6 截图「推流: LLM request failed: provider rejected
+ * the request schema or tool payload.」）的**九语言产品文案覆盖**。
+ *
+ * 运行时把"上游判请求不合法"统一成那句英文包装话；客户端在
+ * `packages/core/src/services/gateway-error-message.ts` 对它做**确切措辞**的窄匹配，
+ * 返回 i18n key `errors.wrapper.providerRequestRejected`（**不硬塞中文** ——
+ * 那样只有中文用户受益），真实文案就在这里、9 个语言文件里。
+ *
+ * 两边分居、中间没有东西连着 —— 少一个语言 = 那个语言的用户继续看英文原文，
+ * 而这**在代码里看不出来**（`t()` 拿不到 key 只回退，不报错）。所以钉在这里。
+ */
+const GATEWAY_WRAPPER_KEYS = ['errors.wrapper.providerRequestRejected'] as const;
+
+describe('已知英文包装句的产品文案覆盖（BUG-077）', () => {
+  const locales = readdirSync(localeDir).filter((f) => f.endsWith('.json'));
+
+  it('清单非空（上游把识别表清空时不该静默通过）', () => {
+    expect(GATEWAY_WRAPPER_KEYS.length).toBe(1);
+  });
+
+  it('⭐ 每个语言都有这套文案，且非空、不等于泛化兜底', () => {
+    for (const file of locales) {
+      const wrapper = at(localeJson(file), 'errors.wrapper');
+      const unknown = at(localeJson(file), 'errors').unknown;
+      for (const key of GATEWAY_WRAPPER_KEYS) {
+        const leaf = key.split('.').pop() as string;
+        const text = wrapper[leaf];
+        expect(text, `${file} 缺 ${key}`).toBeTypeOf('string');
+        expect(text, `${file} 的 ${key} 是空串`).toBeTruthy();
+        expect(text, `${file} 的 ${key} 直接抄了泛化兜底「${unknown}」⇒ 等于没加`).not.toBe(unknown);
+      }
+    }
+  });
+});
+
+/**
  * **本机运行时部署**那四个阶段（+ 慢盘提示）的文案覆盖（2026-10-07 体检问题 2/5）。
  *
  * 为什么和上面那组同一个文件：它们分居的两边是同一种 —— 阶段清单在主进程代码里

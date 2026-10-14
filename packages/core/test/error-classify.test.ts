@@ -153,3 +153,90 @@ describe('formatErrorForToast', () => {
     expect(formatErrorForToast(err, tMark).description).toContain('errors.kind.rate_limit');
   });
 });
+
+/**
+ * BUG-077（2026-10-14 真实用户 1.0.6 现场，截图「推流: LLM request failed: provider rejected
+ * the request schema or tool payload.」）：这句运行时英文包装话此前**没有任何识别器**，
+ * 于是整句原文上屏。
+ *
+ * 修法（审计要求的窄匹配）：对**确切措辞**做识别 → 返回 i18n key → 走统一 `t()`；
+ * 九语言真实文案由 desktop 的 `gateway-copy-coverage.test.ts` 钉住。
+ *
+ * 这里同时钉三条**不许回退**的性质：
+ *  ① 既有明确类别（限流/超时/拒绝/上下文）的文案照旧先行 —— 泛化包装文案不许盖过它们；
+ *  ② 未知错误照旧透出原文（这条新映射不许把 unknown 一起吞掉）；
+ *  ③ `rawMessage`/`code`/`kind` 与诊断关联证据不删（展示层只读不改）。
+ */
+describe('BUG-077：已知英文包装句 → 九语言产品文案（优先级与原文保留）', () => {
+  const RAW = 'LLM request failed: provider rejected the request schema or tool payload.';
+  const KEY = 'errors.wrapper.providerRequestRejected';
+
+  /** 把 wrapper/kind 两类 key 换成可辨认标记 —— 断言的仍是"选中了哪条 key"。 */
+  const tMark2 = (key: string, opts?: Record<string, unknown>): string =>
+    key.startsWith('errors.wrapper.') || key.startsWith('errors.kind.')
+      ? `«${key}»`
+      : ((opts?.defaultValue as string) ?? key);
+
+  it('⭐ 无 kind 的原句 ⇒ 选到产品化 key，英文原文不再上屏', () => {
+    const err = buildAppError({ source: 'upstream', stage: 'stream', rawMessage: RAW });
+    const text = formatErrorForUser(err, tMark2);
+    expect(text).toContain(KEY);
+    expect(text, '英文原文不许再摆给用户').not.toContain('provider rejected');
+  });
+
+  it('⭐ 带「推流: 」前缀的形态同样产品化', () => {
+    const err = buildAppError({ source: 'upstream', stage: 'stream', rawMessage: `推流: ${RAW}` });
+    const text = formatErrorForUser(err, tMark2);
+    expect(text).toContain(KEY);
+    expect(text).not.toContain('provider rejected');
+  });
+
+  it('⭐ 既有明确类别优先级不回退（限流/超时/拒绝/上下文照旧先行）', () => {
+    for (const kind of ['rate_limit', 'timeout', 'refusal', 'context_length'] as const) {
+      const err = buildAppError({ source: 'upstream', stage: 'stream', rawMessage: RAW, kind });
+      const text = formatErrorForUser(err, tMark2);
+      expect(text, `kind=${kind} 应当继续选类别文案`).toContain(`errors.kind.${kind}`);
+      expect(text, `kind=${kind} 不该被泛化包装文案盖掉`).not.toContain(KEY);
+    }
+  });
+
+  it('⭐ kind=unknown 不挡包装句映射（真实帧多半就是 unknown），且字段不被展示层删改', () => {
+    const err = buildAppError({
+      source: 'upstream',
+      stage: 'stream',
+      rawMessage: RAW,
+      kind: 'unknown',
+      code: 'UPSTREAM_REJECTED',
+    });
+    // `unknown` 不在类别表里（认不出就退回原文）—— 但包装句比它具体，必须接上
+    expect(formatErrorForUser(err, tMark2)).toContain(KEY);
+    // 诊断与安全关联证据保留：展示层只读不改
+    expect(err.rawMessage).toBe(RAW);
+    expect(err.kind).toBe('unknown');
+    expect(err.code).toBe('UPSTREAM_REJECTED');
+  });
+
+  it('某语言漏了这条 key ⇒ 退回原文（不许把 key 本身摆给用户）', () => {
+    const missingKeyT = (key: string): string => key; // i18next 取不到 key 时的行为
+    const err = buildAppError({ source: 'upstream', stage: 'stream', rawMessage: RAW });
+    const text = formatErrorForUser(err, missingKeyT);
+    expect(text).not.toContain('errors.wrapper.');
+    expect(text).toContain('provider rejected');
+  });
+
+  it('未知错误仍然透出原文（不因这条新映射把 unknown 一起吞掉）', () => {
+    const err = buildAppError({
+      source: 'upstream',
+      stage: 'stream',
+      rawMessage: 'SomeBrandNewProviderError: whatever',
+    });
+    expect(formatErrorForUser(err, tMark2)).toBe('stream: SomeBrandNewProviderError: whatever');
+  });
+
+  it('toast 描述同样走这条路（它共用 displayMessage）', () => {
+    const err = buildAppError({ source: 'upstream', stage: 'stream', rawMessage: RAW });
+    const { description } = formatErrorForToast(err, tMark2);
+    expect(description).toContain(KEY);
+    expect(description).not.toContain('provider rejected');
+  });
+});

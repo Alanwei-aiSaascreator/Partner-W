@@ -1063,7 +1063,10 @@
       "stream": "推流",
       "sync": "同步"
     },
-    "unknown": "未知错误"
+    "unknown": "未知错误",
+    "wrapper": {
+      "providerRequestRejected": "服务暂时不可用。可以换一个模型再试，或稍后重试。"
+    }
   },
   "export": {
     "exportedToFiles": "已导出到文件管理"

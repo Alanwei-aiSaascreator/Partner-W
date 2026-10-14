@@ -1,6 +1,6 @@
 import type { AppError, ErrorSource, ErrorStage, Retryable } from '@clawwork/shared';
 import { RETRYABLE_ERROR_CODES, NON_RETRYABLE_ERROR_CODES } from '@clawwork/shared';
-import { translateGatewayError } from './gateway-error-message.js';
+import { translateGatewayError, translateGatewayErrorKey } from './gateway-error-message.js';
 
 /**
  * 网关的**结构化**错误类别 → 能不能重试（拍板口径 2026-09-19）。
@@ -78,9 +78,12 @@ const ERROR_KIND_KEYS: Record<string, string> = {
 /**
  * 展示前先过一层翻译：已知的网关错误给中文，未知的**保留原文**（原文比我们编的话准）。
  *
- * 顺序是刻意的：**能认出的原文**（更具体）> **结构化类别**（一定正确但较泛）> **原文**。
- * ⚠️ 最后那一步不能少：类别有条目但**这个语言没这条 key** 时（i18next 会把 key 原样返回），
- *    绝不能把 `errors.kind.rate_limit` 这种东西摆到用户脸上 —— 退回原文。
+ * 顺序是刻意的：**能认出的原文**（更具体）> **结构化类别**（一定正确但较泛）
+ * > **已知英文包装句**（按 key 走九语言产品文案，BUG-077）> **原文**。
+ * ⚠️ 包装句排在类别**之后**：限流/超时/拒绝/上下文这类明确类别照旧先行，
+ *    泛化包装文案不许盖过它们。
+ * ⚠️ 最后那一步不能少：类别/包装句有条目但**这个语言没这条 key** 时（i18next 会把 key
+ *    原样返回），绝不能把 `errors.kind.rate_limit` 这种东西摆到用户脸上 —— 退回原文。
  *
  * ⚠️ 2026-09-17 之前这一层没接上，`formatErrorForUser` 只是把原文拼到前缀后面，
  *    所以 `GatewayClientRequestError: question 'doc_type' requires an answer`
@@ -98,6 +101,17 @@ function displayMessage(err: AppError, t: TranslateFn): string | undefined {
     const byKind = t(key);
     // 取不到翻译时 i18next 原样返回 key —— 那种情况下用它还不如给原文
     if (byKind && byKind !== key) return byKind;
+  }
+
+  // ⭐ BUG-077（2026-10-14 真实用户 1.0.6）：运行时把"上游判请求不合法"统一成一句英文
+  //    包装话（`LLM request failed: provider rejected the request schema or tool payload.`），
+  //    此前它没有任何识别器 ⇒ 整句原文上屏。这里对**确切措辞**做窄匹配 → 返回 i18n key
+  //    → 走统一 `t()` 拿九语言产品文案（文案不在代码里硬塞）。
+  const wrapperKey = err.rawMessage ? translateGatewayErrorKey(err.rawMessage) : null;
+  if (wrapperKey) {
+    const byWrapper = t(wrapperKey);
+    // 纪律同 kind：这个语言没这条 key 时退回原文，不许把 key 本身摆给用户
+    if (byWrapper && byWrapper !== wrapperKey) return byWrapper;
   }
 
   return err.rawMessage || undefined;
