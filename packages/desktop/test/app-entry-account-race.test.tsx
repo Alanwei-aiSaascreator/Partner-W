@@ -83,7 +83,12 @@ vi.mock('../src/renderer/platform', () => {
   // V3-artifact（2026-10-14）：App 新增的结算通知 hook 经 stores/messageStore 的**转出口**
   // 以函数形态调用 useMessageStore —— 补最小同形桩（选择器 + getState/subscribe）。
   // executionBySession 恒空 ⇒ 通知路径不可达（这些账号竞态用例不涉及交付结算）。
-  const messageState = { executionBySession: {} as Record<string, unknown> };
+  // C-B（2026-10-15）：App 又挂了额度刷新 hook，它读 processingBySession.size
+  // （真实 store 为 Set<string>，见 core message-store）—— 桩必须跟着长（同形纪律）。
+  const messageState = {
+    executionBySession: {} as Record<string, unknown>,
+    processingBySession: new Set<string>(),
+  };
   const useMessageStore = (selector?: (state: typeof messageState) => unknown) =>
     selector ? selector(messageState) : messageState;
   Object.assign(useMessageStore, {

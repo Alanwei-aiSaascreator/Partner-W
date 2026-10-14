@@ -56,6 +56,29 @@ export function formatCredits(microCents: number): string {
   return Math.round(credits).toLocaleString();
 }
 
+/**
+ * 微积分 → 积分的**余额**显示串：始终两位小数 + 千分位（同样不带单位后缀）。
+ *
+ * BUG-082 / C-B §4：`formatCredits` 在 ≥1000 积分时四舍五入成整数 ——
+ * `1000.40 → 1000.10` 两笔已经结算的消耗在屏幕上都是「1,000」，
+ * 用户读到的是"没扣费"。
+ *
+ * ⚠️ 为什么是**新函数**而不是改 `formatCredits` 的默认行为：全站调用点里，
+ *    图表刻度（Dashboard 的 Y 轴/提示）、30 天汇总、用量总量这些**非余额**场景
+ *    要的是"读得清"，不是"看得见 0.01"。把它们的语义一起改了 = 全站变吵，
+ *    而且那些数字本来就不承担"这次扣了多少"的信息。
+ *    ⇒ 分工：**余额**（顶栏/账户页/总览的剩余额度）用本函数；
+ *      聚合/图表继续用 `formatCredits`。两条行为都有测试锁住。
+ */
+export function formatCreditsPrecise(microCents: number): string {
+  if (!Number.isFinite(microCents)) return '0';
+  const credits = microCents / MICROS_PER_CREDIT;
+  const abs = Math.abs(credits);
+  // 与 formatCredits 同一个说法：有值但显示不出来 ⇒ `<0.01`，不是 0
+  if (abs > 0 && abs < 0.01) return '<0.01';
+  return credits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // A few renderer helpers are deliberately imported by pure-Node tests and by
 // build-time tooling.  Reading `navigator` at module evaluation time made all
 // of those consumers crash before they could use the platform-independent

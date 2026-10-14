@@ -4,20 +4,24 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommercialAccountOverview } from '@clawwork/shared';
-import { useQuotaRefreshOnTurnEnd } from '../src/renderer/hooks/useQuotaRefreshOnTurnEnd';
+import { QUOTA_SETTLE_MS, useQuotaRefreshOnTurnEnd } from '../src/renderer/hooks/useQuotaRefreshOnTurnEnd';
 import { useMessageStore } from '../src/renderer/stores/messageStore';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 
 /**
- * 「一轮对话结束后把额度拉新」。
+ * 「一轮对话结束后把额度拉新」—— 这条纪律的最早一批断言（2026-09-12）。
  *
  * 这些断言锁的是三件容易在重构里丢掉的事：
  *   ① 挂载时不触发（那一刻并没有「刚结束一轮」）
  *   ② 顺序：先上报本机累计量，**再**拉服务端额度（反了就拿到旧值）
  *   ③ 防抖：短时间内的多次结束只打一次请求（Ensemble 会连续 end）
+ *
+ * ⚠️ 2026-10-15（BUG-082）之后，拉额度那一步走的是**轻量只读额度通道**
+ *    （`commercialQuotaSnapshot`）而不是整份账户概览 —— 断言里的通道名随之改，
+ *    三条纪律本身没变。新增的节奏/追读/退避断言在 `quota-refresh-cadence.test.tsx`。
  */
 
-const SETTLE_MS = 800;
+const SETTLE_MS = QUOTA_SETTLE_MS;
 
 function overview(): CommercialAccountOverview {
   return {
@@ -49,9 +53,13 @@ beforeEach(() => {
       calls.push('report');
       return 0;
     }),
-    commercialAccountOverview: vi.fn(async () => {
-      calls.push('overview');
-      return { ok: true, result: overview() };
+    commercialQuotaSnapshot: vi.fn(async () => {
+      calls.push('quota');
+      const snapshot = overview();
+      return {
+        ok: true,
+        result: { license: snapshot.license, org: snapshot.org, fetchedAt: snapshot.fetchedAt },
+      };
     }),
   } as unknown as Window['clawwork'];
 
@@ -99,7 +107,7 @@ describe('useQuotaRefreshOnTurnEnd', () => {
     await flush(SETTLE_MS + 50);
 
     // ⭐ 顺序：先上报再拉额度。反了会拉到上一次推送前的旧值。
-    expect(calls).toEqual(['report', 'overview']);
+    expect(calls).toEqual(['report', 'quota']);
   });
 
   it('⭐ 防抖：连续两轮之间只打一次请求', async () => {
@@ -114,7 +122,7 @@ describe('useQuotaRefreshOnTurnEnd', () => {
     setBusy(false);
     await flush(SETTLE_MS + 50);
     // 只触发了一轮的量，不是两轮
-    expect(calls).toEqual(['report', 'overview']);
+    expect(calls).toEqual(['report', 'quota']);
   });
 
   it('未登录（没有 account）时不空跑', async () => {
@@ -137,6 +145,6 @@ describe('useQuotaRefreshOnTurnEnd', () => {
     setBusy(true);
     setBusy(false);
     await flush(SETTLE_MS + 50);
-    expect(calls).toEqual(['report', 'overview']);
+    expect(calls).toEqual(['report', 'quota']);
   });
 });

@@ -420,6 +420,13 @@ export interface IpcResult<T = unknown> {
   pairingRequired?: boolean;
 }
 
+export interface CommercialOrgSummary {
+  id: string;
+  name: string;
+  plan: string;
+  role: string;
+}
+
 /**
  * Atomic snapshot of everything the Account settings panel needs.
  *
@@ -435,10 +442,30 @@ export interface CommercialAccountOverview {
     nickname: string | null;
     avatar: string | null;
   };
-  org: { id: string; name: string; plan: string; role: string } | null;
+  org: CommercialOrgSummary | null;
   /** null when the org has no license yet — a normal state, not an error. */
   license: CommercialLicenseSummary | null;
   device: { fingerprint: string; shortFingerprint: string };
+  /** ISO timestamp of when this snapshot was read. */
+  fetchedAt: string;
+}
+
+/**
+ * 轻量**只读**额度快照（BUG-082 / C-B §1）。
+ *
+ * 与 `CommercialAccountOverview` 的区别只有两条，都是为了**刷新频率**：
+ *   ① 宽度 —— 只带额度与计费组织，不带 profile / 设备指纹（余额刷新不需要它们）；
+ *   ② **无副作用** —— 读余额一步都不许碰写 RPC（历史上概览那条路每次都会
+ *      fire-and-forget 一发 `activate_license` 做设备登记）。设备登记保持在
+ *      **激活 / 中转 bootstrap** 边界（`fetchRelayKeyForLicense` → `activate_license`）。
+ *
+ * 两条通道共用同一套 user/org/license 校验，因此同一时刻读到的必须是同一张卡。
+ */
+export interface CommercialQuotaSnapshot {
+  /** null when the signed-in account owns no usable license — a normal state. */
+  license: CommercialLicenseSummary | null;
+  /** Billing organization the licence resolves to, for keeping the shared snapshot coherent. */
+  org: CommercialOrgSummary | null;
   /** ISO timestamp of when this snapshot was read. */
   fetchedAt: string;
 }

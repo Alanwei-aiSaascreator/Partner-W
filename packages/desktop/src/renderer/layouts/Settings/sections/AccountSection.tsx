@@ -1,16 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CreditCard, LogOut, Loader2, Pencil, RefreshCw, User as UserIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import {
-  CUSTOM_RECHARGE_MAX_CENTS,
-  CUSTOM_RECHARGE_MIN_CENTS,
-  parseRechargeYuanToCents,
-  type CommercialAccountOverview,
-} from '@clawwork/shared';
+import { CUSTOM_RECHARGE_MAX_CENTS, CUSTOM_RECHARGE_MIN_CENTS, parseRechargeYuanToCents } from '@clawwork/shared';
 import type { RechargeOrderHandle, RechargeSku } from '../../../../preload/clawwork';
 import { toast } from '@/lib/toast';
-import { formatCredits } from '@/lib/utils';
+import { formatCreditsPrecise } from '@/lib/utils';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
+// C-A（BUG-081，2026-10-15）充值显示：金额（分）→ 到账积分文案。
+// 纯函数与单测见 lib/recharge-display.ts；只服务下方充值对话框区域。
+import { customRechargeCreditsText, rechargeCreditsText } from '@/lib/recharge-display';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,8 +26,6 @@ import InlineNotice from '@/components/semantic/InlineNotice';
 import LoadingBlock from '@/components/semantic/LoadingBlock';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 
-type PanelStatus = 'loading' | 'ready' | 'offline';
-
 /**
  * C2（R1 终审 §9，2026-10-10）：主进程分类出的充值失败码 → 可行动的本地化文案。
  * 不在表里的码回落到通用 `rechargeFailed`（"请重试"）。
@@ -40,32 +36,17 @@ const RECHARGE_ERROR_KEYS: Record<string, string> = {
   client_upgrade_required: 'account.rechargeClientUpgrade',
 };
 
-/** Snapshot cache so the panel can render something useful while offline. */
-const CACHE_KEY = 'cw:account-overview';
-
-interface CachedSnapshot {
-  overview: CommercialAccountOverview;
-  savedAt: string;
-}
-
-function readCache(): CommercialAccountOverview | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CachedSnapshot;
-    return parsed?.overview ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(overview: CommercialAccountOverview): void {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ overview, savedAt: new Date().toISOString() }));
-  } catch {
-    // Cache is best-effort; a full quota must not break the panel.
-  }
-}
+/*
+ * ⚠️ 本页**不再持有自己的余额快照**（BUG-082 / C-B §3）。
+ *
+ * 原先这里有一份 `cw:account-overview` 的本地缓存 + 自己的 `overview/status`
+ * 状态，于是同一时刻屏幕上有两个真源：账户页一个、顶栏/总览（commercialStore）另一个。
+ * 两边各自刷新、各自失败，能同时显示两个不同的余额 —— 而且账户页那份**永不自愈**，
+ * 只能靠"重新进这一页/重开"。
+ *
+ * 现在统一读 `commercialStore` 的账号快照（含它的缓存与 offline 兜底）：账户页、
+ * 聊天顶栏、总览看的是**同一份**数据、同一个 `fetchedAt`；刷新调度与代次守卫也只剩一套。
+ */
 
 function maskPhone(phone: string | null): string {
   if (!phone) return '';
@@ -77,9 +58,11 @@ function maskPhone(phone: string | null): string {
 }
 
 /**
- * ⚠️ 这个是**真实货币**（充值赠送金额，单位分），不是额度。
+ * ⚠️ 这个是**真实货币**（充值支付金额，单位分），不是额度。
  *    额度用 `formatCredits`（微积分 → 积分）。两者差 1e6 倍，
  *    混用不会报错、只会静默错账 —— 所以刻意保留两个不同的函数名。
+ *    （2026-10-15 C-A/BUG-081：原注释写作「充值赠送金额」；赠送展示已按用户
+ *      口径下线，本函数现在只服务支付金额。到账积分换算见 lib/recharge-display。）
  */
 function formatCents(cents: number): string {
   return `¥${(cents / 100).toFixed(2)}`;
@@ -105,7 +88,8 @@ function QuotaBar({ used, total }: { used: number; total: number }) {
       </div>
       <div className="flex items-center justify-between type-support text-[var(--text-muted)]">
         <span className="type-mono-data text-[var(--text-secondary)]">
-          {t('dashboard.remainingCredits')} {formatCredits(remaining)} / {formatCredits(total)} {t('usage.creditsUnit')}
+          {t('dashboard.remainingCredits')} {formatCreditsPrecise(remaining)} / {formatCreditsPrecise(total)}{' '}
+          {t('usage.creditsUnit')}
         </span>
         <span>{remainingPercent.toFixed(1)}%</span>
       </div>
@@ -120,9 +104,10 @@ interface AccountSectionProps {
 
 export default function AccountSection({ onboardingProfile = null, onEditProfile }: AccountSectionProps) {
   const { t } = useTranslation();
-  const [overview, setOverview] = useState<CommercialAccountOverview | null>(null);
-  const [status, setStatus] = useState<PanelStatus>('loading');
-  const [errorMessage, setErrorMessage] = useState('');
+  // 账号快照的唯一真源（BUG-082）：与顶栏/总览共用同一份。
+  const overview = useCommercialStore((s) => s.overview);
+  const status = useCommercialStore((s) => s.status);
+  const load = useCommercialStore((s) => s.load);
   const [signingOut, setSigningOut] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundAgreed, setRefundAgreed] = useState(false);
@@ -146,39 +131,6 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
     };
   }, []);
 
-  const load = useCallback(async () => {
-    setStatus('loading');
-    setErrorMessage('');
-    try {
-      const res = await window.clawwork.commercialAccountOverview();
-      if (!mountedRef.current) return;
-
-      if (!res.ok || !res.result) {
-        // Fall back to the last good snapshot rather than an empty panel, but
-        // say so plainly — never let cached numbers read as live ones.
-        const cached = readCache();
-        if (cached) {
-          setOverview(cached);
-          setStatus('offline');
-        } else {
-          setStatus('offline');
-        }
-        setErrorMessage(res.error ?? '');
-        return;
-      }
-
-      setOverview(res.result);
-      setStatus('ready');
-      writeCache(res.result);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      const cached = readCache();
-      if (cached) setOverview(cached);
-      setStatus('offline');
-      setErrorMessage(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
   const stopWatch = useCallback(() => {
     if (watchRef.current) {
       clearInterval(watchRef.current);
@@ -187,6 +139,8 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
   }, []);
 
   useEffect(() => {
+    // 每次打开账户页都重读一次（与旧行为一致）：打开是一次**有意图**的动作，
+    // 拉到最新比省一次请求重要；失败时 store 会保留最近一次成功的值。
     void load();
   }, [load]);
 
@@ -222,11 +176,6 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
       await window.clawwork.commercialSignOut();
     } catch {
       // Sign-out clears local state first; a network failure must not trap the user.
-    }
-    try {
-      localStorage.removeItem(CACHE_KEY);
-    } catch {
-      // ignore
     }
     // ⚠️ 闸门用的那份缓存（cw:commercial-overview）必须一起清：它现在**能授权发送**
     //    （读失败时用旧快照放行），留着就会让下一个登录的账号用到上一个人的许可证。
@@ -316,7 +265,7 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
     }
   }, [customAmount, placing, selectedSku, startWatch, t, useCustomAmount]);
 
-  if (status === 'loading' && !overview) {
+  if (!overview && status !== 'offline') {
     return (
       <div>
         <h3 className="type-section-title mb-4 text-[var(--text-primary)]">{t('settings.account')}</h3>
@@ -355,6 +304,19 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
   const quotaTotal = license?.tokenQuotaMicros ?? 0;
   const quotaUsed = license?.tokenUsedMicros ?? 0;
   const hasQuota = quotaTotal > 0;
+
+  // ── C-A（BUG-081，2026-10-15）充值区派生值 START ─────────────────────────
+  // 「支付金额 → 到账积分」展示口径（纯函数与单测见 lib/recharge-display.ts）。
+  // 只服务下方充值对话框（确认区摘要 + 每档/自定义的到账行）；
+  // 余额读取与刷新逻辑不在此边界内（C-B 域）。
+  const rechargeCustomCents = useCustomAmount ? parseRechargeYuanToCents(customAmount) : null;
+  const rechargeSkuCents = useCustomAmount
+    ? null
+    : (skus.find((item) => item.sku === selectedSku)?.amountCents ?? null);
+  const rechargeConfirmCents = useCustomAmount ? rechargeCustomCents : rechargeSkuCents;
+  const rechargeConfirmAmountText = rechargeConfirmCents === null ? null : formatCents(rechargeConfirmCents);
+  const rechargeConfirmCreditsText = rechargeCreditsText(rechargeConfirmCents);
+  // ── C-A 充值区派生值 END ─────────────────────────────────────────────────
 
   return (
     <div className="space-y-5">
@@ -487,12 +449,16 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
         </Button>
       </div>
 
-      {errorMessage && status === 'ready' && (
-        <p className="type-support text-[var(--text-muted)]">
-          {t('account.updatedAt', { time: new Date(overview.fetchedAt).toLocaleTimeString() })}
-        </p>
-      )}
+      {/* 余额的**可信度**（BUG-082 / C-B §3）：显示的值永远是"最近一次成功读到的"
+          那份（读失败不归零、不清空），这里如实给出它的时间；读不到时上面那条
+          `account.offline` 通知同时亮着。 */}
+      <p className="type-support text-[var(--text-muted)]" data-account-synced-at>
+        {t('account.updatedAt', { time: new Date(overview.fetchedAt).toLocaleTimeString() })}
+      </p>
 
+      {/* ══ C-A（BUG-081，2026-10-15）充值对话区域改动边界 START ══
+          C-A 只修改本对话框内部（比例说明 / 档位到账行 / 自定义预估 / 确认区摘要）。
+          余额区、刷新 hook、commercialStore 属 C-B 域，不在此边界内。 */}
       <Dialog open={refundOpen} onOpenChange={(next) => !next && closeRefund()}>
         <DialogContent>
           <DialogHeader>
@@ -502,12 +468,17 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
 
           <div className="mt-4 space-y-2">
             <p className="type-label text-[var(--text-primary)]">{t('account.rechargePickAmount')}</p>
+            {/* 固定比例说明。与 lib/recharge-display.ts 的换算同源（1 分 = 1 积分），
+                不随所选档位变化 —— BUG-081 的起点就是"金额和积分对不上"。 */}
+            <p className="type-support text-[var(--text-muted)]">{t('account.rechargeRate')}</p>
             {skus.length === 0 ? (
               <LoadingBlock label={t('common.loading')} />
             ) : (
               <div className="grid grid-cols-2 gap-2">
                 {skus.map((item) => {
                   const active = item.sku === selectedSku;
+                  // 到账积分 = 支付金额（分）× 1；脏数据返回 null 时只留 label。
+                  const creditsText = rechargeCreditsText(item.amountCents);
                   return (
                     <button
                       key={item.sku}
@@ -524,9 +495,14 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
                       }
                     >
                       <span className="type-label block text-[var(--text-primary)]">{item.label}</span>
-                      {item.bonusCents > 0 && (
-                        <span className="type-support block text-[var(--accent)]">
-                          {t('account.rechargeBonus', { amount: formatCents(item.bonusCents) })}
+                      {/* 支付金额 + 到账积分。用户口径（2026-10-15）：赠送（bonusCents）
+                          先不上屏，只按 1元=100积分 展示 —— 所以这里不渲染赠送行。 */}
+                      {creditsText !== null && (
+                        <span className="type-support mt-0.5 block text-[var(--text-secondary)]">
+                          {t('account.rechargeSummary', {
+                            amount: formatCents(item.amountCents),
+                            credits: creditsText,
+                          })}
                         </span>
                       )}
                     </button>
@@ -581,6 +557,15 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
                     })}
                   </p>
                 )}
+                {/* 合法金额的到账预估（复用 parseRechargeYuanToCents 的同一判据）。 */}
+                {rechargeCustomCents !== null && (
+                  <p className="type-support text-[var(--text-secondary)]">
+                    {t('account.rechargeCustomEstimate', {
+                      amount: formatCents(rechargeCustomCents),
+                      credits: customRechargeCreditsText(customAmount),
+                    })}
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -598,6 +583,17 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
           {placeError && (
             <p className="mt-2 type-support text-[var(--danger)]" role="alert">
               {placeError}
+            </p>
+          )}
+
+          {/* 确认付款区摘要：与档位卡复用同一「支付金额/到账积分」文案。
+              合法金额（档位或自定义）才出现；非法/未选时不渲染。 */}
+          {rechargeConfirmAmountText !== null && rechargeConfirmCreditsText !== null && (
+            <p data-recharge-summary className="mt-4 type-label text-[var(--text-primary)]">
+              {t('account.rechargeSummary', {
+                amount: rechargeConfirmAmountText,
+                credits: rechargeConfirmCreditsText,
+              })}
             </p>
           )}
 
@@ -619,6 +615,7 @@ export default function AccountSection({ onboardingProfile = null, onEditProfile
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* ══ C-A（BUG-081）充值对话区域改动边界 END ══ */}
     </div>
   );
 }

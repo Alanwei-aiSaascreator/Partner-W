@@ -23,6 +23,7 @@ import { useFileStore } from './stores/fileStore';
 import { composer } from './platform';
 import { useGatewayBootstrap } from './hooks/useGatewayBootstrap';
 import { useWorkspaceRefresh } from './hooks/useWorkspaceRefresh';
+import { useQuotaRefreshOnTurnEnd } from './hooks/useQuotaRefreshOnTurnEnd';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { useTraySync } from './hooks/useTraySync';
 import { useModuleOpenTracking } from './hooks/useModuleOpenTracking';
@@ -243,6 +244,10 @@ export default function App() {
   preparationFactsRef.current = preparationFacts;
 
   useWorkspaceRefresh();
+  // 余额（积分）的主动刷新调度：回合结束 / 消费进行中 / 回前台。
+  // ⚠️ 挂 App 不挂 MainArea：打开设置会卸载 MainArea，而"留在账户页盯后台消费"
+  //    正是要覆盖的场景之一（余额面板此时只剩设置页那一处）。
+  useQuotaRefreshOnTurnEnd();
   useUpdateCheck();
   // 挂 App 而不是 MainArea：打开设置会卸载 MainArea，那期间文件生成失败就会被漏掉，
   // 而"漏掉一条失败提示"的表现恰好和"什么都没发生"一模一样。

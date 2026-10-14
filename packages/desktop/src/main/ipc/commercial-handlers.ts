@@ -9,6 +9,7 @@ import { readConfig, updateConfig } from '../workspace/config.js';
 import { clearCommercialSession, hasLocalSession, resetCommercialClient } from '../commercial/client.js';
 import {
   readAccountOverview,
+  readQuotaSnapshot,
   readSessionState,
   sendLoginOtp,
   signOutCommercial,
@@ -132,6 +133,12 @@ export function registerCommercialHandlers(): void {
    */
   ipcMain.handle('commercial:local-session', () => ({ ok: true, result: hasLocalSession() }));
   ipcMain.handle('commercial:account-overview', () => readAccountOverview());
+  /**
+   * 轻量只读额度通道（BUG-082）：**无写副作用**，供消费中的余额刷新使用。
+   * 与 `commercial:account-overview` 同一套 user/org/license 校验，只是不带
+   * profile/设备指纹、不登记设备 —— 所以它可以被每几秒调一次。
+   */
+  ipcMain.handle('commercial:quota-snapshot', () => readQuotaSnapshot());
 
   ipcMain.handle('commercial:license-status', () => readLicenseStatus());
   ipcMain.handle('commercial:license-activate', async (_event, licenseKey: string) => {

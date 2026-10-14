@@ -1,6 +1,12 @@
-import type { CommercialAccountOverview, CommercialLicenseSummary, IpcResult } from '@clawwork/shared';
+import type {
+  CommercialAccountOverview,
+  CommercialLicenseSummary,
+  CommercialOrgSummary,
+  CommercialQuotaSnapshot,
+  IpcResult,
+} from '@clawwork/shared';
 import { getCommercialClient, resetCommercialClient } from './client.js';
-import { deviceFingerprint, readLicenseStatus } from './license.js';
+import { deviceFingerprint, readLicenseStatus, type LicenseStatus } from './license.js';
 import {
   classifyAuthFailure,
   classifyOtpVerifyFailure,
@@ -69,30 +75,22 @@ function classifyOtpError(error: unknown): string {
   return 'otp_send_failed';
 }
 
-type CommercialClient = NonNullable<ReturnType<typeof getCommercialClient>>;
-
 /**
- * Records this device against the org's licence, so the device list reflects
- * reality rather than only the machine that first typed the key.
+ * 设备登记的归宿（BUG-082 / C-B §1）：**读路径一次都不打它了**。
  *
- * Deliberately fire-and-forget. Access is decided by ownership (`activated`
- * below), never by this call — if it fails, is rate-limited, or the server
- * declines, the user notices nothing. Its only job is to keep the anti-abuse
- * list current, and because activate_license bumps `last_seen_at`, a machine
- * that is actually used does not get evicted by one that is not.
+ * 事实：`readAccountOverview` 曾经在每次读取后 fire-and-forget 一发
+ * `activate_license` 做设备登记 —— 那是一条**写** RPC。而余额刷新必须能
+ * 每几秒跑一次（消费中），这条读路径就绝不能再带写。
+ *
+ * 登记本身没有被删掉，它留在**边界**上（激活 / 中转 bootstrap）：
+ *   · 激活：`license.ts` 的 `activateLicenseUnlocked` → RPC `activate_license`；
+ *   · 登录/启动：`relay-startup.ts` 的 `fetchRelayKeyForLicense` → 同一个 RPC
+ *     （账号名下那把卡，覆盖"新机器只登录不手动激活"的情形）。
+ * 两处都会 bump `last_seen_at`，所以"在用的机器不会被不用的挤掉"这条性质不变。
+ *
+ * ⚠️ 别再把它加回读路径：读了余额就产生一次设备写，是 2026-10-15 那次核查
+ *    点名要拆的东西（否则高频刷新会持续打写 RPC，还把设备列表变成刷新的副产物）。
  */
-async function registerDevice(supabase: CommercialClient, licenseKey: string): Promise<void> {
-  if (!licenseKey) return;
-  try {
-    await supabase.rpc('activate_license', {
-      p_license_key: licenseKey,
-      p_device_fingerprint: deviceFingerprint(),
-    });
-  } catch {
-    // Intentionally swallowed — see above.
-  }
-}
-
 const NETWORK_TIMEOUT_MS = 8000;
 
 /** Accepts PromiseLike so Supabase's thenable query builders can be raced directly. */
@@ -444,10 +442,100 @@ function shortenFingerprint(fingerprint: string): string {
 }
 
 /**
+ * 卡摘要：把 license 查询链的结果**投影**成界面用的形状。
+ *
+ * ⚠️ 判据（`configured` / `activated` / `licenseId` / `orgId` 四个都在）与
+ *    relay bootstrap 那侧"这张卡能不能用"同源 —— 缺一个就不给摘要，
+ *    界面显示"没有可用卡"，而不是显示半张卡。
+ */
+function licenseSummaryFrom(status: LicenseStatus | null | undefined): CommercialLicenseSummary | null {
+  if (!status?.configured || !status.activated || !status.licenseId || !status.orgId) return null;
+  return {
+    activated: true,
+    licenseId: status.licenseId,
+    orgId: status.orgId,
+    licenseKey: status.licenseKey,
+    sku: status.sku,
+    status: status.status,
+    expiresAt: status.expiresAt,
+    tokenQuotaMicros: status.tokenQuotaMicros,
+    tokenUsedMicros: status.tokenUsedMicros,
+  };
+}
+
+/**
+ * 计费组织：**优先取与卡同 org 的那一行**（且必须是 owner），否则退到
+ * 既有的 `selectOwnerOrg` 选择器。
+ *
+ * 为什么不直接用 `selectOwnerOrg`：账号可能拥有多个 owner 组织，而卡绑定的是
+ * 其中之一。"界面显示的卡"与"界面显示的组织"必须是同一个，否则用户会看到
+ * A 组织的卡挂在 B 组织下（2026-09-24 那类漂移的翻版）。
+ */
+function billingOrgFrom(
+  session: CommercialSessionState,
+  status: LicenseStatus | null | undefined,
+): CommercialOrgSummary | null {
+  const exact = status?.orgId
+    ? (session.orgs.find((candidate) => candidate.id === status.orgId && candidate.role === 'owner') ?? null)
+    : null;
+  const org = exact ?? selectOwnerOrg(session.orgs);
+  return org ? { id: org.id, name: org.name, plan: org.plan, role: org.role } : null;
+}
+
+/**
+ * 轻量**只读**额度快照（BUG-082 / C-B §1）。
+ *
+ * 余额刷新（消费中每几秒一次）走这条通道，而不是整份账户概览：
+ *   · **无写副作用** —— 不激活、不登记设备（设备登记在激活 / bootstrap 边界）；
+ *   · 载荷只带额度与计费组织 —— profile / 设备指纹这些刷新用不上的字段不搬。
+ *
+ * 校验与概览**同源**：同一套 `readSessionState` + `readLicenseStatus`，
+ * 所以两条通道在同一时刻读到的必须是同一张卡（"顶栏一个数、账户页另一个数"
+ * 不会再以更隐蔽的形式回来）。
+ *
+ * ⚠️ 它依然会（经由 `readLicenseStatus`）在读成功后落一次本地 license 绑定 ——
+ *    那是**本地配置**的持久化，不是服务端写，也不改变授权边界。
+ */
+export async function readQuotaSnapshot(): Promise<IpcResult<CommercialQuotaSnapshot>> {
+  const supabase = getCommercialClient();
+  if (!supabase) {
+    return { ok: false, error: 'Commercial backend is not configured', errorCode: 'not_configured' };
+  }
+
+  try {
+    const sessionResult = await readSessionState();
+    if (!sessionResult.ok) return fail(sessionResult.error, sessionResult.errorCode ?? 'session_read_failed');
+
+    const session = sessionResult.result;
+    if (!session?.signedIn || !session.profile) {
+      return { ok: false, error: 'Not signed in', errorCode: 'not_signed_in' };
+    }
+
+    const statusResult = await readLicenseStatus();
+    if (!statusResult.ok) return fail(statusResult.error, statusResult.errorCode ?? 'license_read_failed');
+    const status = statusResult.result;
+
+    return {
+      ok: true,
+      result: {
+        license: licenseSummaryFrom(status),
+        org: billingOrgFrom(session, status),
+        fetchedAt: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    return fail(error, 'quota_snapshot_failed');
+  }
+}
+
+/**
  * Reads the Account panel's entire snapshot in one round-trip.
  *
  * License identity comes from the same resolver relay bootstrap uses.  The UI
  * must never show one card's balance while the gateway spends another card.
+ *
+ * ⚠️ **只读**（BUG-082）：这里不再做设备登记。需要高频读余额时用
+ *    `readQuotaSnapshot()`；本函数是"面板打开/登录后"那一档全量读取。
  */
 export async function readAccountOverview(): Promise<IpcResult<CommercialAccountOverview>> {
   const supabase = getCommercialClient();
@@ -471,33 +559,12 @@ export async function readAccountOverview(): Promise<IpcResult<CommercialAccount
     if (!statusResult.ok) return fail(statusResult.error, statusResult.errorCode ?? 'license_read_failed');
     const status = statusResult.result;
 
-    const exactOrg = status?.orgId
-      ? (session.orgs.find((candidate) => candidate.id === status.orgId && candidate.role === 'owner') ?? null)
-      : null;
-    const org = exactOrg ?? selectOwnerOrg(session.orgs);
-
-    let license: CommercialLicenseSummary | null = null;
-    if (status?.configured && status.activated && status.licenseId && status.orgId) {
-      license = {
-        activated: true,
-        licenseId: status.licenseId,
-        orgId: status.orgId,
-        licenseKey: status.licenseKey,
-        sku: status.sku,
-        status: status.status,
-        expiresAt: status.expiresAt,
-        tokenQuotaMicros: status.tokenQuotaMicros,
-        tokenUsedMicros: status.tokenUsedMicros,
-      };
-      void registerDevice(supabase, status.licenseKey ?? '');
-    }
-
     return {
       ok: true,
       result: {
         account: session.profile,
-        org,
-        license,
+        org: billingOrgFrom(session, status),
+        license: licenseSummaryFrom(status),
         device,
         fetchedAt: new Date().toISOString(),
       },

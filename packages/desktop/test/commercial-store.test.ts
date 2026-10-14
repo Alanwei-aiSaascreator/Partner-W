@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const overviewMock = vi.fn();
+/** 轻量只读额度通道（BUG-082）：静默刷新走它，不再跑整份概览。 */
+const quotaMock = vi.fn();
 const licenseStatusMock = vi.fn();
 
 async function loadStore() {
@@ -18,6 +20,7 @@ describe('commercial store', () => {
     };
     target.clawwork = {
       commercialAccountOverview: overviewMock,
+      commercialQuotaSnapshot: quotaMock,
       commercialLicenseStatus: licenseStatusMock,
     } as unknown as typeof target.clawwork;
     // 这个文件跑在 node 环境（没有 jsdom ⇒ 没有 localStorage）。
@@ -129,7 +132,7 @@ describe('commercial store', () => {
   });
 
   it('marks authorization offline when a silent refresh fails', async () => {
-    overviewMock.mockResolvedValue({ ok: false, error: 'network down' });
+    quotaMock.mockResolvedValue({ ok: false, error: 'network down' });
 
     const useCommercialStore = await loadStore();
     const cachedOverview = {
@@ -142,7 +145,10 @@ describe('commercial store', () => {
 
     const state = useCommercialStore.getState();
     expect(state.status).toBe('offline');
+    // 保留最近一次成功的值（不清、不归零）——界面据此显示"更新于 …"
     expect(state.overview).toBe(cachedOverview);
+    expect(quotaMock, '静默刷新只打轻量额度通道').toHaveBeenCalledTimes(1);
+    expect(overviewMock, '不再为了刷新跑整份账户概览').not.toHaveBeenCalled();
   });
 });
 
@@ -174,7 +180,10 @@ describe('commercial store — 账号代次守卫（R2）', () => {
       clawwork: Record<string, unknown>;
       localStorage: Storage;
     };
-    target.clawwork = { commercialAccountOverview: overviewMock } as unknown as typeof target.clawwork;
+    target.clawwork = {
+      commercialAccountOverview: overviewMock,
+      commercialQuotaSnapshot: quotaMock,
+    } as unknown as typeof target.clawwork;
     target.localStorage = stub;
   });
   afterEach(() => {
@@ -233,13 +242,20 @@ describe('commercial store — 账号代次守卫（R2）', () => {
 
   it('refresh 的迟到回包同样被代次作废', async () => {
     let finish!: (value: unknown) => void;
-    overviewMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    quotaMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
     const useCommercialStore = await loadStore();
     useCommercialStore.setState({ status: 'ready', overview: { account: { userId: 'A' } } as never });
 
     const work = useCommercialStore.getState().refresh();
     useCommercialStore.getState().clearCache();
-    finish(resultFor('A'));
+    finish({
+      ok: true,
+      result: {
+        license: { tokenQuotaMicros: 100, tokenUsedMicros: 1 },
+        org: null,
+        fetchedAt: '2026-10-10T00:00:00.000Z',
+      },
+    });
     await work;
 
     expect(useCommercialStore.getState().overview).toBeNull();

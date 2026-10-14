@@ -6,7 +6,7 @@ import type { DashboardBreakdownEntry, DashboardModelUsage } from '@clawwork/sha
 import { PROVIDER_DISPLAY_NAMES } from '@clawwork/shared';
 import { useDashboardStore } from '@/stores/dashboardStore';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { formatCredits } from '@/lib/utils';
+import { formatCredits, formatCreditsPrecise } from '@/lib/utils';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { Button } from '@/components/ui/button';
 import { resolveAgentDisplayNameKey } from '@/lib/preset-agents';
@@ -221,7 +221,7 @@ export default function Dashboard() {
             />
             <Tile
               label={t('dashboard.remainingCredits')}
-              value={remainingMicros === null ? placeholder : formatCredits(remainingMicros)}
+              value={remainingMicros === null ? placeholder : formatCreditsPrecise(remainingMicros)}
               hint={remainingMicros === null ? t('dashboard.unavailable') : t('dashboard.accountScope')}
             />
             <Tile
@@ -258,7 +258,7 @@ export default function Dashboard() {
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="type-support text-[var(--text-secondary)]">{t('dashboard.remainingCredits')}</span>
                     <span className="type-section-title text-[var(--text-primary)]">
-                      {formatCredits(remainingMicros ?? 0)} {t('usage.creditsUnit')}
+                      {formatCreditsPrecise(remainingMicros ?? 0)} {t('usage.creditsUnit')}
                     </span>
                   </div>
                   <div
@@ -273,10 +273,10 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center justify-between type-meta text-[var(--text-muted)]">
                     <span>
-                      {t('usage.quotaUsed')} {formatCredits(usedMicros)}
+                      {t('usage.quotaUsed')} {formatCreditsPrecise(usedMicros)}
                     </span>
                     <span>
-                      {t('usage.quotaTotal')} {formatCredits(quotaMicros)}
+                      {t('usage.quotaTotal')} {formatCreditsPrecise(quotaMicros)}
                     </span>
                   </div>
                 </div>

@@ -14,6 +14,7 @@ import type {
   ClawDashboardData,
   CommandsListParams,
   CommercialAccountOverview,
+  CommercialQuotaSnapshot,
   ConfigPatchParams,
   ConfigPatchResult,
   ConfigSchemaLookupResult,
@@ -987,6 +988,13 @@ export interface ClawWorkAPI {
    */
   commercialLocalSession: () => Promise<IpcResult<boolean>>;
   commercialAccountOverview: () => Promise<IpcResult<CommercialAccountOverview>>;
+  /**
+   * 轻量只读额度快照（BUG-082）。
+   *
+   * ⚠️ 余额刷新只许用这条：它没有写副作用（不激活、不登记设备）。
+   *    全量 `commercialAccountOverview` 留给"面板打开"那一档。
+   */
+  commercialQuotaSnapshot: () => Promise<IpcResult<CommercialQuotaSnapshot>>;
   commercialLicenseStatus: () => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseActivate: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;
   commercialLicenseRecoverActivation: (licenseKey: string) => Promise<IpcResult<CommercialLicenseStatus>>;

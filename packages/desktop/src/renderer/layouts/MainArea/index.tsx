@@ -33,7 +33,7 @@ import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { cn, formatRelativeTime, formatCredits } from '@/lib/utils';
+import { cn, formatRelativeTime, formatCreditsPrecise } from '@/lib/utils';
 import { anchoredScrollTop, resolveChatScrollAnchor, type ChatScrollSlot } from '@/lib/chat-scroll-anchor';
 import { deriveQuotaDisplay } from '@/lib/quota-display';
 import { resolveModelLabel, shouldShowModelBadge } from '@/lib/model-display';
@@ -66,7 +66,6 @@ import SkillMarket from '@/layouts/SkillMarket';
 import TasksPanel from '@/layouts/TasksPanel';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import { useUsageStore } from '@/stores/usageStore';
-import { useQuotaRefreshOnTurnEnd } from '@/hooks/useQuotaRefreshOnTurnEnd';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
 import EmptyState from '@/components/semantic/EmptyState';
 import StatusTag from '@/components/semantic/StatusTag';
@@ -204,6 +203,7 @@ function ChatHeader({
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
   const updateTaskTitle = useTaskStore((s) => s.updateTaskTitle);
   const commercialOverview = useCommercialStore((s) => s.overview);
+  const commercialStatus = useCommercialStore((s) => s.status);
   const loadCommercial = useCommercialStore((s) => s.load);
 
   useEffect(() => {
@@ -214,7 +214,9 @@ function ChatHeader({
   const usedMicros = commercialOverview?.license?.tokenUsedMicros ?? 0;
   // 剩余额度，单位微积分 → 显示成积分。
   const quotaDisplay = deriveQuotaDisplay(quotaMicros, usedMicros);
-  const remainingCredits = formatCredits(quotaDisplay.remaining);
+  // 余额用**精确保留小数**的格式化（BUG-082）：≥1000 积分时旧口径会把
+  // 1000.40 → 1000.10 的已结算消耗都显示成「1,000」，看起来像没扣费。
+  const remainingCredits = formatCreditsPrecise(quotaDisplay.remaining);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -331,13 +333,13 @@ function ChatHeader({
                 <div className="flex items-center justify-between type-support text-[var(--text-secondary)]">
                   <span>{t('usage.quotaTotal')}</span>
                   <span>
-                    {formatCredits(quotaMicros)} {t('usage.creditsUnit')}
+                    {formatCreditsPrecise(quotaMicros)} {t('usage.creditsUnit')}
                   </span>
                 </div>
                 <div className="flex items-center justify-between type-support text-[var(--text-secondary)]">
                   <span>{t('usage.quotaUsed')}</span>
                   <span>
-                    {formatCredits(usedMicros)} {t('usage.creditsUnit')}
+                    {formatCreditsPrecise(usedMicros)} {t('usage.creditsUnit')}
                   </span>
                 </div>
                 <div
@@ -353,6 +355,15 @@ function ChatHeader({
                     style={{ width: `${quotaDisplay.remainingPercent}%` }}
                   />
                 </div>
+                {/* 读不到最新额度时如实说：显示的还是**最近一次成功**的值，
+                    并给出它的时间 —— 不归零、也不假装是刚刚读到的（BUG-082）。
+                    ⚠️ 文案复用账户页既有的两条键（省一次九语言改动）。 */}
+                {commercialStatus === 'offline' && commercialOverview?.fetchedAt ? (
+                  <p className="type-meta text-[var(--text-muted)]">
+                    {t('account.offline')} ·{' '}
+                    {t('account.updatedAt', { time: new Date(commercialOverview.fetchedAt).toLocaleTimeString() })}
+                  </p>
+                ) : null}
               </div>
             </PopoverContent>
           </Popover>
@@ -1537,9 +1548,9 @@ export default function MainArea({
   const compareMode = useCompareStore((s) => s.mode);
   const setCompareMode = useCompareStore((s) => s.setMode);
 
-  // 一轮对话结束后把额度拉新（否则发完消息顶栏数字不动，看着像没扣费）。
-  // 挂在 MainArea 而不是 ChatHeader：后者带 key、切任务会重挂，会多触发。
-  useQuotaRefreshOnTurnEnd();
+  // ⚠️ 余额刷新调度**不挂在这里**（2026-10-15 起）：打开设置会**卸载 MainArea**
+  //    （`App.tsx` 是 `settingsOpen ? <Settings/> : <MainArea/>`），而"留在账户页
+  //    盯后台消费"正是要覆盖的场景。它改挂在 `App.tsx`（全程在挂）。
 
   // ⚠️ 「网关消失」那条说明**不挂在这里**（我一开始挂这儿，错了）：打开设置会**卸载 MainArea**
   //    （`App.tsx` 是 `settingsOpen ? <Settings/> : <MainArea/>`）⇒ 那期间的消失会被漏掉，
