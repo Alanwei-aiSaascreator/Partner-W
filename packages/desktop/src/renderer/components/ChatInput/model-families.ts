@@ -23,22 +23,52 @@ export const RELAY_PROVIDER_ID = 'clawrouter';
 
 /**
  * ⭐ 「用户能选的模型」= **唯一一把尺**（2026-10-12 统一，用户真机反馈
- * "设置里的模型下拉还有残留"）。三层收敛：
+ * "设置里的模型下拉还有残留"）。四层收敛：
  *
  *   ① `relayModelsFrom`：我们服务得了的（发送不会 404）——顺带挡掉
  *      内核内置示例模型（`GPT-6 Astra (openai)` 这类，我们没有 openai 渠道）；
  *   ② `available !== false`：目录当前标为不可用的不列；
  *   ③ `!isModeAliasModelId`：模式内部别名（`qwen3.7-flash-fast`）不是"某个可选模型"，
- *      出现在用户可点的清单里等于把实现细节摆上台面（与 ChatInput 高级列表同口径）。
+ *      出现在用户可点的清单里等于把实现细节摆上台面（与 ChatInput 高级列表同口径）；
+ *   ④ `dropSupersededChannelEntries`（BUG-076）：被新渠道 SKU 接管的旧渠道条目不列
+ *      （`X` 与 `X-cephalon` 并存是刻意的双 ID 设计，但同一模型两条一起出现在
+ *      可点清单里就是"重复模型"——只收可选面，其余一律不动）。
  *
- * **任何给用户选模型的列表**（设置-智能体覆盖模型、建队、`/model` 补全、对比列）
- * 都走这里；读侧解析（展示历史消息的模型名、查 provider/档位）仍用 raw 目录，
- * 那是另一个问题（见 `model-display.ts` 顶部注释）。
+ * **任何给用户选模型的列表**（设置-智能体覆盖模型、建队、`/model` 补全、对比列、
+ * **composer「高级：指定模型」**）都走这里；读侧解析（展示历史消息的模型名、
+ * 查 provider/档位）仍用 raw 目录，那是另一个问题（见 `model-display.ts` 顶部注释）。
  */
 export function selectableModelsFrom(models: readonly ModelCatalogEntry[] | undefined | null): ModelCatalogEntry[] {
-  return relayModelsFrom([...(models ?? [])]).filter(
-    (model) => model.available !== false && !isModeAliasModelId(model.id),
+  return dropSupersededChannelEntries(
+    relayModelsFrom([...(models ?? [])]).filter((model) => model.available !== false && !isModeAliasModelId(model.id)),
   );
+}
+
+/** 新渠道接管 SKU 的后缀（relay 平台计费 ID 约定：`X-cephalon` 接管旧渠道 `X`）。 */
+const TAKEOVER_CHANNEL_SUFFIX = '-cephalon';
+
+/**
+ * BUG-076：被新渠道 SKU 接管的旧渠道条目不再进用户可选列表。
+ *
+ * 背景：relay 目录里 `deepseek-v4-flash`（旧渠道）与 `deepseek-v4-flash-cephalon`
+ * （新渠道平台计费 ID，展示名"DeepSeek V4 Flash"）并存是**刻意设计**——双 ID 把
+ * 计费/路由与供应商真名分开，PPT 路由精确命中新 ID。但两条一起出现在用户可点
+ * 清单里，就是"同一模型重复两条"（2026-10-14 用户实测）。
+ * 判断按 **id 最后一段**（与 `modelIdMatches` 同口径，兼容 `clawrouter/x` 命名空间）。
+ * 边界：只收**用户可选面**——目录、发送前校验（`isModelSelectable`）、旧任务读侧
+ * 仍是 raw 目录，一律不动（老任务钉的旧 ID 照常可跑；目录没有新 ID 时旧条目照常显示，
+ * 不在这里"悄悄回退"，由上游目录自己说话）。
+ */
+function dropSupersededChannelEntries(models: readonly ModelCatalogEntry[]): ModelCatalogEntry[] {
+  const takenOver = new Set<string>();
+  for (const model of models) {
+    const tail = model.id.split('/').at(-1) ?? model.id;
+    if (tail.endsWith(TAKEOVER_CHANNEL_SUFFIX) && tail.length > TAKEOVER_CHANNEL_SUFFIX.length) {
+      takenOver.add(tail.slice(0, -TAKEOVER_CHANNEL_SUFFIX.length));
+    }
+  }
+  if (takenOver.size === 0) return [...models];
+  return models.filter((model) => !takenOver.has(model.id.split('/').at(-1) ?? model.id));
 }
 
 /**

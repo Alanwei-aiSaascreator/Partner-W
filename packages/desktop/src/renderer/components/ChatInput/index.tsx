@@ -47,14 +47,7 @@ import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
 import { RUN_PHASE_IDS } from '@clawwork/core';
-import {
-  MODE_POLICY,
-  TASK_MODES,
-  isModeAliasModelId,
-  resolveModeModelId,
-  type ModelCatalogEntry,
-  type TaskMode,
-} from '@clawwork/shared';
+import { MODE_POLICY, TASK_MODES, resolveModeModelId, type ModelCatalogEntry, type TaskMode } from '@clawwork/shared';
 import ComposerActivity from '@/components/ComposerActivity';
 import { useMessageStore } from '@/stores/messageStore';
 import { useRoomStore } from '@/stores/roomStore';
@@ -774,15 +767,17 @@ export default function ChatInput({
     (modeDriven ? t(MODE_LABEL_KEYS[currentMode]) : (currentModelEntry?.name ?? modelLabel).replace(/^[^/]+\//, ''));
 
   /**
-   * 高级：指定模型 —— 现有模型列表，**别名除外**。
-   * 别名（`qwen3.7-flash-fast`）是模式内部用的 relay 条目，不是"某个可选模型"：
-   * 让它出现在用户可点的清单里，等于把实现细节摆上台面（点它反而会把模式踢成 custom）。
+   * 高级：指定模型 —— 现有模型列表。
+   *
+   * 来源（useChatSend 的 `modelsByProvider`）已统一过**唯一一把尺**
+   * （relay 渠道 / 可用性 / 模式别名〔`qwen3.7-flash-fast` 这类实现细节不上台面〕/
+   * 被新渠道接管的旧渠道条目——BUG-076）；这里只做"空家族不渲染"。
+   * 2026-10-14 并入同一把尺前，这里是自挡别名的第二份过滤 —— 双条目漏网即出于此。
    */
   const advancedModelsByProvider = useMemo(() => {
     const groups: Record<string, ModelCatalogEntry[]> = {};
     for (const [family, models] of Object.entries(modelsByProvider)) {
-      const visible = models.filter((entry) => !isModeAliasModelId(entry.id));
-      if (visible.length > 0) groups[family] = visible;
+      if (models.length > 0) groups[family] = models;
     }
     return groups;
   }, [modelsByProvider]);

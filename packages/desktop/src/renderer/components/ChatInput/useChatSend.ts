@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
 import { evaluateCommercialSendAccess, type CommercialBlockReason } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { isModelSelectable, modelFamilyLabel, relayModelsFrom } from './model-families.js';
+import { isModelSelectable, modelFamilyLabel, relayModelsFrom, selectableModelsFrom } from './model-families.js';
 import { deriveModelAvailability } from './model-availability.js';
 import { deriveGatewayDisplayPhase } from '../../lib/gateway-display-phase.js';
 import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
@@ -234,10 +234,11 @@ export function useChatSend(opts: UseChatSendOpts) {
 
   const modelsByProvider = useMemo(() => {
     const groups: Record<string, ModelCatalogEntry[]> = {};
-    // modelCatalog 已经过 relayModelsFrom —— 这里不用再筛一遍 provider，
-    // 只负责按**模型家族**分组（deepseek / qwen / glm 各一类，
-    // 而不是全部堆在「clawrouter」一个组里）。
-    for (const m of modelCatalog) {
+    // 先过**唯一一把尺**（relay 渠道 / 可用性 / 模式别名 / 被新渠道接管的旧渠道条目
+    // ——BUG-076；2026-10-14 起 composer「高级：指定模型」并入同一把尺，
+    // 此前这里自己只挡别名，是 10-12 统一时漏掉的一处），再按**模型家族**分组
+    // （deepseek / qwen / glm 各一类，而不是全部堆在「clawrouter」一个组里）。
+    for (const m of selectableModelsFrom(modelCatalog)) {
       const family = modelFamilyLabel(m.id);
       if (!groups[family]) groups[family] = [];
       groups[family].push(m);

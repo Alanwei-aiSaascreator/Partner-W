@@ -162,6 +162,45 @@ describe('selectableModelsFrom —— 用户能选的模型（三层收敛）', 
 });
 
 /**
+ * ⭐ BUG-076（2026-10-14 用户真机实测）：同一模型双渠道条目并显 ——「DeepSeek」组里
+ * `deepseek-v4-flash`（旧渠道，展示名=原始 ID）与 `DeepSeek V4 Flash`（新渠道平台计费 ID
+ * `deepseek-v4-flash-cephalon`）同时出现，被用户读成"重复模型"。
+ * 口径：新渠道 SKU（`X-cephalon`）存在 ⇒ 旧渠道 `X` 不再进**用户可选列表**；
+ * 目录、发送前校验、旧任务读侧一律不动（老任务钉的旧 ID 照常可跑）。
+ */
+describe('selectableModelsFrom —— 被新渠道接管的旧条目（BUG-076）', () => {
+  const entry = (id: string, provider: string, extra: Record<string, unknown> = {}) =>
+    ({ id, name: id, provider, ...extra }) as never;
+
+  it('目录含 X-cephalon 时，旧渠道 X 不列（同一模型只留接管它的那一条）', () => {
+    const out = selectableModelsFrom([
+      entry('deepseek-v4-flash', 'clawrouter'),
+      entry('deepseek-v4-flash-cephalon', 'clawrouter'),
+      entry('deepseek-v4-pro', 'clawrouter'),
+    ]);
+    expect(out.map((m) => m.id)).toEqual(['deepseek-v4-flash-cephalon', 'deepseek-v4-pro']);
+  });
+
+  it('只有旧渠道时原样保留（不悄悄回退、也不误伤）', () => {
+    const out = selectableModelsFrom([entry('deepseek-v4-flash', 'clawrouter')]);
+    expect(out.map((m) => m.id)).toEqual(['deepseek-v4-flash']);
+  });
+
+  it('命名空间形态同样按最后一段判（clawrouter/deepseek-v4-flash 也被收）', () => {
+    const out = selectableModelsFrom([
+      entry('clawrouter/deepseek-v4-flash', 'clawrouter'),
+      entry('clawrouter/deepseek-v4-flash-cephalon', 'clawrouter'),
+    ]);
+    expect(out.map((m) => m.id)).toEqual(['clawrouter/deepseek-v4-flash-cephalon']);
+  });
+
+  it('其余模型零影响（无 -cephalon 孪生的条目一律不动）', () => {
+    const out = selectableModelsFrom([entry('glm-5.3-flash', 'clawrouter'), entry('kimi-k3', 'clawrouter')]);
+    expect(out.map((m) => m.id)).toEqual(['glm-5.3-flash', 'kimi-k3']);
+  });
+});
+
+/**
  * ⭐ 2026-10-12（用户口径："模型不要显示是端脑 cephalon 这个，不然用户会去找这个平台"）：
  * 渠道字样不上用户可见面——源头（relay 展示名）已改中性；这里是**入 store 前的兜底净化**。
  */

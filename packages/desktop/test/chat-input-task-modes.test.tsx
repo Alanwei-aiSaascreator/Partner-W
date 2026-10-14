@@ -424,14 +424,20 @@ describe('任务模式 chip（输入框）', () => {
     unmount();
   });
 
-  it('⭐ Cephalon 批：高级列表中新旧两条 DeepSeek 渠道与 GLM 都可见（别名仍隐藏）', () => {
+  it('⭐ BUG-076（2026-10-14 口径更新取代 Cephalon 批"新旧都可见"）：同模型只留接管它的新渠道条目，旧渠道不再进列表（别名仍隐藏）', () => {
     const { container, unmount } = renderChatInput();
 
     const buttonTexts = [...container.querySelectorAll('button')].map((b) => b.textContent ?? '');
-    // 旧渠道保持可选（用户原有下拉选择不受影响）
-    expect(buttonTexts.filter((t) => t === 'DeepSeek V4 Flash')).toHaveLength(1);
-    // 新渠道（平台计费 ID）也在下拉里、显示为 Cephalon 版本
-    expect(buttonTexts.filter((t) => t === 'DeepSeek V4 Flash · Cephalon')).toHaveLength(1);
+    // 2026-10-14 用户实测拍板：新旧双条并显＝"重复模型" ⇒ 被 `-cephalon` 接管的旧渠道
+    // 条目不再出现在用户可选列表里（目录/发送校验/旧任务读侧不受影响）。
+    expect(
+      buttonTexts.filter((t) => t === 'DeepSeek V4 Flash'),
+      '旧渠道条目已隐藏',
+    ).toHaveLength(0);
+    expect(
+      buttonTexts.filter((t) => t === 'DeepSeek V4 Flash · Cephalon'),
+      '接管它的新渠道条目照常可选',
+    ).toHaveLength(1);
     expect(buttonTexts.some((t) => t.includes('GLM 5.3 Flash'))).toBe(true);
     const text = container.textContent ?? '';
     expect(text, '模式别名仍隐藏').not.toContain(ALIAS_MODEL_ID);
