@@ -28,12 +28,22 @@ interface BeforeToolCallEvent {
   derivedPaths?: string[];
   /**
    * 宿主（内核）提供的可信工具 cwd —— 相对路径按它解析。
-   * ⚠️ 随包内核 2026.9.3 的 `before_tool_call` 事件**不带** cwd（证据：
+   * ⚠️ 随包内核 2026.9.3 的 `before_tool_call` **事件本体**不带 cwd（证据：
    *    `dist/plugin-entry-*.d.ts` 的 `PluginHookBeforeToolCallEvent`、内核
-   *    `agent-tools.before-tool-call-*.mjs` 的事件构造处）——没有它时插件
-   *    **只做字面段判定，绝不猜 process.cwd**（见下方"无可信 cwd"用例）。
+   *    `agent-tools.before-tool-call-*.mjs` 的事件构造处）；可信 cwd 由配对的 runtime
+   *    补丁 `rongying-inbox-trusted-cwd-v1` 放进钩子 **ctx**（`buildToolContext` 返回对象
+   *    带 `cwd`，hookRunner 把 ctx 原样交给 handler）——见下方 `ctx.cwd` 用例。
+   *    两种来源都没有时插件**只做字面段判定，绝不猜 process.cwd**。
    */
   cwd?: string;
+}
+
+/** 钩子第二参数（内核 ctx）：runtime 补丁落地后由它携带执行器同源 cwd。 */
+interface BeforeToolCallContext {
+  cwd?: string;
+  agentId?: string;
+  sessionKey?: string;
+  runId?: string;
 }
 
 type PolicyDecision = { block?: boolean; blockReason?: string } | undefined;
@@ -46,16 +56,20 @@ function tempDir(prefix: string): string {
   return dir;
 }
 
-async function loadGuardHandler(): Promise<(event: BeforeToolCallEvent) => PolicyDecision> {
+async function loadGuardHandler(): Promise<
+  (event: BeforeToolCallEvent, context?: BeforeToolCallContext) => PolicyDecision
+> {
   const stateDir = tempDir('inbox-guard-policy-');
   const pluginDir = ensureInboxReadonlyPolicy(stateDir);
   const module = (await import(pathToFileURL(path.join(pluginDir, 'index.mjs')).href)) as {
     default: { id: string; register: (api: { on: (name: string, handler: unknown) => void }) => void };
   };
-  let handler: ((event: BeforeToolCallEvent) => PolicyDecision) | null = null;
+  let handler: ((event: BeforeToolCallEvent, context?: BeforeToolCallContext) => PolicyDecision) | null = null;
   module.default.register({
     on: (name, candidate) => {
-      if (name === 'before_tool_call') handler = candidate as (event: BeforeToolCallEvent) => PolicyDecision;
+      if (name === 'before_tool_call') {
+        handler = candidate as (event: BeforeToolCallEvent, context?: BeforeToolCallContext) => PolicyDecision;
+      }
     },
   });
   expect(handler, 'policy must register a before_tool_call handler').not.toBeNull();
@@ -64,11 +78,12 @@ async function loadGuardHandler(): Promise<(event: BeforeToolCallEvent) => Polic
 
 /** 按运行时的契约驱动一次"工具调用"：block ⇒ 不执行；否则执行。 */
 function runThroughGuard(
-  handler: (event: BeforeToolCallEvent) => PolicyDecision,
+  handler: (event: BeforeToolCallEvent, context?: BeforeToolCallContext) => PolicyDecision,
   event: BeforeToolCallEvent,
   execute: () => void,
+  context?: BeforeToolCallContext,
 ): { blocked: boolean; reason?: string } {
-  const decision = handler(event);
+  const decision = handler(event, context);
   if (decision?.block) return { blocked: true, reason: decision.blockReason };
   execute();
   return { blocked: false };
@@ -383,6 +398,87 @@ describe('inbox-readonly policy plugin (BUG-030 P3-1)', () => {
     const result = runThroughGuard(handler, { toolName: 'write', params: { path: target, content: 'x' } }, () => {
       throw new Error('must not execute');
     });
+    expect(result.blocked).toBe(true);
+  });
+
+  /**
+   * BUG-056①（M2 接线）：可信 cwd 由配对 runtime 补丁 `rongying-inbox-trusted-cwd-v1`
+   * 放进**钩子 ctx**（`buildToolContext` → `hookRunner.runBeforeToolCall(event, ctx)`
+   * 原样交给 handler）。ctx.cwd 与 event.cwd 走**同一条判定面**（`trustedCwdOf`），
+   * 值 = 执行器解析相对路径用的同一个 codingRoot。
+   *
+   * ⚠️ 这几条钉的是**插件在真实输入面下的决策**；原生链端到端（真实 write/edit/apply_patch
+   *    执行器 + 真实钩子派发）由 M2 harness 实跑（junction → inbox 拒绝、alias → out 放行、
+   *    模型伪造 params.cwd 不改决策、apply_patch 不回退），本文件不重复伪造执行器。
+   */
+  it('⭐ ctx.cwd（runtime 补丁来源）时，相对路径经 junction 指向 inbox ⇒ 拒绝且字节不变', () => {
+    const linkPath = linkToInbox('ctx-link');
+    if (!linkPath) return;
+    const inboxFile = path.join(stateDir, 'task-1', 'inbox', 'ctx.docx');
+    writeFileSync(inboxFile, 'ORIGINAL', 'utf-8');
+
+    let executed = false;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', params: { path: 'task-1/ctx-link/ctx.docx', content: 'HACKED' } },
+      () => {
+        executed = true;
+        writeFileSync(inboxFile, 'HACKED', 'utf-8');
+      },
+      { cwd: stateDir, agentId: 'main', sessionKey: 's', runId: 'r' },
+    );
+    expect(result.blocked).toBe(true);
+    expect(result.reason).toBe(INBOX_READONLY_BLOCK_REASON);
+    // 拒绝 = 执行器不得被调用；原字节保持不变（不是嘴上说说）
+    expect(executed).toBe(false);
+    expect(readFileSync(inboxFile, 'utf-8')).toBe('ORIGINAL');
+  });
+
+  it('⭐ ctx.cwd 下同字符串指向 out ⇒ 放行（按真实 cwd 解析，不误杀）', () => {
+    const outDir = path.join(stateDir, 'task-1', 'out');
+    mkdirSync(outDir, { recursive: true });
+    const linkPath = path.join(stateDir, 'task-1', 'ctx-out-link');
+    try {
+      symlinkSync(outDir, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return; // 环境不允许建链接 ⇒ 不假装通过
+    }
+    let executed = false;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', params: { path: 'task-1/ctx-out-link/x.docx', content: 'x' } },
+      () => {
+        executed = true;
+      },
+      { cwd: stateDir },
+    );
+    expect(result.blocked).toBe(false);
+    expect(executed).toBe(true);
+  });
+
+  it('ctx.cwd 非绝对路径 ⇒ 不作数（只认可信绝对 cwd），退回字面判定', () => {
+    const linkPath = linkToInbox('ctx-relative');
+    if (!linkPath) return;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', params: { path: 'task-1/ctx-relative/x.docx', content: 'x' } },
+      () => {},
+      { cwd: 'task-1' },
+    );
+    expect(result.blocked).toBe(false);
+  });
+
+  it('event.cwd 与 ctx.cwd 都在且一致时同样拒绝（两个来源同一判定面）', () => {
+    const linkPath = linkToInbox('ctx-both');
+    if (!linkPath) return;
+    const result = runThroughGuard(
+      handler,
+      { toolName: 'write', cwd: stateDir, params: { path: 'task-1/ctx-both/x.docx', content: 'x' } },
+      () => {
+        throw new Error('must not execute');
+      },
+      { cwd: stateDir },
+    );
     expect(result.blocked).toBe(true);
   });
 });

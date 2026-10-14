@@ -44,10 +44,17 @@
  * 3. **可信 cwd**：相对路径**只在宿主提供可信 cwd 时**按它解析（与执行器同一
  *    `path.resolve` 语义）。**没有可信 cwd 就只做第 1 层字面判定，绝不拿
  *    `process.cwd()` 去猜** —— 猜错会同时制造误杀和漏杀。
- *    ⚠️ 随包内核 2026.9.3 的 `before_tool_call` 事件**不带** cwd（证据：
+ *    ⚠️ 随包内核 2026.9.3 的 `before_tool_call` **事件本体**不带 cwd（证据：
  *    `openclaw/dist/plugin-entry-*.d.ts` 的 `PluginHookBeforeToolCallEvent` 与内核
- *    `agent-tools.before-tool-call-*.mjs` 的事件构造处），所以第 3 层在当今内核上
- *    是"契约就绪、等宿主给"；给 cwd 的接线一旦落地即自动生效（见 BUG-056 报告 §6）。
+ *    `agent-tools.before-tool-call-*.mjs` 的事件构造处），所以可信 cwd 由**配对的窄
+ *    runtime 补丁** `rongying-inbox-trusted-cwd-v1`（`scripts/lib/inbox-trusted-cwd-runtime.mjs`，
+ *    pack-runtime 构建期 hash/锚点 fail-closed）放进钩子 **ctx**：内核
+ *    `buildToolContext` 的返回对象补上 `...args.ctx?.cwd ? { cwd: args.ctx.cwd } : {}`，
+ *    而 `hookRunner.runBeforeToolCall(event, ctx, …)` 把 ctx **原样**交给插件 handler。
+ *    该 cwd 与 write/edit/apply_patch 执行器解析相对路径用的是**同一个值**
+ *    （`codingRoot = sandboxRoot ?? runtimeRoot`：执行器拿它当 cwd，钩子 ctx 也拿它当 cwd；
+ *    不读模型 `params.cwd`、不猜 `process.cwd()`）。补丁缺席（旧运行时 / 未接线）：ctx
+ *    不带 cwd ⇒ 第 3 层自动退回"只做字面判定"的既有行为，不放宽也不额外收紧。
  *
  * 读工具（read / ls）不受影响；正常输出路径（任务根、out/、生成目录）不含 `inbox` 段，
  * 不受影响。
@@ -86,6 +93,7 @@ export const INBOX_READONLY_PLUGIN_ENTRY = `// 荣盈魔方 · 导入收件箱�
 // ②绝对路径（含宿主给的 derivedPaths）取最深已存在祖先 realpath 再判
 // ③相对路径只在宿主提供可信 cwd（event.cwd / ctx.cwd）时按它解析 ——
 //   没有可信 cwd 就只做①，绝不拿 process.cwd 去猜。
+//   随包 runtime 补丁 rongying-inbox-trusted-cwd-v1 把「执行器同源 cwd」放进 ctx.cwd。
 import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
 

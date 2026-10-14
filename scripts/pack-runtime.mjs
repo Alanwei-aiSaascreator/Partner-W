@@ -48,6 +48,11 @@ import {
   SKILL_PROPOSAL_DRAFT_ENTRY,
   SKILL_PROPOSAL_NAME_PATCH_ID,
 } from './lib/skill-proposal-name-runtime.mjs';
+import {
+  patchInboxTrustedCwdRuntime,
+  INBOX_TRUSTED_CWD_ENTRY,
+  INBOX_TRUSTED_CWD_PATCH_ID,
+} from './lib/inbox-trusted-cwd-runtime.mjs';
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
@@ -346,6 +351,14 @@ async function main() {
     skillProposalDraftRuntime,
     patchSkillProposalDraftNameRuntime(fs.readFileSync(skillProposalDraftRuntime, 'utf8')),
   );
+  // rongying-inbox-trusted-cwd-v1（BUG-056①）：before_tool_call 钩子 ctx 携带执行器同源
+  // 可信 cwd（codingRoot = 沙箱工作区宿主路径 ?? runtimeRoot），inbox 只读守卫的相对
+  // 路径（链接别名）判定由此闭合；hash/锚点漂移 fail-closed。
+  const inboxTrustedCwdRuntime = path.join(stage, INBOX_TRUSTED_CWD_ENTRY);
+  fs.writeFileSync(
+    inboxTrustedCwdRuntime,
+    patchInboxTrustedCwdRuntime(fs.readFileSync(inboxTrustedCwdRuntime, 'utf8')),
+  );
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
   const debugSkillsPatch = bundleWindowsDebugSkills(stage);
@@ -404,6 +417,7 @@ async function main() {
       WEB_SEARCH_AVAILABILITY_PATCH_ID,
       PROVIDER_CAPABILITY_PATCH_ID,
       SKILL_PROPOSAL_NAME_PATCH_ID,
+      INBOX_TRUSTED_CWD_PATCH_ID,
       nativePatch,
       videoFramesPatch,
       debugSkillsPatch,

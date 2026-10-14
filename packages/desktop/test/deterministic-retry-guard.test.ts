@@ -350,7 +350,9 @@ describe('deterministic-retry-guard plugin', () => {
 
   // ——— E-R2（P1）：状态可变的失败不得按文本缓成"固定所有权失败" ———
 
-  it('E-R2：技能尚不存在（ownership 文本）后，目标被真实创建 ⇒ 同参 read 必须执行', () => {
+  // 注：本用例只注入一次"成功回执"，**未真实创建**任何技能 —— 判据是"成功回执不构成拦截依据"，
+  // 不是"目标已被真实创建"（真实 create→apply→catalog 链另由 runtime/proposal 边界验证）。
+  it('E-R2：技能尚不存在（ownership 文本）后，后续成功回执不构成拦截依据 ⇒ 同参 read 必须执行', () => {
     const session = newSession();
     const read = { action: 'read', skill_name: 'new-skill' };
     expect(session.call('skill_workshop', read, { error: SKILL_NOT_OWNED })).toEqual({ blocked: false });
