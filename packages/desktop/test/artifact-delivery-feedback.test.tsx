@@ -30,6 +30,11 @@ describe('artifact delivery failure feedback', () => {
   it('records the preload delivery outcome and unregisters both event subscriptions on unmount', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     useArtifactDeliveryStore.setState({ settled: [] });
+    // 成功事件现在会读一次消息仓库（r6 F4：成功边界要结算该会话已上屏的失败便签），
+    // 这里给 mock 接上真实 store —— 与同文件其它用例一致，断言不变。
+    const store = createMessageStore({ persistMessage: vi.fn(async () => ({ ok: true })) });
+    store.getState().bulkLoad('task-1', [] as Message[]);
+    mocks.getState.mockImplementation(store.getState);
     let settled: ((event: ArtifactDeliverySettled) => void) | undefined;
     const cleanupSettled = vi.fn();
     const cleanupViolation = vi.fn();

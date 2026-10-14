@@ -9,14 +9,51 @@ import { ARTIFACT_QUALITY_MARKER, parseArtifactQualityNote } from '@/lib/artifac
 import { useMessageStore } from '@/stores/messageStore';
 import { useArtifactDeliveryStore } from '@/stores/artifactDeliveryStore';
 
+/** 失败去重周期的作用域键：同一 task 且同一 session 才算同一个周期。 */
+function failureEpisodeKey(taskId: string, sessionKey: string): string {
+  return `${taskId}\n${sessionKey}`;
+}
+
 export function useClaimGuardToast(): void {
   const { t } = useTranslation();
   const seen = useRef(new Set<string>());
+  /*
+    ⭐ r6 F4（BUG-026 成功边界，2026-10-14）：**可信交付成功**结束上一段失败去重周期。
+
+    反例（终审真实 hook/store 探针）：同 task/session「失败 → 修好并成功交付 → 再改又失败」
+    只弹一次失败通知（预期两次）—— 因为去重扫描的是**整个历史**的同文便签，
+    成功事件只进 `artifactDeliveryStore`，不结束任何周期。
+
+    修法：成功（`status === 'succeeded'`）时，把该 task/session **此刻已存在**的系统便签
+    记为"上一段周期已上过屏"；去重只对**不在该集合里**（= 当前周期新增）的便签生效。
+    · 历史便签不删：模型上下文（`artifactFailureContext`）照旧拿得到；
+    · 不加永久失败缓存：判定仍由主进程每轮重新做出，这里只划分"当前周期"；
+    · 命中不到边界（本进程还没见过这个 task/session 的成功）⇒ 一切照旧全量扫描
+      （应用重启后不因丢失内存态而重复刷屏）。
+    · 非成功 settled（failed / needs-review / canceled）**不**结束周期：needs-review 是
+      "未确认"，不是可信成功；把它当边界会让未解决的同一失败在中段重新刷屏。
+
+    ⚠️ 键含 sessionKey（task/session 隔离）；条目按插入序封顶，只保存"哪几张便签属于上一周期"，
+    不保存失败本身。
+  */
+  const closedEpisodeNotes = useRef(new Map<string, Set<string>>());
 
   useEffect(
     () =>
       window.clawwork.onArtifactDeliverySettled?.((result) => {
         useArtifactDeliveryStore.getState().record(result);
+        if (result.status === 'succeeded') {
+          const baseline = new Set(
+            (useMessageStore.getState().messagesByTask[result.taskId] ?? [])
+              .filter((message) => message.role === 'system' && message.sessionKey === result.sessionKey)
+              .map((message) => message.id),
+          );
+          const key = failureEpisodeKey(result.taskId, result.sessionKey);
+          const map = closedEpisodeNotes.current;
+          map.delete(key);
+          map.set(key, baseline);
+          if (map.size > 128) map.delete(map.keys().next().value!);
+        }
         if (result.status === 'canceled' || !result.slideWarnings?.length) return;
         const store = useMessageStore.getState();
         const existing = store.messagesByTask[result.taskId] ?? [];
@@ -148,13 +185,20 @@ export function useClaimGuardToast(): void {
         ⭐ 残余修复（2026-10-14）：**通知也并入这同一个判断** —— 被去重的重复失败不再弹 toast。
         范围至少含 task/session：只有同一个 task **且同一个 session** 里已经存在同内容便签
         才压；新 task / 新会话 / 新失败原因照常通知（判定不缓存"曾经失败"）。
+        ⭐ r6 F4（同日）：去重只对**当前失败周期**的便签生效 —— 可信交付成功（`succeeded`）
+        之前的同文便签属于上一段周期，不替新失败压通知/便签（见 `closedEpisodeNotes`）。
       */
       const note = lines.join('\n');
       const existingNotes = useMessageStore.getState().messagesByTask[violation.taskId] ?? [];
+      const closedNotes = closedEpisodeNotes.current.get(failureEpisodeKey(violation.taskId, violation.sessionKey));
       if (
         existingNotes.some(
           (message) =>
-            message.role === 'system' && message.sessionKey === violation.sessionKey && message.content === note,
+            message.role === 'system' &&
+            message.sessionKey === violation.sessionKey &&
+            message.content === note &&
+            // 成功边界之前的老便签 = 上一段周期：不再压当前周期的通知。
+            !closedNotes?.has(message.id),
         )
       ) {
         console.debug(
