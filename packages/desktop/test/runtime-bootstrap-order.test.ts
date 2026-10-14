@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GatewayPortOccupiedError } from '../src/main/runtime/gateway-process.js';
+import { GatewayPortOccupiedError, GatewayReadyTimeoutError } from '../src/main/runtime/gateway-process.js';
+import { bootstrapWithRetry } from '../src/main/runtime/bootstrap-retry.js';
 import type { DeployProgress } from '../src/main/runtime/deploy.js';
 import type { RuntimeBootstrapDeps } from '../src/main/runtime/index.js';
 
@@ -482,8 +483,8 @@ describe('bootstrapLocalGatewayRuntime', () => {
 
   /**
    * BUG-040 ③④ 的接线（编排层的两条）：
-   *  - 失败结果要带**部署标记** —— 上层靠它决定"首启的 180 秒超时要不要自动再试一次"
-   *    （`bootstrap-retry.ts` 的 `isFirstLaunchFailure`）；
+   *  - 失败结果要带**部署标记** —— 上层靠它决定"ready 超时要不要自动再跑一轮"
+   *    （`bootstrap-retry.ts` 的 `isReadyTimeoutWorthRetry`：`deployed` 或 `skipped`）；
    *  - 失败时要查**崩溃循环熔断**，熔断中换码（不可重试）+ reason 带指引。
    */
   it('⭐ 失败结果带部署标记（deployStatus=deployed ⇒ 首启可自动重试一次）', async () => {
@@ -590,5 +591,153 @@ describe('bootstrapLocalGatewayRuntime', () => {
 
     expect(res.code).toBe('runtime.portable-state-migration-blocked');
     expect(inspectBreaker).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 2026-10-15 P-B 便携首启硬合同 —— **真实编排入口**的组合测试。
+ *
+ * 用户事故类（可复现的确定缺口，不是从事故日志倒推的猜测）：带预部署缓存的盘换新机，
+ * 便携态运行时缓存随盘走（`cache-scope.ts`）⇒ 部署快路径报 `skipped`；新机冷读
+ * （冷读 + 杀软首扫）把网关就绪顶出 180 秒窗口 ⇒ 旧策略一次即终态、界面落到人工
+ * 「重新准备」。这里用 `bootstrapWithRetry`（= `main/index.ts` 包着
+ * `bootstrapLocalGatewayRuntime` 的那一层；启动路径与「重新准备」共用同一段）组合出
+ * 真实入口，钉住修复后的行为与重入安全性。
+ *
+ * 重入安全依据（编码进断言）：
+ *  - 复跑的是**整轮编排**，每一步都是幂等的：对齐配置（ensure 语义）、部署快路径
+ *    （stamp/内容键命中 ⇒ 再报 skipped，不重新解压）、坏链自检（只修悬空）、
+ *    Node 探测（无副作用）、网关三态判定（已就绪 ⇒ reused；没起来 ⇒ 有界等待/spawn，
+ *    绝不 force/kill 别人的进程）。
+ *  - 预算就是既有那套：只多一轮、延迟 3s、**顺序 await（不重叠）**，最坏墙钟 ≈363s。
+ */
+describe('P-B：缓存命中（skipped）+ ready 超时 ⇒ 编排层自动再跑一轮（真实入口）', () => {
+  function skippedDeploy() {
+    return {
+      status: 'skipped' as const,
+      deploymentKey: 'k1',
+      deployedRoot: 'C:\\fake\\userdata\\runtime\\deployed\\k1',
+      nodePath: 'C:\\fake\\userdata\\runtime\\deployed\\k1\\node\\node.exe',
+      cliPath: 'C:\\fake\\userdata\\runtime\\deployed\\k1\\node_modules\\openclaw\\openclaw.mjs',
+    };
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('⭐ 预部署缓存命中 + 首次等就绪超时 ⇒ 同一入口内自动恢复，无需人工重试', async () => {
+    const sleeps: number[] = [];
+    const retryEvents: Array<{ attempt: number; delayMs: number }> = [];
+    let gatewayAttempts = 0;
+    const { deps, calls } = makeDeps({
+      deployFromMedia: vi.fn(async () => {
+        calls.push('deployFromMedia');
+        return skippedDeploy();
+      }),
+      startGateway: vi.fn(async () => {
+        calls.push('startGateway');
+        gatewayAttempts += 1;
+        if (gatewayAttempts === 1) {
+          throw new GatewayReadyTimeoutError('等待网关就绪超时（180s）');
+        }
+        return { ownership: 'spawned' as const, pid: 4321, decision: { verdict: 'spawn' as const, reason: 'x' } };
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const result = await bootstrapWithRetry({
+      attempt: () =>
+        bootstrapLocalGatewayRuntime({
+          userDataDir: PORTABLE_USER_DATA,
+          runtimeCacheUserDataDir: LOCAL_RUNTIME_CACHE,
+          deps,
+        }),
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+      onRetry: (info) => retryEvents.push({ attempt: info.attempt, delayMs: info.delayMs }),
+    });
+
+    expect(result).toMatchObject({ ok: true, deployStatus: 'skipped', ownership: 'spawned' });
+    expect(gatewayAttempts).toBe(2);
+    expect(sleeps).toEqual([3_000]);
+    expect(retryEvents).toEqual([{ attempt: 2, delayMs: 3_000 }]);
+    // 幂等重入：复跑的是**整轮编排**（不是只重起网关），且第二轮与第一轮**步骤与顺序完全相同**
+    // —— 部署一直走缓存快路径（skipped），没有重新解压任何东西。
+    const round = [
+      'alignClientConfig',
+      `setStateDirEnv:${USER_DATA}\\openclaw-state`,
+      'deployFromMedia',
+      'selfCheckLinks',
+      'resolveNode',
+      'startGateway',
+    ];
+    expect(calls).toEqual([...round, ...round]);
+    expect(deps.deployFromMedia).toHaveBeenCalledWith({ userDataDir: LOCAL_RUNTIME_CACHE });
+  });
+
+  it('⭐ 第二轮发现网关已就绪 ⇒ 以 reused 收敛（三态判定原样保留，不重复 spawn）', async () => {
+    const sleeps: number[] = [];
+    let gatewayAttempts = 0;
+    const { deps } = makeDeps({
+      deployFromMedia: vi.fn(async () => skippedDeploy()),
+      startGateway: vi.fn(async () => {
+        gatewayAttempts += 1;
+        if (gatewayAttempts === 1) {
+          throw new GatewayReadyTimeoutError('等待网关就绪超时（180s）');
+        }
+        // 真实三态判定在"上一轮的网关已经起来了"时给的就是这个。
+        return { ownership: 'reused' as const, decision: { verdict: 'reuse' as const, reason: '认证通过' } };
+      }),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const result = await bootstrapWithRetry({
+      attempt: () =>
+        bootstrapLocalGatewayRuntime({
+          userDataDir: PORTABLE_USER_DATA,
+          runtimeCacheUserDataDir: LOCAL_RUNTIME_CACHE,
+          deps,
+        }),
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, ownership: 'reused' });
+    expect(gatewayAttempts).toBe(2);
+    expect(sleeps).toEqual([3_000]);
+  });
+
+  it('⭐ 控制项：Node 版本类失败（终态）不因"缓存命中"被重试（编排入口）', async () => {
+    const sleeps: number[] = [];
+    const { deps } = makeDeps({
+      deployFromMedia: vi.fn(async () => skippedDeploy()),
+      resolveNode: vi.fn(async () => ({
+        ok: false as const,
+        attempts: [],
+        failureClass: 'version-unsupported' as const,
+        message: '环境里的 node 版本不受支持（20.19.1 / 要求 >=24.16.0）',
+      })),
+    });
+    const { bootstrapLocalGatewayRuntime } = await import('../src/main/runtime/index.js');
+
+    const result = await bootstrapWithRetry({
+      attempt: () =>
+        bootstrapLocalGatewayRuntime({
+          userDataDir: PORTABLE_USER_DATA,
+          runtimeCacheUserDataDir: LOCAL_RUNTIME_CACHE,
+          deps,
+        }),
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'runtime.node-version-unsupported' });
+    expect(deps.resolveNode).toHaveBeenCalledTimes(1);
+    expect(deps.startGateway).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([]);
   });
 });
