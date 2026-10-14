@@ -1413,7 +1413,7 @@ function finalizeAssistantArtifacts(input: {
               });
             }
           } else nativeDiagnostics = generated.diagnostics ?? [{ code: 'native-generation-failed' }];
-        } else if (!registeredArtifactNames(input.taskId)?.size) {
+        } else if (!nativeDiagnostics.length && !registeredArtifactNames(input.taskId)?.size) {
           // ⭐ BUG-046 ③ 判据重定义（用户三情形）：
           //   A 本轮要求"新生成"且任务从未登记过任何产物 ⇒ 必须有本轮 write/register 证据；
           //   B/C 任务已有登记产物（修改既有 PPT / 只是引用）⇒ 缺"本轮 current write"
@@ -1421,6 +1421,14 @@ function finalizeAssistantArtifacts(input: {
           //       （claim-guard 的 sinceMs/isRegisteredName 已分别守住 freshness 与豁免），
           //       不再注入 `native-current-write-required` 假诊断把模型带偏。
           //   ⚠️ 读不到库（registeredArtifactNames 回 null）⇒ 按 A 走（宁可真报，不可漏判）。
+          // ⭐ BUG-058④ 邻接缺陷（2026-10-14 M1 实测，真 reconcile 链）：这个兜底分支在
+          //    `!nativeDiagnostics.length` 缺失时会把**上游已具名的诊断**覆盖成这句裸码 ——
+          //    最典型的是 mtime 平局的 `native-input-ambiguous`（含并列候选名 + 重写指引），
+          //    被换成"需要写源文件"，而模型**明明写了**（只是分不出渲染哪一份）：
+          //    2026-10-13 接线的意义（把可执行下一步喂模型）会被整个抹掉。
+          //    同文件既有纪律是"追加而不是覆盖"（见下面 review 诊断的注释）——这里对齐：
+          //    已有诊断时不再覆盖它。**判定链一字未松**：没有任何候选（helper 返回 undefined）
+          //    时 nativeDiagnostics 仍为空 ⇒ 这句裸码照旧发出（本分支其余语义不变）。
           nativeDiagnostics = [{ code: 'native-current-write-required' }];
         }
       } catch {

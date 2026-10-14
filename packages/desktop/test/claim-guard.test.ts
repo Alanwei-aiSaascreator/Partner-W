@@ -131,6 +131,34 @@ describe('extractClaimedFileNames：从回复里抠产物文件名', () => {
     expect(extractClaimedFileNames('我把缺失的底部结论补上，再重新渲染生成.pptx文件。')).toHaveLength(0);
   });
 
+  /**
+   * ⭐ BUG-047 残余（2026-10-14 M1）：原判据只剥**末尾动词**，插了量词/修饰词的变体
+   * （`重新渲染生成一份新的.pptx`、`再生成一个新的.docx`）stem 以「新的」结尾、一个动词
+   * 都剥不掉 ⇒ 仍被当真实交付名 ⇒ 判 missing ⇒ 整轮 delivery-failed。
+   * 修法=在既有 `isBareVerbPhrase` 上窄补「量词/修饰词」剥离步骤：**必须至少剥到一个
+   * 交付动词**、且剥完只剩连接词，才算动作描述（真实文件名不受影响）。
+   */
+  it('⭐ BUG-047 残余：连接词 + 动作 + 量词/修饰词（一份新的）粘着扩展名 ⇒ 不算声称', () => {
+    expect(extractClaimedFileNames('这一页的槽位还是不齐，然后重新渲染生成一份新的.pptx文件即可。')).toHaveLength(0);
+    expect(extractClaimedFileNames('内容我补齐了，再生成一个新的.docx文件即可。')).toHaveLength(0);
+    expect(extractClaimedFileNames('稍等，然后重新渲染一份新的.pptx文件。')).toHaveLength(0);
+  });
+
+  it('⭐ BUG-047 残余负对照：真名以动词/量词结尾、引号包裹、带空格名 仍被识别', () => {
+    // 剥到动词后还剩真名字 ⇒ 不是动作短语
+    expect(extractClaimedFileNames('已写好 学习总结生成.pptx').map((n) => n.name)).toContain('学习总结生成.pptx');
+    expect(extractClaimedFileNames('已生成 季度方案.pptx').map((n) => n.name)).toContain('季度方案.pptx');
+    // ⚠️ 只剥量词、没剥到动词 ⇒ 不算动作短语（如真名恰好以「一份」结尾）
+    expect(extractClaimedFileNames('已生成 分配方案一份.pptx').map((n) => n.name)).toContain('分配方案一份.pptx');
+    // 引号/反引号包裹的名字是用户在引用文件名，不算动词短语
+    expect(extractClaimedFileNames('已生成 `报告生成.pptx`').map((n) => n.name)).toContain('报告生成.pptx');
+    // 真实带空格文件名（产品自己的命名）仍要抓到
+    expect(
+      extractClaimedFileNames('已生成 荣盈魔方 · AI桌面工作台-12ddb119.pptx').length,
+      '带空格真名不许因这次收窄而漏掉',
+    ).toBeGreaterThan(0);
+  });
+
   it('负对照：动词在前、真名在后的**真声称**仍要抓到', () => {
     const names = extractClaimedFileNames('已生成 季度汇报.pptx 请查收').map((n) => n.name);
     expect(names).toContain('季度汇报.pptx');

@@ -86,12 +86,20 @@ export function useClaimGuardToast(): void {
         mediaFailures: violation.mediaFailures,
       });
       const lines = [ARTIFACT_FAILURE_MARKER];
+      /*
+        ⭐ BUG-026 残余（2026-10-14 M1）：`toast.error` 原来在这些分支里**立刻**执行，而便签
+        的内容去重在其后（本函数末尾）—— 于是"便签只有一条"并不保证"只弹一次"：同一失败
+        跨轮次（每轮 messageId 不同）会弹一串同样的红 toast。
+        修法：先把文案与通知意愿**收集**起来，等"稳定失败身份"（便签内容 + task/session）
+        的去重判断落定后再统一发 —— 通知与便签走同一个判断，去重范围不扩大、判定链不缓存。
+      */
+      const notifications: Array<{ title: string; description: string }> = [];
       if (violation.mediaFailures?.length) {
         const description = t('claimGuard.mediaUnavailableBody', {
           names: violation.mediaFailures.map((failure) => failure.fileName).join(', '),
         });
         lines.push(t('claimGuard.mediaUnavailableTitle'), description);
-        toast.error(t('claimGuard.mediaUnavailableTitle'), { description });
+        notifications.push({ title: t('claimGuard.mediaUnavailableTitle'), description });
       }
       if (violation.slideFailures?.length) {
         lines.push(
@@ -114,7 +122,7 @@ export function useClaimGuardToast(): void {
       if (violation.missing.length) {
         const description = t('claimGuard.missingBody', { names: violation.missing.join(', ') });
         lines.push(`[artifact.claim-guard.missing] ${description}`);
-        toast.error(t('claimGuard.missingTitle'), { description });
+        notifications.push({ title: t('claimGuard.missingTitle'), description });
       }
       // ⭐ BUG-042-c（2026-10-08 亲验的 C1 静默丢弃）：回复说做好了、文件在盘上、
       //    字节却不是那份格式（JSON 改名成 .docx 之类）⇒ 从前一声不吭。这里如实说：
@@ -122,7 +130,7 @@ export function useClaimGuardToast(): void {
       if (violation.invalidArtifacts?.length) {
         const description = t('claimGuard.invalidArtifactBody', { names: violation.invalidArtifacts.join(', ') });
         lines.push(`[artifact.claim-guard.invalid-artifact] ${description}`);
-        toast.error(t('claimGuard.invalidArtifactTitle'), { description });
+        notifications.push({ title: t('claimGuard.invalidArtifactTitle'), description });
       }
       // ⭐ 没登记到 ≠ 文件不存在（2026-10-04 真机）：真机上两份改稿都在盘上，界面却在说
       //    「工作区里没有这些文件」。这一档只说「没登记到成果列表」，不下「不存在」的结论，
@@ -130,24 +138,37 @@ export function useClaimGuardToast(): void {
       if (violation.missingKinds?.length) {
         const description = t('claimGuard.missingKindsBody', { names: violation.missingKinds.join(', ') });
         lines.push(`[artifact.claim-guard.missing-kinds] ${description}`);
-        toast.error(t('claimGuard.missingKindsTitle'), { description });
+        notifications.push({ title: t('claimGuard.missingKindsTitle'), description });
       }
       /*
         BUG-026（2026-10-06）：同一失败在后续轮次被重复判定时（每轮 messageId 不同，`seen`
         拦不住），这里原来会往聊天里追加**内容完全相同**的系统便签 —— 用户看到的是
         "一失败一气泡"的连环红框。内容一致时只留第一条：事实没丢（第一条还在聊天里、
         `artifactFailureContext` 照旧拿得到它），原始载荷已在上面的 console.debug。
+        ⭐ 残余修复（2026-10-14）：**通知也并入这同一个判断** —— 被去重的重复失败不再弹 toast。
+        范围至少含 task/session：只有同一个 task **且同一个 session** 里已经存在同内容便签
+        才压；新 task / 新会话 / 新失败原因照常通知（判定不缓存"曾经失败"）。
       */
       const note = lines.join('\n');
       const existingNotes = useMessageStore.getState().messagesByTask[violation.taskId] ?? [];
-      if (existingNotes.some((message) => message.role === 'system' && message.content === note)) {
-        console.debug('[claim-guard] identical failure note already shown; duplicate bubble suppressed', {
-          taskId: violation.taskId,
-          sessionKey: violation.sessionKey,
-          messageId: violation.messageId,
-        });
+      if (
+        existingNotes.some(
+          (message) =>
+            message.role === 'system' && message.sessionKey === violation.sessionKey && message.content === note,
+        )
+      ) {
+        console.debug(
+          '[claim-guard] identical failure note already shown; duplicate bubble and notification suppressed',
+          {
+            taskId: violation.taskId,
+            sessionKey: violation.sessionKey,
+            messageId: violation.messageId,
+          },
+        );
         return;
       }
+      for (const notification of notifications)
+        toast.error(notification.title, { description: notification.description });
       useMessageStore.getState().addMessage(violation.taskId, 'system', note, undefined, {
         sessionKey: violation.sessionKey,
       });

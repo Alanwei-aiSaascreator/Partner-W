@@ -1,5 +1,5 @@
 import type { Message } from '@clawwork/shared';
-import { parseArtifactQualityNote } from './artifact-quality-feedback';
+import { ARTIFACT_QUALITY_MARKER, parseArtifactQualityNote } from './artifact-quality-feedback';
 
 export const ARTIFACT_FAILURE_MARKER = '[artifact-delivery-failed]';
 
@@ -8,11 +8,33 @@ export const ARTIFACT_FAILURE_MARKER = '[artifact-delivery-failed]';
  *
  * ⚠️ 区1 体检 P3-3：便签正文里带内部码是**给模型看的判据**（`artifactFailureContext`
  *    原样把它送进上下文，有测试钉着），但聊天红框把全文原样渲染，用户就看到了一串
- *    内部码。结论：**存和发都不动**，只在渲染这一层剥掉——剥的判据是"行的开头 + 方括号里
- *    是小写字母/数字/点/横线"（`[artifact.claim-guard.missing]` 这种形状），
- *    句中的 `[文件名]`、中文方括号一律不动。
+ *    内部码。结论：**存和发都不动**，只在渲染这一层剥掉。
+ *
+ * ⭐ P3-3 残余（2026-10-14 M1）：旧判据按**形状**猜（行首 + 方括号里是小写字母/数字/点/横线），
+ *    把用户可见文本里的真文件名也剥了 —— 实载反例：`[report.pptx] 文件尚未登记`、
+ *    行首 Markdown 链接 `[report.pptx](relative/report.pptx)`。现在改为**白名单**：
+ *    只剥本产品代码里真实存在的内部码；未知方括号一律原样保留（宁可多显示一个方括号，
+ *    不可删掉用户文本）。新增内部码时必须把它加进这张清单。
+ *
+ *    白名单来源（按代码实读）：
+ *    - `artifact-delivery-failed`  = 本模块的 claim 失败便签标记；
+ *    - `artifact-layout-review`    = 版式诊断便签标记（artifact-quality-feedback）；
+ *    - `artifact.claim-guard.missing` / `invalid-artifact` / `missing-kinds`
+ *      = `useClaimGuardToast` 写进便签的判据码（全量清单见该 hook）。
  */
-const INTERNAL_CODE_PREFIX_RE = /^[ \t]*\[[a-z0-9][a-z0-9._-]*\][ \t]*/gim;
+const KNOWN_INTERNAL_FAILURE_CODES: readonly string[] = [
+  ARTIFACT_FAILURE_MARKER.slice(1, -1),
+  ARTIFACT_QUALITY_MARKER.slice(1, -1),
+  'artifact.claim-guard.missing',
+  'artifact.claim-guard.invalid-artifact',
+  'artifact.claim-guard.missing-kinds',
+];
+const INTERNAL_CODE_PREFIX_RE = new RegExp(
+  `^[ \\t]*\\[(?:${KNOWN_INTERNAL_FAILURE_CODES.map((code) => code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(
+    '|',
+  )})\\][ \\t]*`,
+  'gim',
+);
 export function stripInternalFailureCodes(text: string): string {
   return text.replace(INTERNAL_CODE_PREFIX_RE, '').trim();
 }

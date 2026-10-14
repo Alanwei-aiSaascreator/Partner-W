@@ -280,6 +280,25 @@ describe('artifact delivery failure feedback', () => {
       );
     });
 
+    /**
+     * ⭐ P3-3 残余（2026-10-14 M1，实载反例）：旧判据把**行首任意 `[小写字母/数字/点/横线]`**
+     * 都当内部码 ⇒ 用户可见文本里的真文件名/链接被剥掉：
+     *   `[report.pptx] 文件尚未登记`     → 首词被删
+     *   `[report.pptx](relative/report.pptx)` → Markdown 链接文本被删
+     * 修法：只识别**本产品真实内部码清单**（见 `KNOWN_INTERNAL_FAILURE_CODES`），
+     * 未知方括号原样保留；内部码仍是只剥渲染层、模型上下文/日志一字不动。
+     */
+    it('⭐ P3-3 残余：行首的文件名 / Markdown 链接不是内部码 ⇒ 原样保留', () => {
+      expect(stripInternalFailureCodes('[report.pptx] 文件尚未登记')).toBe('[report.pptx] 文件尚未登记');
+      expect(stripInternalFailureCodes('[report.pptx](relative/report.pptx)')).toBe(
+        '[report.pptx](relative/report.pptx)',
+      );
+    });
+
+    it('⭐ P3-3 残余：未知方括号码也原样保留（白名单之外不猜）', () => {
+      expect(stripInternalFailureCodes('[some-other.marker] 别动我')).toBe('[some-other.marker] 别动我');
+    });
+
     it('发往模型的内容不变：便签原文（含内部码）仍在诊断上下文里', () => {
       const note = makeMessage(
         'system',

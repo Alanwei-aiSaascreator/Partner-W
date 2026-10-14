@@ -1647,6 +1647,67 @@ describe('assistant artifact reconciliation boundary', () => {
     });
   });
 
+  /**
+   * ⭐ BUG-047 残余（2026-10-14 M1）· main 侧接线：claim-guard 的动词短语判据在
+   * `data-handlers` 收尾链上**真实生效**（不是只改 helper 的单测）。
+   *
+   * 负例：没有交付声称的纯建议句（`然后重新渲染生成一份新的.pptx文件`）——
+   * 从前它被当真实交付名 ⇒ 判 missing ⇒ 弹「说好的文件不在」。现在不发 missing。
+   * 正例（下一条）：同一句话发生在"用户明确要 PPT"的轮次里时，**仍然必须**报缺 PPTX ——
+   * 收窄的只是"文件名声称"，不改真实成功判据。
+   */
+  it('⭐ BUG-047 残余：纯建议句（重新渲染生成一份新的.pptx）不发 missing、不发整条 claim-violation', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '这一页的槽位还是不齐，然后重新渲染生成一份新的.pptx文件即可。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+  });
+
+  it('⭐ BUG-047 残余正对照：用户明确要 PPT 且无登记 ⇒ 同一句建议照旧必须报缺 PPTX', async () => {
+    const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+    registerDataHandlers();
+    beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1', {
+      userContent: '请帮我做一份产品发布会 PPT',
+    });
+    selectGetMock.mockReturnValueOnce({ id: 'assistant-persisted' }).mockReturnValueOnce({ gid: 'gateway-1' });
+
+    handleMap.get('data:create-message')!(
+      {},
+      {
+        id: 'assistant-incoming',
+        taskId: 'task-1',
+        role: 'assistant',
+        content: '槽位还是不齐，然后重新渲染生成一份新的.pptx文件即可。',
+        timestamp: '2026-09-16T00:00:02.000Z',
+        sessionKey: 'session-task-1',
+      },
+    );
+    await flushJobs();
+
+    expect(webContentsSendMock).toHaveBeenCalledWith('artifact:claim-violation', {
+      taskId: 'task-1',
+      sessionKey: 'session-task-1',
+      messageId: 'assistant-persisted',
+      missing: [],
+      missingKinds: ['PPT/PPTX 演示文稿'],
+    });
+  });
+
   it('includes parser diagnostics in the visible delivery event even without a filename claim', async () => {
     const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
     registerDataHandlers();

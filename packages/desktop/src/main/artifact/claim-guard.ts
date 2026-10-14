@@ -283,25 +283,58 @@ const TRAILING_ACTION_VERBS = [
 ] as const;
 const CONNECTIVE_ONLY_RE = /^(?:然后|接着|随后|再|并|并且|同时|或|或者|和)*$/;
 
+/**
+ * ⭐ BUG-047 残余（2026-10-14 M1）：动作描述里插了**量词/修饰词**时不长在动词上 ——
+ * `重新渲染生成一份新的.pptx` / `再生成一个新的.docx` 的 stem 以「新的」结尾，
+ * 逐词剥动词一个都剥不到 ⇒ 旧判据判它不是动作短语 ⇒ 当真实交付名查存在性 ⇒ 误报 missing。
+ *
+ * 只列**有限量词/修饰词**（与例句同族），且**单独出现不算数**：必须与至少一个
+ * `TRAILING_ACTION_VERBS` 里的动词同时被剥掉、剥完只剩连接词才判动作短语。
+ * 于是 `分配方案一份.pptx`（只剥得到量词）、`学习总结生成.pptx`（剥完还剩真名字）
+ * 这类真文件名一个都不受影响 —— 不泛化忽略"生成/新/一份"。
+ */
+const TRAILING_QUANTIFIER_PHRASES = [
+  // 长词在前，与动词表同一纪律。
+  '一个新的',
+  '一份新的',
+  '新的',
+  '一份',
+  '一个',
+  '一张',
+  '一版',
+  '新的版本',
+] as const;
+
 /** 这一处名字是不是"动词短语 + 扩展名"（不是真文件名）。 */
 function isBareVerbPhrase(content: string, offset: number, name: string): boolean {
   const base = name.replace(/\.(?:pptx|docx|xlsx|pdf|html|slidegen)$/i, '');
   if (!base) return false;
   let rest = base;
-  let stripped = false;
+  // ⚠️ 必须剥到**动词**才算动作短语（`strippedVerb`）；量词/修饰词只是让动词露出来，
+  //    单剥量词（真名恰好以「一份」结尾）不改变判定。
+  let strippedVerb = false;
   for (;;) {
     let changed = false;
     for (const verb of TRAILING_ACTION_VERBS) {
       if (rest.endsWith(verb)) {
         rest = rest.slice(0, -verb.length);
-        stripped = true;
+        strippedVerb = true;
         changed = true;
         break;
       }
     }
+    if (!changed) {
+      for (const quantifier of TRAILING_QUANTIFIER_PHRASES) {
+        if (rest.endsWith(quantifier)) {
+          rest = rest.slice(0, -quantifier.length);
+          changed = true;
+          break;
+        }
+      }
+    }
     if (!changed) break;
   }
-  if (!stripped || (rest && !CONNECTIVE_ONLY_RE.test(rest))) return false;
+  if (!strippedVerb || (rest && !CONNECTIVE_ONLY_RE.test(rest))) return false;
   // 显式包裹（反引号 / 引号 / 直角引号）的名字是用户在引用文件名，不算动词短语。
   const before = content[offset - 1];
   const after = content[offset + name.length];
