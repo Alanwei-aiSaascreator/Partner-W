@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { isVoiceRequestId } from '@clawwork/shared';
 export interface VoiceCapabilities {
   asr: boolean;
   tts: boolean;
@@ -130,7 +130,12 @@ export function createVoiceRelayClient(deps: VoiceRelayDependencies) {
   }
   return {
     capabilities,
-    async transcribe(audio: Buffer, signal: AbortSignal): Promise<string> {
+    /**
+     * 请求身份由调用方持有（R8-05）：失败恢复必须沿用同一 requestId，relay 才能幂等回放
+     * 已存结果或明确拒绝；这里**不再**内部随机生成，坏身份在发任何请求前拒绝。
+     */
+    async transcribe(audio: Buffer, requestId: string, signal: AbortSignal): Promise<string> {
+      if (!isVoiceRequestId(requestId)) throw new Error('voice-invalid-request-id');
       if (!validateVoiceWav(audio)) throw new Error('voice-invalid-audio');
       const generation = deps.generation();
       const caps = await capabilities(signal);
@@ -138,21 +143,22 @@ export function createVoiceRelayClient(deps: VoiceRelayDependencies) {
       if ((audio.length - 44) / 32000 > caps.maxRecordingSeconds) throw new Error('voice-recording-too-long');
       if (signal.aborted || generation !== deps.generation()) throw new Error('voice-cancelled');
       const { bytes } = await request('transcriptions', signal, {
-        requestId: randomUUID(),
+        requestId,
         audio: audio.toString('base64'),
       });
       const transcript = record(JSON.parse(bytes.toString('utf8'))).transcript;
       if (typeof transcript !== 'string' || transcript.length > 16000) throw new Error('voice-upstream-error');
       return transcript;
     },
-    async speech(text: string, signal: AbortSignal): Promise<ArrayBuffer> {
+    async speech(text: string, requestId: string, signal: AbortSignal): Promise<ArrayBuffer> {
+      if (!isVoiceRequestId(requestId)) throw new Error('voice-invalid-request-id');
       if (!text.trim() || Array.from(text).length > 600) throw new Error('voice-text-too-long');
       const generation = deps.generation();
       const caps = await capabilities(signal);
       if (!caps.tts) throw new Error('voice-unavailable');
       if (Array.from(text).length > caps.maxSpeechCharacters) throw new Error('voice-text-too-long');
       if (signal.aborted || generation !== deps.generation()) throw new Error('voice-cancelled');
-      const { bytes, contentType } = await request('speech', signal, { requestId: randomUUID(), text });
+      const { bytes, contentType } = await request('speech', signal, { requestId, text });
       if (
         !/^audio\/wav(?:;|$)/i.test(contentType) ||
         bytes.length < 44 ||

@@ -334,6 +334,21 @@ function openAndMigrate(dbPath: string): void {
   //    `test/db-fresh-init.test.ts`（空目录 init 一遍）与 kb 系列那几个用临时目录的测试。
   migrateAddColumn(sqlite, "ALTER TABLE team_agents ADD COLUMN position TEXT DEFAULT ''");
 
+  // 视频生成请求的**稳定逻辑身份**（R8-06，2026-10-15；语义与绑定字段见
+  // `videogen/request-identity.ts`）：一条"逻辑操作"（同任务 + 同提示词 + 同参数 +
+  // 同首帧字节）在**创建远端付费任务之前**拿到一把 requestId，此后重放/进程重启命中同一把
+  // —— Seedance 的重试不再变成第二次付费创建。
+  // ⚠️ 与 `artifacts` 的 source_key 重放探测同一条思路，但那条只在**产物已存在**时生效；
+  //    "创建请求已发出、结果未知"这段窗口由这张表兜住。
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS videogen_request_identities (
+      operation_key TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   initFTS(sqlite);
   // 资料库（T6a）：kb_meta / kb_sources / kb_chunks + kb_chunks_fts。
   // 表与库同生共死（工作区可指向 U 盘），**不落服务器**。

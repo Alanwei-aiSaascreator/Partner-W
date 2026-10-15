@@ -544,6 +544,7 @@
     "unsupportedCapability": "This capability isn't supported yet. You can use the capabilities already available in the workspace instead.",
     "unsupportedModel": "This model isn't supported yet. Please pick an available model from the model list.",
     "visionFallbackSwitched": "Switched to a vision-capable model for this image: {{model}}",
+    "visionMentionBlocked": "Images can't be sent to team roles yet. Remove the images before mentioning a role, or drop the @ to send the images directly.",
     "visionUnavailable": "Image support could not be confirmed for this model. Choose an image-capable model or remove the images. For an illustrated PPT, analyze the images first.",
     "waiting": {
       "awaitingAnswer": "Waiting for your answer",

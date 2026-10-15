@@ -964,6 +964,30 @@ export function useChatSend(opts: UseChatSendOpts) {
           // **绕过视觉门禁** —— 文本模型收下后被 runtime 静默丢图（用户还以为发上去了）。
           // 图片判定必须覆盖这一路（它们随后经 `allAttachments` 真的进入这轮请求）。
           extraAttachments.some((att) => classifyAttachmentFile(att.fileName, att.mimeType) === 'image');
+        /**
+         * ⛔ R8-04（2026-10-15 独立终审 P1）：**带图片的 @ 岗位分发在这里早阻断**。
+         *
+         * 旧 ensemble（`ensemble=true`、无 teamId）里，主任务最终模型过完视觉门禁
+         * **不证明**岗位接收模型支持图像 —— core 的 mention 分支不钉 `presetModel`，
+         * 图片由各岗位自己的模型直接接收（composer 内逐目标校验本批不可靠）。
+         * 真实派发边界上的兜底拒绝在 core（带图片的 mention 整趟拒绝）；这里给用户
+         * 一条**可操作的产品文案**：移除图片后 @ 岗位，或去掉 @ 直接发图。
+         *
+         * 判据与 core 同形（复刻它的 room 前提，避免误伤无 room 的普通 @）：
+         *   图片 × （@ 岗位 或 @all）× ensemble × 无 teamId × room 存在。
+         * ⚠️ 不依赖主模型检查结果、**不切换任何模型**；早于视觉回读（getConfig）与
+         *    任何网关副作用，草稿与附件原样保留。
+         */
+        if (
+          hasImageAttachment &&
+          (agentMentions.length > 0 || isMentionAll) &&
+          task.ensemble &&
+          !task.teamId &&
+          useRoomStore.getState().rooms[task.id]
+        ) {
+          toast.error(t('chatInput.visionMentionBlocked'));
+          return;
+        }
         let visionCatalog: readonly ModelCatalogEntry[] = modelCatalog;
         if (hasImageAttachment) {
           // models.list可能来自动态目录，最终override仍以静态config为准；每次带图都回读。

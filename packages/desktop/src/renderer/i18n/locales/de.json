@@ -544,6 +544,7 @@
     "unsupportedCapability": "Diese Funktion wird derzeit nicht unterstützt. Verwenden Sie stattdessen die im Arbeitsbereich verfügbaren Funktionen.",
     "unsupportedModel": "Dieses Modell wird derzeit nicht unterstützt. Bitte wählen Sie ein verfügbares Modell aus der Modellliste.",
     "visionFallbackSwitched": "Für dieses Bild wurde ein bilderkennendes Modell verwendet: {{model}}",
+    "visionMentionBlocked": "Bilder können noch nicht an Teamrollen gesendet werden. Entfernen Sie die Bilder vor dem Erwähnen einer Rolle oder entfernen Sie das @, um Bilder direkt zu senden.",
     "visionUnavailable": "Die Bildunterstützung dieses Modells konnte nicht bestätigt werden. Wählen Sie ein bildfähiges Modell oder entfernen Sie die Bilder. Analysieren Sie Bilder vor der PPT-Erstellung.",
     "waiting": {
       "awaitingAnswer": "Warte auf deine Antwort",

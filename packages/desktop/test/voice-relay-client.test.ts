@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createVoiceRelayClient, validateVoiceWav } from '../src/main/voice/relay-client';
+/**
+ * R8-05：请求身份由调用方（renderer 朗读/录音操作）持有并透传 —— client 不再内部随机。
+ * 这里用固定身份断言"原样使用"；随机/派生在 renderer 的 playback-identity 与 useVoicePlayback 测。
+ */
+const FIXED = '00112233-4455-4677-8899-aabbccddeeff';
 function wav() {
   const b = Buffer.alloc(44 + 3200);
   b.write('RIFF');
@@ -62,7 +67,7 @@ describe('voice relay contract', () => {
       s.switchAccount();
       return new Response(JSON.stringify({ transcript: 'wrong account' }));
     });
-    await expect(s.client.transcribe(wav(), new AbortController().signal)).rejects.toThrow('voice-cancelled');
+    await expect(s.client.transcribe(wav(), FIXED, new AbortController().signal)).rejects.toThrow('voice-cancelled');
     expect(s.fetcher).toHaveBeenCalledTimes(2);
   });
   it('does not retry an upstream failure or expose upstream error messages', async () => {
@@ -72,7 +77,9 @@ describe('voice relay contract', () => {
         status: 502,
       }),
     );
-    await expect(s.client.transcribe(wav(), new AbortController().signal)).rejects.toThrow('voice-upstream-error');
+    await expect(s.client.transcribe(wav(), FIXED, new AbortController().signal)).rejects.toThrow(
+      'voice-upstream-error',
+    );
     expect(s.fetcher).toHaveBeenCalledTimes(2);
   });
   it('returns valid WAV bytes for TTS and sends the Unicode text intact', async () => {
@@ -80,11 +87,35 @@ describe('voice relay contract', () => {
     s.fetcher
       .mockResolvedValueOnce(caps())
       .mockResolvedValueOnce(new Response(wav(), { headers: { 'content-type': 'audio/wav' } }));
-    const result = await s.client.speech('😀中文', new AbortController().signal);
+    const result = await s.client.speech('😀中文', FIXED, new AbortController().signal);
     expect(Buffer.from(result)).toEqual(wav());
     const [url, options] = s.fetcher.mock.calls[1];
     expect(url).toBe('https://relay.test/v1/voice/speech');
-    expect(JSON.parse(String(options?.body)).text).toBe('😀中文');
+    const body = JSON.parse(String(options?.body));
+    expect(body.text).toBe('😀中文');
+    expect(body.requestId).toBe(FIXED);
+  });
+  it('uses the caller-owned identity verbatim instead of generating one', async () => {
+    const s = setup();
+    s.fetcher.mockResolvedValueOnce(caps()).mockResolvedValueOnce(new Response(JSON.stringify({ transcript: '中文' })));
+    expect(await s.client.transcribe(wav(), FIXED, new AbortController().signal)).toBe('中文');
+    expect(s.fetcher).toHaveBeenCalledTimes(2);
+    const [url, opts] = s.fetcher.mock.calls[1];
+    expect(url).toBe('https://relay.test/v1/voice/transcriptions');
+    expect(opts?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer private-key' }));
+    expect(JSON.parse(String(opts?.body)).requestId).toBe(FIXED);
+  });
+  it('rejects a malformed or missing request identity before any HTTP', async () => {
+    const s = setup();
+    const signal = new AbortController().signal;
+    await expect(s.client.speech('你好', 'not-a-uuid', signal)).rejects.toThrow('voice-invalid-request-id');
+    await expect(s.client.speech('你好', undefined as unknown as string, signal)).rejects.toThrow(
+      'voice-invalid-request-id',
+    );
+    await expect(s.client.transcribe(wav(), 'aaaaaaaa-aaaa-1aaa-8aaa-aaaaaaaaaaaa', signal)).rejects.toThrow(
+      'voice-invalid-request-id',
+    );
+    expect(s.fetcher).not.toHaveBeenCalled();
   });
   it('validates PCM16 mono16000 and duration before sending', () => {
     expect(validateVoiceWav(wav())).toBe(true);
@@ -107,31 +138,8 @@ describe('voice relay contract', () => {
         }),
       ),
     );
-    await expect(s.client.transcribe(wav(), new AbortController().signal)).rejects.toThrow('voice-unavailable');
+    await expect(s.client.transcribe(wav(), FIXED, new AbortController().signal)).rejects.toThrow('voice-unavailable');
     expect(s.fetcher).toHaveBeenCalledTimes(1);
-  });
-  it('uses trusted base/key and a UUID once without automatic retries', async () => {
-    const s = setup();
-    s.fetcher
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            asr: true,
-            tts: true,
-            maxRecordingSeconds: 60,
-            maxSpeechCharacters: 600,
-            asrMicrosPerSecond: 100,
-            ttsMicrosPerCharacter: 200,
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ transcript: '中文' })));
-    expect(await s.client.transcribe(wav(), new AbortController().signal)).toBe('中文');
-    expect(s.fetcher).toHaveBeenCalledTimes(2);
-    const [url, opts] = s.fetcher.mock.calls[1];
-    expect(url).toBe('https://relay.test/v1/voice/transcriptions');
-    expect(opts?.headers).toEqual(expect.objectContaining({ Authorization: 'Bearer private-key' }));
-    expect(JSON.parse(String(opts?.body)).requestId).toMatch(/^[0-9a-f-]{36}$/);
   });
   it('discards late replies after account switch', async () => {
     const s = setup();
@@ -152,7 +160,7 @@ describe('voice relay contract', () => {
   });
   it('rejects speech over six hundred unicode characters before HTTP', async () => {
     const s = setup();
-    await expect(s.client.speech('😀'.repeat(601), new AbortController().signal)).rejects.toThrow(
+    await expect(s.client.speech('😀'.repeat(601), FIXED, new AbortController().signal)).rejects.toThrow(
       'voice-text-too-long',
     );
     expect(s.fetcher).not.toHaveBeenCalled();

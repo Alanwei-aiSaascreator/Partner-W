@@ -341,12 +341,20 @@ export default function ChatInput({
   const voiceAccountKey = useCommercialStore((state) => state.overview?.account.userId ?? '');
   const voiceCapabilities = voiceCapabilityReply?.owner === voiceAccountKey ? voiceCapabilityReply.value : null;
   const voiceScopeKey = `${voiceAccountKey}:${activeTaskId ?? ''}:${mainView}:${settingsOpen}`;
+  // R8-05：朗读请求身份的绑定字段（账号 + 任务 + 主会话）。换账号/换任务 ⇒ 换身份，
+  // 失败重试（同一目标）沿用同一身份 —— 派生与语义见 `@/lib/voice/playback-identity`。
+  const voiceTaskSessionKey = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId)?.sessionKey ?? '');
+  const voiceIdentity = useMemo(
+    () => ({ accountKey: voiceAccountKey, taskId: activeTaskId ?? '', sessionKey: voiceTaskSessionKey }),
+    [voiceAccountKey, activeTaskId, voiceTaskSessionKey],
+  );
   const {
     phase: speechPhase,
     error: speechError,
     start: startSpeech,
     stop: stopSpeech,
-  } = useVoicePlayback(voiceScopeKey);
+  } = useVoicePlayback(voiceScopeKey, voiceIdentity);
+  const speechActive = speechPhase === 'preparing' || speechPhase === 'playing';
   const whisperAvailable = voiceCapabilities?.asr === true;
   const loadSettings = useSettingsStore((state) => state.load);
   const updateSettings = useSettingsStore((state) => state.updateSettings);
@@ -493,6 +501,17 @@ export default function ChatInput({
     if (!speechError || speechError === 'voice-cancelled') return;
     toast.error(t(speechError === 'voice-answer-too-long' ? 'voiceInput.answerTooLong' : 'voiceInput.playbackFailed'));
   }, [speechError, t]);
+  /**
+   * R8-05：朗读失败（如结算 pending）后**不进静默 idle** —— 状态行常驻一句"失败、可重试"，
+   * 按钮回到"朗读"语义；再点一次就是用同一请求身份重放（幂等恢复），不会静默再付一次。
+   * 文案复用既有键（不新增 i18n 键）：超长用 answerTooLong，其余用 playbackFailed。
+   */
+  const speechStatusCopy =
+    speechPhase === 'failed'
+      ? t(speechError === 'voice-answer-too-long' ? 'voiceInput.answerTooLong' : 'voiceInput.playbackFailed')
+      : speechPhase !== 'idle'
+        ? t(speechPhase === 'playing' ? 'voiceInput.playing' : 'voiceInput.preparingSpeech')
+        : null;
   const allTasks = useTaskStore((s) => s.tasks);
   const mentionTasks = allTasks.filter((tt) => tt.id !== activeTask?.id && tt.title);
 
@@ -1502,22 +1521,23 @@ export default function ChatInput({
                           <Button
                             variant={speechPhase !== 'idle' ? 'soft' : 'ghost'}
                             size="icon"
-                            disabled={speechPhase === 'idle' && (!completedVoiceAnswer || voiceActive || disabled)}
-                            aria-label={t(speechPhase !== 'idle' ? 'voiceInput.stop' : 'voiceInput.readAnswer')}
+                            disabled={!speechActive && (!completedVoiceAnswer || voiceActive || disabled)}
+                            aria-label={t(speechActive ? 'voiceInput.stop' : 'voiceInput.readAnswer')}
                             onClick={() => {
-                              if (speechPhase !== 'idle') {
+                              if (speechActive) {
                                 stopSpeech();
                                 return;
                               }
+                              // 失败（failed）后再点 = 用同一请求身份重试同一回答（R8-05 幂等恢复）。
                               cancelVoiceInput();
                               void startSpeech(completedVoiceAnswer);
                             }}
                           >
-                            {speechPhase !== 'idle' ? <Square size={18} /> : <Volume2 size={18} />}
+                            {speechActive ? <Square size={18} /> : <Volume2 size={18} />}
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          {t(speechPhase !== 'idle' ? 'voiceInput.stop' : 'voiceInput.readAnswerFee', {
+                          {t(speechActive ? 'voiceInput.stop' : 'voiceInput.readAnswerFee', {
                             fee: speechFeeEstimate,
                           })}
                         </TooltipContent>
@@ -1525,28 +1545,27 @@ export default function ChatInput({
                     )}
                     {(voiceCapabilities?.asr || voiceCapabilities?.tts) && (
                       <span className="type-meta text-[var(--text-muted)]" aria-live="polite">
-                        {speechPhase !== 'idle'
-                          ? t(speechPhase === 'playing' ? 'voiceInput.playing' : 'voiceInput.preparingSpeech')
-                          : [
-                              voiceCapabilities.asr && voiceCapabilities.asrMicrosPerSecond !== undefined
-                                ? t('voiceInput.serviceFeeAsr', {
-                                    fee: ((voiceCapabilities.asrMicrosPerSecond * 60) / 1_000_000).toLocaleString(
-                                      undefined,
-                                      { maximumFractionDigits: 4 },
-                                    ),
-                                  })
-                                : '',
-                              voiceCapabilities.tts && voiceCapabilities.ttsMicrosPerCharacter !== undefined
-                                ? t('voiceInput.serviceFeeTts', {
-                                    fee: ((voiceCapabilities.ttsMicrosPerCharacter * 100) / 1_000_000).toLocaleString(
-                                      undefined,
-                                      { maximumFractionDigits: 4 },
-                                    ),
-                                  })
-                                : '',
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
+                        {speechStatusCopy ??
+                          [
+                            voiceCapabilities.asr && voiceCapabilities.asrMicrosPerSecond !== undefined
+                              ? t('voiceInput.serviceFeeAsr', {
+                                  fee: ((voiceCapabilities.asrMicrosPerSecond * 60) / 1_000_000).toLocaleString(
+                                    undefined,
+                                    { maximumFractionDigits: 4 },
+                                  ),
+                                })
+                              : '',
+                            voiceCapabilities.tts && voiceCapabilities.ttsMicrosPerCharacter !== undefined
+                              ? t('voiceInput.serviceFeeTts', {
+                                  fee: ((voiceCapabilities.ttsMicrosPerCharacter * 100) / 1_000_000).toLocaleString(
+                                    undefined,
+                                    { maximumFractionDigits: 4 },
+                                  ),
+                                })
+                              : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
                       </span>
                     )}
                     {voiceErrorCode === 'permission-denied' && (

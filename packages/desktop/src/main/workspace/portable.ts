@@ -519,22 +519,11 @@ export interface WorkspaceStartupInput {
    */
   workspaceId?: string | null;
   /**
-   * 读候选工作区标记里的 `workspaceId`（注入的纯函数读口；读不到给 null）。
-   * 不注入 = 无从比对身份 ⇒ 身份路径不参与判定（老行为 / 老测试）。
+   * 读候选/记录目录工作区标记里的 `workspaceId`（注入的纯函数读口；读不到给 null）。
+   * 配置记过 id 时，`configured`/候选迁移都必须用它核到**严格相等**（R8-02/03）；
+   * 不注入 = 无从比对身份 ⇒ 任何"配置有 id 的静默路径"都会拒绝（老测试注意）。
    */
   readWorkspaceId?: (workspacePath: string) => string | null;
-  /**
-   * **旧配置所在运行盘**的卷根集合（P-A v2，2026-10-15）：从旧配置自己的
-   * `bundledSkillRecords` key（`<盘>\荣盈魔方-运行数据\state\…` —— 配置就住在这个
-   * 运行数据目录里，跟着盘走）里解析出的保存期盘符。
-   *
-   * 为什么它能当关联：配置住在盘上、跟着盘走 ⇒ 它的运行数据路径里的盘符就是
-   * **这块盘保存时的盘符**。若它 == 记录的工作区盘符，说明保存时工作区就在
-   * 配置自己那块盘上（同盘手选目录的 1.0.6 事故形状）；否则工作区在别的盘上，
-   * 不许静默迁移。交付盘盘根没有 manifest（`volumeMarker` 在真机为 undefined），
-   * 所以这是旧配置上唯一可核证的"旧运行盘"证据。
-   */
-  recordedRunVolumes?: readonly string[];
   /** 首启且非盘上时使用的默认位置（`getDefaultWorkspacePath()`）。 */
   defaultPath: string;
   removableDrives: readonly string[];
@@ -560,15 +549,16 @@ export type WorkspaceStartupDecision =
  *
  * ```
  * 有记录：
- *   exists(记录) 且（非 app-volume，或记录卷 == 当前运行卷）⇒ configured
+ *   记录存在 且（非 app-volume，或记录卷 == 当前运行卷）
+ *        且（配置无 id，或目录 marker id 可读且严格相等）⇒ configured（R8-03）
+ *        配置有 id 但 marker 冲突/缺 id/坏 JSON ⇒ ask-user（保留两侧证据，绝不静默开库）
  *   explicit-path 且记录不存在：
- *     唯一候选在当前运行卷上 + 目录有工作区标记 + 保存期关联成立
- *       （workspaceId 相等，或 recordedRunVolumes 里有一块 == 记录工作区盘）⇒ healed（1.0.6 迁移例外，P-A v2）
- *     否则                                  ⇒ ask-user（绝不静默跨卷自愈/改归属，R1）
+ *     唯一候选在当前运行卷上 + 目录有工作区标记 + **workspaceId 相等** ⇒ healed（仅身份路径）
+ *     否则                                  ⇒ ask-user（老记录无可核证关联；技能账本路径不算，R8-01）
  *   候选 === 1 且（非 app-volume，或候选在运行卷上，或运行卷未知）
- *        且（未记身份，或身份可读且相等）  ⇒ healed（静默）
+ *        且（配置无 id，或候选 marker id 可读且严格相等）⇒ healed（静默）
  *   候选 === 1 但 app-volume 候选在别的卷 ⇒ ask-user（唯一候选不许从旧卷静默胜出，R1）
- *   候选 === 1 但身份可读且不等            ⇒ ask-user（不收养另一份工作区）
+ *   候选 === 1 但配置有 id 而候选 id 缺失/不等 ⇒ ask-user（不许补铸覆盖原关联，R8-02）
  *   候选 > 1                            ⇒ ask-user（多命中不许猜）
  *   候选 === 0 且 记过 relPath（盘上）   ⇒ ask-user（盘不在，不能拿别的卷顶）
  *   候选 === 0 且 卷都还在（本机目录）   ⇒ recreated（就地重建，旧行为）
@@ -594,12 +584,39 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
     const explicitPath = binding === 'explicit-path';
     const recordedExists = input.exists(recorded);
     const runVolume = input.portableRoot ? (normalizeVolumeRoot(input.portableRoot) ?? input.portableRoot) : null;
+    /** 配置里记的工作区身份（R8-02/03：只要配置**有** id，任何静默路径都必须严格核到同一 id）。 */
+    const recordedId = input.workspaceId ?? null;
+    /** 目录里可读到的身份（不注入读口/文件缺失/坏 JSON ⇒ null）。 */
+    const readableIdOf = (workspacePath: string): string | null => input.readWorkspaceId?.(workspacePath) ?? null;
+
+    /**
+     * `configured` 出口（R8-03）：**目录存在不是身份证明**。配置记过身份时，目录里的
+     * marker 必须可读且**严格相等**；冲突/缺 id/坏 JSON 一律不静默开库 —— 保留两侧
+     * 证据（配置 + marker 原样）摆给用户确认（候选=原路径本身，用户确认后由常规
+     * "use/重建"路径显式重绑）。配置无 id 的老记录照旧 configured（补铸在
+     * `startup.ts` 的 configured 分支完成，仅此一种补铸入口）。
+     */
+    const configuredOrAsk = (): WorkspaceStartupDecision => {
+      if (recordedId) {
+        const currentId = readableIdOf(recorded);
+        if (currentId !== recordedId) {
+          const markerExists = input.exists(P().join(recorded, WORKSPACE_MARKER_FILE));
+          const candidate: WorkspaceHealCandidate = {
+            path: recorded,
+            origin: 'same-letter',
+            evidence: 'workspace-marker',
+          };
+          return { kind: 'ask-user', recordedPath: recorded, candidates: markerExists ? [candidate] : [] };
+        }
+      }
+      return { kind: 'configured', path: recorded };
+    };
 
     if (recordedExists) {
-      if (!appVolume) return { kind: 'configured', path: recorded };
+      if (!appVolume) return configuredOrAsk();
       const recordedVolume = volumeRootOf(recorded);
       if (!runVolume || !recordedVolume || sameVolumeRoot(recordedVolume, runVolume)) {
-        return { kind: 'configured', path: recorded };
+        return configuredOrAsk();
       }
       // 记录的卷 ≠ 当前运行卷：不早退，落入下面的候选流程 —— 无证据的旧卷同名目录
       // 会被候选构造拒绝（唯一 F 命中 ⇒ healed）；两卷都有证据 ⇒ ask-user（绝不猜）。
@@ -622,19 +639,17 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
      *
      * ⚠️ 2026-10-15 首次启动硬合同（P-A）的**唯一例外**：旧 1.0.6 把"同盘（当前运行卷）
      *    手选目录"也记成了 explicit-path（workspace:setup/change 与启动页 browse 的旧
-     *    行为），换机器/换盘符后旧绝对路径失效 ⇒ 用户被要求重选——而目录就在**当前
-     *    运行卷**上。这种记录按 app-volume 同族语义静默重定位一次（`startup.ts` 的
-     *    healed 分支会把归属改成 app-volume，之后按正常随盘语义走）。
+     *    行为），换机器/换盘符后旧绝对路径失效 —— 而目录就在**当前运行卷**上。
      *
-     *    例外**必须窄**（P-A v2，独立审查 CHANGES_REQUIRED 后收窄）：
+     *    例外**必须窄**（P-A v2 → R8 返工后收窄到只认身份）：
      *    - 候选必须恰好一个、必须落在**当前运行卷**上（别的卷 = 真外部目录，仍问）；
      *    - 目标目录里必须有我们自己的工作区标记（`.clawwork-workspace.json`）；
-     *    - **通用标记不是身份**：静默迁移还必须有保存期的可核证关联，两条取一：
-     *      ① `workspaceId`（配置里记的身份 == 候选标记里的 id）——新记录；
-     *      ② `recordedRunVolumes` 里有一块盘 == 记录的工作区盘符——"旧配置所在运行盘"
-     *         证明保存时工作区就在配置自己那块盘上（见 `WorkspaceStartupInput` 的注释）。
-     *      两条都没有 ⇒ 仍然问人（独立反例：外部 E 工作区 A 失联、当前 F 盘上同相对
-     *      路径的另一份带标记工作区 B 会被冒名收养，把用户带到别人的数据上）。
+     *    - **只接受可核证的工作区身份**：配置里的 `workspaceId` == 候选标记里的 id。
+     *      ⚠️ R8-01（独立终审）：**技能账本/历史路径集合不能证明"配置所在旧运行盘"**
+     *      （技能目录来源不受约束、可跨盘多根、可陈旧），已整体撤销该信任——外部键、
+     *      多根、陈旧键都会被静默收养到"同相对路径的另一份工作区"上。
+     *      老记录（配置无 id）**没有**可核证的迁移关联 ⇒ 一律问人；正常的自动恢复
+     *      走"老记录正常启动一次即补铸身份、之后按身份迁移"这条升级路径。
      *    - 判据看的是**文件在不在**，不是候选的 `evidence` 枚举值 —— 盘根 marker 在场时
      *      `evidenceOf` 会把候选记成 `volume-marker`（先判盘根），那样会漏掉目录标记。
      */
@@ -642,25 +657,13 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
       const onlyCandidate = candidates.length === 1 ? candidates[0] : null;
       if (
         onlyCandidate !== null &&
+        recordedId &&
         runVolume !== null &&
         sameVolumeRoot(volumeRootOf(onlyCandidate.path), runVolume) &&
-        input.exists(P().join(onlyCandidate.path, WORKSPACE_MARKER_FILE))
+        input.exists(P().join(onlyCandidate.path, WORKSPACE_MARKER_FILE)) &&
+        readableIdOf(onlyCandidate.path) === recordedId
       ) {
-        const recordedId = input.workspaceId ?? null;
-        if (recordedId) {
-          // 新记录：身份相等才是同一份。读不出/不相等 ⇒ 不是同一份 ⇒ 问。
-          const candidateId = input.readWorkspaceId?.(onlyCandidate.path) ?? null;
-          if (candidateId !== null && candidateId === recordedId) {
-            return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
-          }
-          return { kind: 'ask-user', recordedPath: recorded, candidates };
-        }
-        // 老记录（无身份）：只有"记录的工作区就在旧配置自己那块盘上"这一个可核证关联。
-        const recordedVolume = volumeRootOf(recorded);
-        const sameDiskAsConfig = (input.recordedRunVolumes ?? []).some((root) => sameVolumeRoot(recordedVolume, root));
-        if (sameDiskAsConfig) {
-          return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
-        }
+        return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
       }
       return { kind: 'ask-user', recordedPath: recorded, candidates };
     }
@@ -672,19 +675,16 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
        * 摆给用户确认；当前运行卷没有合法目标时同样要问。
        * ⚠️ 运行卷未知（非盘上启动）时保持旧的静默自愈 —— 没有"当前卷"可比，
        *    唯一带证据的候选仍是 2026-09-18 实机那条救命路径（见该用例）。
-       * ⚠️ P-A v2：身份**可读且不等**时不许收养（候选是另一份工作区）。读不出身份
-       *    （老目录 / 未注入读口）保持旧行为，不制造新的假询问。
+       * ⚠️ R8-02（独立终审）：配置**有** id 时，候选必须可读且**严格相等** ——
+       *    缺 id / 坏 JSON / 读不出都不能放行（放行会让补铸覆盖原关联 A）。
+       *    配置无 id 的老记录保持旧行为（保守自愈），不制造新的假询问。
        */
       const viaVolume = volumeRootOf(candidates[0].path);
       if (appVolume && runVolume && !sameVolumeRoot(viaVolume, runVolume)) {
         return { kind: 'ask-user', recordedPath: recorded, candidates };
       }
-      const recordedId = input.workspaceId ?? null;
-      if (recordedId) {
-        const candidateId = input.readWorkspaceId?.(candidates[0].path) ?? null;
-        if (candidateId !== null && candidateId !== recordedId) {
-          return { kind: 'ask-user', recordedPath: recorded, candidates };
-        }
+      if (recordedId && readableIdOf(candidates[0].path) !== recordedId) {
+        return { kind: 'ask-user', recordedPath: recorded, candidates };
       }
       return { kind: 'healed', path: candidates[0].path, from: recorded, via: candidates[0] };
     }

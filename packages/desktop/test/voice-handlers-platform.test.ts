@@ -37,6 +37,17 @@ function capabilities(asr = true, tts = true) {
     }),
   );
 }
+/** R8-05：身份由 renderer 生成并透传；IPC 只校验形状，不改写、不重发。 */
+const FIXED_REQUEST_ID = '00112233-4455-4677-8899-aabbccddeeff';
+function wavBytes() {
+  const bytes = Buffer.alloc(46, 0);
+  bytes.write('RIFF', 0);
+  bytes.write('WAVE', 8);
+  return bytes;
+}
+function wavResponse() {
+  return new Response(wavBytes(), { headers: { 'content-type': 'audio/wav' } });
+}
 describe('voice IPC platform contract', () => {
   beforeEach(() => {
     handlers.clear();
@@ -91,6 +102,30 @@ describe('voice IPC platform contract', () => {
       error: 'voice-text-too-long',
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it('rejects a malformed or missing request identity before any network request', async () => {
+    expect(await handler('voice:speech')(event(), { text: '你好', requestId: 'not-a-uuid' })).toEqual({
+      ok: false,
+      error: 'voice-invalid-request-id',
+    });
+    expect(await handler('voice:speech')(event(), { text: '你好' })).toEqual({
+      ok: false,
+      error: 'voice-invalid-request-id',
+    });
+    expect(await handler('voice:transcribe')(event(), { audio: wavBytes().buffer, requestId: 42 })).toEqual({
+      ok: false,
+      error: 'voice-invalid-request-id',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('passes the renderer request identity to the relay verbatim', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(capabilities()).mockResolvedValueOnce(wavResponse());
+    const result = (await handler('voice:speech')(event(), { text: '你好', requestId: FIXED_REQUEST_ID })) as {
+      ok: boolean;
+    };
+    expect(result.ok).toBe(true);
+    const relayBody = JSON.parse(String(vi.mocked(fetch).mock.calls[1]?.[1]?.body));
+    expect(relayBody.requestId).toBe(FIXED_REQUEST_ID);
   });
   it('cancels pending requests and ignores a late reply', async () => {
     let finish: ((response: Response) => void) | undefined;

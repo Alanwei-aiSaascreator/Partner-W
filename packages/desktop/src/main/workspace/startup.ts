@@ -98,33 +98,6 @@ export interface PrepareWorkspaceOptions {
 /** 对话框里最多来回几轮（用户一直不选就退出，不空转）。 */
 const MAX_RECOVERY_ROUNDS = 5;
 
-/**
- * 「旧配置所在运行盘」的卷根集合（P-A v2，2026-10-15）。
- *
- * 从旧配置自己的 `bundledSkillRecords` key 里解析盘符 —— 那些 key 形如
- * `<盘>\荣盈魔方-运行数据\state\<token>\skills`，而**配置本身就住在这个运行数据
- * 目录里、跟着盘走** ⇒ 这些盘符就是这块盘保存时的盘符（启动判定发生在任何
- * record 迁移之前；`ensureClientGatewayEntry` 的换 key 只在 workspace:change
- * 或同步运行时工作区时发生）。
- *
- * 用途：判断"记录的工作区当时就在配置自己那块盘上吗"——是，则换盘符后同相对
- * 路径上的候选就是同一份（可以静默自愈）；否，则工作区在别的盘上（必须问）。
- * 交付盘盘根没有 manifest（`volumeMarker` 在真机为 undefined），这是旧配置上
- * 唯一可核证的运行盘证据。读不出任何盘符 ⇒ 空数组 ⇒ 迁移例外不成立（问人）。
- */
-function recordedRunVolumesOf(
-  config: { bundledSkillRecords?: Record<string, Record<string, string>> } | null,
-): string[] {
-  const records = config?.bundledSkillRecords;
-  if (!records) return [];
-  const roots = new Set<string>();
-  for (const key of Object.keys(records)) {
-    const root = volumeRootOf(key);
-    if (root) roots.add(root);
-  }
-  return [...roots];
-}
-
 interface StartupContext {
   dialogs: WorkspaceStartupDialogs;
   database: WorkspaceDatabasePort;
@@ -273,7 +246,6 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     workspaceBinding: config?.workspaceBinding,
     workspaceId: config?.workspaceId,
     readWorkspaceId: (workspacePath) => readWorkspaceId(workspacePath),
-    recordedRunVolumes: recordedRunVolumesOf(config),
     portableRoot,
     defaultPath: getHomedirWorkspacePath(),
     // ⚠️ 记录的位置还在 ⇒ 判定必然停在第一分支（`configured`），压根不会读这个列表，
@@ -293,18 +265,21 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     case 'configured': {
       workspacePath = decision.path;
       /**
-       * 身份补铸（P-A v2，2026-10-15）：记录还在原位置 ⇒ 这是**确认过的工作区**。
-       * 老标记（1.0.6 时代只有 formatVersion/app/createdAt）在这里补一个 workspaceId
-       * 并写回配置 —— 只要正常启动过一次，老记录就升级成"身份可核证"的记录，
-       * 之后的换机/换盘符走身份路径，不再依赖运行盘关联。尽力而为、绝不抛。
+       * 身份补铸（P-A v2 → R8-03 收窄）：**仅当配置本身没有 id** 才补铸 ——
+       * 老记录（1.0.6 时代）正常启动一次即升级成"身份可核证"的记录，之后的
+       * 换机/换盘符走身份路径。配置已有 id 时绝不补铸/覆盖（决定了 configured
+       * 就意味着 marker id 已核到严格相等，R8-03 的冲突路径在判定层已转 ask-user，
+       * 不允许"先写后报"把冲突证据抹掉）。尽力而为、绝不抛。
        */
-      try {
-        const id = ensureWorkspaceId(decision.path);
-        if (id && id !== config?.workspaceId) updateConfig({ workspaceId: id });
-      } catch (err) {
-        ctx.log('workspace.identity.backfill.failed', {
-          message: err instanceof Error ? err.message : String(err),
-        });
+      if (!config?.workspaceId) {
+        try {
+          const id = ensureWorkspaceId(decision.path);
+          if (id) updateConfig({ workspaceId: id });
+        } catch (err) {
+          ctx.log('workspace.identity.backfill.failed', {
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
       break;
     }

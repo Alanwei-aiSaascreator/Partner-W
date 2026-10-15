@@ -749,10 +749,15 @@ export interface ClawWorkAPI {
     };
     error?: string;
   }>;
-  synthesizeSpeech: (text: string) => Promise<{ ok: boolean; result?: ArrayBuffer; error?: string }>;
+  /** `requestId`：R8-05 由 renderer 的逻辑朗读操作持有的稳定身份（UUIDv4 形状）；失败重试必须沿用同一值。 */
+  synthesizeSpeech: (text: string, requestId: string) => Promise<{ ok: boolean; result?: ArrayBuffer; error?: string }>;
   cancelVoice: () => Promise<{ ok: boolean }>;
   openMicrophoneSettings: () => Promise<{ ok: boolean }>;
-  transcribeAudio: (audio: ArrayBuffer) => Promise<{ ok: boolean; transcript?: string; error?: string }>;
+  /** `requestId`：由本次录音会话持有（录音停止时生成一次），该次转写重试沿用同一值。 */
+  transcribeAudio: (
+    audio: ArrayBuffer,
+    requestId: string,
+  ) => Promise<{ ok: boolean; transcript?: string; error?: string }>;
 
   reconnectGateway: (gatewayId: string) => Promise<IpcResult>;
 

@@ -24,7 +24,11 @@ export function splitSpeechText(text: string, maxCharacters = 600): string[] {
   return chunks;
 }
 interface SpeechDependencies {
-  speak: (text: string) => Promise<ArrayBuffer>;
+  /**
+   * `sentenceIndex` = 分句序号（0 起，`splitSpeechText` 的顺序）——
+   * 朗读请求身份（R8-05）按"分句序号 + 分句文本"逐句绑定，重试同一逻辑播放时逐句沿用同一身份。
+   */
+  speak: (text: string, sentenceIndex: number) => Promise<ArrayBuffer>;
   play: (audio: ArrayBuffer) => Promise<void>;
   cancel: () => void;
 }
@@ -40,9 +44,9 @@ export function createSpeechPlayback(deps: SpeechDependencies) {
       stop();
       const current = epoch;
       const chunks = splitSpeechText(text);
-      for (const chunk of chunks) {
+      for (const [sentenceIndex, chunk] of chunks.entries()) {
         if (current !== epoch) return;
-        const audio = await deps.speak(chunk);
+        const audio = await deps.speak(chunk, sentenceIndex);
         if (current !== epoch) return;
         await deps.play(audio);
       }

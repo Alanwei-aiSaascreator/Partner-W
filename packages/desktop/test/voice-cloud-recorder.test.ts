@@ -35,7 +35,7 @@ function setup() {
   });
   let finish: ((result: { ok: boolean; transcript: string }) => void) | undefined;
   const transcribe = vi.fn(
-    (_audio: ArrayBuffer) =>
+    (_audio: ArrayBuffer, _requestId: string) =>
       new Promise<{ ok: boolean; transcript: string }>((resolve) => {
         finish = resolve;
       }),
@@ -91,5 +91,18 @@ describe('cloud recorder lifetime', () => {
     vi.advanceTimersByTime(60000);
     expect(s.stop).toHaveBeenCalledTimes(1);
     expect(s.transcribe).toHaveBeenCalledTimes(1);
+  });
+  it('holds one stable transcription identity per recording and never randomizes it in main', async () => {
+    // R8-05：转写身份由本次录音会话（调用方）持有 —— 录音停止时生成一次，
+    // 该次转写将来重试沿用同一 id（main/relay-client 不再内部随机）。
+    const s = setup();
+    s.session.start();
+    await Promise.resolve();
+    s.feed();
+    s.session.stop();
+    expect(s.transcribe).toHaveBeenCalledTimes(1);
+    const requestId = s.transcribe.mock.calls[0]?.[1];
+    expect(typeof requestId).toBe('string');
+    expect(requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 });

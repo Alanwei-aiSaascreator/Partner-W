@@ -106,7 +106,11 @@ describe('generateVideosFromMessage（编排）', () => {
     expect(result.failed).toEqual([]);
     expect(result.saved).toHaveLength(1);
     expect(client.create).toHaveBeenCalledTimes(1);
-    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ prompt: '一只猫打盹', duration: 4 }));
+    // 第二个参数 = 稳定逻辑身份（R8-06）；H3 通道不产出 id，所以是显式的 undefined。
+    expect(client.create).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: '一只猫打盹', duration: 4 }),
+      undefined,
+    );
     expect(client.query).toHaveBeenCalledTimes(2);
     expect(client.download).toHaveBeenCalledWith('task-1');
     const saveParams = mocks.saveArtifactFromBuffer.mock.calls[0][0] as Record<string, unknown>;

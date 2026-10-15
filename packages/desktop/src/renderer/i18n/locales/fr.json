@@ -544,6 +544,7 @@
     "unsupportedCapability": "Cette fonctionnalité n'est pas encore prise en charge. Utilisez les fonctionnalités disponibles dans l'espace de travail.",
     "unsupportedModel": "Ce modèle n'est pas encore pris en charge. Choisissez un modèle disponible dans la liste des modèles.",
     "visionFallbackSwitched": "Un modèle capable de vision a été utilisé pour cette image : {{model}}",
+    "visionMentionBlocked": "Les images ne peuvent pas encore être envoyées aux rôles d’équipe. Retirez les images avant de mentionner un rôle, ou supprimez le @ pour les envoyer directement.",
     "visionUnavailable": "La prise en charge des images par ce modèle ne peut pas être confirmée. Choisissez un modèle compatible ou retirez les images. Analysez les images avant de créer le PPT.",
     "waiting": {
       "awaitingAnswer": "En attente de votre réponse",

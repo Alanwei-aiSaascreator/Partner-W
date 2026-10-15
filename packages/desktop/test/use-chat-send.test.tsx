@@ -161,6 +161,7 @@ vi.mock('../src/renderer/features/team-meeting/instance', () => ({
   teamMeetingController: { store: { getState: () => mocks.meetingState } },
 }));
 import { useChatSend } from '../src/renderer/components/ChatInput/useChatSend';
+import { MENTION_ALL_AGENT_ID } from '../src/renderer/components/ChatInput/constants';
 import type { PendingAttachment } from '../src/renderer/components/ChatInput/types';
 import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/components/ChatInput/useTaskMaterials';
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
@@ -1853,11 +1854,14 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     imported = [] as ImportedMaterialFile[],
     pending = [] as PendingAttachment[],
     artifacts = [] as Artifact[],
+    // R8-04：@ 岗位（或 @all）这条入口也要能用同一套 harness 钉（默认无 @）。
+    agents = [] as Array<{ agentId: string; agentName: string; sessionKey: string }>,
     draft = '看看这张图',
   }: {
     imported?: ImportedMaterialFile[];
     pending?: PendingAttachment[];
     artifacts?: Artifact[];
+    agents?: Array<{ agentId: string; agentName: string; sessionKey: string }>;
     draft?: string;
   }) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1874,7 +1878,7 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
       selectedImportedFiles: imported,
       clearSelectedImportedFiles: vi.fn(),
       markImportedFileMissing: vi.fn(),
-      selectedAgents: [],
+      selectedAgents: agents,
       setSelectedAgents: vi.fn(),
       stopVoiceInput: vi.fn(),
     });
@@ -2261,6 +2265,104 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
 
     unmount();
+  });
+
+  /**
+   * ⛔ R8-04（2026-10-15 独立终审 P1）：**带图片的 @ 岗位在渲染层早阻断**。
+   *
+   * 旧 ensemble（`ensemble=true`、无 teamId）里「主任务模型过完视觉门禁」≠「岗位接收模型
+   * 支持图像」—— core 的 mention 分支不钉 presetModel，图片由各岗位**自己的模型**直接接收。
+   * **真实派发边界上的兜底拒绝已由 core 测试覆盖**
+   *（`packages/core/test/chat-composer.test.ts`「R8-04：带图片的 @ 分发整体拒绝」；
+   *   审阅方探针复本与 RED→GREEN 原始日志在 `D:/claude/mofang/reviews/r8-rework-vision/`），
+   * 这里钉的是**用户可见那一层**：弹产品文案、保留草稿与附件、不触发视觉回读/切换。
+   *
+   * 判据与 core 同形：图片 ×（@ 岗位 或 @all）× ensemble × 无 teamId × room 存在。
+   * 不依赖主模型检查结果、不切换任何模型；无 room 的普通 @ 不受影响（room 前提拦掉误伤）。
+   */
+  describe('R8-04：带图片的 @ 岗位在发送前被拦下', () => {
+    const WORKER = {
+      agentId: 'worker',
+      agentName: 'Worker',
+      sessionKey: 'agent:worker:clawwork:task:task-1',
+    };
+    const MENTION_ALL = { agentId: MENTION_ALL_AGENT_ID, agentName: '全部岗位', sessionKey: '' };
+
+    /** 旧 ensemble 任务 + 已就绪的 room（与 composer 的 room 前提逐字同形）。 */
+    function ensembleRoom(): void {
+      mocks.taskState.tasks = [{ ...mocks.baseTask, ensemble: true, mode: 'smart' }];
+      mocks.roomState.rooms = {
+        'task-1': {
+          taskId: 'task-1',
+          conductorSessionKey: 'agent:conductor:clawwork:task:task-1',
+          conductorReady: true,
+          status: 'active',
+          performers: [WORKER],
+        },
+      };
+    }
+
+    it('@worker + 图片 ⇒ 不发送、不切模型、草稿保留、给产品文案', async () => {
+      ensembleRoom();
+      mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+      const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} agents={[WORKER]} />);
+
+      await clickSend(container);
+
+      expect(mocks.send).not.toHaveBeenCalled();
+      // 早阻断在任何网关副作用之前：不读静态配置、不切模型
+      expect(window.clawwork.getConfig).not.toHaveBeenCalled();
+      expect(gateway.patchSession).not.toHaveBeenCalled();
+      // 保留草稿与附件（清除发生在发送成功之后，这里根本没走到）
+      expect(container.querySelector('textarea')?.value).toBe('看看这张图');
+      expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionMentionBlocked', { duration: 10000 });
+      unmount();
+    });
+
+    it('@all + 图片 ⇒ 同样拦下（mentionAll 那条入口不能漏）', async () => {
+      ensembleRoom();
+      mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+      const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} agents={[MENTION_ALL]} />);
+
+      await clickSend(container);
+
+      expect(mocks.send).not.toHaveBeenCalled();
+      expect(gateway.patchSession).not.toHaveBeenCalled();
+      expect(container.querySelector('textarea')?.value).toBe('看看这张图');
+      expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionMentionBlocked', { duration: 10000 });
+      unmount();
+    });
+
+    it('对照：@worker 不带图 ⇒ 照常发送（不误伤纯文本 @）', async () => {
+      ensembleRoom();
+      mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+      const { container, unmount } = render(<VisionRoutingHarness draft="帮我写个周报" agents={[WORKER]} />);
+
+      await clickSend(container);
+
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(sendOptions()?.mentions).toEqual(['worker']);
+      expect(mocks.toastError).not.toHaveBeenCalledWith('chatInput.visionMentionBlocked', { duration: 10000 });
+      unmount();
+    });
+
+    it('对照：普通带图发送（无 @）⇒ 既有视觉门禁照旧（切换后带图发送）', async () => {
+      mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+      const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+
+      await clickSend(container);
+
+      expect(gateway.patchSession).toHaveBeenCalledWith('gw-1', mocks.baseTask.sessionKey, {
+        model: VISION_MODEL_ID,
+      });
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+      expect(sendOptions()?.attachments).toEqual([
+        { fileName: 'screenshot.png', mimeType: 'image/png', content: 'cG5n' },
+      ]);
+      expect(mocks.toastError).not.toHaveBeenCalledWith('chatInput.visionMentionBlocked', { duration: 10000 });
+      unmount();
+    });
   });
 });
 

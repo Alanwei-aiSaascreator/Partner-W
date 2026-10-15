@@ -12,6 +12,13 @@ export function createWhisperSttSession(handlers: CreateVoiceSessionHandlers): V
   let destroyed = false;
   let sampleCount = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * 转写请求身份（R8-05）：由**本次录音会话（调用方）**持有，录音停止发起转写时生成一次，
+   * 该次转写将来重试沿用同一 id —— 不再让 main/voice/relay-client 在内部随机，否则
+   * "结果未知后的重试"会变成一个全新的收费操作、绕开 relay 的幂等与结果缓存。
+   * 现在链路没有转写重试入口（一次失败即 onError/onEnd），缓存到变量里正是为重试入口预留。
+   */
+  let transcriptionRequestId: string | null = null;
   function cleanup(): void {
     if (timer) {
       clearTimeout(timer);
@@ -51,8 +58,9 @@ export function createWhisperSttSession(handlers: CreateVoiceSessionHandlers): V
       return;
     }
     const wav = encodeWav(captured, rate);
+    transcriptionRequestId ??= crypto.randomUUID();
     void window.clawwork
-      .transcribeAudio(wav)
+      .transcribeAudio(wav, transcriptionRequestId)
       .then((result) => {
         if (destroyed) return;
         if (result.ok && result.transcript) handlers.onFinalResult(result.transcript);

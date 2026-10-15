@@ -1259,3 +1259,152 @@ describe('首轮产物索引：只进网关，不进气泡', () => {
     expect(addMessage.mock.calls.find((c) => c[1] === 'user')?.[2]).toBe('你好');
   });
 });
+
+/**
+ * ⛔ R8-04（2026-10-15 独立终审 P1「图片 @ 岗位绕过最终接收模型门禁」）。
+ *
+ * 病灶：mention 分支（`if (!isMentionSend)` 才钉 `presetModel`）不把主任务过完
+ * 视觉门禁的模型钉给各岗位会话，图片由各岗位**自己的模型**直接接收 ——
+ * 主会话能力**不证明**接收岗位能力（岗位会话可能是纯文本/未知模型）。
+ * 逐目标能力校验本批不可靠（composer 内拿不到各会话的最终模型），故按终审许可的
+ * 临时口径**整体拒绝**：只要这一轮 attachments 里有 `image/*`，且 mention 目标
+ * 真能解析出来（room 存在 + mentions/mentionAll），就在真实派发边界上 fail-closed
+ * ——零 `sendMessage`、不钉（不覆盖）任何模型。
+ *
+ * 审阅方探针（复本与 RED→GREEN 原始日志在 `D:/claude/mofang/reviews/r8-rework-vision/`）：
+ * 修前 `ok:true` + 图片字节派发到 worker 会话；修后 `ok:false` + 零派发。
+ */
+describe('chat-composer —— R8-04：带图片的 @ 分发整体拒绝（真实派发边界）', () => {
+  const IMAGE = { mimeType: 'image/png', fileName: 'shot.png', content: 'cG5n' };
+
+  it('⭐ 反例：@worker + 图片 ⇒ ok:false、零派发（连 conductor 通知也不发）、回滚 pending 用户消息、不钉任何模型', async () => {
+    const h = setup({ ensemble: true });
+
+    const result = await h.composer.send(TASK_ID, {
+      content: 'read image',
+      mentions: ['worker'],
+      presetModel: 'vision-verified',
+      attachments: [IMAGE],
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result).toEqual({ ok: false, taskId: TASK_ID });
+    // 岗位会话拿不到图片字节；conductor 的那句「用户 @ 了谁」也不单独发出（整趟拒绝）
+    expect(h.sendMessage).not.toHaveBeenCalled();
+    // 不覆盖任何会话模型（岗位模型/用户选定模型一律不碰）
+    expect(h.patchSession).not.toHaveBeenCalled();
+    // 走 composer 现有失败/回滚路径：pending 用户消息回滚、processing 不留痕、emitError 有出口
+    expect(h.removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
+    expect(h.processingBySession.size).toBe(0);
+    expect(h.setProcessing).not.toHaveBeenCalledWith(`${SESSION_KEY}:worker`, true);
+    expect(h.onError).toHaveBeenCalledTimes(1);
+    expect(h.systemOptions()).toEqual([{ sessionKey: SESSION_KEY }]);
+    expect(h.persistMessage).not.toHaveBeenCalled();
+    h.composer.dispose();
+  });
+
+  it('⭐ 反例：@all + 图片 ⇒ 同样整体拒绝（mentionAll 那条入口不能漏）', async () => {
+    const h = setup({ ensemble: true });
+
+    const result = await h.composer.send(TASK_ID, {
+      content: 'read image',
+      mentionAll: true,
+      presetModel: 'vision-verified',
+      attachments: [IMAGE],
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result).toEqual({ ok: false, taskId: TASK_ID });
+    expect(h.sendMessage).not.toHaveBeenCalled();
+    expect(h.patchSession).not.toHaveBeenCalled();
+    expect(h.removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
+    expect(h.processingBySession.size).toBe(0);
+    h.composer.dispose();
+  });
+
+  it('对照：同形状但附件是 text/plain ⇒ 照旧派发（控制项：只拦图片）', async () => {
+    vi.useFakeTimers();
+    const h = setup({ ensemble: true });
+
+    const result = await h.composer.send(TASK_ID, {
+      content: 'read note',
+      mentions: ['worker'],
+      presetModel: 'vision-verified',
+      attachments: [{ mimeType: 'text/plain', fileName: 'note.txt', content: 'aGk=' }],
+      deferUserMessageUntilSent: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, taskId: TASK_ID });
+    expect(h.sendMessage).toHaveBeenCalledWith(
+      'gw-1',
+      `${SESSION_KEY}:worker`,
+      'read note',
+      [{ mimeType: 'text/plain', fileName: 'note.txt', content: 'aGk=' }],
+      { userContent: 'read note' },
+    );
+    expect(h.removeMessage).not.toHaveBeenCalled();
+    h.composer.notifyResponse(`${SESSION_KEY}:worker`);
+    h.composer.notifyResponse(`${SESSION_KEY}:conductor`);
+    h.composer.dispose();
+  });
+
+  it('对照：@worker 但这一轮没有任何附件 ⇒ 照旧派发（控制项，不破既有行为）', async () => {
+    vi.useFakeTimers();
+    const h = setup({ ensemble: true });
+
+    const result = await h.composer.send(TASK_ID, {
+      content: 'plain mention',
+      mentions: ['worker'],
+      presetModel: 'vision-verified',
+    });
+
+    expect(result).toMatchObject({ ok: true, taskId: TASK_ID });
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', `${SESSION_KEY}:worker`, 'plain mention', undefined, {
+      userContent: 'plain mention',
+    });
+    h.composer.notifyResponse(`${SESSION_KEY}:worker`);
+    h.composer.notifyResponse(`${SESSION_KEY}:conductor`);
+    h.composer.dispose();
+  });
+
+  it('窄口径：@ 一个**不在 room 里**的名字（不构成 mention 分发）⇒ 不误伤，仍走普通发送+钉模型', async () => {
+    vi.useFakeTimers();
+    const h = setup({ ensemble: true });
+
+    const result = await h.composer.send(TASK_ID, {
+      content: 'read image',
+      mentions: ['ghost'],
+      presetModel: 'vision-verified',
+      attachments: [IMAGE],
+    });
+
+    expect(result).toMatchObject({ ok: true, taskId: TASK_ID });
+    // 目标解析为空 ⇒ 不是 mention 发送 ⇒ 主会话照常钉已过视觉门禁的模型
+    expect(h.patchSession).toHaveBeenCalledWith('gw-1', SESSION_KEY, { model: 'vision-verified' });
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'read image', [IMAGE], {
+      userContent: 'read image',
+    });
+    h.composer.notifyResponse(SESSION_KEY);
+    h.composer.dispose();
+  });
+
+  it('窄口径：teamId 任务的旧 ensemble 旁路不受影响（路由到主会话，非岗位分发）', async () => {
+    vi.useFakeTimers();
+    const h = setup({ ensemble: true, teamId: 'team-design' });
+
+    const result = await h.composer.send(TASK_ID, {
+      content: 'read image',
+      mentionAll: true,
+      mentions: ['worker'],
+      presetModel: 'vision-verified',
+      attachments: [IMAGE],
+    });
+
+    expect(result).toMatchObject({ ok: true, taskId: TASK_ID });
+    expect(h.sendMessage).toHaveBeenCalledWith('gw-1', SESSION_KEY, 'read image', [IMAGE], {
+      userContent: 'read image',
+    });
+    h.composer.notifyResponse(SESSION_KEY);
+    h.composer.dispose();
+  });
+});

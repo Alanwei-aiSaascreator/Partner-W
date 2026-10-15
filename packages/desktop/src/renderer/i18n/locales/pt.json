@@ -544,6 +544,7 @@
     "unsupportedCapability": "Este recurso ainda não é compatível. Use os recursos disponíveis na área de trabalho.",
     "unsupportedModel": "Este modelo ainda não é compatível. Escolha um modelo disponível na lista de modelos.",
     "visionFallbackSwitched": "Foi usado um modelo com visão para esta imagem: {{model}}",
+    "visionMentionBlocked": "Imagens ainda não podem ser enviadas aos papéis da equipe. Remova as imagens antes de mencionar um papel, ou tire o @ para enviá-las diretamente.",
     "visionUnavailable": "Não foi possível confirmar o suporte a imagens deste modelo. Escolha um modelo compatível ou remova as imagens. Analise as imagens antes de criar o PPT.",
     "waiting": {
       "awaitingAnswer": "Aguardando sua resposta",

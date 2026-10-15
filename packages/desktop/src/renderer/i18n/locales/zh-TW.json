@@ -544,6 +544,7 @@
     "unsupportedCapability": "目前暫不支援該能力，可以改用工作台中已有的能力完成。",
     "unsupportedModel": "目前暫不支援該模型，請從工作台的模型清單中選擇可用模型。",
     "visionFallbackSwitched": "已為該圖片使用支援看圖的模型：{{model}}",
+    "visionMentionBlocked": "圖片暫不能傳送給團隊職位。請移除圖片後 @ 職位，或移除 @ 後直接傳送圖片。",
     "visionUnavailable": "目前無法確認此模型支援本次圖片。請切換至支援識圖的模型，或移除圖片後傳送；含圖 PPT 請先完成識圖。",
     "waiting": {
       "awaitingAnswer": "等待你的回答",

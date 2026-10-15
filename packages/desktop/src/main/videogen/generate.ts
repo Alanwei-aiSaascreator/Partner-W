@@ -7,6 +7,8 @@ import { notifyArtifactActivity, type ArtifactActivityCallback } from '../artifa
 import { verifyMp4Buffer } from '../artifact/verify.js';
 import { extractVideogenBlocks } from './blocks.js';
 import type { VideogenRelayClient } from './client.js';
+import { readVideogenFirstFrame } from './reference-image.js';
+import { resolveVideogenRequestId } from './request-identity.js';
 import { videoFileNameFor, type VideogenRequest } from './request.js';
 
 /**
@@ -98,7 +100,52 @@ async function runOneRequest(
 
   notifyArtifactActivity(input.onActivity, 'generating-video');
 
-  const created = await input.client.create(request);
+  // ② Seedance 首帧装载（R8-06）：解析出的只是**路径**，创建前必须换成**受信字节**。
+  //
+  //  · `readVideogenFirstFrame` 已有完整纪律（工作区钉扎 / 越界拒绝 / 坏图拒绝 / 读一致性），
+  //    这里只负责在**真实生产入口**调用它 —— 原先它只有定义、零调用，图生视频会被静默
+  //    降级成文生视频（r8 独立终审 VV-2）。
+  //  · 装载失败 ⇒ **零创建**（一个请求都不发）、可行动错误：绝不"图没用上也照样生成"。
+  //  · 失败码用它现有的 `videogen-block-invalid`（"这个请求做不了"）：坏图/越界/缺失文件
+  //    的区别进日志（`videogen.reference-rejected` 的 reason），不上屏——界面文案按码本地化，
+  //    新增一个专用码要动 shared + 九种语言，不在本次返工范围（已如实上报）。
+  let effective = request;
+  if (request.model === 'seedance-2.5' && request.firstFrame) {
+    try {
+      const firstFrameData = await readVideogenFirstFrame({
+        workspacePath: input.workspacePath,
+        path: request.firstFrame,
+      });
+      effective = { ...request, firstFrameData };
+    } catch (error) {
+      log.warn({
+        domain: 'artifact',
+        event: 'videogen.reference-rejected',
+        data: { taskId: input.taskId, reason: (error as Error).message },
+      });
+      return { failure: { code: 'videogen-block-invalid' } };
+    }
+  }
+
+  // ③ 稳定逻辑身份（R8-06）：同操作重放/进程重启 ⇒ 同一把 requestId；新操作才是新 id。
+  //    只在 Seedance 通道用（H3 的创建体里没有这个字段，传了也无处安放）。
+  const requestId =
+    request.model === 'seedance-2.5'
+      ? resolveVideogenRequestId({ taskId: input.taskId, request: effective })
+      : undefined;
+
+  // ④ 工作区切换 ⇒ **零创建**。轮询环里那条同名检查守不住这里：创建是花第一笔钱的点，
+  //    必须在它之前判（用户已经切走工作区时，不该再向旧任务投一笔付费创建）。
+  if (!owner.current()) {
+    log.warn({
+      domain: 'artifact',
+      event: 'videogen.workspace-changed',
+      data: { taskId: input.taskId, phase: 'before-create' },
+    });
+    return { failure: { code: 'videogen-task-failed', upstreamCode: null } };
+  }
+
+  const created = await input.client.create(effective, requestId);
   if (!created.ok) {
     log.warn({
       domain: 'artifact',
