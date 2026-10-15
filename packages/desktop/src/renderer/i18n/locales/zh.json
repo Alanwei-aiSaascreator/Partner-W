@@ -544,7 +544,7 @@
     "unsupportedCapability": "当前暂不支持该能力，可以换用工作台里已有的能力完成。",
     "unsupportedModel": "当前暂不支持该模型，请从工作台的模型列表里选择可用模型。",
     "visionFallbackSwitched": "已为该图片使用支持看图的模型：{{model}}",
-    "visionUnavailable": "图片识别暂时不可用：本次消息会照常发送，但图片可能无法被识别。",
+    "visionUnavailable": "当前模型无法确认支持本次图片。请切换到支持识图的模型，或移除图片后发送；含图 PPT 请先完成识图。",
     "waiting": {
       "awaitingAnswer": "等待你的回答",
       "awaitingApproval": "等待批准：{{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B 否",
       "answerYes": "A 是",
-      "assistantNotice": "这里列出已内置助手的推荐职责，工具可用状态以工作台实际检查为准。",
-      "assistantTitle": "推荐工作助手",
       "basicDescription": "根据你选择的工作需求生成的基础配置。",
       "chargeNotice": "生成团队在你的电脑本地完成，不会调用模型。",
       "confirm": "进入工作台",
@@ -1652,9 +1650,30 @@
         "tidy": "你的房间整洁吗？"
       },
       "questionSkip": "暂时跳过",
+      "result": {
+        "capabilities": {
+          "content": "内容创作",
+          "ecommerce": "电商运营",
+          "family": "生活家庭",
+          "office": "办公提效",
+          "photography": "拍摄剪辑",
+          "research": "学习研究"
+        },
+        "capabilityNotice": "主罗盘统筹调研、分析、创作、制作和质检五岗位，使用以下工作能力。执行时的工具可用状态以工作台实际检查为准。",
+        "capabilityTitle": "推荐能力",
+        "reasons": {
+          "content": "内容创作与文案整理",
+          "ecommerce": "电商运营、竞品与经营分析",
+          "family": "生活家庭与日常规划",
+          "office": "办公提效与数据整理",
+          "photography": "短视频脚本与拍摄剪辑",
+          "research": "学习研究与资料分析"
+        },
+        "viewPortrait": "查看我的画像"
+      },
       "role": "岗位类别",
       "sourceAi": "方案来源：AI建议",
-      "sourceBasic": "方案来源：基础模板",
+      "sourceBasic": "配置来源：本地规则",
       "steps": {
         "portrait": "趣味画像",
         "profile": "工作资料",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "先来一份趣味画像",
         "profile": "告诉我们你的工作情况",
-        "result": "你的工作支持方案"
+        "result": "你的工作配置"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "视频请求里带了当前版本不支持的字段「{{field}}」（暂不支持参考图/首尾帧）。让助手去掉它再来一次。"
   },
   "voiceInput": {
+    "answerTooLong": "回答超过6000字符，请先让助手精简后再朗读。",
     "introConfirm": "知道了",
-    "introDescription": "按住 Space 说话，松开后结束。",
+    "introDescription": "点击麦克风或按住 Space 说话，最长60秒",
     "introSkip": "暂不使用",
-    "introStepBeta": "语音输入在本机处理，目前仍为 Beta 功能。",
+    "introStepBeta": "语音经云端识别，按显示单价收费",
     "introStepHold": "识别结果会写入输入框，不会自动发送。",
     "introStepInsert": "短按 Space 仍然会输入普通空格。",
-    "introTitle": "语音输入（Beta）",
+    "introTitle": "语音输入",
     "listeningStatus": "正在录音…松开 Space 开始识别",
+    "microphoneNotFound": "未找到麦克风，请连接设备后重试",
+    "openMicrophoneSettings": "打开麦克风设置",
     "permissionDenied": "麦克风权限被拒绝",
+    "playbackFailed": "回答朗读失败，请重试",
+    "playing": "正在播放…",
+    "preparingSpeech": "正在准备播报…",
+    "readAnswer": "朗读最新回答",
+    "readAnswerFee": "朗读最新回答（预计 {{fee}} 积分）",
     "recognitionFailed": "语音识别失败",
-    "tooltip": "语音输入（Beta）",
+    "serviceFeeAsr": "语音识别 {{fee}} 积分/分钟",
+    "serviceFeeTts": "朗读 {{fee}} 积分/100字符",
+    "stop": "停止语音",
+    "tooltip": "语音输入",
     "transcribing": "正在识别…",
     "unsupported": "语音输入暂不可用，请继续使用文字输入。",
-    "unsupportedPlatform": "此版本暂不支持 Windows 语音输入，请继续使用文字输入。",
     "unsupportedTooltip": "此应用暂时无法使用语音输入。"
   },
   "workspaceNotice": {

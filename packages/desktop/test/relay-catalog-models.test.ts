@@ -33,6 +33,7 @@ const CATALOG_FIXTURE = {
       models: [
         {
           id: 'glm-5.3-flash',
+          capabilities: ['llm', 'llm.vision'],
           supportedReasoningEfforts: ['low', 'high', 'max'],
           pricing: { maxInputTokens: 1000000, defaultMaxOutputTokens: 131072 },
         },
@@ -51,6 +52,7 @@ describe('relayCatalogModelEntries', () => {
     expect(flash).toEqual({
       id: 'glm-5.3-flash',
       name: 'glm-5.3-flash', // displayName 缺省 ⇒ 回 id
+      input: ['text', 'image'],
       reasoning: true,
       compat: { supportsReasoningEffort: true, supportedReasoningEfforts: ['low', 'high', 'max'] },
       // 内核 buildThinkingLevelMap 同构：**每个** level 都写键，不支持 = null。
@@ -58,6 +60,21 @@ describe('relayCatalogModelEntries', () => {
       contextWindow: 1000000,
       maxTokens: 131072,
     });
+  });
+
+  it('纯文本和未知声明不能冒充视觉模型（不按名字猜）', () => {
+    const entries = relayCatalogModelEntries({
+      providers: [
+        {
+          models: [
+            { id: 'looks-like-vision-vl', capabilities: ['llm'] },
+            { id: 'unknown', capabilities: ['llm.future'] },
+            { id: 'malformed', capabilities: 'llm.vision' },
+          ],
+        },
+      ],
+    });
+    expect(entries.map((entry) => entry.input)).toEqual([['text'], ['text'], ['text']]);
   });
 
   it('relay 的 none 词映射为内核的 off 词（词表逐字对齐）', () => {
@@ -88,7 +105,7 @@ describe('relayCatalogModelEntries', () => {
     const entries = relayCatalogModelEntries(CATALOG_FIXTURE);
     const plain = entries.find((entry) => entry.id === 'plain-chat');
 
-    expect(plain).toEqual({ id: 'plain-chat', name: 'plain-chat', reasoning: false });
+    expect(plain).toEqual({ id: 'plain-chat', name: 'plain-chat', input: ['text'], reasoning: false });
   });
 
   it('空白 displayName 回 id；无 pricing 不写窗口字段；重复 id 只保留第一条', () => {
@@ -97,6 +114,7 @@ describe('relayCatalogModelEntries', () => {
     expect(entries.find((entry) => entry.id === 'no-pricing')).toEqual({
       id: 'no-pricing',
       name: 'no-pricing',
+      input: ['text'],
       reasoning: false,
     });
     expect(entries.filter((entry) => entry.id === 'glm-5.3-flash')).toHaveLength(1);
@@ -119,9 +137,25 @@ describe('buildRelayPatch × catalogModels', () => {
     expect(patch).toHaveProperty('models.providers.clawrouter.models', entries);
   });
 
-  it('缺省 / 空数组 ⇒ **不写** models 键（保留旧快照或动态发现兜底，绝不清列表）', () => {
+  it('目录失败仅补旧缺input条目为text，保留明确视觉和思考窗口', () => {
+    const legacy = {
+      id: 'old',
+      reasoning: true,
+      compat: { supportedReasoningEfforts: ['max'] },
+      contextWindow: 100000,
+    };
+    const vision = { id: 'known', input: ['text', 'image'], reasoning: false };
+    const patch = buildRelayPatch({
+      ...INPUT,
+      catalogModels: null,
+      existingConfig: { config: { models: { providers: { clawrouter: { models: [legacy, vision] } } } } },
+    });
+    expect(patch).toHaveProperty('models.providers.clawrouter.models', [{ ...legacy, input: ['text'] }, vision]);
+  });
+
+  it('缺省或失败保留旧快照；可信空目录清除旧静态能力', () => {
     expect(buildRelayPatch(INPUT)).not.toHaveProperty('models.providers.clawrouter.models');
-    expect(buildRelayPatch({ ...INPUT, catalogModels: [] })).not.toHaveProperty('models.providers.clawrouter.models');
+    expect(buildRelayPatch({ ...INPUT, catalogModels: [] })).toHaveProperty('models.providers.clawrouter.models', []);
     expect(buildRelayPatch({ ...INPUT, catalogModels: null })).not.toHaveProperty('models.providers.clawrouter.models');
   });
 

@@ -689,6 +689,114 @@ describe('applyRelayConfig', () => {
     } as never;
   }
 
+  it.each([undefined, ['text']])('视觉input回读缺失/降级不能报告配置成功 (%s)', async (input) => {
+    const expected = {
+      id: 'glm-5.3-flash',
+      name: 'GLM',
+      reasoning: false,
+      input: ['text', 'image'] as Array<'text' | 'image'>,
+    };
+    const d = deps({
+      resolveCatalogModels: async () => [expected],
+      getConfig: vi.fn(async () =>
+        snapshot({
+          models: {
+            providers: {
+              clawrouter: {
+                baseUrl: RELAY_BASE_URL,
+                apiKey: '__OPENCLAW_REDACTED__',
+                models: [{ ...expected, input }],
+              },
+            },
+          },
+        }),
+      ),
+    });
+    const result = await applyRelayConfig(d, INPUT);
+    expect(result.configured).toBe(false);
+    expect(result.errorCode).toBe('verify-failed');
+  });
+
+  it('回读允许runtime补缺省字段与对象键重排，但保留视觉和max声明', async () => {
+    const expected = {
+      id: 'glm-5.3-flash',
+      name: 'GLM',
+      reasoning: true,
+      input: ['text', 'image'] as Array<'text' | 'image'>,
+      compat: { supportsReasoningEffort: true as const, supportedReasoningEfforts: ['high', 'max'] },
+      thinkingLevelMap: { high: 'high', max: 'max' },
+    };
+    const current = {
+      ...expected,
+      input: ['image', 'text'],
+      contextWindow: 200000,
+      maxTokens: 8192,
+      compat: { supportedReasoningEfforts: ['high', 'max'], supportsReasoningEffort: true },
+      thinkingLevelMap: { max: 'max', high: 'high' },
+    };
+    const d = deps({
+      resolveCatalogModels: async () => [expected],
+      getConfig: vi.fn(async () =>
+        snapshot({
+          models: {
+            providers: { clawrouter: { baseUrl: RELAY_BASE_URL, apiKey: '__OPENCLAW_REDACTED__', models: [current] } },
+          },
+        }),
+      ),
+    });
+    expect((await applyRelayConfig(d, INPUT)).configured).toBe(true);
+    current.thinkingLevelMap.max = 'high';
+    expect((await applyRelayConfig(d, INPUT)).configured).toBe(false);
+  });
+
+  it('可信空目录若网关保留旧模型则回读失败', async () => {
+    const d = deps({
+      resolveCatalogModels: async () => [],
+      getConfig: vi.fn(async () =>
+        snapshot({
+          models: {
+            providers: {
+              clawrouter: {
+                baseUrl: RELAY_BASE_URL,
+                apiKey: '__OPENCLAW_REDACTED__',
+                models: [{ id: 'removed', input: ['text', 'image'] }],
+              },
+            },
+          },
+        }),
+      ),
+    });
+    expect((await applyRelayConfig(d, INPUT)).configured).toBe(false);
+    expect(JSON.parse(d.patchConfig.mock.calls[0]![0].raw)).toHaveProperty('models.providers.clawrouter.models', []);
+  });
+
+  it('启动刷新旧静态模型input，并移除目录已下架模型', async () => {
+    const fresh = [
+      { id: 'glm-5.3-flash', name: 'GLM', reasoning: false, input: ['text', 'image'] as Array<'text' | 'image'> },
+    ];
+    let state: Record<string, unknown> = {
+      models: {
+        providers: {
+          clawrouter: {
+            baseUrl: RELAY_BASE_URL,
+            apiKey: '__OPENCLAW_REDACTED__',
+            models: [{ id: 'glm-5.3-flash' }, { id: 'removed', input: ['text', 'image'] }],
+          },
+        },
+      },
+    };
+    const d = deps({
+      resolveCatalogModels: async () => fresh,
+      getConfig: vi.fn(async () => snapshot(state)),
+      patchConfig: vi.fn(async ({ raw }: { raw: string }) => {
+        state = JSON.parse(raw) as Record<string, unknown>;
+        return { ok: true };
+      }),
+    });
+    expect((await applyRelayConfig(d, INPUT)).configured).toBe(true);
+    expect(state).toHaveProperty('models.providers.clawrouter.models', fresh);
+  });
+
   it('写入成功后回读校验，configured 为 true', async () => {
     const d = deps();
     const res = await applyRelayConfig(d, INPUT);

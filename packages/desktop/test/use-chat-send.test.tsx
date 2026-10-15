@@ -3,7 +3,7 @@
 import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeetingStatus, Message, ModelCatalogEntry, Task } from '@clawwork/shared';
+import type { Artifact, MeetingStatus, Message, ModelCatalogEntry, Task } from '@clawwork/shared';
 
 const mocks = vi.hoisted(() => {
   const activeTask: Task = {
@@ -316,6 +316,10 @@ describe('useChatSend abort flow', () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask }];
     Object.assign(window, {
       clawwork: {
+        getConfig: vi.fn(async () => ({
+          ok: true,
+          result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+        })),
         readInboxFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
@@ -1547,6 +1551,10 @@ describe('对比模式下的发送', () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask }];
     Object.assign(window, {
       clawwork: {
+        getConfig: vi.fn(async () => ({
+          ok: true,
+          result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+        })),
         readInboxFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
@@ -1744,7 +1752,14 @@ describe('网关分档接进输入框之前：真身 useChatSend 读出来的那
     mocks.uiState.gatewayStatusMap = { 'gw-1': 'connected' };
     mocks.uiState.gatewayReconnectInfo = {};
     mocks.uiState.gatewayEverConnected = {};
-    Object.assign(window, { clawwork: {} });
+    Object.assign(window, {
+      clawwork: {
+        getConfig: vi.fn(async () => ({
+          ok: true,
+          result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+        })),
+      },
+    });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
 
@@ -1780,7 +1795,7 @@ describe('网关分档接进输入框之前：真身 useChatSend 读出来的那
 
 /**
  * Auto Capability Routing v1（用户交付日 P0-4）：**带图发送 × 当前模型不自述看图 ⇒ 先切到
- * 目录里能看图的模型再发**；切不动/没候选 ⇒ **不拦截**（照发，模型按附件纪律如实说看不到）。
+ * 目录里能看图的模型再发**；切不动/没候选 ⇒ 阻止发送并保留草稿。
  *
  * 这里钉的是**接线**（用真身 hook）：切在发之前、切了才提示、提示带模型名。
  * 候选选择本身的判据在 `vision-routing.test.ts` 单独钉（纯函数）。
@@ -1808,6 +1823,21 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     availability: 'available',
   };
 
+  /** @ 提及的**图片产物**（二进制读取、走 extraAttachments）。 */
+  const imageArtifact: Artifact = {
+    id: 'art-img-1',
+    taskId: 'task-1',
+    messageId: 'm-1',
+    type: 'image',
+    name: '预览图.png',
+    filePath: 'tasks/task-1/artifacts/预览图.png',
+    localPath: 'tasks/task-1/artifacts/预览图.png',
+    mimeType: 'image/png',
+    size: 6,
+    createdAt: '2026-10-15T00:00:00.000Z',
+    availability: 'available',
+  };
+
   /** 网关边界上的调用：真正的"切模型"要看这里（composer 是桩，它自己的钉在 core 里）。 */
   const gateway = {
     patchSession: vi.fn(async (_gatewayId: string, _sessionKey: string, _patch: Record<string, unknown>) => ({
@@ -1822,10 +1852,12 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
   function VisionRoutingHarness({
     imported = [] as ImportedMaterialFile[],
     pending = [] as PendingAttachment[],
+    artifacts = [] as Artifact[],
     draft = '看看这张图',
   }: {
     imported?: ImportedMaterialFile[];
     pending?: PendingAttachment[];
+    artifacts?: Artifact[];
     draft?: string;
   }) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1835,7 +1867,7 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
       setPendingAttachments: vi.fn(),
       selectedTasks: [],
       setSelectedTasks: vi.fn(),
-      selectedArtifacts: [],
+      selectedArtifacts: artifacts,
       setSelectedArtifacts: vi.fn(),
       selectedLocalFiles: [],
       setSelectedLocalFiles: vi.fn(),
@@ -1882,10 +1914,14 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     mocks.taskState.updateTaskMetadata.mockClear();
     mocks.meetingState.records = [];
     mocks.taskState.activeTaskId = 'task-1';
-    mocks.taskState.tasks = [{ ...mocks.baseTask }];
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
     for (const fn of Object.values(gateway)) fn.mockClear();
     Object.assign(window, {
       clawwork: {
+        getConfig: vi.fn(async () => ({
+          ok: true,
+          result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+        })),
         readInboxFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'cG5n', encoding: 'base64', byteLength: 3 },
@@ -1893,6 +1929,12 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
         readTaskContextFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'notes', mimeType: 'text/plain', size: 5, byteLength: 5, truncated: false, tier: 'text' },
+        })),
+        // MM-A 加固（2026-10-15）：@ 引用的**图片产物**也要过视觉门禁（见本 describe
+        // 末尾的两条用例）。默认返回二进制读结果；具体用例可覆写。
+        readArtifactFile: vi.fn(async () => ({
+          ok: true,
+          result: { content: 'aW1hZ2U=', encoding: 'base64', byteLength: 6 },
         })),
         ...gateway,
       },
@@ -1930,6 +1972,83 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
       },
     });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it('models.list视觉声明不能覆盖最终静态text，无有效备选时不发图片', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: VISION_MODEL_ID }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    vi.mocked(window.clawwork.getConfig).mockResolvedValue({
+      ok: true,
+      result: {
+        config: { models: { providers: { clawrouter: { models: [{ id: VISION_MODEL_ID, input: ['text'] }] } } } },
+      },
+    } as never);
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+    await clickSend(container);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+    unmount();
+  });
+
+  it('最终静态配置不可回读时保留草稿，不收费试发图片', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    vi.mocked(window.clawwork.getConfig).mockRejectedValue(new Error('fixture transport failure'));
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+    await clickSend(container);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')?.value).toBe('看看这张图');
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+    unmount();
+  });
+
+  it('custom显式选择不识图模型时不切换、不发送', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'custom' }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+    await clickSend(container);
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+    unmount();
+  });
+
+  it.each(['fast', 'smart', 'deep'] as const)('MM-A最终模式模型视觉门禁 %s，多图字节不变', async (mode) => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode, model: VISION_MODEL_ID }];
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [...catalogWithVision, { id: 'glm-5.3-flash', provider: 'clawrouter', input: ['text'] }],
+    };
+    const { container, unmount } = render(
+      <VisionRoutingHarness
+        imported={[
+          imageMaterial,
+          { ...imageMaterial, fileName: 'other.png', localPath: 'tasks/task-1/inbox/other.png' },
+        ]}
+      />,
+    );
+    await clickSend(container);
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    expect(sendOptions()?.attachments).toEqual([
+      { fileName: 'screenshot.png', mimeType: 'image/png', content: 'cG5n' },
+      { fileName: 'other.png', mimeType: 'image/png', content: 'cG5n' },
+    ]);
+    unmount();
+  });
+
+  it('PPT最终制作模型不支持视觉时阻止发送，不丢图也不劫持制作模型', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: VISION_MODEL_ID }];
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [...catalogWithVision, { id: 'deepseek-v4-flash-cephalon', provider: 'clawrouter', input: ['text'] }],
+    };
+    const { container, unmount } = render(
+      <VisionRoutingHarness imported={[imageMaterial]} draft="根据这张图制作PPT" />,
+    );
+    await clickSend(container);
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+    unmount();
   });
 
   it('⭐ 带图 × 当前模型不看图 × 有候选 ⇒ 切到候选（先切后发）并给一条轻量提示', async () => {
@@ -2018,22 +2137,33 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     unmount();
   });
 
-  it('目录里没有能看图的模型 ⇒ 不切，但**不许静默**：给一条诚实文案，照发（不拦截）', async () => {
+  it('目录里没有视觉模型时阻止发送并保留草稿', async () => {
     mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutVision };
     const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
 
     await clickSend(container);
 
     expect(gateway.patchSession).not.toHaveBeenCalled();
-    expect(mocks.send).toHaveBeenCalledOnce();
-    expect(sendOptions()?.presetModel).toBe(CURRENT_MODEL_ID);
-    // v1.1：没候选 = 这轮图片识别不了，用户有权先知道（而不是发完对着模型的困惑自查）
-    expect(mocks.toastInfo).toHaveBeenCalledWith('chatInput.visionUnavailable');
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')?.value).toBe('看看这张图');
+    // MM-A：没候选 = 这轮图片识别不了，用户有权先知道（而不是发完对着模型的困惑自查）
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
 
     unmount();
   });
 
-  it('切换失败 ⇒ 不发「已使用」提示（切了才给），照发原模型', async () => {
+  it('视觉模型切换抛错时给可操作提示，不暴露原始transport错误', async () => {
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    gateway.patchSession.mockRejectedValueOnce(new Error('RAW_TRANSPORT_FIXTURE'));
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
+    await clickSend(container);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+    expect(JSON.stringify(mocks.toastError.mock.calls)).not.toContain('RAW_TRANSPORT_FIXTURE');
+    unmount();
+  });
+
+  it('视觉切换失败时阻止发送', async () => {
     mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
     gateway.patchSession.mockResolvedValueOnce({ ok: false });
     const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} />);
@@ -2043,9 +2173,46 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     expect(gateway.patchSession).toHaveBeenCalledOnce();
     expect(mocks.toastInfo).not.toHaveBeenCalled();
     expect(mocks.taskState.updateTaskMetadata).not.toHaveBeenCalled();
-    // 不拦截：消息照发，模型会按附件纪律如实说看不到
+    // 切换失败时保留附件，不派发不能识图的请求。
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+
+    unmount();
+  });
+
+  it('⭐ @ 引用的图片产物同样过视觉门禁：文本模型 + 目录有视觉候选 ⇒ 先切换再带图发送', async () => {
+    // 缺口来源（独立核验 2026-10-15）：@ 提及的产物走 `extraAttachments`，而
+    // `hasImageAttachment` 此前只数 attachedFilesForIntent ⇒ 图片产物绕过门禁、
+    // 由文本模型收下后被 runtime 静默丢图。修法：图片判定并入 extraAttachments。
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: CURRENT_MODEL_ID }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+    const { container, unmount } = render(<VisionRoutingHarness artifacts={[imageArtifact]} />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).toHaveBeenCalledOnce();
+    expect(gateway.patchSession.mock.calls[0]?.[2]).toMatchObject({ model: VISION_MODEL_ID });
     expect(mocks.send).toHaveBeenCalledOnce();
-    expect(sendOptions()?.presetModel).toBe(CURRENT_MODEL_ID);
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    // 图片字节确实进了这轮请求（不是"切了模型但图没带上"）
+    expect(sendOptions()?.attachments).toEqual(
+      expect.arrayContaining([expect.objectContaining({ mimeType: 'image/png', content: 'aW1hZ2U=' })]),
+    );
+
+    unmount();
+  });
+
+  it('⭐ @ 引用的图片产物 + 目录无视觉候选 ⇒ 阻断发送、保留草稿（不静默丢图）', async () => {
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: CURRENT_MODEL_ID }];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithoutVision };
+    const { container, unmount } = render(<VisionRoutingHarness artifacts={[imageArtifact]} />);
+
+    await clickSend(container);
+
+    expect(gateway.patchSession).not.toHaveBeenCalled();
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')?.value).toBe('看看这张图');
+    expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
 
     unmount();
   });
@@ -2070,8 +2237,9 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
       id: 'task-2',
       sessionKey: 'agent:main:clawwork:task:task-2',
       model: undefined,
+      mode: 'smart',
     };
-    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', mode: 'custom' } as never;
+    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main', mode: 'smart' } as never;
     mocks.taskState.commitPendingTask.mockReturnValue(newTask);
     mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
     const pending: PendingAttachment[] = [
@@ -2179,6 +2347,10 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     mocks.uiState.modelCatalogFailureByGateway = {};
     Object.assign(window, {
       clawwork: {
+        getConfig: vi.fn(async () => ({
+          ok: true,
+          result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+        })),
         readInboxFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },
@@ -2573,12 +2745,12 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     unmount();
   });
 
-  it('⭐ 模式任务不做视觉路由（带图也只按模式模型发；路由是给 custom / 旧会话兜底的）', async () => {
+  it('MM-A模式任务按最终模型视觉能力切换', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
     mocks.uiState.modelCatalogByGateway = {
       'gw-1': [
         { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
-        // 模式基础模型**没**自述看图；另有别的模型自述看图 —— 路由不能把模式换掉
+        // 模式基础模型不支持图片，最终请求应切到声明支持视觉的候选。
         { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text'] },
         { id: 'glm-4.7', name: 'GLM 4.7', provider: 'clawrouter', input: ['text', 'image'] },
       ],
@@ -2599,11 +2771,10 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
 
     await clickSend(container);
 
-    expect(window.clawwork.patchSession, '模式任务不切模型').not.toHaveBeenCalled();
-    // 2026-10-10 Cephalon 批：这条钉的是「视觉路由的切换提示」不出现；
-    // 存量任务的一次性模型/价格提示（modePolicyUpdated）是另一回事，不在本断言范围。
-    expect(mocks.toastInfo).not.toHaveBeenCalledWith('chatInput.visionFallbackSwitched');
-    expect(sendOptions()?.presetModel, '图片照发模式模型（递交给上游，按真实能力说话）').toBe(BASE_MODEL_ID);
+    expect(window.clawwork.patchSession).toHaveBeenCalled();
+    // 视觉切换成功后按实际候选提示，不冒报原模式模型。
+    expect(mocks.toastInfo).toHaveBeenCalledWith('chatInput.visionFallbackSwitched');
+    expect(sendOptions()?.presetModel).toBe('glm-4.7');
     unmount();
   });
 });
@@ -2677,6 +2848,10 @@ describe('Deck 意图路由：演示类任务钉新 Cephalon 渠道 DeepSeek（�
     mocks.uiState.modelCatalogFailureByGateway = {};
     Object.assign(window, {
       clawwork: {
+        getConfig: vi.fn(async () => ({
+          ok: true,
+          result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+        })),
         readInboxFileForSend: vi.fn(async () => ({
           ok: true,
           result: { content: 'cGRm', encoding: 'base64', byteLength: 3 },

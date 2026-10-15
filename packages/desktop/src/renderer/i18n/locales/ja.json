@@ -544,7 +544,7 @@
     "unsupportedCapability": "この機能は現在ご利用いただけません。ワークスペースで利用できる機能を代わりにお使いください。",
     "unsupportedModel": "このモデルは現在ご利用いただけません。モデル一覧から利用可能なモデルをお選びください。",
     "visionFallbackSwitched": "この画像には画像を認識できるモデルを使用しました：{{model}}",
-    "visionUnavailable": "画像認識は一時的に利用できません：このメッセージはそのまま送信されますが、画像が認識されない可能性があります。",
+    "visionUnavailable": "このモデルで画像を処理できることを確認できません。画像対応モデルに切り替えるか、画像を削除して送信してください。画像付きPPTは先に画像を分析してください。",
     "waiting": {
       "awaitingAnswer": "回答を待っています",
       "awaitingApproval": "承認待ち：{{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
       "confirm": "Enter the workbench",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "コンテンツ制作",
+          "ecommerce": "EC運営",
+          "family": "家庭・日常生活",
+          "office": "オフィス業務の効率化",
+          "photography": "撮影・編集",
+          "research": "学習・調査"
+        },
+        "capabilityNotice": "メインコンパスが調査・分析・創作・制作・品質確認の五つの担当をまとめ、これらの仕事用機能を使います。ツールの利用可否は実行時にワークスペースで確認します。",
+        "capabilityTitle": "おすすめの機能",
+        "reasons": {
+          "content": "コンテンツ制作と文章整理",
+          "ecommerce": "EC運営・競合調査と事業分析",
+          "family": "家庭・日常生活と日々の計画",
+          "office": "オフィス業務の効率化とデータ整理",
+          "photography": "ショート動画の脚本・撮影・編集",
+          "research": "学習・調査と資料分析"
+        },
+        "viewPortrait": "自分のポートレートを見る"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "設定元：ローカルルール",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "A quick fun profile",
         "profile": "Tell us about your work",
-        "result": "Your work configuration"
+        "result": "仕事の設定"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "現在のバージョンでは「{{field}}」は対応していません（参照画像・先頭/末尾フレームは未対応）。アシスタントに削除を伝えてください。"
   },
   "voiceInput": {
+    "answerTooLong": "回答が6000文字を超えています。短い回答を依頼してから読み上げてください。",
     "introConfirm": "了解",
-    "introDescription": "Space を長押しして音声入力し、離すと終了します。",
+    "introDescription": "マイクをクリックするか Space を押しながら話してください。最長60秒です。",
     "introSkip": "後で",
-    "introStepBeta": "音声入力はローカルで処理され、現在ベータ版です。",
+    "introStepBeta": "音声はクラウドで認識され、表示単価で課金されます。",
     "introStepHold": "文字起こし結果は入力欄に挿入され、自動送信されません。",
     "introStepInsert": "Space の短押しは通常のスペース入力になります。",
-    "introTitle": "音声入力 (ベータ)",
+    "introTitle": "音声入力",
     "listeningStatus": "録音中... Space を離すと文字起こしします",
+    "microphoneNotFound": "マイクが見つかりません。接続して再試行してください。",
+    "openMicrophoneSettings": "マイク設定を開く",
     "permissionDenied": "マイクへのアクセスが拒否されました",
+    "playbackFailed": "読み上げに失敗しました。再試行してください。",
+    "playing": "再生中…",
+    "preparingSpeech": "読み上げを準備中…",
+    "readAnswer": "最新の回答を読み上げる",
+    "readAnswerFee": "最新の回答を読み上げる（約 {{fee}} ポイント）",
     "recognitionFailed": "音声認識に失敗しました",
-    "tooltip": "音声入力 (ベータ)",
+    "serviceFeeAsr": "文字起こし：{{fee}} ポイント/分",
+    "serviceFeeTts": "読み上げ：{{fee}} ポイント/100文字",
+    "stop": "音声を停止",
+    "tooltip": "音声入力",
     "transcribing": "文字起こし中...",
     "unsupported": "音声入力は利用できません。テキスト入力をお使いください。",
-    "unsupportedPlatform": "Windows では音声入力はまだサポートされていません。テキスト入力をお使いください。",
     "unsupportedTooltip": "このアプリでは音声入力を利用できません。"
   },
   "workspaceNotice": {

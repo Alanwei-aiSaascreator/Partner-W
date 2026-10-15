@@ -327,6 +327,8 @@ export interface Message {
    * 老行/老调用方没有这个字段 ⇒ `undefined`，语义与加这一列之前逐字相同。
    */
   deliverySucceeded?: boolean;
+  /** This system note existed at a trusted first success; immutable across replay/reopen. */
+  deliveryFailureClosed?: boolean;
 }
 
 /**

@@ -141,6 +141,41 @@ describe('first-run local onboarding', () => {
     window.sessionStorage.clear();
   });
 
+  it('puts the work action before compact result content and renders real skill reasons and task examples', () => {
+    const request = vi.fn();
+    const onComplete = vi.fn();
+    const view = render(
+      <Onboarding userId="user-1" onComplete={onComplete} workMatch={{ scopeKey: 'workspace-a', request }} />,
+    );
+    click(view.container, 'onboarding.useCases.office.title');
+    fill(view.container, '[data-first-run-goal]', 'Prepare manufacturing monthly reports');
+    toPortrait(view.container, 'C');
+    for (let index = 0; index < 4; index += 1) click(view.container, 'onboarding.firstRun.answerYes');
+    click(view.container, 'onboarding.portrait.next');
+    const content = view.container.querySelector('[data-result-work]')!;
+    const action = view.container.querySelector('[data-result-actions] [data-primary-action]')!;
+    expect(content).not.toBeNull();
+    expect(action.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(view.container.querySelector('[data-testid="portrait-card"]')?.getAttribute('data-variant')).toBe('compact');
+    expect(view.container.querySelector('[data-testid="portrait-radar"]')).toBeNull();
+    expect(view.container.querySelector('[data-result-use-cases]')?.textContent).toContain(
+      'onboarding.useCases.office.title',
+    );
+    expect(view.container.querySelector('[data-result-goal]')?.textContent).toBe(
+      'Prepare manufacturing monthly reports',
+    );
+    expect(
+      view.container.querySelector('[data-assistant="office"] [data-recommendation-reason]')?.textContent,
+    ).toContain('onboarding.firstRun.result.reasons.office');
+    expect(view.container.querySelectorAll('[data-recommendation-reason]')).toHaveLength(3);
+    expect(view.container.querySelectorAll('[data-skill-task]')).toHaveLength(3);
+    expect(view.container.textContent).toContain('onboarding.firstRun.result.capabilityNotice');
+    click(view.container, 'onboarding.firstRun.result.viewPortrait');
+    expect(document.body.querySelector('[role="dialog"] [data-testid="portrait-radar"]')).not.toBeNull();
+    expect(request).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('opens on the work profile page with the slimmed form and eight named industry choices without charging', () => {
     // 反转（2026-10-06 V1 收口）：旧首屏是趣味画像页（画像→资料→匹配→结果）；
     // 新流程工作资料在前（资料→画像→结果），匹配页随 AI 匹配通道下线。

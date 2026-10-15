@@ -6,16 +6,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ⚠️ `vi.mock` 工厂会被提升到 import 之前 ⇒ 工厂里只能碰 `vi.hoisted` 的东西。
+// 结算出口自 F4（0305 修复）起走 drizzle 事务：先读锚点、关同会话旧便签、再落标记。
+// 替身按新形状长：`transaction(cb)` 同步执行；锚点默认"未成功 + 有 sessionKey"。
 const mocks = vi.hoisted(() => {
+  const anchorGet = vi.fn(() => ({ deliverySucceeded: false, sessionKey: 'session-1' }));
+  const select = vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ get: anchorGet })) })) }));
   const run = vi.fn();
   const where = vi.fn(() => ({ run }));
   const set = vi.fn(() => ({ where }));
   const update = vi.fn(() => ({ set }));
-  return { run, where, set, update, isDbReady: vi.fn(() => true) };
+  const transaction = vi.fn((cb: (tx: { select: typeof select; update: typeof update }) => unknown) =>
+    cb({ select, update }),
+  );
+  return { anchorGet, select, update, set, where, run, transaction, isDbReady: vi.fn(() => true) };
 });
 
 vi.mock('../src/main/db/index.js', () => ({
-  getDb: vi.fn(() => ({ update: mocks.update })),
+  getDb: vi.fn(() => ({ transaction: mocks.transaction })),
   isDbReady: mocks.isDbReady,
 }));
 
@@ -38,21 +45,38 @@ const succeeded = {
 
 describe('r7-1 交付结算出口', () => {
   beforeEach(() => {
+    mocks.anchorGet.mockReset();
+    mocks.anchorGet.mockReturnValue({ deliverySucceeded: false, sessionKey: 'session-1' });
     mocks.run.mockReset();
     mocks.where.mockClear();
     mocks.set.mockClear();
     mocks.update.mockClear();
+    mocks.transaction.mockClear();
     mocks.isDbReady.mockReturnValue(true);
   });
 
-  it('succeeded：写 messages.delivery_succeeded 后照常广播', () => {
+  it('succeeded：先关同会话旧便签边界、再写 messages.delivery_succeeded，然后照常广播', () => {
     const { win, send } = fakeWindow();
 
     sendArtifactDeliverySettled(win, succeeded);
 
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenCalledWith(messages);
+    // F4 结算顺序（03:05 修复）：首次可信成功 = 关闭"当时已存在"的失败便签边界……
+    expect(mocks.set).toHaveBeenCalledWith({ deliveryFailureClosed: true });
+    // ……再落最小成功标记本身。
     expect(mocks.set).toHaveBeenCalledWith({ deliverySucceeded: true });
-    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.run).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledWith('artifact:delivery-settled', succeeded);
+  });
+
+  it('重复成功回执（锚点已成功）：幂等早退，不再写任何行（旧成功不推进边界）', () => {
+    mocks.anchorGet.mockReturnValue({ deliverySucceeded: true, sessionKey: 'session-1' });
+    const { win, send } = fakeWindow();
+
+    sendArtifactDeliverySettled(win, succeeded);
+
+    expect(mocks.update).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledWith('artifact:delivery-settled', succeeded);
   });
 
@@ -64,6 +88,7 @@ describe('r7-1 交付结算出口', () => {
     }
 
     expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.transaction).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledTimes(3);
   });
 

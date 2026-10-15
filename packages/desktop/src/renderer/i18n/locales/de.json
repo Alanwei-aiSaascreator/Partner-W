@@ -544,7 +544,7 @@
     "unsupportedCapability": "Diese Funktion wird derzeit nicht unterstützt. Verwenden Sie stattdessen die im Arbeitsbereich verfügbaren Funktionen.",
     "unsupportedModel": "Dieses Modell wird derzeit nicht unterstützt. Bitte wählen Sie ein verfügbares Modell aus der Modellliste.",
     "visionFallbackSwitched": "Für dieses Bild wurde ein bilderkennendes Modell verwendet: {{model}}",
-    "visionUnavailable": "Bilderkennung ist vorübergehend nicht verfügbar: Ihre Nachricht wird trotzdem gesendet, das Bild kann jedoch nicht erkannt werden.",
+    "visionUnavailable": "Die Bildunterstützung dieses Modells konnte nicht bestätigt werden. Wählen Sie ein bildfähiges Modell oder entfernen Sie die Bilder. Analysieren Sie Bilder vor der PPT-Erstellung.",
     "waiting": {
       "awaitingAnswer": "Warte auf deine Antwort",
       "awaitingApproval": "Warte auf Genehmigung: {{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
       "confirm": "Enter the workbench",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "Inhalte erstellen",
+          "ecommerce": "E-Commerce-Betrieb",
+          "family": "Haushalt und Alltag",
+          "office": "Büroproduktivität",
+          "photography": "Filmen und schneiden",
+          "research": "Lernen und Recherche"
+        },
+        "capabilityNotice": "Der Hauptkompass koordiniert Recherche, Analyse, Erstellung, Produktion und Qualitätsprüfung mit diesen Arbeitsfähigkeiten. Die Werkzeugverfügbarkeit wird bei der Ausführung im Arbeitsbereich geprüft.",
+        "capabilityTitle": "Empfohlene Fähigkeiten",
+        "reasons": {
+          "content": "Inhalte erstellen und Texte ordnen",
+          "ecommerce": "E-Commerce, Wettbewerbs- und Geschäftsanalyse",
+          "family": "Haushalt, Alltag und tägliche Planung",
+          "office": "Büroproduktivität und Datenorganisation",
+          "photography": "Kurzvideoskripte, Filmen und Schneiden",
+          "research": "Lernen, Recherche und Quellenanalyse"
+        },
+        "viewPortrait": "Mein Porträt ansehen"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "Konfigurationsquelle: lokale Regeln",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "A quick fun profile",
         "profile": "Tell us about your work",
-        "result": "Your work configuration"
+        "result": "Deine Arbeitskonfiguration"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "Die Anfrage nutzt „{{field}}“, was diese Version nicht unterstützt (noch keine Referenzbilder oder Start-/Endframes). Bitten Sie, es zu entfernen."
   },
   "voiceInput": {
+    "answerTooLong": "Die Antwort überschreitet 6000 Zeichen. Bitten Sie vor dem Vorlesen um eine kürzere Antwort.",
     "introConfirm": "Verstanden",
-    "introDescription": "Halten Sie die Leertaste zum Diktieren und lassen Sie sie los, um zu beenden.",
+    "introDescription": "Klicken Sie auf das Mikrofon oder halten Sie Space zum Sprechen gedrückt, maximal 60 Sekunden.",
     "introSkip": "Nicht jetzt",
-    "introStepBeta": "Die Spracheingabe läuft lokal und befindet sich noch in der Beta-Phase.",
+    "introStepBeta": "Die Cloud-Transkription wird zum angezeigten Tarif berechnet.",
     "introStepHold": "Das Transkript wird in das Eingabefeld eingefuegt und nie automatisch gesendet.",
     "introStepInsert": "Kurzes Druecken der Leertaste fuegt weiterhin ein normales Leerzeichen ein.",
-    "introTitle": "Spracheingabe (Beta)",
+    "introTitle": "Spracheingabe",
     "listeningStatus": "Aufnahme… Leertaste loslassen zum Transkribieren",
+    "microphoneNotFound": "Kein Mikrofon gefunden. Schließen Sie eines an und versuchen Sie es erneut.",
+    "openMicrophoneSettings": "Mikrofoneinstellungen öffnen",
     "permissionDenied": "Mikrofonzugriff wurde verweigert",
+    "playbackFailed": "Vorlesen fehlgeschlagen. Bitte erneut versuchen.",
+    "playing": "Wiedergabe…",
+    "preparingSpeech": "Sprachausgabe wird vorbereitet…",
+    "readAnswer": "Letzte Antwort vorlesen",
+    "readAnswerFee": "Letzte Antwort vorlesen (ca. {{fee}} Punkte)",
     "recognitionFailed": "Spracherkennung fehlgeschlagen",
-    "tooltip": "Spracheingabe (Beta)",
+    "serviceFeeAsr": "Transkription: {{fee}} Punkte/Minute",
+    "serviceFeeTts": "Vorlesen: {{fee}} Punkte/100 Zeichen",
+    "stop": "Audio stoppen",
+    "tooltip": "Spracheingabe",
     "transcribing": "Transkribierung…",
     "unsupported": "Spracheingabe ist nicht verfügbar. Verwende stattdessen die Texteingabe.",
-    "unsupportedPlatform": "Spracheingabe wird unter Windows noch nicht unterstützt. Verwende stattdessen die Texteingabe.",
     "unsupportedTooltip": "Spracheingabe ist in dieser App nicht verfügbar."
   },
   "workspaceNotice": {

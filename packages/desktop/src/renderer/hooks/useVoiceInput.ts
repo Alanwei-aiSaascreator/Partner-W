@@ -30,6 +30,7 @@ interface UseVoiceInputOptions {
   pressHoldDelayMs?: number;
   isSupported?: boolean;
   onTextInserted?: () => void;
+  onRecordingStarted?: () => void;
 }
 
 interface UseVoiceInputResult {
@@ -45,6 +46,7 @@ interface UseVoiceInputResult {
   dismissIntro: () => void;
   startFromTrigger: () => Promise<void>;
   stopListening: () => void;
+  cancelInput: () => void;
 }
 
 export function useVoiceInput({
@@ -60,6 +62,7 @@ export function useVoiceInput({
   pressHoldDelayMs = 220,
   isSupported = true,
   onTextInserted,
+  onRecordingStarted,
 }: UseVoiceInputOptions): UseVoiceInputResult {
   const { isIntroOpen, hasSeenIntro, openIntro, confirmIntro, dismissIntro } = useVoiceIntro({
     loadIntroSeen,
@@ -75,9 +78,10 @@ export function useVoiceInput({
 
   const handleSessionStarted = useCallback(
     (requiresActivePress: boolean) => {
+      onRecordingStarted?.();
       markStartedFromCurrentPress(requiresActivePress);
     },
-    [markStartedFromCurrentPress],
+    [markStartedFromCurrentPress, onRecordingStarted],
   );
 
   const insertIntoTextarea = useCallback(
@@ -218,11 +222,9 @@ export function useVoiceInput({
   }, [isListening, isListeningActive, resetPress, stopListening]);
 
   useEffect(() => {
-    if (!hasActiveTask || mainView !== 'chat' || settingsOpen) {
-      clearHoldTimer();
-      stopListening();
-    }
-  }, [activeTaskKey, clearHoldTimer, hasActiveTask, mainView, settingsOpen, stopListening]);
+    clearHoldTimer();
+    cleanup();
+  }, [activeTaskKey, clearHoldTimer, cleanup, hasActiveTask, mainView, settingsOpen]);
 
   useEffect(() => {
     return () => {
@@ -244,5 +246,6 @@ export function useVoiceInput({
     dismissIntro,
     startFromTrigger,
     stopListening,
+    cancelInput: cleanup,
   };
 }

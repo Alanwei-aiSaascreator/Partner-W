@@ -41,6 +41,7 @@ export interface SessionSyncDeps {
         model?: string | null;
         /** 交付成功的最小持久化标记（r7-1）：老行/老调用方没有它 ⇒ `null`/`undefined`。 */
         deliverySucceeded?: boolean | null;
+        deliveryFailureClosed?: boolean | null;
       }[];
     }>;
     persistMessage: (msg: {
@@ -428,6 +429,7 @@ export function createSessionSync(deps: SessionSyncDeps) {
                   // ⭐ r7-1：交付成功的最小持久化标记随消息一起水合 —— 重开后失败去重周期的
                   //    边界靠它（+ 交付活动快照）重建，不再只活在 hook 内存里。老行 = undefined。
                   ...(r.deliverySucceeded === true ? { deliverySucceeded: true } : {}),
+                  ...(r.deliveryFailureClosed === true ? { deliveryFailureClosed: true } : {}),
                 };
               });
               messageStore.bulkLoad(t.id, msgs);

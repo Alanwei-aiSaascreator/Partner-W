@@ -366,6 +366,10 @@ function buildApi(): ClawWorkAPI {
     getMicrophonePermission: () => ipcRenderer.invoke('voice:get-microphone-permission'),
     requestMicrophonePermission: () => ipcRenderer.invoke('voice:request-microphone-permission'),
     checkWhisper: () => ipcRenderer.invoke('voice:check-whisper'),
+    voiceCapabilities: () => ipcRenderer.invoke('voice:capabilities'),
+    synthesizeSpeech: (text: string) => ipcRenderer.invoke('voice:speech', { text }),
+    cancelVoice: () => ipcRenderer.invoke('voice:cancel'),
+    openMicrophoneSettings: () => ipcRenderer.invoke('voice:open-microphone-settings'),
     transcribeAudio: (audio: ArrayBuffer) => ipcRenderer.invoke('voice:transcribe', { audio }),
 
     reconnectGateway: (gatewayId: string) => ipcRenderer.invoke('ws:reconnect-gateway', { gatewayId }),

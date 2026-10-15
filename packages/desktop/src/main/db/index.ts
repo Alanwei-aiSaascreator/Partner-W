@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS messages (
   image_attachments TEXT,
   tool_calls TEXT,
   model TEXT,
-  delivery_succeeded INTEGER
+  delivery_succeeded INTEGER,
+  delivery_failure_closed INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -166,6 +167,7 @@ function openAndMigrate(dbPath: string): void {
   // `succeeded` 时置位。老行留 NULL —— 语义是"没有可恢复的成功证据"，不 backfill
   // （见 `@clawwork/shared` 的 `Message.deliverySucceeded` 与 `useClaimGuardToast` 的恢复路径）。
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN delivery_succeeded INTEGER');
+  migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN delivery_failure_closed INTEGER');
 
   for (const col of ['session_key TEXT', 'agent_id TEXT', 'run_id TEXT']) {
     migrateAddColumn(sqlite, `ALTER TABLE messages ADD COLUMN ${col}`);

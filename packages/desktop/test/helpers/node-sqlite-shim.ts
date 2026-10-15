@@ -92,6 +92,39 @@ export class NodeSqliteShim {
     return new ShimStatement(this.inner.prepare(sql) as unknown as NodeSqliteStatement);
   }
 
+  /**
+   * `better-sqlite3` 的 `db.transaction(fn)`：返回带 `.deferred/.immediate/.exclusive`
+   * 三个变体的包装函数（F4 起 `delivery-settlement` 用 drizzle 事务 —— 少了这个，
+   * drizzle 的 `nativeTx[config.behavior ?? 'deferred']` 直接抛 "not a function"，
+   * 标记静默写不进去）。语义对齐：包装调用 = BEGIN（按变体）→ fn → COMMIT，
+   * fn 抛错则 ROLLBACK 后原样重抛；参数透传（better-sqlite3 同款）。
+   */
+  transaction(fn: (...args: unknown[]) => unknown): {
+    (...args: unknown[]): unknown;
+    deferred: (...args: unknown[]) => unknown;
+    immediate: (...args: unknown[]) => unknown;
+    exclusive: (...args: unknown[]) => unknown;
+  } {
+    const run = (mode: 'DEFERRED' | 'IMMEDIATE' | 'EXCLUSIVE') => {
+      return (...args: unknown[]): unknown => {
+        this.inner.exec(`BEGIN ${mode}`);
+        try {
+          const result = fn(...args);
+          this.inner.exec('COMMIT');
+          return result;
+        } catch (err) {
+          this.inner.exec('ROLLBACK');
+          throw err;
+        }
+      };
+    };
+    const wrapper = run('DEFERRED') as ReturnType<NodeSqliteShim['transaction']>;
+    wrapper.deferred = run('DEFERRED');
+    wrapper.immediate = run('IMMEDIATE');
+    wrapper.exclusive = run('EXCLUSIVE');
+    return wrapper;
+  }
+
   close(): void {
     this.inner.close();
   }

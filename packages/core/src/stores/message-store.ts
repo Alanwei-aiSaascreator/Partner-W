@@ -883,13 +883,16 @@ export function createMessageStore(deps: MessageStoreDeps) {
       set((s) => {
         const messages = s.messagesByTask[taskId];
         if (!messages?.length) return s;
-        let changed = false;
+        const anchor = messages.find((message) => message.id === messageId);
+        if (!anchor || anchor.deliverySucceeded === true) return s;
         const next = messages.map((message) => {
-          if (message.id !== messageId || message.deliverySucceeded === true) return message;
-          changed = true;
-          return { ...message, deliverySucceeded: true };
+          if (message.id === messageId) return { ...message, deliverySucceeded: true };
+          if (message.role === 'system' && message.sessionKey === anchor.sessionKey) {
+            return { ...message, deliveryFailureClosed: true };
+          }
+          return message;
         });
-        return changed ? { messagesByTask: { ...s.messagesByTask, [taskId]: next } } : s;
+        return { messagesByTask: { ...s.messagesByTask, [taskId]: next } };
       }),
 
     bindActiveRun: (sessionKey, runId) =>

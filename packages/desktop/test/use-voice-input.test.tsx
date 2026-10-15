@@ -48,7 +48,11 @@ function createFakeSessionFactory(): {
   };
 }
 
-function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
+function render(ui: ReactElement): {
+  container: HTMLDivElement;
+  unmount: () => void;
+  rerender: (ui: ReactElement) => void;
+} {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root: Root = createRoot(container);
@@ -59,6 +63,9 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
   return {
     container,
+    rerender: (next) => {
+      act(() => root.render(next));
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -70,6 +77,7 @@ function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => v
 
 interface HarnessProps {
   hasActiveTask?: boolean;
+  activeTaskKey?: string;
   mainView?: 'chat' | 'files' | 'archived';
   settingsOpen?: boolean;
   isSupported?: boolean;
@@ -82,6 +90,7 @@ interface HarnessProps {
 
 function Harness({
   hasActiveTask = true,
+  activeTaskKey = 'task-a',
   mainView = 'chat',
   settingsOpen = false,
   isSupported = true,
@@ -95,6 +104,7 @@ function Harness({
   const voice = useVoiceInput({
     textareaRef,
     hasActiveTask,
+    activeTaskKey,
     mainView,
     settingsOpen,
     loadIntroSeen,
@@ -134,6 +144,54 @@ async function flushAsync(): Promise<void> {
 }
 
 describe('useVoiceInput', () => {
+  it('destroys recording and discards late text on task switch', async () => {
+    const factory = createFakeSessionFactory();
+    const props = {
+      createSession: factory.createSession,
+      loadIntroSeen: async () => true,
+      requestPermission: async () => 'granted' as const,
+    };
+    const view = render(<Harness {...props} activeTaskKey="a" />);
+    await flushAsync();
+    await act(async () => {
+      view.container
+        .querySelector('[data-testid="start-trigger"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const old = factory.getLastSession();
+    view.rerender(<Harness {...props} activeTaskKey="b" />);
+    act(() => {
+      old?.emitFinal('old task transcript');
+    });
+    expect(old?.destroy).toHaveBeenCalledTimes(1);
+    expect(view.container.querySelector('textarea')?.value).toBe('');
+    view.unmount();
+  });
+  it('does not start a late permission request after leaving chat', async () => {
+    const factory = createFakeSessionFactory();
+    let resolve: ((permission: VoicePermissionStatus) => void) | undefined;
+    const props = {
+      createSession: factory.createSession,
+      loadIntroSeen: async () => true,
+      requestPermission: () =>
+        new Promise<VoicePermissionStatus>((r) => {
+          resolve = r;
+        }),
+    };
+    const view = render(<Harness {...props} />);
+    await flushAsync();
+    act(() => {
+      view.container
+        .querySelector('[data-testid="start-trigger"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    view.rerender(<Harness {...props} settingsOpen={true} />);
+    await act(async () => {
+      resolve?.('granted');
+    });
+    expect(factory.createSession).not.toHaveBeenCalled();
+    view.unmount();
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     document.body.innerHTML = '';

@@ -36,7 +36,7 @@ export type VideogenQueryResult =
 export type VideogenDownloadResult = { ok: true; buffer: Buffer } | { ok: false; failure: VideogenFailure };
 
 export interface VideogenRelayClient {
-  create(request: VideogenRequest): Promise<VideogenCreateResult>;
+  create(request: VideogenRequest, requestId?: string): Promise<VideogenCreateResult>;
   query(taskId: string): Promise<VideogenQueryResult>;
   download(taskId: string): Promise<VideogenDownloadResult>;
 }
@@ -63,14 +63,17 @@ export function createVideogenRelayClient(options: VideogenRelayClientOptions): 
   const authHeaders = { Authorization: `Bearer ${options.relayKey}` };
 
   return {
-    async create(request: VideogenRequest): Promise<VideogenCreateResult> {
-      const url = `${base}/v1/videos`;
+    async create(request: VideogenRequest, requestId?: string): Promise<VideogenCreateResult> {
+      const url = `${base}/v1/${request.model === 'seedance-2.5' ? 'seedance/videos' : 'videos'}`;
       let res: Response;
       try {
         res = await doFetch(url, {
           method: 'POST',
           headers: { ...authHeaders, 'content-type': 'application/json' },
           body: JSON.stringify({
+            ...(request.model === 'seedance-2.5'
+              ? { requestId, ...(request.firstFrameData ? { firstFrame: request.firstFrameData } : {}) }
+              : {}),
             prompt: request.prompt,
             duration: request.duration,
             resolution: request.resolution,

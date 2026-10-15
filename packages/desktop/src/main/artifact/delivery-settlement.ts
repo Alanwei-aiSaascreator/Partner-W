@@ -24,11 +24,28 @@ import { messages } from '../db/schema.js';
 export function markMessageDeliverySucceeded(taskId: string, messageId: string): boolean {
   if (!taskId || !messageId || !isDbReady()) return false;
   try {
-    getDb()
-      .update(messages)
-      .set({ deliverySucceeded: true })
-      .where(and(eq(messages.id, messageId), eq(messages.taskId, taskId)))
-      .run();
+    const db = getDb();
+    db.transaction((tx) => {
+      const anchor = tx
+        .select()
+        .from(messages)
+        .where(and(eq(messages.id, messageId), eq(messages.taskId, taskId)))
+        .get();
+      // First success owns the boundary. Old/duplicate success must never close newer notes.
+      if (!anchor || anchor.deliverySucceeded === true) return;
+      if (anchor.sessionKey) {
+        tx.update(messages)
+          .set({ deliveryFailureClosed: true })
+          .where(
+            and(eq(messages.taskId, taskId), eq(messages.sessionKey, anchor.sessionKey), eq(messages.role, 'system')),
+          )
+          .run();
+      }
+      tx.update(messages)
+        .set({ deliverySucceeded: true })
+        .where(and(eq(messages.id, messageId), eq(messages.taskId, taskId)))
+        .run();
+    });
     return true;
   } catch (error) {
     console.warn('[artifact] delivery success marker unavailable:', error);

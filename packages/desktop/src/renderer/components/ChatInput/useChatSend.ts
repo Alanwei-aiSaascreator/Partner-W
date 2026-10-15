@@ -49,7 +49,7 @@ import {
   detectEditIntent,
   resolveImageInputSupport,
 } from '../../lib/attachment-actions';
-import { planVisionRouting } from '../../lib/vision-routing';
+import { planVisionRouting, visionCatalogWithConfiguredInputs } from '../../lib/vision-routing';
 import { planDeckRouting } from '../../lib/deck-intent';
 import { markModePolicyNotified, shouldNotifyModePolicyChange } from '../../lib/mode-policy-notice';
 import { userMdContentFromReadResult } from '../../lib/identity-persona';
@@ -896,24 +896,11 @@ export function useChatSend(opts: UseChatSendOpts) {
           return;
         }
 
-        // ── Auto Capability Routing v1/v1.1：带图发送 × 当前模型不看图 ⇒ 先切到能看图的模型再发 ──
-        // 判据与候选选择全在纯函数里（`lib/vision-routing.ts` 的 `planVisionRouting`）；
-        // 这里只做接线：
-        //   · `switch`：切成功了才给一条轻量提示（无按钮、不打断）；切不动 ⇒ **不拦截**，
-        //     照发 —— 附件纪律（attachmentDirective）会让模型如实说看不到，而不是编内容；
-        //   · `unavailable`（目录里一个能看图的候选都没有）：照发，但**不许静默** ——
-        //     给一条诚实文案再发（v1.1；用户有权先知道这一轮图片识别不了）；
-        //   · 切过去后**不自动切回**（v1 取舍，见 vision-routing.ts 文件头）：会话停在该模型，
-        //     选择器可见，用户想换自己换。
-        //   · 会话/任务维度**没有任何记忆**：每次发送拿"这个任务此刻的模型"重新判 ——
-        //     新任务（待发态）的起点是默认模型，不继承上一段会话切过去的那个。
-        //
-        // ⚠️ 任务模式（快速/智能/深度）下**不做这条路由**：模式已经把"跑哪个模型"定死了，
-        //    自动切走会当场违背用户刚选的档（而模式模型的选型本来就把看图考虑进去了）。
-        //    这条路由继续为 `custom`（高级：指定模型）与旧会话护航 —— 见任务书的口径。
+        // 先计算模式与PPT路由，再对最终执行模型做视觉门禁。
         const sendMode = resolveEffectiveTaskMode(task);
         let effectiveModel = currentModel;
         let effectiveThinking: string = currentThinking;
+        let preservesDeckModel = false;
         /**
          * 存量模式任务的一次性"已切换"提示内容（BUG-067 复验整改）：
          * 发送前只**存下**目标 `{modelId, modelName}`；是否真的"已采用"在 composer
@@ -953,7 +940,10 @@ export function useChatSend(opts: UseChatSendOpts) {
           });
           if (deckPlan.markTask) updateTaskMetadata(task.id, { deckRouted: true });
           // 目录里没有 DeepSeek（没拉到 / 下架）⇒ `route: false`：**保持现状、不拦截**。
-          if (deckPlan.route && deckPlan.modelId) effectiveModel = deckPlan.modelId;
+          if (deckPlan.route && deckPlan.modelId) {
+            effectiveModel = deckPlan.modelId;
+            preservesDeckModel = true;
+          }
 
           // 存量模式任务首次采用新策略 ⇒ 一次性模型/价格提示（判据与标记见 lib/mode-policy-notice.ts）。
           // 判据用 deck 路由后的**最终**模型：老 PPT 粘性任务换的是渠道（新平台 ID），
@@ -967,31 +957,64 @@ export function useChatSend(opts: UseChatSendOpts) {
             };
           }
         }
-        const hasImageAttachment = attachedFilesForIntent.some(
-          (file) => classifyAttachmentFile(file.fileName, file.mimeType) === 'image',
-        );
-        if (sendMode === 'custom') {
-          const visionPlan = planVisionRouting({
-            hasImageAttachment,
-            imageInputSupport,
-            currentModelId: currentModel,
-            catalog: modelCatalog,
-          });
-          if (visionPlan.kind === 'switch') {
-            const visionFallback = visionPlan.model;
-            if (await patchSessionModel(task, visionFallback.id)) {
-              effectiveModel = visionFallback.id;
-              // 任务级元数据与真实会话对齐 —— 否则选择器还显示旧模型（界面在说谎）。
-              updateTaskMetadata(task.id, {
-                model: visionFallback.id,
-                modelProvider: visionFallback.provider,
-              });
-              toast.info(t('chatInput.visionFallbackSwitched', { model: visionFallback.name ?? visionFallback.id }));
+        const hasImageAttachment =
+          attachedFilesForIntent.some((file) => classifyAttachmentFile(file.fileName, file.mimeType) === 'image') ||
+          // ⚠️ MM-A 加固（2026-10-15 独立核验缺口）：@ 提及的**产物**（二进制读取）
+          // 走 `extraAttachments`，此前不在 attachedFilesForIntent 里 ⇒ 图片产物
+          // **绕过视觉门禁** —— 文本模型收下后被 runtime 静默丢图（用户还以为发上去了）。
+          // 图片判定必须覆盖这一路（它们随后经 `allAttachments` 真的进入这轮请求）。
+          extraAttachments.some((att) => classifyAttachmentFile(att.fileName, att.mimeType) === 'image');
+        let visionCatalog: readonly ModelCatalogEntry[] = modelCatalog;
+        if (hasImageAttachment) {
+          // models.list可能来自动态目录，最终override仍以静态config为准；每次带图都回读。
+          try {
+            const snapshot = await window.clawwork.getConfig(task.gatewayId);
+            const configuredCatalog = snapshot.ok
+              ? visionCatalogWithConfiguredInputs(modelCatalog, snapshot.result)
+              : null;
+            if (!configuredCatalog) {
+              toast.error(t('chatInput.visionUnavailable'));
+              return;
             }
-          } else if (visionPlan.kind === 'unavailable') {
-            // 照发（不拦截），但先如实说一句 —— 这条文案是这轮唯一的知情渠道。
-            toast.info(t('chatInput.visionUnavailable'));
+            visionCatalog = configuredCatalog;
+          } catch {
+            toast.error(t('chatInput.visionUnavailable'));
+            return;
           }
+        }
+        const routedModel = effectiveModel;
+        const finalModelEntry = routedModel
+          ? visionCatalog.find((entry) => modelIdMatches(entry.id, routedModel))
+          : undefined;
+        const visionPlan = planVisionRouting({
+          hasImageAttachment,
+          imageInputSupport: resolveImageInputSupport(finalModelEntry),
+          currentModelId: finalModelEntry?.id ?? effectiveModel,
+          catalog: visionCatalog,
+          allowFallback: sendMode !== 'custom' && !preservesDeckModel,
+        });
+        if (visionPlan.kind === 'unavailable') {
+          // 保留草稿与附件；不给不能识图的模型发送这轮请求。
+          toast.error(t('chatInput.visionUnavailable'));
+          return;
+        }
+        if (visionPlan.kind === 'switch') {
+          const visionFallback = visionPlan.model;
+          let switched = false;
+          try {
+            switched = await patchSessionModel(task, visionFallback.id);
+          } catch {
+            // 图片请求不可继续，原始传输错误不进入用户消息。
+          }
+          if (!switched) {
+            toast.error(t('chatInput.visionUnavailable'));
+            return;
+          }
+          effectiveModel = visionFallback.id;
+          effectiveThinking = thinkingDefaultFor(visionFallback);
+          modePolicyNotice = undefined;
+          updateTaskMetadata(task.id, { model: visionFallback.id, modelProvider: visionFallback.provider });
+          toast.info(t('chatInput.visionFallbackSwitched', { model: visionFallback.name ?? visionFallback.id }));
         }
 
         const result = await composer

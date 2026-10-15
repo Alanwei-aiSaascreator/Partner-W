@@ -58,6 +58,23 @@ describe('PortraitCard', () => {
     translationMode.real = false;
   });
 
+  it('keeps result portraits compact without a radar or implicit column span, while full stays the default', () => {
+    const view = render(
+      <PortraitCard axes={allYes.axes} letters="ENFJ" role="zhenshan" gender="female" variant="compact" />,
+    );
+    const card = view.container.querySelector('[data-testid="portrait-card"]')!;
+    expect(card.getAttribute('data-variant')).toBe('compact');
+    expect(card.querySelector('[data-testid="portrait-radar"]')).toBeNull();
+    expect(card.querySelector('[data-mbti-artwork]')?.className).toContain('h-40');
+    expect(card.querySelector('[class*="col-span"]')).toBeNull();
+    act(() => card.querySelector('[data-mbti-artwork]')!.dispatchEvent(new Event('error')));
+    expect(card.querySelector('[data-portrait-artwork]')).not.toBeNull();
+    view.rerender(<PortraitCard axes={allYes.axes} letters="ESTJ" role="zhenshan" />);
+    expect(view.container.querySelector('[data-testid="portrait-card"]')?.getAttribute('data-variant')).toBe('full');
+    expect(view.container.querySelector('[data-testid="portrait-radar"]')).not.toBeNull();
+    view.unmount();
+  });
+
   it('renders the role artwork when it is available and the placeholder when it is not', () => {
     const withArtwork = render(<PortraitCard axes={allYes.axes} letters={allYes.letters} role="zhenshan" />);
     expect(withArtwork.container.querySelector('[data-portrait-artwork]')).not.toBeNull();

@@ -9,6 +9,7 @@ export interface CreateVoiceSessionHandlers {
   onFinalResult: (text: string) => void;
   onError: (code: VoiceErrorCode) => void;
   onEnd: () => void;
+  onTranscribing?: () => void;
 }
 
 export type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';

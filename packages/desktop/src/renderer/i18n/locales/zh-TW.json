@@ -544,7 +544,7 @@
     "unsupportedCapability": "目前暫不支援該能力，可以改用工作台中已有的能力完成。",
     "unsupportedModel": "目前暫不支援該模型，請從工作台的模型清單中選擇可用模型。",
     "visionFallbackSwitched": "已為該圖片使用支援看圖的模型：{{model}}",
-    "visionUnavailable": "圖片辨識暫時無法使用：本次訊息會照常送出，但圖片可能無法被辨識。",
+    "visionUnavailable": "目前無法確認此模型支援本次圖片。請切換至支援識圖的模型，或移除圖片後傳送；含圖 PPT 請先完成識圖。",
     "waiting": {
       "awaitingAnswer": "等待你的回答",
       "awaitingApproval": "等待批准：{{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "生成團隊在你的電腦本地完成，不會呼叫模型。",
       "confirm": "進入工作台",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "內容創作",
+          "ecommerce": "電商營運",
+          "family": "生活家庭",
+          "office": "辦公提效",
+          "photography": "拍攝剪輯",
+          "research": "學習研究"
+        },
+        "capabilityNotice": "主羅盤統籌調研、分析、創作、製作和質檢五崗位，使用以下工作能力。執行時的工具可用狀態以工作臺實際檢查為準。",
+        "capabilityTitle": "推薦能力",
+        "reasons": {
+          "content": "內容創作與文案整理",
+          "ecommerce": "電商營運、競品與經營分析",
+          "family": "生活家庭與日常規劃",
+          "office": "辦公提效與資料整理",
+          "photography": "短影片腳本與拍攝剪輯",
+          "research": "學習研究與資料分析"
+        },
+        "viewPortrait": "查看我的畫像"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "設定來源：本機規則",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "A quick fun profile",
         "profile": "Tell us about your work",
-        "result": "Your work configuration"
+        "result": "你的工作設定"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "影片請求裡帶了目前版本不支援的欄位「{{field}}」（暫不支援參考圖／首尾幀）。請助手去掉它再試一次。"
   },
   "voiceInput": {
+    "answerTooLong": "回答超過6000字元，請先讓助手精簡後再朗讀。",
     "introConfirm": "了解",
-    "introDescription": "按住空白鍵開始聽寫，放開後結束。",
+    "introDescription": "點擊麥克風或按住 Space 說話，最長60秒",
     "introSkip": "暫時不用",
-    "introStepBeta": "語音輸入會在本機處理，目前仍為 Beta 功能。",
+    "introStepBeta": "語音經雲端辨識，按顯示單價收費",
     "introStepHold": "轉錄文字會插入輸入框，不會自動傳送。",
     "introStepInsert": "短按空白鍵仍會輸入普通空格。",
-    "introTitle": "語音輸入（Beta）",
+    "introTitle": "語音輸入",
     "listeningStatus": "錄音中…放開空白鍵以轉錄",
+    "microphoneNotFound": "找不到麥克風，請連接裝置後重試",
+    "openMicrophoneSettings": "開啟麥克風設定",
     "permissionDenied": "麥克風存取被拒絕",
+    "playbackFailed": "回答朗讀失敗，請重試",
+    "playing": "正在播放…",
+    "preparingSpeech": "正在準備播報…",
+    "readAnswer": "朗讀最新回答",
+    "readAnswerFee": "朗讀最新回答（預計 {{fee}} 積分）",
     "recognitionFailed": "語音辨識失敗",
-    "tooltip": "語音輸入（Beta）",
+    "serviceFeeAsr": "語音辨識 {{fee}} 積分/分鐘",
+    "serviceFeeTts": "朗讀 {{fee}} 積分/100字元",
+    "stop": "停止語音",
+    "tooltip": "語音輸入",
     "transcribing": "轉錄中…",
     "unsupported": "語音輸入暫時無法使用，請繼續使用文字輸入。",
-    "unsupportedPlatform": "此版本暫不支援 Windows 語音輸入，請繼續使用文字輸入。",
     "unsupportedTooltip": "此應用程式暫時無法使用語音輸入。"
   },
   "workspaceNotice": {

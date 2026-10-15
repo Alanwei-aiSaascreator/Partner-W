@@ -1,195 +1,141 @@
-import { ipcMain, session, systemPreferences } from 'electron';
-import { execFile } from 'child_process';
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
-import { join } from 'path';
-import { tmpdir, homedir } from 'os';
-import { randomUUID } from 'crypto';
+import { ipcMain, session, shell, systemPreferences, type IpcMainInvokeEvent } from 'electron';
+import { join } from 'node:path';
 import { allowsAudioMedia } from '../voice/media-permission';
+import { createVoiceRelayClient } from '../voice/relay-client';
+import { activeRelayBaseUrl } from '../commercial/relay-config';
+import { getActiveRelayKey } from '../commercial/relay-key';
+import { getLicenseGeneration } from '../commercial/license-generation';
+import { isAllowedAppNavigation } from '../security/navigation-guard';
 
 type VoicePermissionStatus = 'granted' | 'not-determined' | 'denied' | 'unsupported';
-
-interface WhisperCheckResult {
-  available: boolean;
-  binaryPath: string | null;
-  modelPath: string | null;
-  unsupportedPlatform?: boolean;
-  error?: string;
+const requests = new Map<number, Set<AbortController>>();
+export function isTrustedVoiceSender(event: IpcMainInvokeEvent): boolean {
+  return Boolean(
+    event.senderFrame &&
+    event.senderFrame === event.sender.mainFrame &&
+    isAllowedAppNavigation(event.senderFrame.url, {
+      devOrigin: process.env['ELECTRON_RENDERER_URL'] ?? null,
+      appRendererDir: join(import.meta.dirname, '../renderer'),
+    }),
+  );
 }
-
-interface WhisperTranscribeResult {
-  ok: boolean;
-  transcript?: string;
-  error?: string;
+function cancelRequests(senderId: number): void {
+  for (const controller of requests.get(senderId) ?? []) controller.abort();
+  requests.get(senderId)?.clear();
 }
-
-const WHISPER_BINARY_CANDIDATES = [
-  '/opt/homebrew/bin/whisper-cli',
-  '/usr/local/bin/whisper-cli',
-  '/opt/homebrew/bin/whisper-cpp',
-  '/usr/local/bin/whisper-cpp',
-];
-
-const WHISPER_MODEL_DIRS = [
-  join(homedir(), 'models', 'whisper'),
-  '/opt/homebrew/share/whisper-cpp/models',
-  join(homedir(), '.local', 'share', 'whisper-cpp', 'models'),
-];
-
-const WHISPER_MODEL_NAMES = [
-  'ggml-large-v3-turbo.bin',
-  'ggml-large-v3.bin',
-  'ggml-large.bin',
-  'ggml-medium.bin',
-  'ggml-base.bin',
-  'ggml-small.bin',
-  'ggml-tiny.bin',
-];
-
-let cachedBinary: string | null | undefined;
-let cachedModel: string | null | undefined;
-
-function findWhisperBinary(): string | null {
-  if (cachedBinary !== undefined) return cachedBinary;
-  for (const candidate of WHISPER_BINARY_CANDIDATES) {
-    if (existsSync(candidate)) {
-      cachedBinary = candidate;
-      return candidate;
-    }
-  }
-  cachedBinary = null;
-  return null;
+function safeError(error: unknown): string {
+  return error instanceof Error && /^voice-[a-z-]+$/.test(error.message) ? error.message : 'voice-upstream-error';
 }
-
-function findWhisperModel(): string | null {
-  if (cachedModel !== undefined) return cachedModel;
-  for (const dir of WHISPER_MODEL_DIRS) {
-    for (const name of WHISPER_MODEL_NAMES) {
-      const fullPath = join(dir, name);
-      if (existsSync(fullPath)) {
-        cachedModel = fullPath;
-        return fullPath;
-      }
-    }
-  }
-  cachedModel = null;
-  return null;
-}
-
-function whisperTranscribe(binaryPath: string, modelPath: string, audioPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      binaryPath,
-      ['-m', modelPath, '-f', audioPath, '--no-timestamps', '-l', 'auto'],
-      { timeout: 60_000 },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(stderr || error.message));
-          return;
-        }
-        const transcript = stdout
-          .split('\n')
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0)
-          .join(' ')
-          .trim();
-        resolve(transcript);
-      },
-    );
-  });
-}
-
 export function registerVoiceHandlers(): void {
-  ipcMain.handle('voice:get-microphone-permission', () => {
-    return { status: getMicrophonePermissionStatus() };
+  const client = createVoiceRelayClient({
+    baseUrl: activeRelayBaseUrl,
+    relayKey: getActiveRelayKey,
+    generation: getLicenseGeneration,
+    fetch: (...args) => fetch(...args),
   });
-
-  ipcMain.handle('voice:request-microphone-permission', async () => {
-    return { status: await requestMicrophonePermission() };
-  });
-
-  ipcMain.handle('voice:check-whisper', (): WhisperCheckResult => {
-    if (process.platform === 'win32') {
-      // ⚠️ 产品层口径（BUG-044，2026-10-08 拍板）：whisper 不支持的平台**整块隐藏**
-      //    麦克风按钮（`ChatInput/index.tsx` 按 `whisperAvailable` 条件渲染）——
-      //    这条 `available: false` 就是那个判断的输入，**不是**"禁用但可见"。
-      //    链路保留：装了 whisper 的 macOS 走下面同一套探测，行为不变。
-      return {
-        available: false,
-        binaryPath: null,
-        modelPath: null,
-        unsupportedPlatform: true,
-        error: 'voice input is not supported on Windows yet',
-      };
+  async function run<T>(
+    event: IpcMainInvokeEvent,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<{ ok: true; result: T } | { ok: false; error: string }> {
+    if (!isTrustedVoiceSender(event)) return { ok: false, error: 'voice-untrusted-sender' };
+    const controller = new AbortController();
+    const senderId = event.sender.id;
+    let active = requests.get(senderId);
+    if (!active) {
+      active = new Set();
+      requests.set(senderId, active);
+      event.sender.once('destroyed', () => {
+        cancelRequests(senderId);
+        requests.delete(senderId);
+      });
     }
-    const binaryPath = findWhisperBinary();
-    if (!binaryPath) {
-      return { available: false, binaryPath: null, modelPath: null, error: 'whisper-cpp not found' };
-    }
-    const modelPath = findWhisperModel();
-    if (!modelPath) {
-      return { available: false, binaryPath, modelPath: null, error: 'no whisper model found' };
-    }
-    return { available: true, binaryPath, modelPath };
-  });
-
-  ipcMain.handle('voice:transcribe', async (_event, args: { audio: ArrayBuffer }): Promise<WhisperTranscribeResult> => {
-    const binaryPath = findWhisperBinary();
-    const modelPath = findWhisperModel();
-    if (!binaryPath || !modelPath) {
-      return { ok: false, error: 'whisper-cpp or model not found' };
-    }
-
-    const tempPath = join(tmpdir(), `clawwork-voice-${randomUUID()}.wav`);
+    active.add(controller);
     try {
-      writeFileSync(tempPath, Buffer.from(args.audio));
-      const transcript = await whisperTranscribe(binaryPath, modelPath, tempPath);
-      return { ok: true, transcript };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      const result = await operation(controller.signal);
+      if (controller.signal.aborted) return { ok: false, error: 'voice-cancelled' };
+      return { ok: true, result };
+    } catch (error) {
+      return { ok: false, error: safeError(error) };
     } finally {
-      try {
-        unlinkSync(tempPath);
-      } catch {}
+      active.delete(controller);
+    }
+  }
+  ipcMain.handle('voice:get-microphone-permission', (event) => ({
+    status: isTrustedVoiceSender(event) ? getMicrophonePermissionStatus() : 'denied',
+  }));
+  ipcMain.handle('voice:request-microphone-permission', async (event) => ({
+    status: isTrustedVoiceSender(event) ? await requestMicrophonePermission() : 'denied',
+  }));
+  ipcMain.handle('voice:capabilities', (event) => run(event, (signal) => client.capabilities(signal)));
+  ipcMain.handle('voice:check-whisper', async (event) => {
+    const result = await run(event, (signal) => client.capabilities(signal));
+    return {
+      available: result.ok && result.result.asr,
+      binaryPath: null,
+      modelPath: null,
+      ...(!result.ok ? { error: result.error } : {}),
+    };
+  });
+  ipcMain.handle('voice:transcribe', async (event, args: unknown) => {
+    const audio = typeof args === 'object' && args !== null && 'audio' in args ? args.audio : null;
+    if (!(audio instanceof ArrayBuffer) || audio.byteLength > 44 + 16000 * 2 * 60)
+      return { ok: false, error: 'voice-invalid-audio' };
+    const result = await run(event, (signal) => client.transcribe(Buffer.from(audio), signal));
+    return result.ok ? { ok: true, transcript: result.result } : result;
+  });
+  ipcMain.handle('voice:speech', async (event, args: unknown) => {
+    const text = typeof args === 'object' && args !== null && 'text' in args ? args.text : null;
+    if (typeof text !== 'string' || Array.from(text).length > 600) return { ok: false, error: 'voice-text-too-long' };
+    return run(event, (signal) => client.speech(text, signal));
+  });
+  ipcMain.handle('voice:cancel', (event) => {
+    if (!isTrustedVoiceSender(event)) return { ok: false };
+    cancelRequests(event.sender.id);
+    return { ok: true };
+  });
+  ipcMain.handle('voice:open-microphone-settings', async (event) => {
+    if (!isTrustedVoiceSender(event)) return { ok: false };
+    const url =
+      process.platform === 'win32'
+        ? 'ms-settings:privacy-microphone'
+        : process.platform === 'darwin'
+          ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+          : null;
+    if (!url) return { ok: false };
+    try {
+      await shell.openExternal(url);
+      return { ok: true };
+    } catch {
+      return { ok: false };
     }
   });
 }
-
 export function configureVoicePermissionHandlers(): void {
   const defaultSession = session.defaultSession;
   if (!defaultSession) return;
-
-  defaultSession.setPermissionCheckHandler((_webContents, permission, _requestingOrigin, details) => {
-    if (permission !== 'media') return false;
-    return allowsAudioMedia(details);
-  });
-
-  defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-    if (permission !== 'media') {
-      callback(false);
-      return;
-    }
-    callback(allowsAudioMedia(details));
-  });
+  defaultSession.setPermissionCheckHandler(
+    (_webContents, permission, _requestingOrigin, details) => permission === 'media' && allowsAudioMedia(details),
+  );
+  defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) =>
+    callback(permission === 'media' && allowsAudioMedia(details)),
+  );
 }
-
 function getMicrophonePermissionStatus(): VoicePermissionStatus {
-  if (process.platform === 'darwin' || process.platform === 'win32') {
+  if (process.platform === 'darwin' || process.platform === 'win32')
     return normalizeMediaAccessStatus(systemPreferences.getMediaAccessStatus('microphone'));
-  }
   return 'granted';
 }
-
 async function requestMicrophonePermission(): Promise<VoicePermissionStatus> {
   if (process.platform === 'darwin') {
     const current = systemPreferences.getMediaAccessStatus('microphone');
     if (current === 'granted') return 'granted';
     if (current === 'denied' || current === 'restricted') return 'denied';
-    const granted = await systemPreferences.askForMediaAccess('microphone');
-    return granted ? 'granted' : 'denied';
+    return (await systemPreferences.askForMediaAccess('microphone')) ? 'granted' : 'denied';
   }
-  return getMicrophonePermissionStatus();
+  // On Windows Chromium's getUserMedia makes the device request. Do not reject an undetermined OS status early.
+  const status = getMicrophonePermissionStatus();
+  return status === 'not-determined' ? 'granted' : status;
 }
-
 function normalizeMediaAccessStatus(status: string): VoicePermissionStatus {
   if (status === 'granted') return 'granted';
   if (status === 'not-determined') return 'not-determined';

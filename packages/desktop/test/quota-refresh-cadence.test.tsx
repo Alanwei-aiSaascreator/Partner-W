@@ -239,6 +239,29 @@ describe('消费进行中的有界主动刷新（BUG-082）', () => {
     expect(calls).toEqual(['quota', 'quota']);
   });
 
+  it('hidden busy→idle reports usage once but waits until foreground to read quota', async () => {
+    act(() => root.render(<Probe />));
+    setBusy(true);
+    setDocumentVisibility('hidden');
+    setBusy(false);
+    await flush(QUOTA_SETTLE_MS + QUOTA_FOLLOW_UP_MS * 5);
+    expect(calls).toEqual(['report']);
+    setDocumentVisibility('visible');
+    await flush(50);
+    expect(calls).toEqual(['report', 'quota']);
+  });
+
+  it('a scheduled follow-up does not read after the window becomes hidden', async () => {
+    act(() => root.render(<Probe />));
+    setBusy(true);
+    setBusy(false);
+    await flush(QUOTA_SETTLE_MS + 50);
+    expect(calls).toEqual(['report', 'quota']);
+    setDocumentVisibility('hidden');
+    await flush(QUOTA_FOLLOW_UP_MS + 50);
+    expect(calls).toEqual(['report', 'quota']);
+  });
+
   it('⭐ 登出/切号（快照被清）后旧调度全停，不再产生请求', async () => {
     act(() => root.render(<Probe />));
     setBusy(true);

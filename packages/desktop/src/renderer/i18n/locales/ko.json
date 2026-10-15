@@ -544,7 +544,7 @@
     "unsupportedCapability": "현재 이 기능은 지원되지 않습니다. 작업 공간에서 사용할 수 있는 기능을 대신 이용해 주세요.",
     "unsupportedModel": "현재 이 모델은 지원되지 않습니다. 모델 목록에서 사용 가능한 모델을 선택해 주세요.",
     "visionFallbackSwitched": "이 이미지에는 이미지 인식이 가능한 모델을 사용했습니다: {{model}}",
-    "visionUnavailable": "이미지 인식을 일시적으로 사용할 수 없습니다: 메시지는 그대로 전송되지만 이미지가 인식되지 않을 수 있습니다.",
+    "visionUnavailable": "이 모델의 이미지 지원을 확인할 수 없습니다. 이미지 지원 모델을 선택하거나 이미지를 제거한 후 전송하세요. 이미지가 포함된 PPT는 먼저 이미지를 분석하세요.",
     "waiting": {
       "awaitingAnswer": "답변을 기다리는 중",
       "awaitingApproval": "승인 대기 중: {{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
       "confirm": "Enter the workbench",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "콘텐츠 제작",
+          "ecommerce": "전자상거래 운영",
+          "family": "가정 및 일상생활",
+          "office": "사무 생산성",
+          "photography": "촬영 및 편집",
+          "research": "학습 및 조사"
+        },
+        "capabilityNotice": "주 나침반이 조사, 분석, 창작, 제작, 품질 검토의 다섯 역할을 조율하며 이 업무 기능을 사용합니다. 도구 사용 가능 여부는 실행 시 작업 공간에서 확인합니다.",
+        "capabilityTitle": "추천 기능",
+        "reasons": {
+          "content": "콘텐츠 제작 및 문안 정리",
+          "ecommerce": "전자상거래 운영, 경쟁 및 사업 분석",
+          "family": "가정, 일상생활 및 일일 계획",
+          "office": "사무 생산성 및 데이터 정리",
+          "photography": "짧은 영상 대본, 촬영 및 편집",
+          "research": "학습, 조사 및 자료 분석"
+        },
+        "viewPortrait": "내 초상 보기"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "설정 출처: 로컬 규칙",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "A quick fun profile",
         "profile": "Tell us about your work",
-        "result": "Your work configuration"
+        "result": "업무 설정"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "현재 버전에서는 「{{field}}」 필드를 지원하지 않습니다(참조 이미지·첫/끝 프레임 미지원). 삭제하도록 요청하세요."
   },
   "voiceInput": {
+    "answerTooLong": "답변이 6000자를 초과합니다. 짧게 요약한 뒤 읽어 주세요.",
     "introConfirm": "확인",
-    "introDescription": "Space를 길게 눌러 말한 후 놓으면 완료됩니다.",
+    "introDescription": "마이크를 클릭하거나 Space 키를 누른 채 말하세요. 최대 60초입니다.",
     "introSkip": "나중에",
-    "introStepBeta": "음성 입력은 로컬에서 처리되며 아직 베타 기능입니다.",
+    "introStepBeta": "음성은 클라우드에서 인식되며 표시된 요금으로 청구됩니다.",
     "introStepHold": "변환된 텍스트는 입력란에 삽입되며 자동으로 전송되지 않습니다.",
     "introStepInsert": "Space를 짧게 누르면 일반 공백이 입력됩니다.",
-    "introTitle": "음성 입력 (베타)",
+    "introTitle": "음성 입력",
     "listeningStatus": "녹음 중... Space를 놓으면 변환됩니다",
+    "microphoneNotFound": "마이크를 찾을 수 없습니다. 연결한 후 다시 시도하세요.",
+    "openMicrophoneSettings": "마이크 설정 열기",
     "permissionDenied": "마이크 접근이 거부되었습니다",
+    "playbackFailed": "답변 읽기에 실패했습니다. 다시 시도하세요.",
+    "playing": "재생 중…",
+    "preparingSpeech": "음성 준비 중…",
+    "readAnswer": "최근 답변 읽기",
+    "readAnswerFee": "최근 답변 읽기 (약 {{fee}} 포인트)",
     "recognitionFailed": "음성 인식에 실패했습니다",
-    "tooltip": "음성 입력 (베타)",
+    "serviceFeeAsr": "음성 인식: {{fee}} 포인트/분",
+    "serviceFeeTts": "읽기: {{fee}} 포인트/100자",
+    "stop": "음성 중지",
+    "tooltip": "음성 입력",
     "transcribing": "변환 중...",
     "unsupported": "음성 입력을 사용할 수 없습니다. 텍스트 입력을 사용해 주세요.",
-    "unsupportedPlatform": "Windows에서는 아직 음성 입력을 지원하지 않습니다. 텍스트 입력을 사용해 주세요.",
     "unsupportedTooltip": "이 앱에서는 음성 입력을 사용할 수 없습니다."
   },
   "workspaceNotice": {

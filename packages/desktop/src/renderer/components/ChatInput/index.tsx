@@ -8,6 +8,7 @@ import {
   ListTodo,
   Loader2,
   Mic,
+  Volume2,
   Plus,
   Send,
   Square,
@@ -43,6 +44,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { useVoicePlayback } from '@/hooks/useVoicePlayback';
+import { speechBillingUnits } from '@/lib/voice/speech-playback';
 import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
@@ -331,29 +334,22 @@ export default function ChatInput({
     setDraftConflict(null);
   });
 
-  const [whisperAvailable, setWhisperAvailable] = useState(false);
-  const [whisperPlatformUnsupported, setWhisperPlatformUnsupported] = useState(false);
-  const loadSettings = useSettingsStore((s) => s.load);
-  const updateSettings = useSettingsStore((s) => s.updateSettings);
-  useEffect(() => {
-    if (typeof window.clawwork.checkWhisper !== 'function') {
-      setWhisperAvailable(false);
-      setWhisperPlatformUnsupported(false);
-      return;
-    }
-    window.clawwork
-      .checkWhisper()
-      .then((r) => {
-        setWhisperAvailable(r.available);
-        setWhisperPlatformUnsupported(r.unsupportedPlatform === true);
-      })
-      .catch((err: unknown) => {
-        console.error('[ChatInput] checkWhisper failed:', err);
-        setWhisperAvailable(false);
-        setWhisperPlatformUnsupported(false);
-      });
-  }, []);
-
+  const [voiceCapabilityReply, setVoiceCapabilityReply] = useState<{
+    owner: string;
+    value: NonNullable<Awaited<ReturnType<typeof window.clawwork.voiceCapabilities>>['result']>;
+  } | null>(null);
+  const voiceAccountKey = useCommercialStore((state) => state.overview?.account.userId ?? '');
+  const voiceCapabilities = voiceCapabilityReply?.owner === voiceAccountKey ? voiceCapabilityReply.value : null;
+  const voiceScopeKey = `${voiceAccountKey}:${activeTaskId ?? ''}:${mainView}:${settingsOpen}`;
+  const {
+    phase: speechPhase,
+    error: speechError,
+    start: startSpeech,
+    stop: stopSpeech,
+  } = useVoicePlayback(voiceScopeKey);
+  const whisperAvailable = voiceCapabilities?.asr === true;
+  const loadSettings = useSettingsStore((state) => state.load);
+  const updateSettings = useSettingsStore((state) => state.updateSettings);
   const loadVoiceIntroSeen = useCallback(async () => {
     const settings = useSettingsStore.getState().settings ?? (await loadSettings());
     return Boolean(settings?.voiceInput?.introSeen);
@@ -414,10 +410,35 @@ export default function ChatInput({
     markImportedFileMissing: materials.markImportedFileMissing,
     selectedAgents,
     setSelectedAgents,
-    stopVoiceInput: () => stopVoiceInput(),
+    stopVoiceInput: () => {
+      cancelVoiceInput();
+      stopSpeech();
+    },
     onComposerCleared: () => setCanSend(false),
   });
 
+  useEffect(() => {
+    let current = true;
+    setVoiceCapabilityReply(null);
+    if (isOffline || typeof window.clawwork.voiceCapabilities !== 'function') return;
+    const refresh = (): void => {
+      void window.clawwork
+        .voiceCapabilities()
+        .then((reply) => {
+          if (current)
+            setVoiceCapabilityReply(reply.ok && reply.result ? { owner: voiceAccountKey, value: reply.result } : null);
+        })
+        .catch(() => {
+          if (current) setVoiceCapabilityReply(null);
+        });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => {
+      current = false;
+      window.removeEventListener('focus', refresh);
+    };
+  }, [voiceAccountKey, isOffline]);
   // 拦截文案跟着**原因**走（quotaBlock 为 null 时对话框根本没打开，取哪个都不影响）
   const quotaCopy = quotaBlockCopy(quotaBlock ?? 'unavailable');
 
@@ -433,10 +454,11 @@ export default function ChatInput({
     dismissIntro: dismissVoiceIntro,
     startFromTrigger: startVoiceInput,
     stopListening: stopVoiceInput,
+    cancelInput: cancelVoiceInput,
   } = useVoiceInput({
     textareaRef,
     hasActiveTask: !isOffline,
-    activeTaskKey: activeTask?.id ?? null,
+    activeTaskKey: voiceScopeKey,
     mainView,
     settingsOpen,
     loadIntroSeen: loadVoiceIntroSeen,
@@ -444,8 +466,33 @@ export default function ChatInput({
     requestPermission: requestVoicePermission,
     createSession: createWhisperSttSession,
     isSupported: whisperAvailable,
+    onRecordingStarted: stopSpeech,
   });
 
+  const completedVoiceAnswer = useMessageStore((state) => {
+    if (!activeTask || isGenerating) return '';
+    const turn = state.activeTurnBySession[activeTask.sessionKey];
+    if (turn?.finalized && turn.content.trim()) return turn.content;
+    const messages = state.messagesByTask[activeTask.id] ?? [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && messages[i].content.trim()) return messages[i].content;
+    }
+    return '';
+  });
+  const spokenCharacterCount = speechBillingUnits(completedVoiceAnswer);
+  const speechFeeEstimate =
+    voiceCapabilities?.ttsMicrosPerCharacter !== undefined
+      ? ((spokenCharacterCount * voiceCapabilities.ttsMicrosPerCharacter) / 1_000_000).toLocaleString(undefined, {
+          maximumFractionDigits: 4,
+        })
+      : null;
+  useEffect(() => {
+    if (isGenerating) stopSpeech();
+  }, [isGenerating, stopSpeech]);
+  useEffect(() => {
+    if (!speechError || speechError === 'voice-cancelled') return;
+    toast.error(t(speechError === 'voice-answer-too-long' ? 'voiceInput.answerTooLong' : 'voiceInput.playbackFailed'));
+  }, [speechError, t]);
   const allTasks = useTaskStore((s) => s.tasks);
   const mentionTasks = allTasks.filter((tt) => tt.id !== activeTask?.id && tt.title);
 
@@ -727,9 +774,7 @@ export default function ChatInput({
   //    老写法把"还不知道"（网关状态还没有这一条）也算成离线，于是首启那 50 秒里
   //    输入框在说一件不是事实的话（2026-09-20 实机截图）。
   const placeholder = t(composerPlaceholderKey({ phase: gatewayDisplayPhase, isOffline, readinessBlocked }));
-  const voiceTooltip = !isVoiceSupported
-    ? t(whisperPlatformUnsupported ? 'voiceInput.unsupportedPlatform' : 'voiceInput.unsupportedTooltip')
-    : t('voiceInput.tooltip');
+  const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
   // 文案分档全部住在 `modelStatusCopy` 里（可单测）：哪一档转圈、哪一档说什么话，
   // 一个地方定；尤其「无需重复操作」**只许**在真加载那一档出现（2026-09-20 报障）。
   // ⚠️ 已知的中转失败**压过**目录推断：这时"正在准备模型，准备完会自动显示"是句谎
@@ -822,11 +867,16 @@ export default function ChatInput({
       return;
     }
     if (voiceErrorCode === 'unsupported') {
-      toast.error(t(whisperPlatformUnsupported ? 'voiceInput.unsupportedPlatform' : 'voiceInput.unsupported'));
+      toast.error(t('voiceInput.unsupported'));
       return;
     }
+    if (voiceErrorCode === 'microphone-not-found') {
+      toast.error(t('voiceInput.microphoneNotFound'));
+      return;
+    }
+    if (voiceErrorCode === 'voice-cancelled') return;
     toast.error(t('voiceInput.recognitionFailed'));
-  }, [voiceErrorCode, t, whisperPlatformUnsupported]);
+  }, [voiceErrorCode, t]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1412,14 +1462,6 @@ export default function ChatInput({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    {/*
-                     * 麦克风按钮（BUG-044 · 产品拍板）：whisper **不支持就整块不渲染** ——
-                     * 不是"禁用但可见"。原来 Windows 上摆着一个永远点不动的灰麦克风 +
-                     * "此版本暂不支持 Windows 语音输入"的 Tooltip（一个只解释自己为什么没用的入口）。
-                     * `whisperAvailable` 由 `checkWhisper` 链路给出（IPC 照旧保留：macOS /
-                     * 装了 whisper 的机器走同一个判断，行为不变）；未就绪的默认态也是 false，
-                     * 所以首帧不会闪一个还没确认可用的按钮出来。
-                     */}
                     {whisperAvailable && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1428,14 +1470,19 @@ export default function ChatInput({
                               variant={isVoiceListening ? 'soft' : 'ghost'}
                               size="icon"
                               onClick={() => {
+                                stopSpeech();
+                                if (isVoiceTranscribing) {
+                                  cancelVoiceInput();
+                                  return;
+                                }
                                 if (isVoiceListening) {
                                   stopVoiceInput();
                                   return;
                                 }
                                 void startVoiceInput();
                               }}
-                              disabled={disabled || !isVoiceSupported}
-                              aria-label={voiceTooltip}
+                              disabled={(!voiceActive && disabled) || !isVoiceSupported}
+                              aria-label={voiceActive ? t('voiceInput.stop') : voiceTooltip}
                               className={cn(
                                 'rounded-xl',
                                 isVoiceListening && 'text-[var(--accent)]',
@@ -1449,6 +1496,64 @@ export default function ChatInput({
                         <TooltipContent>{voiceTooltip}</TooltipContent>
                       </Tooltip>
                     )}
+                    {voiceCapabilities?.tts && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant={speechPhase !== 'idle' ? 'soft' : 'ghost'}
+                            size="icon"
+                            disabled={speechPhase === 'idle' && (!completedVoiceAnswer || voiceActive || disabled)}
+                            aria-label={t(speechPhase !== 'idle' ? 'voiceInput.stop' : 'voiceInput.readAnswer')}
+                            onClick={() => {
+                              if (speechPhase !== 'idle') {
+                                stopSpeech();
+                                return;
+                              }
+                              cancelVoiceInput();
+                              void startSpeech(completedVoiceAnswer);
+                            }}
+                          >
+                            {speechPhase !== 'idle' ? <Square size={18} /> : <Volume2 size={18} />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {t(speechPhase !== 'idle' ? 'voiceInput.stop' : 'voiceInput.readAnswerFee', {
+                            fee: speechFeeEstimate,
+                          })}
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {(voiceCapabilities?.asr || voiceCapabilities?.tts) && (
+                      <span className="type-meta text-[var(--text-muted)]" aria-live="polite">
+                        {speechPhase !== 'idle'
+                          ? t(speechPhase === 'playing' ? 'voiceInput.playing' : 'voiceInput.preparingSpeech')
+                          : [
+                              voiceCapabilities.asr && voiceCapabilities.asrMicrosPerSecond !== undefined
+                                ? t('voiceInput.serviceFeeAsr', {
+                                    fee: ((voiceCapabilities.asrMicrosPerSecond * 60) / 1_000_000).toLocaleString(
+                                      undefined,
+                                      { maximumFractionDigits: 4 },
+                                    ),
+                                  })
+                                : '',
+                              voiceCapabilities.tts && voiceCapabilities.ttsMicrosPerCharacter !== undefined
+                                ? t('voiceInput.serviceFeeTts', {
+                                    fee: ((voiceCapabilities.ttsMicrosPerCharacter * 100) / 1_000_000).toLocaleString(
+                                      undefined,
+                                      { maximumFractionDigits: 4 },
+                                    ),
+                                  })
+                                : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                      </span>
+                    )}
+                    {voiceErrorCode === 'permission-denied' && (
+                      <Button variant="ghost" size="sm" onClick={() => void window.clawwork.openMicrophoneSettings()}>
+                        {t('voiceInput.openMicrophoneSettings')}
+                      </Button>
+                    )}{' '}
                     {runPhaseLabel && (
                       <span className="type-meta pr-1 text-[var(--text-muted)]" aria-live="polite">
                         {runPhaseLabel}

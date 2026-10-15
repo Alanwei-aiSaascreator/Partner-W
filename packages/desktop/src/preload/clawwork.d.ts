@@ -737,6 +737,21 @@ export interface ClawWorkAPI {
     unsupportedPlatform?: boolean;
     error?: string;
   }>;
+  voiceCapabilities: () => Promise<{
+    ok: boolean;
+    result?: {
+      asr: boolean;
+      tts: boolean;
+      maxRecordingSeconds: number;
+      maxSpeechCharacters: number;
+      asrMicrosPerSecond?: number;
+      ttsMicrosPerCharacter?: number;
+    };
+    error?: string;
+  }>;
+  synthesizeSpeech: (text: string) => Promise<{ ok: boolean; result?: ArrayBuffer; error?: string }>;
+  cancelVoice: () => Promise<{ ok: boolean }>;
+  openMicrophoneSettings: () => Promise<{ ok: boolean }>;
   transcribeAudio: (audio: ArrayBuffer) => Promise<{ ok: boolean; transcript?: string; error?: string }>;
 
   reconnectGateway: (gatewayId: string) => Promise<IpcResult>;

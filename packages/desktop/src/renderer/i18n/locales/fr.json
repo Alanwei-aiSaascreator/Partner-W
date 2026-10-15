@@ -544,7 +544,7 @@
     "unsupportedCapability": "Cette fonctionnalité n'est pas encore prise en charge. Utilisez les fonctionnalités disponibles dans l'espace de travail.",
     "unsupportedModel": "Ce modèle n'est pas encore pris en charge. Choisissez un modèle disponible dans la liste des modèles.",
     "visionFallbackSwitched": "Un modèle capable de vision a été utilisé pour cette image : {{model}}",
-    "visionUnavailable": "La reconnaissance d’images est temporairement indisponible : votre message sera quand même envoyé, mais l’image risque de ne pas être reconnue.",
+    "visionUnavailable": "La prise en charge des images par ce modèle ne peut pas être confirmée. Choisissez un modèle compatible ou retirez les images. Analysez les images avant de créer le PPT.",
     "waiting": {
       "awaitingAnswer": "En attente de votre réponse",
       "awaitingApproval": "En attente d'approbation : {{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
       "confirm": "Enter the workbench",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "Création de contenu",
+          "ecommerce": "Opérations e-commerce",
+          "family": "Maison et vie quotidienne",
+          "office": "Productivité bureautique",
+          "photography": "Tournage et montage",
+          "research": "Apprentissage et recherche"
+        },
+        "capabilityNotice": "La boussole principale coordonne recherche, analyse, création, production et contrôle qualité avec ces compétences. La disponibilité des outils est vérifiée dans l’espace de travail lors de l’exécution.",
+        "capabilityTitle": "Compétences recommandées",
+        "reasons": {
+          "content": "Création de contenu et organisation des textes",
+          "ecommerce": "E-commerce, concurrence et analyse commerciale",
+          "family": "Maison, vie quotidienne et planification journalière",
+          "office": "Productivité bureautique et organisation des données",
+          "photography": "Scripts de vidéos courtes, tournage et montage",
+          "research": "Apprentissage, recherche et analyse des sources"
+        },
+        "viewPortrait": "Voir mon portrait"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "Source de la configuration : règles locales",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "A quick fun profile",
         "profile": "Tell us about your work",
-        "result": "Your work configuration"
+        "result": "Votre configuration de travail"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "La demande utilise « {{field}} », non pris en charge dans cette version (pas encore d'images de référence ni d'images de début/fin). Demandez à l'assistant de le retirer."
   },
   "voiceInput": {
+    "answerTooLong": "La réponse dépasse 6000 caractères. Demandez une réponse plus courte avant la lecture.",
     "introConfirm": "Compris",
-    "introDescription": "Maintenez Espace pour dicter, puis relâchez pour terminer.",
+    "introDescription": "Cliquez sur le microphone ou maintenez Space pour parler, pendant 60 secondes au maximum.",
     "introSkip": "Pas maintenant",
-    "introStepBeta": "La saisie vocale s’exécute localement et reste en version bêta.",
+    "introStepBeta": "La transcription cloud est facturée au tarif affiché.",
     "introStepHold": "La transcription est insérée dans le champ de saisie et n'est jamais envoyée automatiquement.",
     "introStepInsert": "Une pression brève sur Espace insère toujours une espace normale.",
-    "introTitle": "Saisie vocale (Beta)",
+    "introTitle": "Saisie vocale",
     "listeningStatus": "Enregistrement… relâchez Espace pour transcrire",
+    "microphoneNotFound": "Aucun microphone détecté. Connectez-en un et réessayez.",
+    "openMicrophoneSettings": "Ouvrir les paramètres du microphone",
     "permissionDenied": "L'accès au microphone a été refusé",
+    "playbackFailed": "La lecture a échoué. Réessayez.",
+    "playing": "Lecture…",
+    "preparingSpeech": "Préparation de la voix…",
+    "readAnswer": "Lire la dernière réponse",
+    "readAnswerFee": "Lire la dernière réponse (environ {{fee}} points)",
     "recognitionFailed": "Échec de la reconnaissance vocale",
-    "tooltip": "Saisie vocale (Beta)",
+    "serviceFeeAsr": "Transcription : {{fee}} points/minute",
+    "serviceFeeTts": "Lecture : {{fee}} points/100 caractères",
+    "stop": "Arrêter le son",
+    "tooltip": "Saisie vocale",
     "transcribing": "Transcription…",
     "unsupported": "La saisie vocale n’est pas disponible. Utilisez la saisie de texte.",
-    "unsupportedPlatform": "La saisie vocale n’est pas encore prise en charge sous Windows. Utilisez la saisie de texte.",
     "unsupportedTooltip": "La saisie vocale n’est pas disponible dans cette application."
   },
   "workspaceNotice": {

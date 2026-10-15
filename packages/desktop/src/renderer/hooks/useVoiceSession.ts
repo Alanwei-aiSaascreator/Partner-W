@@ -71,12 +71,11 @@ export function useVoiceSession({
 
   const stopListening = useCallback(() => {
     const wasListening = isListeningRef.current;
-    releaseSession(true);
+    if (!wasListening) return;
     clearListeningState();
-    if (wasListening) {
-      setIsTranscribing(true);
-    }
-  }, [clearListeningState, releaseSession]);
+    setIsTranscribing(true);
+    sessionRef.current?.stop();
+  }, [clearListeningState]);
 
   const beginListening = useCallback(
     async (requiresActivePress: boolean) => {
@@ -85,11 +84,19 @@ export function useVoiceSession({
         return;
       }
 
+      releaseSession(false);
+      setIsTranscribing(false);
       setErrorCode(null);
       const requestId = startRequestIdRef.current + 1;
       startRequestIdRef.current = requestId;
 
-      const permissionStatus = await requestPermission();
+      let permissionStatus: VoicePermissionStatus;
+      try {
+        permissionStatus = await requestPermission();
+      } catch {
+        if (startRequestIdRef.current === requestId) setErrorCode('mic-access-failed');
+        return;
+      }
 
       if (startRequestIdRef.current !== requestId) return;
       if (!canStartAfterPermission(requiresActivePress)) return;
@@ -102,20 +109,29 @@ export function useVoiceSession({
 
       const session = createSession({
         onInterimResult: (text) => {
+          if (startRequestIdRef.current !== requestId) return;
           setInterimTranscript(text);
         },
         onFinalResult: (text) => {
+          if (startRequestIdRef.current !== requestId) return;
           setInterimTranscript('');
           setIsTranscribing(false);
           onFinalTranscript(text);
         },
         onError: (code) => {
+          if (startRequestIdRef.current !== requestId) return;
           setErrorCode(code);
           setIsTranscribing(false);
           releaseSession(false);
           clearListeningState();
         },
+        onTranscribing: () => {
+          if (startRequestIdRef.current !== requestId) return;
+          clearListeningState();
+          setIsTranscribing(true);
+        },
         onEnd: () => {
+          if (startRequestIdRef.current !== requestId) return;
           setIsTranscribing(false);
           releaseSession(false);
           clearListeningState();
@@ -149,8 +165,11 @@ export function useVoiceSession({
   );
 
   const cleanup = useCallback(() => {
+    startRequestIdRef.current += 1;
     releaseSession(false);
-  }, [releaseSession]);
+    clearListeningState();
+    setIsTranscribing(false);
+  }, [clearListeningState, releaseSession]);
 
   const isListeningActive = useCallback(() => isListeningRef.current, []);
 

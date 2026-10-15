@@ -5,6 +5,7 @@ import {
   WEB_ROUTING_FACTS,
   planVisionRouting,
   selectVisionFallbackModel,
+  visionCatalogWithConfiguredInputs,
 } from '../src/renderer/lib/vision-routing';
 import { buildRelayPatch } from '../src/main/commercial/relay-config.js';
 
@@ -19,6 +20,25 @@ const entry = (id: string, provider: string | undefined, input: unknown): ModelC
   ({ id, provider, input }) as unknown as ModelCatalogEntry;
 
 const RELAY = 'clawrouter';
+
+describe('visionCatalogWithConfiguredInputs', () => {
+  it('带provider前缀的静态模型也必须覆盖动态视觉声明，缺input按text', () => {
+    const catalog = [entry('glm-5.3-flash', RELAY, ['text', 'image'])];
+    expect(
+      visionCatalogWithConfiguredInputs(catalog, {
+        config: { models: { providers: { clawrouter: { models: [{ id: 'clawrouter/glm-5.3-flash' }] } } } },
+      })?.[0]?.input,
+    ).toEqual(['text']);
+  });
+  it('配置provider缺失或列表形状无效时能力不可确认', () => {
+    expect(visionCatalogWithConfiguredInputs([], { config: {} })).toBeNull();
+    expect(
+      visionCatalogWithConfiguredInputs([], {
+        config: { models: { providers: { clawrouter: { models: 'invalid' } } } },
+      }),
+    ).toBeNull();
+  });
+});
 
 describe('selectVisionFallbackModel', () => {
   it('默认偏好顺序 = [qwen3.7-flash, qwen3.5-27b]（官方页核证过的两个，顺序即优先级）', () => {
@@ -142,6 +162,18 @@ describe('planVisionRouting（发送路径的路由计划）', () => {
     ).toEqual({ kind: 'switch', model: visionEntry });
   });
 
+  it('用户显式选择的非视觉模型不可自动切换', () => {
+    expect(
+      planVisionRouting({
+        hasImageAttachment: true,
+        imageInputSupport: 'unsupported',
+        currentModelId: textEntry.id,
+        catalog,
+        allowFallback: false,
+      }),
+    ).toEqual({ kind: 'unavailable' });
+  });
+
   it('unknown（目录没声明）与 unsupported 同一条路 —— 没声明 ≠ 不支持', () => {
     expect(
       planVisionRouting({
@@ -153,7 +185,7 @@ describe('planVisionRouting（发送路径的路由计划）', () => {
     ).toEqual({ kind: 'switch', model: visionEntry });
   });
 
-  it('候选就是当前模型（脏目录同 id 两条的防御分支）⇒ skip，不做无意义切换', () => {
+  it('同id目录声明冲突时不可跳过视觉门禁', () => {
     expect(
       planVisionRouting({
         hasImageAttachment: true,
@@ -161,7 +193,7 @@ describe('planVisionRouting（发送路径的路由计划）', () => {
         currentModelId: 'qwen3.7-flash',
         catalog: [entry('qwen3.7-flash', RELAY, ['text']), visionEntry],
       }),
-    ).toEqual({ kind: 'skip' });
+    ).toEqual({ kind: 'unavailable' });
   });
 
   it('一个能看图的候选都没有 ⇒ unavailable（调用方必须给诚实文案，不许静默照发）', () => {

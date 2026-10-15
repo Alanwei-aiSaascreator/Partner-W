@@ -41,10 +41,13 @@ export const VIDEOGEN_MAX_TITLE_CHARS = 60;
 const ROOT_KEYS = new Set(['prompt', 'duration', 'resolution', 'aspectRatio', 'title']);
 
 export interface VideogenRequest {
+  model?: 'seedance-2.5';
+  firstFrame?: string;
+  firstFrameData?: { mimeType: 'image/png' | 'image/jpeg'; content: string };
   prompt: string;
   duration: number;
-  resolution: (typeof VIDEOGEN_RESOLUTIONS)[number];
-  aspectRatio: (typeof VIDEOGEN_ASPECT_RATIOS)[number];
+  resolution: (typeof VIDEOGEN_RESOLUTIONS)[number] | '720P' | '1080P';
+  aspectRatio: (typeof VIDEOGEN_ASPECT_RATIOS)[number] | 'adaptive';
   /** 已解析的标题（可能为空串 ⇒ 文件名回落到 prompt 前缀）。 */
   title: string;
 }
@@ -66,6 +69,7 @@ export function parseVideogenRequest(raw: unknown): VideogenParseResult {
     return { ok: false, failure: { code: 'videogen-block-invalid' }, detail: 'request must be a JSON object' };
   }
 
+  if (raw.model === 'seedance-2.5') return parseSeedanceRequest(raw);
   const unknownKey = Object.keys(raw).find((key) => !ROOT_KEYS.has(key));
   if (unknownKey) {
     return {
@@ -151,4 +155,77 @@ export function parseVideogenRequest(raw: unknown): VideogenParseResult {
 export function videoFileNameFor(request: Pick<VideogenRequest, 'prompt' | 'title'>): string {
   const fallback = request.prompt.replace(/\s+/g, ' ').trim().slice(0, 20);
   return `${documentFileStem(request.title || fallback, '短视频')}.mp4`;
+}
+
+/** Seedance is explicitly selected; legacy H3 requests keep their existing strict schema. */
+function parseSeedanceRequest(raw: Record<string, unknown>): VideogenParseResult {
+  const keys = new Set(['model', 'prompt', 'duration', 'resolution', 'aspectRatio', 'title', 'firstFrame']);
+  const bad = Object.keys(raw).find((key) => !keys.has(key));
+  if (bad)
+    return {
+      ok: false,
+      failure: { code: 'videogen-unsupported-field', field: bad.slice(0, 40) },
+      detail: 'unsupported Seedance field',
+    };
+  const prompt = asTrimmedString(raw.prompt) ?? '';
+  if (!prompt) return { ok: false, failure: { code: 'videogen-prompt-missing' }, detail: 'prompt required' };
+  if (prompt.length > VIDEOGEN_PROMPT_MAX_CHARS)
+    return {
+      ok: false,
+      failure: { code: 'videogen-prompt-too-long', maxChars: VIDEOGEN_PROMPT_MAX_CHARS },
+      detail: 'prompt too long',
+    };
+  const duration = raw.duration ?? 5;
+  if (typeof duration !== 'number' || !Number.isInteger(duration) || duration < 4 || duration > 30)
+    return {
+      ok: false,
+      failure: { code: 'videogen-duration-invalid', min: 4, max: 30 },
+      detail: 'Seedance duration must be [4,30]',
+    };
+  const resolution = raw.resolution ?? '720P';
+  if (resolution !== '720P' && resolution !== '1080P')
+    return {
+      ok: false,
+      failure: { code: 'videogen-resolution-invalid', allowed: ['720P', '1080P'] },
+      detail: 'Seedance resolution invalid',
+    };
+  const firstFrame = raw.firstFrame === undefined ? undefined : asTrimmedString(raw.firstFrame);
+  if (
+    raw.firstFrame !== undefined &&
+    (!firstFrame ||
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(firstFrame) ||
+      firstFrame.startsWith('data:') ||
+      firstFrame.startsWith('\\\\'))
+  )
+    return {
+      ok: false,
+      failure: { code: 'videogen-block-invalid' },
+      detail: 'firstFrame must name a task image or workspace path',
+    };
+  const aspectRatio = raw.aspectRatio ?? (firstFrame ? 'adaptive' : '16:9');
+  const allowed = [...VIDEOGEN_ASPECT_RATIOS, 'adaptive'];
+  if (typeof aspectRatio !== 'string' || !allowed.includes(aspectRatio) || (firstFrame && aspectRatio !== 'adaptive'))
+    return {
+      ok: false,
+      failure: {
+        code: 'videogen-aspect-invalid',
+        allowed: firstFrame ? ['adaptive'] : allowed,
+        value: String(aspectRatio).slice(0, 20),
+      },
+      detail: 'firstFrame requires adaptive ratio',
+    };
+  if (raw.title !== undefined && typeof raw.title !== 'string')
+    return { ok: false, failure: { code: 'videogen-block-invalid' }, detail: 'title must be string' };
+  return {
+    ok: true,
+    request: {
+      model: 'seedance-2.5',
+      prompt,
+      duration,
+      resolution,
+      aspectRatio: aspectRatio as VideogenRequest['aspectRatio'],
+      title: typeof raw.title === 'string' ? raw.title.trim().slice(0, VIDEOGEN_MAX_TITLE_CHARS) : '',
+      ...(firstFrame ? { firstFrame } : {}),
+    },
+  };
 }

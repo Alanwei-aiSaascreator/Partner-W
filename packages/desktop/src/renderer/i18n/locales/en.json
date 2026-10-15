@@ -544,7 +544,7 @@
     "unsupportedCapability": "This capability isn't supported yet. You can use the capabilities already available in the workspace instead.",
     "unsupportedModel": "This model isn't supported yet. Please pick an available model from the model list.",
     "visionFallbackSwitched": "Switched to a vision-capable model for this image: {{model}}",
-    "visionUnavailable": "Image recognition is temporarily unavailable: your message will still be sent, but the image may not be recognized.",
+    "visionUnavailable": "Image support could not be confirmed for this model. Choose an image-capable model or remove the images. For an illustrated PPT, analyze the images first.",
     "waiting": {
       "awaitingAnswer": "Waiting for your answer",
       "awaitingApproval": "Waiting for approval: {{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
       "confirm": "Enter the workbench",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "Content creation",
+          "ecommerce": "E-commerce operations",
+          "family": "Home and everyday life",
+          "office": "Office productivity",
+          "photography": "Filming and editing",
+          "research": "Learning and research"
+        },
+        "capabilityNotice": "The main compass coordinates research, analysis, creation, production and quality review using these work capabilities. Tool availability is checked in the workspace when a task runs.",
+        "capabilityTitle": "Recommended capabilities",
+        "reasons": {
+          "content": "Content creation and copy organization",
+          "ecommerce": "E-commerce operations, competitor and business analysis",
+          "family": "Home, everyday life and daily planning",
+          "office": "Office productivity and data organization",
+          "photography": "Short-video scripts, filming and editing",
+          "research": "Learning, research and source analysis"
+        },
+        "viewPortrait": "View my portrait"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "Configuration source: local rules",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -2639,20 +2658,30 @@
     "unsupportedField": "The request uses \"{{field}}\", which this version doesn't support (no reference images or first/last frames yet). Ask the assistant to remove it."
   },
   "voiceInput": {
+    "answerTooLong": "The answer exceeds 6000 characters. Ask for a shorter answer before playing it.",
     "introConfirm": "Got it",
-    "introDescription": "Hold Space to dictate, then release to finish.",
+    "introDescription": "Click the microphone or hold Space to speak, up to 60 seconds.",
     "introSkip": "Not now",
-    "introStepBeta": "Voice input runs locally and is still in beta.",
+    "introStepBeta": "Cloud transcription is billed at the displayed rate.",
     "introStepHold": "The transcript is inserted into the input box and is never sent automatically.",
     "introStepInsert": "Short press Space still inserts a normal space.",
-    "introTitle": "Voice Input (Beta)",
+    "introTitle": "Voice input",
     "listeningStatus": "Recording... release Space to transcribe",
+    "microphoneNotFound": "No microphone found. Connect one and try again.",
+    "openMicrophoneSettings": "Open microphone settings",
     "permissionDenied": "Microphone access was denied",
+    "playbackFailed": "Could not read the answer. Try again.",
+    "playing": "Playing…",
+    "preparingSpeech": "Preparing speech…",
+    "readAnswer": "Read latest answer",
+    "readAnswerFee": "Read latest answer (about {{fee}} credits)",
     "recognitionFailed": "Voice recognition failed",
-    "tooltip": "Voice Input (Beta)",
+    "serviceFeeAsr": "Transcription: {{fee}} credits/minute",
+    "serviceFeeTts": "Speech: {{fee}} credits/100 characters",
+    "stop": "Stop audio",
+    "tooltip": "Voice input",
     "transcribing": "Transcribing...",
     "unsupported": "Voice input is unavailable. Continue with text input.",
-    "unsupportedPlatform": "Voice input is not supported on Windows yet. Continue with text input.",
     "unsupportedTooltip": "Voice input is unavailable in this app."
   },
   "workspaceNotice": {

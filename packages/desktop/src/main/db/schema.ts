@@ -97,6 +97,7 @@ export const messages = sqliteTable('messages', {
    * NULL = 老行 / 还没有可信成功结算；语义见 `@clawwork/shared` 的 `Message.deliverySucceeded`。
    */
   deliverySucceeded: integer('delivery_succeeded', { mode: 'boolean' }),
+  deliveryFailureClosed: integer('delivery_failure_closed', { mode: 'boolean' }),
 });
 
 export const taskRooms = sqliteTable('task_rooms', {

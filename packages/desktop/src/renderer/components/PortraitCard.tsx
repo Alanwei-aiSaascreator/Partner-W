@@ -35,11 +35,22 @@ interface PortraitCardProps {
   gender?: PortraitGender | null;
   /** 形象层：年龄（可选，1–120）。只用于卡面那一行，不参与任何判定。 */
   age?: number | null;
+  /** Result previews omit the full-size artwork, identity details and radar. */
+  variant?: 'full' | 'compact';
   className?: string;
 }
 
-export default function PortraitCard({ axes, letters, role, gender, age, className }: PortraitCardProps) {
+export default function PortraitCard({
+  axes,
+  letters,
+  role,
+  gender,
+  age,
+  variant = 'full',
+  className,
+}: PortraitCardProps) {
   const { t } = useTranslation();
+  const compact = variant === 'compact';
   /** ② 六角色立绘坏图降级（素材在、内容坏 ⇒ 回占位）。 */
   const [artworkFailed, setArtworkFailed] = useState(false);
   /** ① 16 型全身卡坏图降级（⇒ 退回六角色立绘，再坏才占位）。 */
@@ -65,9 +76,11 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
     <section
       data-testid="portrait-card"
       data-role={role}
+      data-variant={variant}
       data-artwork-source={shownMbtiArtwork ? 'mbti' : shownRoleArtwork ? 'persona' : 'placeholder'}
       className={cn(
-        'grid gap-5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5 sm:grid-cols-3',
+        'grid min-w-0 gap-5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5',
+        !compact && 'sm:grid-cols-3',
         className,
       )}
     >
@@ -83,7 +96,7 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
               src={shownMbtiArtwork}
               alt=""
               onError={() => setMbtiArtworkFailed(true)}
-              className="block h-auto w-full"
+              className={compact ? 'block h-40 w-full object-contain' : 'block h-auto w-full'}
             />
           </div>
         ) : shownRoleArtwork ? (
@@ -93,7 +106,7 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
               src={shownRoleArtwork}
               alt=""
               onError={() => setArtworkFailed(true)}
-              className="block h-auto w-full"
+              className={compact ? 'block h-40 w-full object-contain' : 'block h-auto w-full'}
             />
           </div>
         ) : (
@@ -103,7 +116,7 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
           </div>
         )}
       </div>
-      <div className="space-y-3 sm:col-span-2">
+      <div className={cn('min-w-0 space-y-3 break-words', !compact && 'sm:col-span-2')}>
         <p className="type-support text-[var(--text-muted)]">{t('onboarding.portrait.resultTitle')}</p>
         <p data-portrait-role-name className="type-section-title text-[var(--text-primary)]">
           {t(`onboarding.portrait.roles.${role}.name`)}
@@ -111,25 +124,27 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
         <p className="type-support text-[var(--text-secondary)]">
           {t(`onboarding.portrait.roles.${role}.description`)}
         </p>
-        <div data-portrait-type>
-          <p className="type-support text-[var(--text-muted)]">{t('onboarding.portrait.letters')}</p>
-          <p className="type-label mt-1 text-[var(--text-primary)]">
-            <span data-portrait-letters>{displayPortraitLetters(letters)}</span>
-            {typeCode ? ` · ${t(`onboarding.firstRun.types.${typeCode}.name`)}` : null}
-          </p>
-          {typeCode ? (
-            <p className="type-support mt-1 text-[var(--text-secondary)]">
-              {t(`onboarding.firstRun.types.${typeCode}.line`)}
+        {!compact && (
+          <div data-portrait-type>
+            <p className="type-support text-[var(--text-muted)]">{t('onboarding.portrait.letters')}</p>
+            <p className="type-label mt-1 text-[var(--text-primary)]">
+              <span data-portrait-letters>{displayPortraitLetters(letters)}</span>
+              {typeCode ? ` · ${t(`onboarding.firstRun.types.${typeCode}.name`)}` : null}
             </p>
-          ) : (
-            <p className="type-support mt-1 text-[var(--text-muted)]" data-portrait-partial>
-              {t('onboarding.firstRun.types.partial')}
-            </p>
-          )}
-        </div>
+            {typeCode ? (
+              <p className="type-support mt-1 text-[var(--text-secondary)]">
+                {t(`onboarding.firstRun.types.${typeCode}.line`)}
+              </p>
+            ) : (
+              <p className="type-support mt-1 text-[var(--text-muted)]" data-portrait-partial>
+                {t('onboarding.firstRun.types.partial')}
+              </p>
+            )}
+          </div>
+        )}
         {/* 「类型 · 性别 · 年龄」一行：只有 16 型形象真的成立（四字码完整 + 性别有效）才出现；
             年龄没填就不显示那一段 —— 不编、不留空壳。 */}
-        {hasMbtiIdentity ? (
+        {!compact && hasMbtiIdentity ? (
           <p data-portrait-identity className="type-label text-[var(--text-primary)]">
             <span className="text-[var(--text-muted)]">{t('onboarding.portrait.typeLabel')}</span>{' '}
             <span data-portrait-mbti-type>{typeCode}</span>
@@ -145,7 +160,7 @@ export default function PortraitCard({ axes, letters, role, gender, age, classNa
             ) : null}
           </p>
         ) : null}
-        <PortraitRadar axes={axes} className="mx-auto max-w-xs" />
+        {!compact && <PortraitRadar axes={axes} className="mx-auto max-w-xs" />}
       </div>
     </section>
   );

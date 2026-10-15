@@ -544,7 +544,7 @@
     "unsupportedCapability": "Este recurso ainda não é compatível. Use os recursos disponíveis na área de trabalho.",
     "unsupportedModel": "Este modelo ainda não é compatível. Escolha um modelo disponível na lista de modelos.",
     "visionFallbackSwitched": "Foi usado um modelo com visão para esta imagem: {{model}}",
-    "visionUnavailable": "O reconhecimento de imagens está temporariamente indisponível: a mensagem será enviada normalmente, mas a imagem pode não ser reconhecida.",
+    "visionUnavailable": "Não foi possível confirmar o suporte a imagens deste modelo. Escolha um modelo compatível ou remova as imagens. Analise as imagens antes de criar o PPT.",
     "waiting": {
       "awaitingAnswer": "Aguardando sua resposta",
       "awaitingApproval": "Aguardando aprovação: {{what}}",
@@ -1615,8 +1615,6 @@
     "firstRun": {
       "answerNo": "B. No",
       "answerYes": "A. Yes",
-      "assistantNotice": "These are built-in assistant roles. Tool availability is checked in the workbench.",
-      "assistantTitle": "Recommended work assistants",
       "basicDescription": "A basic configuration based on your selected work needs.",
       "chargeNotice": "Team generation runs locally on your computer and does not call a model.",
       "confirm": "Enter the workbench",
@@ -1652,9 +1650,30 @@
         "tidy": "Is your room tidy?"
       },
       "questionSkip": "Skip this question",
+      "result": {
+        "capabilities": {
+          "content": "Criação de conteúdo",
+          "ecommerce": "Operações de comércio eletrônico",
+          "family": "Casa e vida cotidiana",
+          "office": "Produtividade no escritório",
+          "photography": "Filmagem e edição",
+          "research": "Aprendizado e pesquisa"
+        },
+        "capabilityNotice": "A bússola principal coordena pesquisa, análise, criação, produção e controle de qualidade usando estas capacidades. A disponibilidade das ferramentas é verificada no espaço de trabalho durante a execução.",
+        "capabilityTitle": "Capacidades recomendadas",
+        "reasons": {
+          "content": "Criação de conteúdo e organização de textos",
+          "ecommerce": "Comércio eletrônico, concorrência e análise de negócios",
+          "family": "Casa, vida cotidiana e planejamento diário",
+          "office": "Produtividade no escritório e organização de dados",
+          "photography": "Roteiros de vídeos curtos, filmagem e edição",
+          "research": "Aprendizado, pesquisa e análise de fontes"
+        },
+        "viewPortrait": "Ver meu retrato"
+      },
       "role": "Role",
       "sourceAi": "Source: AI suggestion",
-      "sourceBasic": "Source: basic template",
+      "sourceBasic": "Origem da configuração: regras locais",
       "steps": {
         "portrait": "Fun profile",
         "profile": "Work details",
@@ -1664,7 +1683,7 @@
       "titles": {
         "portrait": "A quick fun profile",
         "profile": "Tell us about your work",
-        "result": "Your work configuration"
+        "result": "Sua configuração de trabalho"
       },
       "types": {
         "ENFJ": {
@@ -2639,20 +2658,30 @@
     "unsupportedField": "O pedido usa «{{field}}», que esta versão não suporta (ainda sem imagens de referência nem fotogramas inicial/final). Peça ao assistente para o remover."
   },
   "voiceInput": {
+    "answerTooLong": "A resposta excede 6000 caracteres. Peça uma resposta mais curta antes de ouvi-la.",
     "introConfirm": "Entendi",
-    "introDescription": "Segure Espaço para ditar, depois solte para finalizar.",
+    "introDescription": "Clique no microfone ou segure Space para falar, por até 60 segundos.",
     "introSkip": "Agora não",
-    "introStepBeta": "A entrada de voz é executada localmente e ainda está em beta.",
+    "introStepBeta": "A transcrição na nuvem é cobrada pela tarifa exibida.",
     "introStepHold": "A transcrição é inserida na caixa de entrada e nunca é enviada automaticamente.",
     "introStepInsert": "Pressionar Espaço rapidamente ainda insere um espaço normal.",
-    "introTitle": "Entrada de Voz (Beta)",
+    "introTitle": "Entrada de voz",
     "listeningStatus": "Gravando... solte Espaço para transcrever",
+    "microphoneNotFound": "Nenhum microfone encontrado. Conecte um e tente novamente.",
+    "openMicrophoneSettings": "Abrir configurações do microfone",
     "permissionDenied": "O acesso ao microfone foi negado",
+    "playbackFailed": "Falha ao ler a resposta. Tente novamente.",
+    "playing": "Reproduzindo…",
+    "preparingSpeech": "Preparando voz…",
+    "readAnswer": "Ler última resposta",
+    "readAnswerFee": "Ler última resposta (cerca de {{fee}} pontos)",
     "recognitionFailed": "Falha no reconhecimento de voz",
-    "tooltip": "Entrada de Voz (Beta)",
+    "serviceFeeAsr": "Transcrição: {{fee}} pontos/minuto",
+    "serviceFeeTts": "Leitura: {{fee}} pontos/100 caracteres",
+    "stop": "Parar áudio",
+    "tooltip": "Entrada de voz",
     "transcribing": "Transcrevendo...",
     "unsupported": "A entrada de voz não está disponível. Use a entrada de texto.",
-    "unsupportedPlatform": "A entrada de voz ainda não é compatível com o Windows. Use a entrada de texto.",
     "unsupportedTooltip": "A entrada de voz não está disponível neste aplicativo."
   },
   "workspaceNotice": {

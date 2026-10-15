@@ -37,6 +37,7 @@ export interface PersistedMessage {
   model?: string | null;
   /** 交付成功的最小持久化标记（r7-1）。老行/老调用方没有它 ⇒ `null`/`undefined`。 */
   deliverySucceeded?: boolean | null;
+  deliveryFailureClosed?: boolean | null;
 }
 
 export interface ListResult<T> {

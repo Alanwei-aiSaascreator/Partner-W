@@ -1,25 +1,11 @@
-import type { ModelCatalogEntry } from '@clawwork/shared';
+import { modelIdMatches, type ModelCatalogEntry } from '@clawwork/shared';
 import { RELAY_PROVIDER_ID } from '@/components/ChatInput/model-families';
 import type { ImageInputSupport } from './attachment-actions';
 
 /**
- * Auto Capability Routing v1 —— 「带图发送时，自动换一个能看图的模型」。
- *
- * 语义（Lead 已裁决，v1 最小实现）：
- *   带图发送 × 当前会话模型**不自述**支持图片 ⇒ 先切到目录里声明了 `image` 的中转模型，再发送；
- *   找不到候选 ⇒ **维持现状**（照发，模型按附件纪律如实说看不到）。不拦截、不弹窗、无开关。
- *
- * 为什么判据是「目录声明」而不是「按模型名猜」：
- *   `input` 是网关 `models.list` 的自述字段（`['text']` / `['text','image']`），由随包 runtime
- *   补丁 `rongying-provider-capability-v1` 从 relay 目录的 `llm.vision` 声明投影而来 ——
- *   名字正则猜不出国产型号（BUG-027 调查结论），声明是唯一可信来源。
- *
- * ⚠️ **别把"没声明"当成"不支持"**：没声明只意味着"不知道"（`resolveImageInputSupport`
- *    返回 `unknown`）。路由的触发条件是 `!== 'supported'`（unsupported 与 unknown 都路由）——
- *    宁可白切一次，也不让用户的图片被静默丢弃。
- *
- * ⚠️ 已知取舍（v1）：切过去之后**不自动切回** —— 会话停在该模型，模型选择器可见。
- *    "自动切回"需要在每轮之间跟踪用户意图，v1 不做（宁可见，不可猜）。
+ * 所有发送模式共用的视觉门禁。只信目录input，不按模型名猜能力。
+ * 自动模式可切换一次视觉候选；custom和专用制作链保留显式模型。
+ * 不可确认图片支持、无候选或切换失败时，调用方保留草稿并阻止发送。
  */
 
 /**
@@ -39,8 +25,34 @@ function declaresImageInput(entry: ModelCatalogEntry): boolean {
   return input.some((value) => typeof value === 'string' && value === 'image');
 }
 
+/** 发送前以config.get静态覆盖校正models.list；旧缺input按runtime缺省text处理。 */
+export function visionCatalogWithConfiguredInputs(
+  catalog: readonly ModelCatalogEntry[],
+  snapshot: unknown,
+): ModelCatalogEntry[] | null {
+  const provider = (snapshot as { config?: { models?: { providers?: Record<string, { models?: unknown }> } } } | null)
+    ?.config?.models?.providers?.[RELAY_PROVIDER_ID];
+  if (!provider) return null;
+  const configured = provider.models;
+  if (configured !== undefined && !Array.isArray(configured)) return null;
+  return catalog.map((entry) => {
+    if (entry.provider !== RELAY_PROVIDER_ID) return entry;
+    const row = Array.isArray(configured)
+      ? (configured.find((value: unknown) => {
+          const id = value && typeof value === 'object' ? (value as { id?: unknown }).id : undefined;
+          return typeof id === 'string' && modelIdMatches(id, entry.id);
+        }) as { input?: unknown } | undefined)
+      : undefined;
+    if (!row) return entry;
+    const input = Array.isArray(row.input)
+      ? row.input.filter((value): value is string => typeof value === 'string')
+      : ['text'];
+    return { ...entry, input };
+  });
+}
+
 /**
- * 在目录里挑一个"能看图的备选模型"；找不到返回 `null`（调用方维持现状，不许替代品）。
+ * 在目录里挑一个"能看图的备选模型"；找不到返回 `null`（调用方阻止带图发送）。
  *
  * 规则（顺序即优先级）：
  *   1. 只认 `provider === 'clawrouter'` 的条目（网关全量目录里其它 provider 我们服务不了，
@@ -65,25 +77,7 @@ export function selectVisionFallbackModel(
   return visionCapable[0] ?? null;
 }
 
-/**
- * 发送这一刻的**路由计划**（纯函数，v1.1 加固）——接线只负责照着做，不再自己判。
- *
- * | 计划 | 含义 | 调用方要做的 |
- * |---|---|---|
- * | `skip` | 不用管：没带图，或当前模型已自述能看图 | 原样发，不提示 |
- * | `switch` | 切到 `model` 再发 | `patchSession` + 一条轻提示（**切成功了才提示**） |
- * | `unavailable` | 带图，但目录里**一个能看图的候选都没有** | **给一条诚实文案再发（不许静默）** |
- *
- * 为什么 v1.1 要补 `unavailable`：v1 的"没候选就悄悄照发"在用户侧是**静默**的 ——
- * 图片被丢掉、模型只会困惑地说"我读不到"，而用户根本不知道是"没能力"还是"出错了"。
- * 照发仍然照发（不拦截是 v1 的既定取舍），但**用户有权先知道这一轮图片识别不了**。
- *
- * ⚠️ 判据与 v1 共用同一把尺：`imageInputSupport !== 'supported'`（`unsupported` 与 `unknown`
- *    都要路由）—— 没声明 ≠ 不支持，宁可白切一次，也不让图片被静默丢弃。
- * ⚠️ 会话/任务维度**没有**记忆：每次发送都拿"这个任务此刻的模型"重新判。
- *    新任务（待发态）没选过模型 ⇒ 起点是默认模型，**不继承**上一段会话切过去的那个
- *    （切换态只落在 `task.model` 与 `task.sessionKey` 上，两处都是任务作用域的）。
- */
+/** skip=无图或已支持；switch=切换成功后发送；unavailable=提示调整模型/附件并阻止发送。 */
 export type VisionRoutingPlan =
   | { kind: 'skip' }
   | { kind: 'switch'; model: ModelCatalogEntry }
@@ -95,15 +89,17 @@ export function planVisionRouting(params: {
   currentModelId?: string;
   catalog: readonly ModelCatalogEntry[];
   preferredOrder?: readonly string[];
+  /** custom显式模型和专用制作链不允许被视觉备选劫持。 */
+  allowFallback?: boolean;
 }): VisionRoutingPlan {
   const { hasImageAttachment, imageInputSupport, currentModelId, catalog, preferredOrder } = params;
   if (!hasImageAttachment || imageInputSupport === 'supported') return { kind: 'skip' };
+  if (params.allowFallback === false) return { kind: 'unavailable' };
 
   const fallback = selectVisionFallbackModel(catalog, preferredOrder ?? VISION_FALLBACK_PREFERRED_ORDER);
   if (!fallback) return { kind: 'unavailable' };
-  // 防御分支（脏目录里同 id 两条、第一条没报名看图时理论可达）：切到"同一个模型"是空动作，
-  // 还会白弹一条"已切换"提示 —— 按 skip 处理。
-  if (fallback.id === currentModelId) return { kind: 'skip' };
+  // 同id声明冲突，不能用空切换绕过视觉门禁。
+  if (fallback.id === currentModelId) return { kind: 'unavailable' };
   return { kind: 'switch', model: fallback };
 }
 

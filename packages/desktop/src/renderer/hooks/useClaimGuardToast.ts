@@ -41,7 +41,10 @@ function isClosedEpisodeNote(input: {
   closedEpisodeNotes: ReadonlyMap<string, ReadonlySet<string>>;
 }): boolean {
   const { note, noteIndex, messages, sessionKey, episodeKey, successMessageIds, closedEpisodeNotes } = input;
-  // ① 持久化最小成功标记。
+  // First-success settlement closes the notes that existed then, even when the original
+  // assistant message precedes those notes (media retry). No timestamp/order guessing.
+  if (note.deliveryFailureClosed === true) return true;
+  // ① Legacy persisted success marker (older versions did not mark closed notes).
   for (let index = noteIndex + 1; index < messages.length; index += 1) {
     const candidate = messages[index]!;
     if (candidate.sessionKey === sessionKey && candidate.deliverySucceeded === true) return true;

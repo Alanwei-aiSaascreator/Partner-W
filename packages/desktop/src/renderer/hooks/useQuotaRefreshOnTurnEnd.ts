@@ -84,6 +84,7 @@ export function useQuotaRefreshOnTurnEnd(): void {
       wasBusy.current = false;
       let followUpsLeft = QUOTA_FOLLOW_UP_MAX;
       const readOnce = async (withReport: boolean): Promise<void> => {
+        if (cancelled) return;
         const before = usedMicros();
         if (withReport) {
           try {
@@ -92,6 +93,9 @@ export function useQuotaRefreshOnTurnEnd(): void {
             // 上报失败不影响下一步：refresh 仍然可能拿到服务端已经记好的账。
           }
         }
+        // Hidden completion must still report usage once, but quota reads wait for
+        // foreground. Recheck after the await: logout/hide can happen mid-report.
+        if (cancelled || !visible()) return;
         await refresh();
         if (cancelled) return;
         // 值变了 ⇒ 已结算，追读到此为止。

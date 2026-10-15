@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Trigger as DialogTrigger } from '@radix-ui/react-dialog';
 import { cn } from '@/lib/utils';
 import {
   recommendAssistants,
@@ -774,12 +776,15 @@ function FirstRunOnboarding({
     <div className="brand-first-run h-screen overflow-y-auto bg-[var(--surface-onboarding-page)] text-[var(--text-primary)]">
       <header className="border-b border-[var(--border-subtle)] px-5 py-4">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             <img src={logo} alt={t('common.appName')} className="h-9 w-9 rounded-lg" />
-            <span className="type-label">{t('common.appName')}</span>
+            <span className="type-label whitespace-nowrap">{t('common.appName')}</span>
           </div>
           {/* 步骤条跟随新页序（工作资料 → 趣味画像 → 团队确认）；matching 步骤随 AI 匹配通道一并下线。 */}
-          <ol className="flex gap-4 type-support" aria-label={t('onboarding.progress')}>
+          <ol
+            className="flex min-w-0 flex-wrap justify-end gap-x-4 gap-y-1 type-support"
+            aria-label={t('onboarding.progress')}
+          >
             {(['profile', 'portrait', 'result'] as const).map((item) => (
               <li
                 key={item}
@@ -793,7 +798,20 @@ function FirstRunOnboarding({
         </div>
       </header>
       <main className="mx-auto max-w-5xl space-y-6 px-5 py-8">
-        <h1 className="type-page-title">{t(`onboarding.firstRun.titles.${page}`)}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <h1 className="type-page-title min-w-0 break-words">{t(`onboarding.firstRun.titles.${page}`)}</h1>
+          {page === 'result' && match && (
+            <div data-result-actions className="flex flex-wrap gap-3">
+              <Button data-primary-action disabled={selectedAssistantIds.length === 0} onClick={confirm}>
+                {t('onboarding.firstRun.confirm')}
+                <Check size={16} />
+              </Button>
+              <Button variant="ghost" onClick={() => setPage('profile')}>
+                {t('onboarding.firstRun.editProfile')}
+              </Button>
+            </div>
+          )}
+        </div>
         {page === 'portrait' && (
           <>
             <p className="type-body text-[var(--text-secondary)]">{t('onboarding.portrait.subtitle')}</p>
@@ -1068,100 +1086,6 @@ function FirstRunOnboarding({
         )}
         {page === 'result' && match && (
           <>
-            <section className="grid gap-5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-6 sm:grid-cols-3">
-              <div className="space-y-3 text-center">
-                {/* 2026-10-07 体检问题 6：结果页以前**恒画占位**（UserRound + personaUnavailable），
-                    哪怕画像答得整整齐齐 —— BUG-003 的同类残留。有画像就复用 `PortraitCard`
-                    （与个性化中心/结果页同一条立绘查表链），四题全跳过才落占位。 */}
-                {portraitPreview ? (
-                  <PortraitCard
-                    axes={portraitPreview.axes}
-                    letters={portraitPreview.letters}
-                    role={portraitPreview.role}
-                    gender={portraitPreview.gender}
-                    age={portraitPreview.age}
-                    className="border-0 bg-transparent p-0 text-left sm:grid-cols-1"
-                  />
-                ) : (
-                  <>
-                    <UserRound size={72} className="mx-auto text-[var(--text-muted)]" />
-                    <p className="type-support text-[var(--text-muted)]">
-                      {t('onboarding.firstRun.personaUnavailable')}
-                    </p>
-                  </>
-                )}
-                <p className="type-support">
-                  {t(
-                    draft.persona?.source === 'user'
-                      ? 'onboarding.firstRun.personaSourceUser'
-                      : draft.persona?.source === 'approved-rule'
-                        ? 'onboarding.firstRun.personaSourceRule'
-                        : 'onboarding.firstRun.personaSourceDefault',
-                  )}
-                </p>
-              </div>
-              <div className="space-y-3 sm:col-span-2">
-                <p className="type-section-title">{nickname.trim() || t('onboarding.firstRun.nicknameFallback')}</p>
-                <p className="type-support text-[var(--text-secondary)]">
-                  {t(`onboarding.firstRun.industries.${industry?.code ?? 'general'}`)} ·{' '}
-                  {customRole.trim() || t(`onboarding.roles.${role}.title`)}
-                </p>
-                <p data-match-source={match.source} className="type-label text-[var(--accent)]">
-                  {t(match.source === 'ai' ? 'onboarding.firstRun.sourceAi' : 'onboarding.firstRun.sourceBasic')}
-                </p>
-                <p className="type-body">
-                  {match.source === 'ai'
-                    ? match.summary
-                    : customGoal.trim() || t('onboarding.firstRun.basicDescription')}
-                </p>
-                {match.source === 'ai' && (
-                  <>
-                    <p className="type-support text-[var(--text-muted)]">
-                      {t('onboarding.firstRun.model')}: {match.modelId}
-                    </p>
-                    <p className="type-support text-[var(--text-muted)]">
-                      {t(
-                        match.usageStatus === 'pending'
-                          ? 'onboarding.firstRun.usagePending'
-                          : 'onboarding.firstRun.usageSettled',
-                      )}
-                    </p>
-                    <ul className="list-inside list-disc space-y-1 type-support">
-                      {match.starters.map((entry) => (
-                        <li key={entry}>{entry}</li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </div>
-            </section>
-            <section className="space-y-3">
-              <h2 className="type-section-title">{t('onboarding.firstRun.assistantTitle')}</h2>
-              <p className="type-support text-[var(--text-secondary)]">{t('onboarding.firstRun.assistantNotice')}</p>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {(match.source === 'ai' ? aiAssistantOptions : recommendations.map((item) => item.id)).map((id) => {
-                  const active = selectedAssistantIds.includes(id);
-                  const Icon = ASSISTANT_ICONS[id];
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      data-assistant={id}
-                      aria-pressed={active}
-                      className={choice(active)}
-                      onClick={() =>
-                        setSelectedAssistantIds((current) =>
-                          current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
-                        )
-                      }
-                    >
-                      <Icon size={22} className="mb-3 text-[var(--accent)]" />
-                      <span className="type-label">{t(`onboarding.assistants.${id}.name`)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
             {saveFailed && (
               <p
                 role="alert"
@@ -1170,15 +1094,163 @@ function FirstRunOnboarding({
                 {t('teams.wizard.saveError')}
               </p>
             )}
-            <div className="flex flex-wrap gap-3">
-              <Button variant="ghost" onClick={() => setPage('profile')}>
-                {t('onboarding.firstRun.editProfile')}
-              </Button>
-              <Button data-primary-action disabled={selectedAssistantIds.length === 0} onClick={confirm}>
-                {t('onboarding.firstRun.confirm')}
-                <Check size={16} />
-              </Button>
-            </div>
+            <section className="grid items-start gap-5 md:grid-cols-3">
+              <div data-result-work className="min-w-0 space-y-5 break-words md:col-span-2">
+                <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
+                  <h2 className="type-section-title">{nickname.trim() || t('onboarding.firstRun.nicknameFallback')}</h2>
+                  <p className="type-support text-[var(--text-secondary)]">
+                    {t(`onboarding.firstRun.industries.${industry?.code ?? 'general'}`)} ·{' '}
+                    {customRole.trim() || t(`onboarding.roles.${role}.title`)}
+                  </p>
+                  {introduction.trim() && (
+                    <p className="type-support text-[var(--text-secondary)]">{introduction.trim()}</p>
+                  )}
+                  {useCases.length > 0 && (
+                    <div data-result-use-cases className="flex flex-wrap gap-2">
+                      {useCases.map((id) => (
+                        <span key={id} className="type-support rounded-lg bg-[var(--bg-tertiary)] px-3 py-1">
+                          {t(`onboarding.useCases.${id}.title`)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {customGoal.trim() && (
+                    <p data-result-goal className="type-body">
+                      {customGoal.trim()}
+                    </p>
+                  )}
+                  <p data-match-source={match.source} className="type-support text-[var(--accent)]">
+                    {t(match.source === 'ai' ? 'onboarding.firstRun.sourceAi' : 'onboarding.firstRun.sourceBasic')}
+                  </p>
+                  {match.source === 'ai' ? (
+                    <>
+                      <p className="type-body">{match.summary}</p>
+                      <p className="type-support text-[var(--text-muted)]">
+                        {t('onboarding.firstRun.model')}: {match.modelId}
+                      </p>
+                      <p className="type-support text-[var(--text-muted)]">
+                        {t(
+                          match.usageStatus === 'pending'
+                            ? 'onboarding.firstRun.usagePending'
+                            : 'onboarding.firstRun.usageSettled',
+                        )}
+                      </p>
+                      <ul className="type-support list-inside list-disc text-[var(--text-secondary)]">
+                        {match.starters.map((entry) => (
+                          <li key={entry}>{entry}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : !customGoal.trim() && !useCases.length ? (
+                    <p className="type-support text-[var(--text-secondary)]">
+                      {t('onboarding.firstRun.basicDescription')}
+                    </p>
+                  ) : null}
+                </div>
+                <section className="space-y-3" aria-labelledby="result-capabilities-title">
+                  <h2 id="result-capabilities-title" className="type-section-title">
+                    {t('onboarding.firstRun.result.capabilityTitle')}
+                  </h2>
+                  <p className="type-support text-[var(--text-secondary)]">
+                    {t('onboarding.firstRun.result.capabilityNotice')}
+                  </p>
+                  <div className="space-y-3">
+                    {(match.source === 'ai' ? aiAssistantOptions : recommendations.map((item) => item.id)).map((id) => {
+                      const active = selectedAssistantIds.includes(id);
+                      const Icon = ASSISTANT_ICONS[id];
+                      const recommendation = recommendations.find((item) => item.id === id);
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          data-assistant={id}
+                          aria-pressed={active}
+                          className={cn(choice(active), 'flex w-full min-w-0 items-start gap-3')}
+                          onClick={() =>
+                            setSelectedAssistantIds((current) =>
+                              current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+                            )
+                          }
+                        >
+                          <Icon size={22} className="mt-1 shrink-0 text-[var(--accent)]" />
+                          <span className="min-w-0 flex-1 space-y-1 break-words">
+                            <span className="type-label block">
+                              {t(`onboarding.firstRun.result.capabilities.${id}`)}
+                            </span>
+                            <span
+                              data-recommendation-reason={recommendation?.reason}
+                              className="type-support block text-[var(--text-secondary)]"
+                            >
+                              {recommendation
+                                ? t(`onboarding.firstRun.result.reasons.${id}`)
+                                : t(`assistantWorkspaces.${id}.description`)}
+                            </span>
+                            <span data-skill-task className="type-support block text-[var(--text-muted)]">
+                              {t(`assistantWorkspaces.${id}.starters.1.title`)} ·{' '}
+                              {t(`assistantWorkspaces.${id}.starters.1.description`)}
+                            </span>
+                          </span>
+                          <span
+                            className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[var(--border)]"
+                            aria-hidden="true"
+                          >
+                            {active && <Check size={14} className="text-[var(--accent)]" />}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+              <aside className="min-w-0 space-y-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-5">
+                {portraitPreview ? (
+                  <>
+                    <PortraitCard
+                      axes={portraitPreview.axes}
+                      letters={portraitPreview.letters}
+                      role={portraitPreview.role}
+                      gender={portraitPreview.gender}
+                      age={portraitPreview.age}
+                      variant="compact"
+                      className="border-0 bg-transparent p-0"
+                    />
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="ghost" className="w-full">
+                          {t('onboarding.firstRun.result.viewPortrait')}
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl" aria-describedby={undefined}>
+                        <DialogTitle className="mb-5 pr-6">{t('onboarding.portrait.resultTitle')}</DialogTitle>
+                        <PortraitCard
+                          axes={portraitPreview.axes}
+                          letters={portraitPreview.letters}
+                          role={portraitPreview.role}
+                          gender={portraitPreview.gender}
+                          age={portraitPreview.age}
+                        />
+                      </DialogContent>
+                    </Dialog>
+                  </>
+                ) : (
+                  <div className="space-y-3 text-center">
+                    <UserRound size={48} className="mx-auto text-[var(--text-muted)]" />
+                    <p className="type-support text-[var(--text-muted)]">
+                      {t('onboarding.firstRun.personaUnavailable')}
+                    </p>
+                  </div>
+                )}
+                <p className="type-support text-[var(--text-muted)]">
+                  {t(
+                    draft.persona?.source === 'user'
+                      ? 'onboarding.firstRun.personaSourceUser'
+                      : draft.persona?.source === 'approved-rule'
+                        ? 'onboarding.firstRun.personaSourceRule'
+                        : 'onboarding.firstRun.personaSourceDefault',
+                  )}
+                </p>
+              </aside>
+            </section>
           </>
         )}
       </main>

@@ -227,6 +227,10 @@ vi.mock('../src/renderer/hooks/useVoiceInput', () => ({
     dismissIntro: vi.fn(),
     startFromTrigger: vi.fn(),
     stopListening: vi.fn(),
+    // ⚠️ 桩必须跟着长（2026-10-15 全量收口）：ChatInput 的 `stopVoiceInput`
+    // （发送路径 414 行）现在还会调 `cancelInput`（接成 cancelVoiceInput）。
+    // 少这一个 = 点发送时 `cancelVoiceInput is not a function` 未处理拒绝（exit 1 但测试全绿）。
+    cancelInput: vi.fn(),
   }),
 }));
 
@@ -505,56 +509,52 @@ describe('任务模式 chip（输入框）', () => {
   /**
    * 麦克风按钮的可见性（BUG-044 · 产品拍板）：**不支持 ⇒ 整块不渲染**（不是"禁用但可见"）。
    *
-   * 原来 Windows 上渲染一个灰掉的麦克风 + "此版本暂不支持 Windows 语音输入"的 Tooltip ——
-   * 一个永远点不动、只解释自己为什么没用的入口。拍板改成"没有的能力不占位置"。
-   * ⚠️ `useVoiceInput` 在本文件里是桩（它自己的行为由 use-voice-input.test.tsx 守）：
-   *    这里钉的是**按钮出不出现**这一条接线；macOS 的 whisper 可用路径照旧出现。
+   * 2026-10-15（MM-B）：可用性来源从"本机 whisper 二进制"改成**relay 能力** ——
+   * `ChatInput` 现在按 `window.clawwork.voiceCapabilities().result.asr` 决定按钮出不出现
+   * （Windows 也走同一套云端链）。这里钉的还是"按钮出不出现"这条接线；
+   * `useVoiceInput` 的行为仍由 use-voice-input.test.tsx 守。
    */
   describe('麦克风按钮：不支持 ⇒ 不渲染（BUG-044）', () => {
     const micButton = (container: HTMLElement): HTMLButtonElement | null =>
       container.querySelector('button[aria-label^="voiceInput."]');
 
-    /** 把 `checkWhisper()` 那条 promise 链跑干净（useEffect 里的 setState 才落进界面）。 */
-    async function flushWhisperCheck(): Promise<void> {
+    /** 把 `voiceCapabilities()` 那条 promise 链跑干净（useEffect 里的 setState 才落进界面）。 */
+    async function flushVoiceCapabilities(): Promise<void> {
       await act(async () => {
         await Promise.resolve();
         await Promise.resolve();
       });
     }
 
-    it('whisper 不可用（Windows / 没装）⇒ 按钮与 Tooltip 整块不出现', async () => {
-      mocks.voiceSupported = false;
-      window.clawwork.checkWhisper = vi.fn(async () => ({
-        available: false,
-        binaryPath: null,
-        modelPath: null,
-        unsupportedPlatform: true,
+    const voiceCaps = (asr: boolean, tts: boolean) =>
+      vi.fn(async () => ({
+        ok: true,
+        result: { asr, tts, maxRecordingSeconds: 60, maxSpeechCharacters: 600 },
       }));
+
+    it('relay 无 ASR 能力（未部署 / 关闭）⇒ 按钮与 Tooltip 整块不出现', async () => {
+      mocks.voiceSupported = false;
+      window.clawwork.voiceCapabilities = voiceCaps(false, false);
       const { container, unmount } = renderChatInput();
 
-      await flushWhisperCheck();
+      await flushVoiceCapabilities();
 
       expect(micButton(container)).toBeNull();
 
       unmount();
     });
 
-    it('whisper 可用（macOS）⇒ 按钮照常出现且可用，Tooltip 是正常态文案', async () => {
-      // 真身里 `isVoiceSupported` 就是 `whisperAvailable`（ChatInput 原样传下去）——桩跟着一起翻。
+    it('relay 有 ASR 能力 ⇒ 按钮出现且可用，Tooltip 是正常态文案', async () => {
       mocks.voiceSupported = true;
-      window.clawwork.checkWhisper = vi.fn(async () => ({
-        available: true,
-        binaryPath: '/opt/homebrew/bin/whisper-cli',
-        modelPath: '/models/ggml-large-v3-turbo.bin',
-      }));
+      window.clawwork.voiceCapabilities = voiceCaps(true, true);
       const { container, unmount } = renderChatInput();
 
-      await flushWhisperCheck();
+      await flushVoiceCapabilities();
 
       const button = micButton(container);
       expect(button).not.toBeNull();
       expect(button?.getAttribute('aria-label')).toBe('voiceInput.tooltip');
-      expect(button?.disabled, 'macOS 行为不变：可用即能点').toBe(false);
+      expect(button?.disabled, '能力可用即能点（Windows 同此路径）').toBe(false);
 
       unmount();
       mocks.voiceSupported = false;

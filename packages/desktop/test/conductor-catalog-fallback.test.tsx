@@ -230,6 +230,13 @@ describe('conductor initialization - catalog fallback', () => {
           tier: 'image',
         },
       })),
+      // MM-A（2026-10-15）：所有模式带图发送先回读最终静态配置（`getConfig`）。
+      // conductor 用例考的是初始化与附件派发，不考视觉路由 —— 给一份空的 clawrouter
+      // 目录（目录条目按自身声明通过）；缺了这个桩，门禁会因 `getConfig` 不存在而阻断。
+      getConfig: vi.fn(async () => ({
+        ok: true,
+        result: { config: { models: { providers: { clawrouter: { models: [] } } } } },
+      })),
     };
     useCommercialStore.setState({
       status: 'ready',
@@ -254,6 +261,19 @@ describe('conductor initialization - catalog fallback', () => {
 
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
+
+  /**
+   * MM-A（2026-10-15）后带图发送要过视觉门禁（对**最终执行模型**裁定）。本文件的用例
+   * 考的是 conductor 初始化与附件派发 —— 目录里放一个**能看图**的最终模型让门禁通过；
+   * 阻断语义本身由 use-chat-send / vision-routing 的用例钉（含本文件末尾的一条负例）。
+   */
+  function withVisionCapableFinalModel(): void {
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [{ id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text', 'image'] }],
+    };
+    const current = mocks.taskState.tasks[0]!;
+    mocks.taskState.tasks = [{ ...current, model: 'glm-5.3-flash' }];
+  }
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -337,6 +357,7 @@ describe('conductor initialization - catalog fallback', () => {
         agents: [{ id: 'worker-a', name: 'Worker A' }],
       },
     };
+    withVisionCapableFinalModel();
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {};
     const setPendingAttachments = vi.fn();
@@ -434,6 +455,7 @@ describe('conductor initialization - catalog fallback', () => {
         agents: [{ id: 'worker-a', name: 'Worker A' }],
       },
     };
+    withVisionCapableFinalModel();
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {};
     mocks.composerSend.mockResolvedValueOnce({ ok: false, taskId: 'task-ensemble' });
@@ -470,6 +492,7 @@ describe('conductor initialization - catalog fallback', () => {
         agents: [{ id: 'worker-a', name: 'Worker A' }],
       },
     };
+    withVisionCapableFinalModel();
     mocks.teamState.teams = { 'team-1': mocks.teamData };
     mocks.roomState.rooms = {
       'task-ensemble': { taskId: 'task-ensemble', conductorReady: true, status: 'active', performers: [] },
@@ -520,6 +543,47 @@ describe('conductor initialization - catalog fallback', () => {
     expect(clearImported).toHaveBeenCalledTimes(1);
     expect(clearSource).toHaveBeenCalledTimes(1);
     expect(clearSource).toHaveBeenCalledWith([]);
+    unmount();
+  });
+
+  it('MM-A 负例：带图 + 目录没有能看图的最终模型 ⇒ 视觉门禁同样拦 conductor 派发（草稿与附件保留）', async () => {
+    // 门禁是**所有发送模式共用**的（MM-A §3）：conductor/ensemble 路径不许成为丢图旁路。
+    mocks.uiState.agentCatalogByGateway = {
+      'gw-1': {
+        defaultId: 'main',
+        agents: [{ id: 'worker-a', name: 'Worker A' }],
+      },
+    };
+    mocks.uiState.modelCatalogByGateway = {
+      'gw-1': [{ id: 'glm-5.3-flash', name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text'] }],
+    };
+    const current = mocks.taskState.tasks[0]!;
+    mocks.taskState.tasks = [{ ...current, model: 'glm-5.3-flash' }];
+    mocks.teamState.teams = { 'team-1': mocks.teamData };
+    mocks.roomState.rooms = {};
+    const setPendingAttachments = vi.fn();
+    const clearImported = vi.fn();
+    const clearSource = vi.fn();
+    const { container, unmount } = render(
+      <Harness
+        withMaterials
+        setPendingAttachments={setPendingAttachments}
+        clearImported={clearImported}
+        clearSource={clearSource}
+      />,
+    );
+
+    await act(async () => {
+      await capturedHandleSend!();
+    });
+
+    // 目录里没有能看图的候选 ⇒ 不切模型、不派发；草稿和附件原样保留。
+    expect(mocks.composerSend).not.toHaveBeenCalled();
+    expect(setPendingAttachments).not.toHaveBeenCalledWith([]);
+    expect(clearImported).not.toHaveBeenCalled();
+    expect(clearSource).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('chatInput.visionUnavailable');
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('hello team');
     unmount();
   });
 });

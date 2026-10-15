@@ -199,8 +199,8 @@ export interface RelayPatchInput {
   defaultModel?: string | null;
   /**
    * relay 目录的静态模型条目（思考档位/上下文窗口的接线，见
-   * `relayCatalogModelEntries` 的说明）。缺省 / 空 = **不写 `models` 键**
-   * （保留旧快照或由内核动态发现兜底；绝不写空数组把列表清掉）。
+   * `relayCatalogModelEntries` 的说明）。缺省 / 拉取失败 = 保留旧快照；
+   * 可信目录的空数组 = 清除已下架或换账号前的静态能力。
    */
   catalogModels?: readonly RelayCatalogModelEntry[] | null;
   /**
@@ -350,6 +350,18 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
     acceptsOurVideoConfig &&
     !isPluginExplicitlyDisabled(config, XAI_VIDEO_PROVIDER_ID);
 
+  const previousModels = (config?.models as { providers?: Record<string, { models?: unknown }> } | undefined)
+    ?.providers?.[RELAY_PROVIDER_ID]?.models;
+  // 目录暂不可用时，仅把旧版省略input条目变为明确text；保留已有视觉和思考声明。
+  const legacyModels =
+    input.catalogModels == null &&
+    Array.isArray(previousModels) &&
+    previousModels.some((row: unknown) => row !== null && typeof row === 'object' && !('input' in row))
+      ? previousModels.map((row: unknown) =>
+          row !== null && typeof row === 'object' && !('input' in row) ? { ...row, input: ['text'] } : row,
+        )
+      : undefined;
+  const catalogModels = input.catalogModels ?? legacyModels;
   const providers: Record<string, unknown> = {
     [RELAY_PROVIDER_ID]: {
       baseUrl: activeRelayBaseUrl(),
@@ -357,8 +369,8 @@ export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null
       headers,
       // ⭐ 2026-10-12：目录模型静态条目（思考档位接线，见 `relayCatalogModelEntries`）。
       //    数组在 merge patch 里 = 全量替换：每次写入即目录快照；拉不到目录就不写这个键
-      //    （旧快照保留 / 无旧值时内核动态发现兜底）——**绝不写空数组**。
-      ...(input.catalogModels && input.catalogModels.length > 0 ? { models: input.catalogModels } : {}),
+      //    （旧快照保留 / 无旧值时内核动态发现兜底）；可信空目录则撤销旧条目。
+      ...(catalogModels != null ? { models: catalogModels } : {}),
     },
   };
 
@@ -679,6 +691,7 @@ export interface RelayCatalogModelEntry {
   id: string;
   name: string;
   reasoning: boolean;
+  input?: Array<'text' | 'image'>;
   compat?: { supportsReasoningEffort: true; supportedReasoningEfforts: string[] };
   thinkingLevelMap?: Record<string, string | null>;
   contextWindow?: number;
@@ -738,6 +751,7 @@ export function relayCatalogModelEntries(catalog: unknown): RelayCatalogModelEnt
       const row = model as {
         id?: unknown;
         displayName?: unknown;
+        capabilities?: unknown;
         supportedReasoningEfforts?: unknown;
         pricing?: { maxInputTokens?: unknown; defaultMaxOutputTokens?: unknown } | null;
       } | null;
@@ -753,6 +767,9 @@ export function relayCatalogModelEntries(catalog: unknown): RelayCatalogModelEnt
         id,
         name: displayName,
         reasoning: efforts.length > 0,
+        // 显式覆盖静态缺省text；只信目录声明，不按模型名字猜视觉能力。
+        input:
+          Array.isArray(row?.capabilities) && row.capabilities.includes('llm.vision') ? ['text', 'image'] : ['text'],
         ...(efforts.length > 0
           ? {
               compat: { supportsReasoningEffort: true as const, supportedReasoningEfforts: efforts },
@@ -768,8 +785,7 @@ export function relayCatalogModelEntries(catalog: unknown): RelayCatalogModelEnt
 }
 
 /**
- * 拉一次 relay 目录并映射成静态模型条目；拿不到返回 null
- * （= 不写 `models` 键，让内核动态发现兜底，绝不写空数组）。
+ * 拉取可信目录；网络/结构失败返回null保留旧快照，成功空目录返回[]撤销旧声明。
  */
 export async function fetchRelayCatalogModelEntries(relayKey: string): Promise<RelayCatalogModelEntry[] | null> {
   const res = await fetch(`${normalizeBaseUrl(activeRelayBaseUrl())}/v1/catalog`, {
@@ -778,8 +794,9 @@ export async function fetchRelayCatalogModelEntries(relayKey: string): Promise<R
   });
   if (!res.ok) return null;
 
-  const entries = relayCatalogModelEntries(await res.json());
-  return entries.length > 0 ? entries : null;
+  const catalog: unknown = await res.json();
+  if (!Array.isArray((catalog as { providers?: unknown } | null)?.providers)) return null;
+  return relayCatalogModelEntries(catalog);
 }
 
 /**
@@ -1049,6 +1066,44 @@ function providerApplied(snapshot: unknown): boolean {
   return typeof apiKey === 'string' && apiKey.length > 0;
 }
 
+function catalogPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolean {
+  const expected = (patch.models as { providers?: Record<string, { models?: RelayCatalogModelEntry[] }> } | undefined)
+    ?.providers?.[RELAY_PROVIDER_ID]?.models;
+  if (!expected) return true;
+  const actual = (configOf(snapshot)?.models as { providers?: Record<string, { models?: unknown }> } | undefined)
+    ?.providers?.[RELAY_PROVIDER_ID]?.models;
+  if (!Array.isArray(actual) || actual.length !== expected.length) return false;
+  return expected.every((entry) => {
+    const current = actual.find(
+      (value: unknown) => value && typeof value === 'object' && (value as { id?: unknown }).id === entry.id,
+    ) as Partial<RelayCatalogModelEntry> | undefined;
+    if (!current) return false;
+    // 回读配置是最终模型覆盖的真源；models.list动态声明不能替代input。
+    // 只核本次声明字段，允许runtime补缺省字段和重排对象/集合。
+    const sameValues = (value: unknown, expectedValues: readonly string[]): boolean =>
+      Array.isArray(value) &&
+      value.length === expectedValues.length &&
+      expectedValues.every((item) => value.includes(item));
+    if (entry.input && !sameValues(current.input, entry.input)) return false;
+    if (current.reasoning !== entry.reasoning) return false;
+    if (
+      entry.compat &&
+      (current.compat?.supportsReasoningEffort !== true ||
+        !sameValues(current.compat.supportedReasoningEfforts, entry.compat.supportedReasoningEfforts))
+    )
+      return false;
+    if (
+      entry.thinkingLevelMap &&
+      !Object.entries(entry.thinkingLevelMap).every(([level, effort]) => current.thinkingLevelMap?.[level] === effort)
+    )
+      return false;
+    return (
+      (entry.contextWindow === undefined || current.contextWindow === entry.contextWindow) &&
+      (entry.maxTokens === undefined || current.maxTokens === entry.maxTokens)
+    );
+  });
+}
+
 /**
  * 回读校验本次媒体补丁真的生效。
  *
@@ -1244,6 +1299,7 @@ export async function applyRelayConfig(
       appliedSnapshot = await deps.getConfig();
       verified =
         providerApplied(appliedSnapshot) &&
+        catalogPatchApplied(appliedSnapshot, patch) &&
         mediaPatchApplied(appliedSnapshot, patch) &&
         searchPatchApplied(appliedSnapshot, patch);
     } catch (error) {
