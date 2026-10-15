@@ -888,13 +888,16 @@ describe('R1 边界：归属与路径线索（真实启动入口）', () => {
  *
  * 事故（合同 §3 P-A / 用户反馈）：正式交付盘换电脑/换盘符后仍被要求"选择新工作区"。
  * 两条代码链都要收口：
- *   ① 启动页 browse（startup.ts:392 旧行为）选**当前运行卷**上的目录也写 explicit-path
+ *   ① 启动页 browse（startup.ts 旧行为）选**当前运行卷**上的目录也写 explicit-path
  *      ⇒ 换盘符后旧绝对路径失效 ⇒ 直接 ask-user；
  *   ② 旧 1.0.6 配置里已经写下的显式归属（同盘手选目录也会是 explicit-path）——
- *      迁移**不得只凭目录同名或盘符**，必须凭**目录级可信身份**（工作区自身标记）。
+ *      迁移**不得只凭目录同名、盘符或一个通用目录标记**（独立审查反例会冒名收养同
+ *      相对路径的另一份工作区），必须有**保存期的可核证关联**：`workspaceId` 身份，
+ *      或"旧配置所在运行盘 == 记录工作区盘"（bundledSkillRecords 的盘符 —— 配置
+ *      住在盘上、跟着盘走，它的盘符就是那块盘保存时的盘符）。
  *
- * 保留的控制项：真外部目录仍 explicit-path 且恢复时仍询问；缺可信身份仍问人；
- * 缺失对话框"当前卷恢复候选"（startup.ts:372）的 app-volume 记账路径不变。
+ * 保留的控制项：真外部目录仍 explicit-path 且恢复时仍询问；缺目录标记/缺关联仍问人；
+ * 缺失对话框"当前卷恢复候选"（startup.ts）的 app-volume 记账路径不变。
  */
 describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => {
   const DELIVERY_DIR = '荣盈魔方U盘交付-0.0.24';
@@ -952,13 +955,19 @@ describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => 
     expect(readConfig()?.workspacePath).toBe(win32.join('F:\\', PICKED));
   });
 
-  it('⭐ C1：旧 1.0.6 explicit-path 记录 + 当前卷上**可信同身份**目录 ⇒ 自动恢复（不再问人）', async () => {
+  it('⭐ C1：旧 1.0.6 explicit-path 记录 + 运行盘关联成立 + 当前卷上目录带标记 ⇒ 自动恢复（不再问人）', async () => {
     // 1.0.6 把"同盘手选目录"也记成了 explicit-path（事故链）。
+    // 关联证据（P-A v2）：`bundledSkillRecords` 的 key 记的是**配置自己所在的运行数据
+    // 目录**（配置住在盘上、跟着盘走）⇒ 它的盘符就是这块盘保存时的盘符；与记录的
+    // 工作区盘符（E:\）相同 = 保存时工作区就在配置自己那块盘上（同盘手选的事故形状）。
     seedConfig({
       workspacePath: win32.join('E:\\', PICKED),
       workspaceRelPath: PICKED,
       volumeMarker: MANIFEST,
       workspaceBinding: 'explicit-path',
+      bundledSkillRecords: {
+        [win32.join('E:\\', '荣盈魔方-运行数据', 'state', 'fixture-token', 'skills')]: {},
+      },
     });
     const h = makeHarness(deliveryOn('F:\\'));
     seedVirtual(h, bundledManifestOn('F:\\'), win32.join('F:\\', PICKED), MARKER_IN(win32.join('F:\\', PICKED)));
@@ -976,7 +985,7 @@ describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => 
     expect(h.quit).not.toHaveBeenCalled();
   });
 
-  it('⭐ C1b：盘根 marker 也在场（候选 evidence 会是 volume-marker）⇒ 仍按**目录级身份**恢复', async () => {
+  it('⭐ C1b：盘根 marker 也在场（候选 evidence 会是 volume-marker）⇒ 仍按目录标记 + 运行盘关联恢复', async () => {
     // 关键区别：候选构造里 `volume-marker` 优先于 `workspace-marker` 被判出来 ——
     // 判据必须看"目录里有没有我们自己的工作区标记"，不能看 evidence 枚举值。
     seedConfig({
@@ -984,6 +993,9 @@ describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => 
       workspaceRelPath: PICKED,
       volumeMarker: MANIFEST,
       workspaceBinding: 'explicit-path',
+      bundledSkillRecords: {
+        [win32.join('E:\\', '荣盈魔方-运行数据', 'state', 'fixture-token', 'skills')]: {},
+      },
     });
     const h = makeHarness(deliveryOn('F:\\'));
     seedVirtual(
@@ -1045,6 +1057,29 @@ describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => 
     expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
     const asked = h.dialogs.askForMissingWorkspace.mock.calls[0][0] as { candidates: string[] };
     expect(asked.candidates).toEqual([win32.join('E:\\', PICKED)]);
+    expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
+  });
+
+  it('⚠️ C4 反例控制（独立审查）：无运行盘关联、无身份 ⇒ 不许冒名收养同相对路径的另一份工作区', async () => {
+    // 外部 E 工作区 A 失联；当前 F 运行盘上同相对路径有一份**另一份**带标记的工作区 B。
+    // 记录里既没有 workspaceId，也没有能证明"工作区当时在配置自己那块盘上"的证据
+    // （bundledSkillRecords 的盘符与记录工作区盘不符）⇒ 必须问人。
+    seedConfig({
+      workspacePath: win32.join('E:\\', PICKED),
+      workspaceRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      bundledSkillRecords: {
+        [win32.join('F:\\', '荣盈魔方-运行数据', 'state', 'fixture-token', 'skills')]: {},
+      },
+    });
+    const h = makeHarness(deliveryOn('F:\\'));
+    seedVirtual(h, bundledManifestOn('F:\\'), win32.join('F:\\', PICKED), MARKER_IN(win32.join('F:\\', PICKED)));
+
+    const result = await h.run();
+
+    expect(h.dialogs.askForMissingWorkspace).toHaveBeenCalledTimes(1);
+    const asked = h.dialogs.askForMissingWorkspace.mock.calls[0][0] as { candidates: string[] };
+    expect(asked.candidates).toEqual([win32.join('F:\\', PICKED)]);
     expect(result).toEqual({ kind: 'quit', reason: 'user-chose-quit' });
   });
 });

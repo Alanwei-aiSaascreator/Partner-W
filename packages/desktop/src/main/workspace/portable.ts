@@ -247,6 +247,13 @@ export interface WorkspaceLocationDescription {
   volumeMarker?: string;
   /** 归属（B1）：记线索时一并记下"这份工作区是否随盘走"。 */
   workspaceBinding?: 'app-volume' | 'explicit-path';
+  /**
+   * 工作区**身份**（P-A v2，2026-10-15）：标记文件 `.clawwork-workspace.json` 里的
+   * `workspaceId`。记线索时一并写进配置 —— 恢复端据此证明"候选就是记录的那一份"，
+   * 不再拿"目录里有个通用标记"当身份（独立审查反例：外部 E 工作区失联、当前 F 盘
+   * 同相对路径的另一份带标记工作区会被冒名收养）。
+   */
+  workspaceId?: string;
 }
 
 /**
@@ -274,6 +281,8 @@ export function describeWorkspaceLocation(input: {
   runVolumeRoot?: string | null;
   /** 归属（B1）：自动盘上工作区=app-volume；用户显式选择=explicit-path。 */
   binding?: 'app-volume' | 'explicit-path';
+  /** 工作区身份（P-A v2）：调用方从标记文件读到的 `workspaceId`（尽力而为）。 */
+  workspaceId?: string | null;
 }): WorkspaceLocationDescription {
   const volumeRoot = volumeRootOf(input.workspacePath);
   if (!volumeRoot) return {};
@@ -289,6 +298,8 @@ export function describeWorkspaceLocation(input: {
     volumeMarker: input.exists(P().join(volumeRoot, marker)) ? marker : undefined,
     // binding 只在"记了盘上线索"时有意义（B1）：非盘上工作区不写归属，判定按老行为。
     ...(input.binding ? { workspaceBinding: input.binding } : {}),
+    // 身份只在"记了盘上线索"时才有意义：本机固定盘的工作区不参与盘符迁移。
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
   };
 }
 
@@ -327,9 +338,21 @@ export function workspaceLocationPatch(input: {
   volumeMarker?: string | null;
   runVolumeRoot?: string | null;
   binding?: 'app-volume' | 'explicit-path';
-}): { workspaceRelPath?: string; volumeMarker?: string; workspaceBinding?: 'app-volume' | 'explicit-path' } {
+  workspaceId?: string | null;
+}): {
+  workspaceRelPath?: string;
+  volumeMarker?: string;
+  workspaceBinding?: 'app-volume' | 'explicit-path';
+  workspaceId?: string;
+} {
   const location = describeWorkspaceLocation(input);
-  return { workspaceRelPath: undefined, volumeMarker: undefined, workspaceBinding: undefined, ...location };
+  return {
+    workspaceRelPath: undefined,
+    volumeMarker: undefined,
+    workspaceBinding: undefined,
+    workspaceId: undefined,
+    ...location,
+  };
 }
 
 /**
@@ -490,6 +513,28 @@ export interface WorkspaceStartupInput {
    *   否则按 explicit 处理（老行为）。
    */
   workspaceBinding?: 'app-volume' | 'explicit-path' | null;
+  /**
+   * 配置里记的工作区**身份**（P-A v2）：`workspaceId`（标记文件里的 uuid）。
+   * 与 `readWorkspaceId` 读到的候选身份相等 ⇒ 静默自愈（同一份工作区的确证）。
+   */
+  workspaceId?: string | null;
+  /**
+   * 读候选工作区标记里的 `workspaceId`（注入的纯函数读口；读不到给 null）。
+   * 不注入 = 无从比对身份 ⇒ 身份路径不参与判定（老行为 / 老测试）。
+   */
+  readWorkspaceId?: (workspacePath: string) => string | null;
+  /**
+   * **旧配置所在运行盘**的卷根集合（P-A v2，2026-10-15）：从旧配置自己的
+   * `bundledSkillRecords` key（`<盘>\荣盈魔方-运行数据\state\…` —— 配置就住在这个
+   * 运行数据目录里，跟着盘走）里解析出的保存期盘符。
+   *
+   * 为什么它能当关联：配置住在盘上、跟着盘走 ⇒ 它的运行数据路径里的盘符就是
+   * **这块盘保存时的盘符**。若它 == 记录的工作区盘符，说明保存时工作区就在
+   * 配置自己那块盘上（同盘手选目录的 1.0.6 事故形状）；否则工作区在别的盘上，
+   * 不许静默迁移。交付盘盘根没有 manifest（`volumeMarker` 在真机为 undefined），
+   * 所以这是旧配置上唯一可核证的"旧运行盘"证据。
+   */
+  recordedRunVolumes?: readonly string[];
   /** 首启且非盘上时使用的默认位置（`getDefaultWorkspacePath()`）。 */
   defaultPath: string;
   removableDrives: readonly string[];
@@ -517,10 +562,13 @@ export type WorkspaceStartupDecision =
  * 有记录：
  *   exists(记录) 且（非 app-volume，或记录卷 == 当前运行卷）⇒ configured
  *   explicit-path 且记录不存在：
- *     唯一候选在当前运行卷上且有目录级身份（工作区自身标记）⇒ healed（1.0.6 迁移例外，P-A）
+ *     唯一候选在当前运行卷上 + 目录有工作区标记 + 保存期关联成立
+ *       （workspaceId 相等，或 recordedRunVolumes 里有一块 == 记录工作区盘）⇒ healed（1.0.6 迁移例外，P-A v2）
  *     否则                                  ⇒ ask-user（绝不静默跨卷自愈/改归属，R1）
- *   候选 === 1 且（非 app-volume，或候选在运行卷上，或运行卷未知）⇒ healed（静默）
+ *   候选 === 1 且（非 app-volume，或候选在运行卷上，或运行卷未知）
+ *        且（未记身份，或身份可读且相等）  ⇒ healed（静默）
  *   候选 === 1 但 app-volume 候选在别的卷 ⇒ ask-user（唯一候选不许从旧卷静默胜出，R1）
+ *   候选 === 1 但身份可读且不等            ⇒ ask-user（不收养另一份工作区）
  *   候选 > 1                            ⇒ ask-user（多命中不许猜）
  *   候选 === 0 且 记过 relPath（盘上）   ⇒ ask-user（盘不在，不能拿别的卷顶）
  *   候选 === 0 且 卷都还在（本机目录）   ⇒ recreated（就地重建，旧行为）
@@ -575,17 +623,20 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
      * ⚠️ 2026-10-15 首次启动硬合同（P-A）的**唯一例外**：旧 1.0.6 把"同盘（当前运行卷）
      *    手选目录"也记成了 explicit-path（workspace:setup/change 与启动页 browse 的旧
      *    行为），换机器/换盘符后旧绝对路径失效 ⇒ 用户被要求重选——而目录就在**当前
-     *    运行卷**上、带着我们自己的工作区标记（`.clawwork-workspace.json`，目录级身份）。
-     *    这种记录按 app-volume 同族语义静默重定位一次（`startup.ts` 的 healed 分支会
-     *    把归属改成 app-volume，之后按正常随盘语义走）。
+     *    运行卷**上。这种记录按 app-volume 同族语义静默重定位一次（`startup.ts` 的
+     *    healed 分支会把归属改成 app-volume，之后按正常随盘语义走）。
      *
-     *    例外**必须窄**（控制项）：
+     *    例外**必须窄**（P-A v2，独立审查 CHANGES_REQUIRED 后收窄）：
      *    - 候选必须恰好一个、必须落在**当前运行卷**上（别的卷 = 真外部目录，仍问）；
-     *    - 必须有**目录级身份**：目录里存在我们自己的工作区标记。只凭目录同名、或只凭
-     *      盘根 marker（"这块盘是我们的"证明不了"这个目录是那份工作区"）、或盘符巧合，
-     *      一律仍问人（R1-② 的形状原样保留）；
+     *    - 目标目录里必须有我们自己的工作区标记（`.clawwork-workspace.json`）；
+     *    - **通用标记不是身份**：静默迁移还必须有保存期的可核证关联，两条取一：
+     *      ① `workspaceId`（配置里记的身份 == 候选标记里的 id）——新记录；
+     *      ② `recordedRunVolumes` 里有一块盘 == 记录的工作区盘符——"旧配置所在运行盘"
+     *         证明保存时工作区就在配置自己那块盘上（见 `WorkspaceStartupInput` 的注释）。
+     *      两条都没有 ⇒ 仍然问人（独立反例：外部 E 工作区 A 失联、当前 F 盘上同相对
+     *      路径的另一份带标记工作区 B 会被冒名收养，把用户带到别人的数据上）。
      *    - 判据看的是**文件在不在**，不是候选的 `evidence` 枚举值 —— 盘根 marker 在场时
-     *      `evidenceOf` 会把候选记成 `volume-marker`（先判盘根），那样会漏掉这里的身份。
+     *      `evidenceOf` 会把候选记成 `volume-marker`（先判盘根），那样会漏掉目录标记。
      */
     if (explicitPath && !recordedExists) {
       const onlyCandidate = candidates.length === 1 ? candidates[0] : null;
@@ -595,7 +646,21 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
         sameVolumeRoot(volumeRootOf(onlyCandidate.path), runVolume) &&
         input.exists(P().join(onlyCandidate.path, WORKSPACE_MARKER_FILE))
       ) {
-        return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
+        const recordedId = input.workspaceId ?? null;
+        if (recordedId) {
+          // 新记录：身份相等才是同一份。读不出/不相等 ⇒ 不是同一份 ⇒ 问。
+          const candidateId = input.readWorkspaceId?.(onlyCandidate.path) ?? null;
+          if (candidateId !== null && candidateId === recordedId) {
+            return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
+          }
+          return { kind: 'ask-user', recordedPath: recorded, candidates };
+        }
+        // 老记录（无身份）：只有"记录的工作区就在旧配置自己那块盘上"这一个可核证关联。
+        const recordedVolume = volumeRootOf(recorded);
+        const sameDiskAsConfig = (input.recordedRunVolumes ?? []).some((root) => sameVolumeRoot(recordedVolume, root));
+        if (sameDiskAsConfig) {
+          return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
+        }
       }
       return { kind: 'ask-user', recordedPath: recorded, candidates };
     }
@@ -607,10 +672,19 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
        * 摆给用户确认；当前运行卷没有合法目标时同样要问。
        * ⚠️ 运行卷未知（非盘上启动）时保持旧的静默自愈 —— 没有"当前卷"可比，
        *    唯一带证据的候选仍是 2026-09-18 实机那条救命路径（见该用例）。
+       * ⚠️ P-A v2：身份**可读且不等**时不许收养（候选是另一份工作区）。读不出身份
+       *    （老目录 / 未注入读口）保持旧行为，不制造新的假询问。
        */
       const viaVolume = volumeRootOf(candidates[0].path);
       if (appVolume && runVolume && !sameVolumeRoot(viaVolume, runVolume)) {
         return { kind: 'ask-user', recordedPath: recorded, candidates };
+      }
+      const recordedId = input.workspaceId ?? null;
+      if (recordedId) {
+        const candidateId = input.readWorkspaceId?.(candidates[0].path) ?? null;
+        if (candidateId !== null && candidateId !== recordedId) {
+          return { kind: 'ask-user', recordedPath: recorded, candidates };
+        }
       }
       return { kind: 'healed', path: candidates[0].path, from: recorded, via: candidates[0] };
     }

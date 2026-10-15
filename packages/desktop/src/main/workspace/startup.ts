@@ -15,7 +15,7 @@ import { existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { DB_FILE_NAME } from '@clawwork/shared';
 import { closeDatabase, initDatabase } from '../db/index.js';
-import { initWorkspace } from './init.js';
+import { ensureWorkspaceId, initWorkspace, readWorkspaceId } from './init.js';
 import { removableDrives, setRemovableDrives } from './removable-drives.js';
 import {
   bindingForPickedDirectory,
@@ -97,6 +97,33 @@ export interface PrepareWorkspaceOptions {
 
 /** 对话框里最多来回几轮（用户一直不选就退出，不空转）。 */
 const MAX_RECOVERY_ROUNDS = 5;
+
+/**
+ * 「旧配置所在运行盘」的卷根集合（P-A v2，2026-10-15）。
+ *
+ * 从旧配置自己的 `bundledSkillRecords` key 里解析盘符 —— 那些 key 形如
+ * `<盘>\荣盈魔方-运行数据\state\<token>\skills`，而**配置本身就住在这个运行数据
+ * 目录里、跟着盘走** ⇒ 这些盘符就是这块盘保存时的盘符（启动判定发生在任何
+ * record 迁移之前；`ensureClientGatewayEntry` 的换 key 只在 workspace:change
+ * 或同步运行时工作区时发生）。
+ *
+ * 用途：判断"记录的工作区当时就在配置自己那块盘上吗"——是，则换盘符后同相对
+ * 路径上的候选就是同一份（可以静默自愈）；否，则工作区在别的盘上（必须问）。
+ * 交付盘盘根没有 manifest（`volumeMarker` 在真机为 undefined），这是旧配置上
+ * 唯一可核证的运行盘证据。读不出任何盘符 ⇒ 空数组 ⇒ 迁移例外不成立（问人）。
+ */
+function recordedRunVolumesOf(
+  config: { bundledSkillRecords?: Record<string, Record<string, string>> } | null,
+): string[] {
+  const records = config?.bundledSkillRecords;
+  if (!records) return [];
+  const roots = new Set<string>();
+  for (const key of Object.keys(records)) {
+    const root = volumeRootOf(key);
+    if (root) roots.add(root);
+  }
+  return [...roots];
+}
 
 interface StartupContext {
   dialogs: WorkspaceStartupDialogs;
@@ -244,6 +271,9 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     recordedRelPath: config?.workspaceRelPath,
     volumeMarker: config?.volumeMarker,
     workspaceBinding: config?.workspaceBinding,
+    workspaceId: config?.workspaceId,
+    readWorkspaceId: (workspacePath) => readWorkspaceId(workspacePath),
+    recordedRunVolumes: recordedRunVolumesOf(config),
     portableRoot,
     defaultPath: getHomedirWorkspacePath(),
     // ⚠️ 记录的位置还在 ⇒ 判定必然停在第一分支（`configured`），压根不会读这个列表，
@@ -260,7 +290,24 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
 
   let workspacePath: string;
   switch (decision.kind) {
-    case 'configured':
+    case 'configured': {
+      workspacePath = decision.path;
+      /**
+       * 身份补铸（P-A v2，2026-10-15）：记录还在原位置 ⇒ 这是**确认过的工作区**。
+       * 老标记（1.0.6 时代只有 formatVersion/app/createdAt）在这里补一个 workspaceId
+       * 并写回配置 —— 只要正常启动过一次，老记录就升级成"身份可核证"的记录，
+       * 之后的换机/换盘符走身份路径，不再依赖运行盘关联。尽力而为、绝不抛。
+       */
+      try {
+        const id = ensureWorkspaceId(decision.path);
+        if (id && id !== config?.workspaceId) updateConfig({ workspaceId: id });
+      } catch (err) {
+        ctx.log('workspace.identity.backfill.failed', {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      break;
+    }
     case 'default':
       workspacePath = decision.path;
       break;
@@ -312,13 +359,21 @@ function locationOf(
   ctx: StartupContext,
   workspacePath: string,
   binding: 'app-volume' | 'explicit-path',
-): { workspaceRelPath?: string; volumeMarker?: string; workspaceBinding?: 'app-volume' | 'explicit-path' } {
+): {
+  workspaceRelPath?: string;
+  volumeMarker?: string;
+  workspaceBinding?: 'app-volume' | 'explicit-path';
+  workspaceId?: string;
+} {
   return workspaceLocationPatch({
     workspacePath,
     removableDrives: ctx.drives(),
     exists: ctx.exists,
     runVolumeRoot: ctx.portableRoot,
     binding,
+    // 身份（P-A v2）：所有"确认写入"的路径都先过 ensureWorkspace（标记已补铸），
+    // 这里读出来随线索一起写进配置。
+    workspaceId: readWorkspaceId(workspacePath),
   });
 }
 

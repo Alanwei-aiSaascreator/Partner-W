@@ -63,6 +63,9 @@ vi.mock('../src/main/workspace/config.js', () => ({
 vi.mock('../src/main/workspace/init.js', () => ({
   initWorkspace: initWorkspaceMock,
   migrateWorkspace: migrateWorkspaceMock,
+  // P-A v2（2026-10-15）：locationPatch 会补铸/读工作区身份。替身返回 null（"读不到"）
+  // ⇒ 判定保持老行为；少这个导出会让 handler 直接抛 "is not a function" 落到 {ok:false}。
+  ensureWorkspaceId: vi.fn(() => null),
 }));
 
 vi.mock('../src/main/db/index.js', () => ({

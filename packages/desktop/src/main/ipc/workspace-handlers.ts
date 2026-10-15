@@ -10,7 +10,7 @@ import {
   getPortableWorkspaceRoot,
   ensureDeviceId,
 } from '../workspace/config.js';
-import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
+import { ensureWorkspaceId, initWorkspace, migrateWorkspace } from '../workspace/init.js';
 import { probeWorkspaceFsIdentity } from '../workspace/fs-identity.js';
 import { clearWorkspaceStartupNotice, readWorkspaceStartupNotice } from '../workspace/startup-notice.js';
 import { bindingForPickedDirectory, workspaceLocationPatch } from '../workspace/portable.js';
@@ -59,6 +59,7 @@ function locationPatch(workspacePath: string): {
   workspaceRelPath?: string;
   volumeMarker?: string;
   workspaceBinding?: 'app-volume' | 'explicit-path';
+  workspaceId?: string;
 } {
   // 程序自己所在的那块盘（盘上形态才有）：`DriveType=3` 的盘不在可移动盘列表里，
   // 少了这一条，用户把工作区设到那块盘上时一条线索都记不上（换口就丢）。
@@ -77,6 +78,9 @@ function locationPatch(workspacePath: string): {
      * 旧行为一律 explicit-path ⇒ 同盘手选过的目录在换盘符后被当成"外部路径"问人。
      */
     binding: bindingForPickedDirectory(workspacePath, runVolumeRoot),
+    // 身份（P-A v2）：用户选定的工作区在这里补铸/读出身份，随线索一起写进配置。
+    // 调用点都在 `initWorkspace`/`migrateWorkspace` 之后，标记已就位。
+    workspaceId: ensureWorkspaceId(workspacePath),
   });
 }
 

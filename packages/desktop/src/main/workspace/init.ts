@@ -1,5 +1,6 @@
-import { mkdirSync, existsSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { cp } from 'fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'path';
 import { sep as winSep } from 'node:path/win32';
 import { WORKSPACE_MARKER_FILE } from './portable.js';
@@ -17,21 +18,73 @@ export async function initWorkspace(workspacePath: string): Promise<void> {
  * 作用：盘符变了以后，靠"这个目录里有没有我们的标记"认出**它是不是那份工作区**
  * —— 光靠盘根 marker 只能证明"这个卷是我们的盘"，证明不了目录这一层。
  *
+ * ⚠️ **身份（P-A v2，2026-10-15）**：标记里带一个 `workspaceId`（uuid），配置侧
+ *    同步记一份 —— 恢复端用它证明"候选就是记录的那一份工作区"，不再拿"目录里
+ *    有个通用标记"当身份（独立审查反例：外部工作区失联时冒名收养同相对路径的
+ *    另一份带标记工作区）。老标记（没有 id）在**确认过的工作区**上补铸一次：
+ *    `initWorkspace` / 启动 `configured` 分支都会到这里。
+ *
  * ⚠️ **尽力而为、绝不抛**：写不进去（只读盘、权限）只是失去一条认盘线索，
  *    不该把「设置工作区」整个弄失败。
  */
 function writeWorkspaceMarker(workspacePath: string): void {
   const markerPath = join(workspacePath, WORKSPACE_MARKER_FILE);
-  if (existsSync(markerPath)) return;
   try {
+    if (existsSync(markerPath)) {
+      // 补铸：老标记只有 formatVersion/app/createdAt ⇒ 原样补一个 workspaceId。
+      const existing = readMarkerJson(markerPath);
+      if (!existing || (typeof existing.workspaceId === 'string' && existing.workspaceId.trim())) return;
+      writeFileSync(markerPath, `${JSON.stringify({ ...existing, workspaceId: randomUUID() }, null, 2)}\n`, 'utf-8');
+      return;
+    }
     writeFileSync(
       markerPath,
-      `${JSON.stringify({ formatVersion: 1, app: 'rongying-cube', createdAt: new Date().toISOString() }, null, 2)}\n`,
+      `${JSON.stringify(
+        { formatVersion: 1, app: 'rongying-cube', workspaceId: randomUUID(), createdAt: new Date().toISOString() },
+        null,
+        2,
+      )}\n`,
       'utf-8',
     );
   } catch (err) {
     console.warn('[workspace] 写工作区标记失败（忽略，继续）:', err);
   }
+}
+
+/** 读标记 JSON（容错）；读不出给 null。 */
+function readMarkerJson(markerPath: string): Record<string, unknown> | null {
+  try {
+    const raw = readFileSync(markerPath, 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读工作区标记里的 `workspaceId`（P-A v2 的身份读口；没有/坏了给 null）。
+ *
+ * 只读、同步、绝不抛 —— 调用方是启动判定路径，读不出来只表示"身份不可用"。
+ */
+export function readWorkspaceId(workspacePath: string): string | null {
+  const marker = readMarkerJson(join(workspacePath, WORKSPACE_MARKER_FILE));
+  const id = marker?.workspaceId;
+  return typeof id === 'string' && id.trim() ? id : null;
+}
+
+/**
+ * 确保工作区有身份并返回它（有了就返回，没有就补铸再读；失败给 null）。
+ *
+ * 只对**确认过的工作区**调用（`configured` 分支 / 用户选定 / 初始化路径）——
+ * 老记录在正常启动一次后就自动升级成有身份的记录。
+ */
+export function ensureWorkspaceId(workspacePath: string): string | null {
+  writeWorkspaceMarker(workspacePath);
+  return readWorkspaceId(workspacePath);
 }
 
 /** True when the destination is the same as or nested inside the source workspace path. */

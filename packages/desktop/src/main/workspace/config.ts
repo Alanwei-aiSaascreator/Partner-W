@@ -75,6 +75,13 @@ export interface AppConfig {
    */
   workspaceBinding?: 'app-volume' | 'explicit-path';
   /**
+   * 工作区**身份**（P-A v2，2026-10-15）：工作区标记 `.clawwork-workspace.json` 里的
+   * `workspaceId`。恢复端用"记录身份 == 候选标记身份"证明同一份工作区 ——
+   * 通用目录标记只能证明"这个目录是我们的"，证明不了"它是记录的那一份"。
+   * 老记录首次 `configured` 启动时自动补铸并写回（`startup.ts`）。
+   */
+  workspaceId?: string;
+  /**
    * 兼容 0.0.25 写下的盘上首启标记。新版发现它后会清掉，避免把内置本地网关
    * 暴露成需要用户填写地址和令牌的远程网关表单。
    */

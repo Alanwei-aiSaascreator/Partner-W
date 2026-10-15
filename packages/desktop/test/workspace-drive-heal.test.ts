@@ -614,19 +614,31 @@ describe('R1 —— 归属与路径线索边界（集中终审）', () => {
 });
 
 /**
- * 便携首次启动硬合同（2026-10-15）P-A —— 旧 1.0.6 `explicit-path` 记录的**迁移边界**。
+ * 便携首次启动硬合同（2026-10-15）P-A —— 旧 `explicit-path` 记录的**迁移边界**。
  *
- * 1.0.6 把"同盘（当前运行卷）手选目录"也记成了 explicit-path（workspace:setup/change
- * 与启动页 browse 的旧行为），换盘符后旧绝对路径失效 ⇒ 一律 ask-user = 用户事故。
+ * 1.0.6（与 r7 同源）把"同盘（当前运行卷）手选目录"也记成了 explicit-path
+ * （workspace:setup/change 与启动页 browse 的旧行为），换盘符后旧绝对路径失效
+ * ⇒ 一律 ask-user = 用户事故。
  *
- * 迁移例外**必须窄**：唯一候选在**当前运行卷**上、且带**目录级可信身份**
- * （`.clawwork-workspace.json` —— 我们自己写的"这个目录是那份工作区"标记）。
+ * ⚠️ 修复 v2（2026-10-15，独立审查 CHANGES_REQUIRED 后的收窄）：**目录里那个通用标记
+ *    不是身份**——同相对路径上"另一份带标记的工作区"（外部 E 工作区失联、当前 F 盘上
+ *    正好有一份同名的）会被冒名收养，把用户带到别人的数据上。静默迁移必须用**保存期
+ *    的可核证关联**，两级：
+ *    ① `workspaceId`：新记录把工作区标记里的 id 同时写进配置；恢复时 id 相等 = 同一份；
+ *    ② `recordedRunVolumes`（旧配置所在运行盘）：config 自己的 `bundledSkillRecords`
+ *       key（`<盘>\荣盈魔方-运行数据\state\…\skills`）里的盘符 == 记录的工作区盘符
+ *       ⇒ 保存时工作区就在**配置自己那块盘**上（配置住在盘上、跟着盘走，所以它的
+ *       盘符就是那块盘的保存期盘符）。交付盘盘根**没有** manifest，`volumeMarker`
+ *       在真机上一条都记不到，不能当判据。
+ *    两条都没有 ⇒ ask-user（独立反例的形状）。
+ *
+ * 候选本身仍须：唯一、在**当前运行卷**上、带工作区自身标记（`.clawwork-workspace.json`）。
  * 目录同名但没有标记（R1-② 的形状）、候选在别的卷、多候选 —— 一律保持询问。
  *
  * ⚠️ 判据是"目录里有没有工作区自身标记"，**不是**候选的 `evidence` 枚举值：
  *    盘根 marker 在场时 `evidenceOf` 会先把 candidate 记成 `volume-marker`。
  */
-describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', () => {
+describe('P-A：旧 explicit-path 记录的迁移边界（保存期身份/运行盘关联）', () => {
   beforeEach(() => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
   });
@@ -637,15 +649,16 @@ describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', (
   const BASE = { defaultPath: WIN.join('C:\\', 'Users', 'u', 'ClawWork-Workspace') };
   const PICKED = '我的工作区';
   const F_PICKED = WIN.join('F:\\', PICKED);
+  const E_PICKED = WIN.join('E:\\', PICKED);
   const markerIn = (dir: string): string => WIN.join(dir, WORKSPACE_MARKER);
 
-  it('⭐ 唯一候选在运行卷 + 带工作区自身标记 ⇒ healed（同盘手选目录的迁移）', () => {
+  it('⭐ 运行盘关联成立（旧配置运行盘 == 记录工作区盘 + 运行卷候选 + 目录标记）⇒ healed', () => {
     const decision = decideWorkspaceStartup({
       ...BASE,
-      recordedPath: WIN.join('E:\\', PICKED),
+      recordedPath: E_PICKED,
       recordedRelPath: PICKED,
       workspaceBinding: 'explicit-path',
-      volumeMarker: MANIFEST,
+      recordedRunVolumes: ['E:\\'],
       portableRoot: 'F:\\',
       removableDrives: ['F:'],
       exists: vfs(F_PICKED, markerIn(F_PICKED)),
@@ -654,21 +667,22 @@ describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', (
     expect(decision).toEqual({
       kind: 'healed',
       path: F_PICKED,
-      from: WIN.join('E:\\', PICKED),
+      from: E_PICKED,
       via: { path: F_PICKED, origin: 'run-volume', evidence: 'workspace-marker' },
     });
   });
 
-  it('⭐ 盘根 marker 也在（evidence 会是 volume-marker）⇒ 判据仍按目录级身份 healed', () => {
+  it('⭐ 身份匹配（配置 workspaceId == 候选标记 id）⇒ healed', () => {
     const decision = decideWorkspaceStartup({
       ...BASE,
-      recordedPath: WIN.join('E:\\', PICKED),
+      recordedPath: E_PICKED,
       recordedRelPath: PICKED,
       workspaceBinding: 'explicit-path',
-      volumeMarker: MANIFEST,
+      workspaceId: 'ws-identity-1',
+      readWorkspaceId: () => 'ws-identity-1',
       portableRoot: 'F:\\',
       removableDrives: ['F:'],
-      exists: vfs(F_PICKED, markerIn(F_PICKED), WIN.join('F:\\', MANIFEST)),
+      exists: vfs(F_PICKED, markerIn(F_PICKED)),
     });
 
     expect(decision.kind).toBe('healed');
@@ -676,10 +690,58 @@ describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', (
     expect(decision.path).toBe(F_PICKED);
   });
 
-  it('⚠️ 控制：同名目录 + 盘根 marker、**没有**目录级身份 ⇒ 仍 ask-user（缺可信身份仍问人）', () => {
+  it('⚠️ 独立反例：无身份、无运行盘关联 ⇒ ask-user（不许冒名收养同相对路径的另一份工作区）', () => {
+    // 外部 E 工作区 A 失联；当前 F 运行盘上同相对路径有一份**另一份**带标记的工作区 B。
     const decision = decideWorkspaceStartup({
       ...BASE,
-      recordedPath: WIN.join('E:\\', PICKED),
+      recordedPath: E_PICKED,
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, markerIn(F_PICKED)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+    if (decision.kind !== 'ask-user') throw new Error('unreachable');
+    expect(candidatePaths(decision.candidates)).toEqual([F_PICKED]);
+  });
+
+  it('⚠️ 运行盘关联**不成立**（记录工作区在别的盘）⇒ ask-user', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: E_PICKED,
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      recordedRunVolumes: ['F:\\'],
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, markerIn(F_PICKED)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+  });
+
+  it('⚠️ 身份**不匹配**（配置 id ≠ 候选标记 id）⇒ ask-user', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: E_PICKED,
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      workspaceId: 'ws-identity-1',
+      readWorkspaceId: () => 'ws-identity-2',
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, markerIn(F_PICKED)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+  });
+
+  it('⚠️ 只记了 volumeMarker（盘根 marker）而没有运行盘关联/身份 ⇒ 仍 ask-user（真机盘根无 manifest，不能当身份）', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: E_PICKED,
       recordedRelPath: PICKED,
       workspaceBinding: 'explicit-path',
       volumeMarker: MANIFEST,
@@ -689,9 +751,24 @@ describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', (
     });
 
     expect(decision.kind).toBe('ask-user');
+  });
+
+  it('⚠️ 控制：同名目录 + 盘根 marker、**没有**目录级标记 ⇒ 仍 ask-user（缺目录标记仍问人）', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: E_PICKED,
+      recordedRelPath: PICKED,
+      workspaceBinding: 'explicit-path',
+      recordedRunVolumes: ['E:\\'],
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, WIN.join('F:\\', MANIFEST)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
     if (decision.kind !== 'ask-user') throw new Error('unreachable');
     expect(candidatePaths(decision.candidates)).toEqual([F_PICKED]);
-    expect(decision.recordedPath).toBe(WIN.join('E:\\', PICKED));
+    expect(decision.recordedPath).toBe(E_PICKED);
   });
 
   it('⚠️ 控制：唯一可信候选在**别的卷**上 ⇒ 仍 ask-user（绝不跨卷静默）', () => {
@@ -700,7 +777,7 @@ describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', (
       recordedPath: WIN.join('Z:\\', PICKED),
       recordedRelPath: PICKED,
       workspaceBinding: 'explicit-path',
-      volumeMarker: MANIFEST,
+      recordedRunVolumes: ['Z:\\'],
       portableRoot: 'F:\\',
       removableDrives: ['E:'],
       exists: vfs(WIN.join('E:\\', PICKED), markerIn(WIN.join('E:\\', PICKED)), WIN.join('F:\\', MANIFEST)),
@@ -711,11 +788,26 @@ describe('P-A：旧 explicit-path 记录的迁移边界（目录级身份）', (
     expect(candidatePaths(decision.candidates)).toEqual([WIN.join('E:\\', PICKED)]);
   });
 
+  it('⚠️ 控制：app-volume 分支上配置 id 与候选 id **可读且不等** ⇒ ask-user（不收养别的身份）', () => {
+    const decision = decideWorkspaceStartup({
+      ...BASE,
+      recordedPath: E_PICKED,
+      recordedRelPath: PICKED,
+      workspaceId: 'ws-identity-1',
+      readWorkspaceId: () => 'ws-identity-2',
+      portableRoot: 'F:\\',
+      removableDrives: ['F:'],
+      exists: vfs(F_PICKED, markerIn(F_PICKED)),
+    });
+
+    expect(decision.kind).toBe('ask-user');
+  });
+
   it('⚠️ 控制：app-volume 与无归属记录的既有行为不变（运行卷候选仍静默 healed）', () => {
     // 老记录（没有 binding 字段、记过盘上相对路径）按 app-volume 保守处理 —— 不变。
     const decision = decideWorkspaceStartup({
       ...BASE,
-      recordedPath: WIN.join('E:\\', PICKED),
+      recordedPath: E_PICKED,
       recordedRelPath: PICKED,
       volumeMarker: MANIFEST,
       portableRoot: 'F:\\',
