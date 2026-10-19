@@ -42,12 +42,18 @@ import type {
   IpcResult as SharedIpcResult,
   JoinTeamResult,
   LikeToggleResult,
+  MemoryEntry,
   OurSkillInstallResult,
   OurSkillsListResult,
   ParsedTeam,
   QuestionResolveParams,
   RelayBootstrapPublicState,
   RelayLivenessPublicState,
+  RepairApplyRequest,
+  RepairBootstrap,
+  RepairApplyResult,
+  RepairScanReport,
+  RepairRestoreResult,
   RuntimeBootstrapStatus,
   RuntimeDeployProgress,
   SaveTeamMeetingInput,
@@ -68,6 +74,7 @@ import type {
   TeamPosition,
   TeamMeetingRecord,
   VideogenFailure,
+  ImagegenFailure,
   WorkspaceFsIdentity,
 } from '@clawwork/shared';
 // 隐私工单状态的**归一化后**形状（snake→camel、字节数字、真布尔）由 core 定义，
@@ -75,6 +82,17 @@ import type {
 import type { ExecutionEvent, PrivacyState } from '@clawwork/core';
 
 type IpcResult<T = Record<string, unknown>> = SharedIpcResult<T>;
+
+/** 飞书扫码会话的可观察状态（与主进程 `FeishuRegistrationState` 同形）。 */
+type FeishuRegistrationSnapshot = {
+  phase: 'idle' | 'pending' | 'success' | 'denied' | 'expired' | 'cancelled' | 'error';
+  qrUrl: string | null;
+  userCode: string | null;
+  expireAt: number | null;
+  appId: string | null;
+  boundAgentId: string | null;
+  error: string | null;
+};
 
 interface ConnectionStatus {
   connected: boolean;
@@ -194,6 +212,10 @@ interface CommercialLicenseStatus {
   maxActivations: number;
   tokenQuotaMicros: number;
   tokenUsedMicros: number;
+  /** 在途预占（媒体冻结）微积分（BUG-082 续）。只有真读到读数才有；缺省 = 没读到。 */
+  tokenHeldMicros?: number;
+  /** 预占口径是否可判定；`false` ⇒ 可用额度未知，UI 显示"暂不可用"（BUG-082 续 / r14）。 */
+  heldComplete?: boolean;
   activated: boolean;
   deviceFingerprint: string;
 }
@@ -327,6 +349,8 @@ interface PersistedMessage {
   thinkingContent?: string;
   /** 实际生成这条回复的模型 id（逐条来自网关）。老数据为 null。 */
   model?: string | null;
+  /** 整轮用时（本地量，ms）。老行没有这一列 ⇒ null/undefined。 */
+  durationMs?: number | null;
 }
 
 interface DiscoveredSession {
@@ -655,6 +679,7 @@ export interface ClawWorkAPI {
    * ⚠️ 与其它三条通道的**时序差别**：视频是远端异步任务，这条推送可能在消息完成后
    * **几分钟**才到（后台作业广播，见 `main/videogen/start.ts`）。
    */
+  onImagegenFailed: (callback: (failures: ImagegenFailure[]) => void) => () => void;
   onVideogenFailed: (callback: (failures: VideogenFailure[]) => void) => () => void;
   /**
    * 幻灯片那条通道的**两档**结果。
@@ -771,6 +796,76 @@ export interface ClawWorkAPI {
   ) => Promise<IpcResult>;
 
   getAppVersion: () => Promise<string>;
+  /**
+   * 「连接器」状态（2026-10-17）。
+   *
+   * ⚠️ 只报**盘上确认得了**的事实：配置里有没有 `channels.feishu`、插件有没有落盘。
+   *    飞书长连接在网关进程里，桌面侧没有查询通道 ⇒ **不许把"已配置"渲染成"已连接"**。
+   */
+  getConnectors: () => Promise<
+    IpcResult<{
+      connectors: Array<{
+        id: 'feishu';
+        configured: boolean;
+        appId: string | null;
+        enabled: boolean;
+        pluginInstalled: boolean;
+        runtimeReady: boolean;
+      }>;
+    }>
+  >;
+  /**
+   * 飞书连接器**完整状态**（2026-10-18）：盘上事实 + 网关上的当前绑定与助手名单。
+   *
+   * `boundAgentId === null` 表示没有路由绑定 —— 飞书消息会 `AgentSelectionRequiredError`。
+   */
+  getFeishuState: () => Promise<
+    IpcResult<{
+      state: {
+        id: 'feishu';
+        configured: boolean;
+        appId: string | null;
+        enabled: boolean;
+        pluginInstalled: boolean;
+        runtimeReady: boolean;
+        boundAgentId: string | null;
+        agents: Array<{ id: string; name: string }>;
+        /** 网关里这条通道的真实健康；读不到为 null（不猜"已连接"）。 */
+        channelHealth?: {
+          running: boolean;
+          lifecycle: string;
+          ingressUnavailable: boolean;
+          lastError: string | null;
+        } | null;
+      };
+    }>
+  >;
+  /** 开始扫码（应用内二维码）：返回二维码地址、用户码与过期时间。 */
+  beginFeishuRegistration: () => Promise<IpcResult<FeishuRegistrationSnapshot>>;
+  /** 轮询扫码会话状态（渲染层按 1s 调一次，不依赖事件推送）。 */
+  getFeishuRegistration: () => Promise<IpcResult<FeishuRegistrationSnapshot>>;
+  /** 取消扫码（关闭弹窗时调用）。 */
+  cancelFeishuRegistration: () => Promise<IpcResult<{ cancelled: true }>>;
+  /** 更换绑定（`agentId = null` ⇒ 取消绑定）。 */
+  bindFeishuAgent: (agentId: string | null) => Promise<IpcResult<{ boundAgentId: string | null }>>;
+  /** 开关飞书通道（`enabled=false` 只停通道，不删凭证）。 */
+  setFeishuChannelEnabled: (enabled: boolean) => Promise<IpcResult<{ enabled: boolean }>>;
+  /** 旧流程：拉起系统终端的扫码窗口（保留兼容；界面已改走应用内扫码）。 */
+  connectFeishu: () => Promise<IpcResult<{ launched: true }>>;
+  /** 桌面宠物：开/关那个置顶的透明小窗（主区右下角的「放到桌面」用它）。 */
+  petOpen: () => Promise<IpcResult<{ ok: true }>>;
+  petClose: () => Promise<IpcResult<{ ok: true }>>;
+  /** 换个位置（桌面宠物「走动」）。 */
+  petMove: () => Promise<IpcResult<{ ok: true }>>;
+  /** 只读：桌面这一层有多少可整理文件、按类别分布。 */
+  petDesktopSummary: () => Promise<IpcResult<{ fileCount: number; groups: Array<{ folder: string; count: number }> }>>;
+  /** 整理桌面：**主进程先弹确认框**，用户同意才移动；只移动文件、重名自动加序号。 */
+  petOrganize: () => Promise<IpcResult<{ moved: number; cancelled: boolean; failed: string[] }>>;
+  /** 删除：先让用户选文件，再弹确认，最后进**回收站**（可恢复）。 */
+  petTrash: () => Promise<IpcResult<{ trashed: number; cancelled: boolean }>>;
+  /** 视频画质档位：standard = H3（便宜）；seedance = 豆包 Seedance 2.5（更贵、更清晰）。 */
+  getVideoQuality: () => Promise<IpcResult<{ quality: 'standard' | 'seedance' }>>;
+  setVideoQuality: (quality: 'standard' | 'seedance') => Promise<IpcResult<{ quality: 'standard' | 'seedance' }>>;
   reportPortableUpdateRendererReady: () => void;
   checkForUpdates: () => Promise<UpdateCheckResult>;
   getUpdateState: () => Promise<PortableUpdatePublicState | null>;
@@ -843,6 +938,8 @@ export interface ClawWorkAPI {
     thinkingContent?: string;
     /** 实际生成这条回复的模型 id（逐条来自网关）。 */
     model?: string;
+    /** 整轮用时（本地量，ms）；缺省不覆盖已落库的值。 */
+    durationMs?: number;
     /** ⚠️ DOCX-205 合同：整轮终态证据（见 core session-sync 的可信历史终态校验）。 */
     terminal?: { kind: 'final'; runId: string; stopReason?: string; source?: string };
     /** ⚠️ DOCX-205 合同：同步链路标记（带标记的消息在主进程只认终态证据）。 */
@@ -1160,6 +1257,71 @@ export interface ClawWorkAPI {
   privacyRequestDeletion: (payload: { reason?: string }) => Promise<IpcResult<unknown>>;
   privacyCancelDeletion: (payload: { id: string }) => Promise<IpcResult<null>>;
   privacyDownloadExport: () => Promise<IpcResult<{ path: string; truncated: boolean; notes: string[] }>>;
+
+  /** 长期记忆：已确认条目 + 待确认草案 + 已拒绝（供界面如实区分三种状态）。 */
+  memoryList: () => Promise<MemoryStoreSnapshot>;
+  /** 用户**显式**"记住这条"（写入口）。写成功后 main 会把已确认集合投影到 `MEMORY.md`。 */
+  memoryCreate: (payload: { text: string; gatewayId?: string }) => Promise<MemoryMutationResult>;
+  memoryDelete: (payload: { id: string; gatewayId?: string }) => Promise<MemoryMutationResult>;
+  /** 确认一条助手提的草案（可带用户改过的正文）。 */
+  memoryConfirmDraft: (payload: { id: string; text?: string; gatewayId?: string }) => Promise<MemoryMutationResult>;
+  memoryRejectDraft: (payload: { id: string; gatewayId?: string }) => Promise<MemoryMutationResult>;
+  /** 手动重投影（启动注入失败后、或怀疑"助手没读到"时）。 */
+  memorySync: (payload?: { gatewayId?: string }) => Promise<MemorySyncOutcome>;
+  /** 取证：只读回读每个助手 `MEMORY.md` 的受管区块。 */
+  memoryRecallProof: (payload?: { gatewayId?: string }) => Promise<MemoryRecallOutcome>;
+  /** 记忆变化广播（草案建立 / 增删改）。返回取消订阅函数。 */
+  onMemoryChanged: (callback: (payload: { gatewayId: string | null }) => void) => () => void;
+
+  // ── 诊断与修复（FEAT-03）─────────────────────────────────────────
+  /** 一次拿全初始状态（版本 / 形态 / 目标目录 / 语言）。 */
+  repairBootstrap: () => Promise<RepairBootstrap>;
+  /** 只读全检。**每次点都重扫**，返回的计划就是随后 apply 唯一认的那一份。 */
+  repairScan: () => Promise<RepairScanReport>;
+  /** 执行同一次扫描里勾中的动作（主进程会再核一遍活锁与计划新鲜度）。 */
+  repairApply: (payload: RepairApplyRequest) => Promise<RepairApplyResult>;
+  /** 在文件管理器里打开备份目录（主进程白名单：只许应用自己的目录）。 */
+  repairReveal: (targetPath: string) => Promise<{ ok: boolean }>;
+  /** 把某一轮修复的备份写回原路径（`apply` 回给的 `backupDir`）；活锁下拒绝。 */
+  repairRestore: (backupDir: string) => Promise<RepairRestoreResult | { ok: false }>;
+}
+
+export interface MemorySyncSummary {
+  status: 'synced' | 'skipped';
+  reason?: string;
+  written?: string[];
+  unchanged?: string[];
+  failed?: Array<{ agentId: string; error: string }>;
+}
+
+export interface MemoryStoreSnapshot {
+  ok: boolean;
+  reason?: string;
+  ownerUserId?: string;
+  entries?: MemoryEntry[];
+  pending?: MemoryEntry[];
+  rejected?: MemoryEntry[];
+}
+
+export interface MemoryMutationResult {
+  ok: boolean;
+  reason?: string;
+  limit?: number;
+  entry?: MemoryEntry;
+  sync?: MemorySyncSummary;
+}
+
+export interface MemorySyncOutcome {
+  ok: boolean;
+  reason?: string;
+  sync?: MemorySyncSummary;
+}
+
+export interface MemoryRecallOutcome {
+  ok: boolean;
+  reason?: string;
+  entries?: MemoryEntry[];
+  files?: Record<string, string[]>;
 }
 
 export interface RechargeSku {

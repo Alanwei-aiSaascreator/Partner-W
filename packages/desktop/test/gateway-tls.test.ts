@@ -46,7 +46,10 @@ describe('ensureGatewayWindowsSystemTrust', () => {
     return dir;
   };
 
+  const originalSystemCertEnv = process.env.MOFANG_SYSTEM_CERT_STORE;
+
   beforeEach(() => {
+    delete process.env.MOFANG_SYSTEM_CERT_STORE;
     vi.resetModules();
     for (const fn of [
       mocks.run,
@@ -65,13 +68,38 @@ describe('ensureGatewayWindowsSystemTrust', () => {
     if (platformDescriptor) {
       Object.defineProperty(process, 'platform', platformDescriptor);
     }
+    if (originalSystemCertEnv === undefined) delete process.env.MOFANG_SYSTEM_CERT_STORE;
+    else process.env.MOFANG_SYSTEM_CERT_STORE = originalSystemCertEnv;
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
+  // 2026-10-19（360 误报治理）：win-ca 的 fallback 引擎会 execFile 一个**未签名**的
+  // roots.exe。对杀软启发式而言这是"未签名程序启动未签名程序 + 读证书库"。
+  // 我们的 relay/更新域名都是公共 CA，不需要企业 MITM 根证书 ⇒ 默认不跑。
+  it('⭐ 默认不加载系统证书库（不执行未签名的 roots.exe）', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+
+    const { ensureGatewayWindowsSystemTrust } = await import('../src/main/ws/tls-trust.js');
+    ensureGatewayWindowsSystemTrust(makeTempDir());
+
+    expect(mocks.requireMock).not.toHaveBeenCalled();
+  });
+
+  it('显式开启（MOFANG_SYSTEM_CERT_STORE=1）才加载', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+    process.env.MOFANG_SYSTEM_CERT_STORE = '1';
+
+    const { ensureGatewayWindowsSystemTrust } = await import('../src/main/ws/tls-trust.js');
+    ensureGatewayWindowsSystemTrust(makeTempDir());
+
+    expect(mocks.requireMock).toHaveBeenCalledTimes(3);
+  });
+
   it('在 Windows 上：只 require 三个子模块（不碰主入口），证书逐张保存+注入', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+    process.env.MOFANG_SYSTEM_CERT_STORE = '1';
 
     const { ensureGatewayWindowsSystemTrust } = await import('../src/main/ws/tls-trust.js');
     const userDataDir = makeTempDir();
@@ -101,6 +129,7 @@ describe('ensureGatewayWindowsSystemTrust', () => {
 
   it('重复调用只初始化一次', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+    process.env.MOFANG_SYSTEM_CERT_STORE = '1';
 
     const { ensureGatewayWindowsSystemTrust } = await import('../src/main/ws/tls-trust.js');
     const userDataDir = makeTempDir();
@@ -123,6 +152,7 @@ describe('ensureGatewayWindowsSystemTrust', () => {
 
   it('保存目录建不出来时整件事跳过（fail-soft，不惊动 win-ca）', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+    process.env.MOFANG_SYSTEM_CERT_STORE = '1';
 
     const { ensureGatewayWindowsSystemTrust } = await import('../src/main/ws/tls-trust.js');
     // 把一个普通文件当父目录 ⇒ mkdir 必失败

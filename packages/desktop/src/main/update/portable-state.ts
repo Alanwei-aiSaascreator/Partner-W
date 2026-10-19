@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, parse, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import type { PortableUpdateChannel, PortableUpdateErrorCode, PortableUpdatePhase } from '@clawwork/shared';
 
 export const PORTABLE_PROGRAM_DIRECTORY_NAME = '\u8363\u76c8\u9b54\u65b9';
@@ -139,6 +139,69 @@ export function assertPortableTransactionPaths(
   }
 }
 
+/**
+ * 把一条**写在别的盘符下**的事务记录挪到当前根（2026-10-19，与启动器的
+ * `RebaseTransaction` 同一条纪律）。
+ *
+ * 为什么应用侧也要做：记录是绝对路径，U 盘今天在 E:、明天在 F: 是产品的正常用法。
+ * 读的时候不改写，后续任何"续传/清场"都会拿着 E: 的路径去操作 F: 的盘 —— 失败信息
+ * 还会被当成"更新坏了"。启动器那侧已经会在启动时重写；这里保证**应用先于启动器**
+ * 读到同一条记录时也不会走错。
+ *
+ * 判据同样是"只做整体重写"：任何一条路径越出旧根、或程序目录不是旧根的兄弟，
+ * 就返回 null（调用方按既有策略隔离这条记录），绝不做半截改写。
+ */
+export function rebasePortableTransaction(
+  transaction: PortableUpdateTransactionV1,
+  root: string,
+): PortableUpdateTransactionV1 | null {
+  // ⚠️ 必须先按**原始值**判绝对：`resolve()` 会把相对路径锚到进程 cwd，
+  //    之后再 `isAbsolute` 恒为真 —— 等于把 cwd 当成"这块盘"（2026-10-19 自审）。
+  if (!isAbsolute(transaction.updateRoot) || !isAbsolute(root)) return null;
+  const recordedRoot = resolve(transaction.updateRoot);
+  const currentRoot = resolve(join(root, PORTABLE_UPDATE_DIRECTORY_NAME));
+  if (compareKey(recordedRoot) === compareKey(currentRoot)) return transaction;
+
+  const move = (value: string): string | null => {
+    const relativePath = relative(recordedRoot, resolve(value));
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return null;
+    return join(currentRoot, relativePath);
+  };
+
+  const rebased: PortableUpdateTransactionV1 = {
+    ...transaction,
+    updateRoot: currentRoot,
+    archivePath: '',
+    stagedProgramPath: '',
+    backupProgramPath: '',
+    manifestPath: '',
+    fileManifestPath: '',
+    healthPath: '',
+  };
+  for (const key of [
+    'archivePath',
+    'stagedProgramPath',
+    'backupProgramPath',
+    'manifestPath',
+    'fileManifestPath',
+    'healthPath',
+  ] as const) {
+    const next = move(transaction[key]);
+    if (next === null) return null;
+    rebased[key] = next;
+  }
+
+  if (compareKey(dirname(transaction.currentProgramPath)) !== compareKey(dirname(recordedRoot))) return null;
+  rebased.currentProgramPath = join(root, basename(transaction.currentProgramPath));
+
+  try {
+    assertPortableTransactionPaths(rebased);
+  } catch {
+    return null;
+  }
+  return rebased;
+}
+
 function parseTransaction(value: unknown): PortableUpdateTransactionV1 | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -199,15 +262,23 @@ export class PortableUpdateStateStore {
       return null;
     }
 
+    // ⚠️ 记录可能是**另一个盘符**下写的（U 盘换机是正常用法）。先按当前根重写，
+    //    重写不了才隔离 —— "换个盘符"不是"记录坏了"。
+    const rebased = rebasePortableTransaction(transaction, dirname(dirname(this.stateFilePath)));
+    if (rebased === null) {
+      await this.quarantine();
+      return null;
+    }
+
     try {
-      assertPortableTransactionPaths(transaction);
+      assertPortableTransactionPaths(rebased);
     } catch {
       await this.quarantine();
       return null;
     }
 
-    this.lastUpdatedAt = Math.max(this.lastUpdatedAt, transaction.updatedAt);
-    return transaction;
+    this.lastUpdatedAt = Math.max(this.lastUpdatedAt, rebased.updatedAt);
+    return rebased;
   }
 
   async write(transaction: PortableUpdateTransactionV1): Promise<PortableUpdateTransactionV1> {

@@ -147,6 +147,10 @@ describe('门禁钩子：模型不齐必须让构建失败', () => {
       path.resolve(PROJECT_DIR, 'build/icon.png'),
       RUNTIME_ABS,
       path.join(RUNTIME_ABS, 'openclaw-runtime-manifest.json'),
+      // BUG-171：随包 npm 负载也是运行时的一部分
+      path.join(RUNTIME_ABS, 'node', 'npm.cmd'),
+      path.join(RUNTIME_ABS, 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.join(RUNTIME_ABS, 'node', 'npm-cache', '_cacache'),
       MODEL_ABS,
       ...files.map((f) => path.join(MODEL_ABS, f)),
     ]);
@@ -174,7 +178,12 @@ describe('门禁钩子：模型不齐必须让构建失败', () => {
   it('整个 kb-model 目录都不在 ⇒ 失败（走的是原有的"缺源"那条）', () => {
     const exists = (p: string): boolean =>
       p !== MODEL_ABS &&
-      (p === RUNTIME_ABS || p === path.join(RUNTIME_ABS, 'openclaw-runtime-manifest.json') || p.endsWith('icon.png'));
+      (p === RUNTIME_ABS ||
+        p === path.join(RUNTIME_ABS, 'openclaw-runtime-manifest.json') ||
+        p === path.join(RUNTIME_ABS, 'node', 'npm.cmd') ||
+        p === path.join(RUNTIME_ABS, 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js') ||
+        p === path.join(RUNTIME_ABS, 'node', 'npm-cache', '_cacache') ||
+        p.endsWith('icon.png'));
     const message = gate.checkBundledRuntime(modelConfig, PROJECT_DIR, exists);
 
     expect(message).not.toBeNull();

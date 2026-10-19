@@ -481,6 +481,10 @@ function mimeTypeFor(name: string): string | null {
 }
 
 function artifactType(mimeType: string): Artifact['type'] {
+  // BUG-120（2026-10-17）：视频按 mime 认成 `'video'`。
+  // 扫描登记这条路（本文件）与 videogen 显式保存那条路必须**同一口径** ——
+  // 同一份 `.mp4` 不该因为"走哪条登记路径"就换一个类型。
+  if (mimeType.startsWith('video/')) return 'video';
   return mimeType.startsWith('image/') ? 'image' : 'file';
 }
 

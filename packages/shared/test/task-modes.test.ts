@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COMMERCIAL_DEFAULT_MODEL_ID,
   DEFAULT_TASK_MODE,
   FAST_MODEL_ALIAS_ID,
   MODE_BASE_MODEL_ID,
@@ -31,35 +32,39 @@ describe('任务模式映射（单一真源）', () => {
     expect(DEFAULT_TASK_MODE).toBe('smart');
   });
 
-  it('⭐ MODE_POLICY（Cephalon 批）：三档同为 glm-5.3-flash，思考档 = low / high / max', () => {
-    expect(MODE_POLICY.fast).toEqual({ modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'low' });
-    expect(MODE_POLICY.smart).toEqual({ modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'high' });
-    expect(MODE_POLICY.deep).toEqual({ modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'max' });
+  it('⭐ MODE_POLICY（2026-10-17）：三档按能力分模型 —— flash / flashx / glm-5.3，思考档 low / high / max', () => {
+    expect(MODE_POLICY.fast).toEqual({ modelId: 'glm-5.3-flash', thinkingLevel: 'low' });
+    expect(MODE_POLICY.smart).toEqual({ modelId: 'glm-5.3-flashx', thinkingLevel: 'high' });
+    expect(MODE_POLICY.deep).toEqual({ modelId: 'glm-5.3', thinkingLevel: 'max' });
   });
 
-  it('基础模型 = glm-5.3-flash（id 本体，不带 clawrouter/ 前缀）；旧 Qwen 快速别名常量保留（隐藏条目）', () => {
-    expect(MODE_BASE_MODEL_ID).toBe('glm-5.3-flash');
+  it('默认档（智能）的模型 = MODE_BASE_MODEL_ID = COMMERCIAL_DEFAULT_MODEL_ID', () => {
+    expect(MODE_BASE_MODEL_ID).toBe(MODE_POLICY.smart.modelId);
+    expect(MODE_BASE_MODEL_ID).toBe(COMMERCIAL_DEFAULT_MODEL_ID);
     // 别名是另一路并行上线的 relay 条目（保留在售、下拉隐藏）；三档已不再使用它。
     expect(FAST_MODEL_ALIAS_ID).toBe('qwen3.7-flash-fast');
   });
 
   describe('resolveModeModelId（对着目录解析）', () => {
-    it('⭐ 三档都解析到 glm-5.3-flash（旧别名在目录里也不误用）', () => {
-      const catalog = [FAST_MODEL_ALIAS_ID, MODE_BASE_MODEL_ID, 'deepseek-v4-flash'];
-      expect(resolveModeModelId('fast', catalog)).toBe(MODE_BASE_MODEL_ID);
-      expect(resolveModeModelId('smart', catalog)).toBe(MODE_BASE_MODEL_ID);
-      expect(resolveModeModelId('deep', catalog)).toBe(MODE_BASE_MODEL_ID);
+    it('⭐ 三档各自解析到自己的模型（旧别名在目录里也不误用）', () => {
+      const catalog = [FAST_MODEL_ALIAS_ID, 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-5.3', 'deepseek-v4-flash'];
+      expect(resolveModeModelId('fast', catalog)).toBe('glm-5.3-flash');
+      expect(resolveModeModelId('smart', catalog)).toBe('glm-5.3-flashx');
+      expect(resolveModeModelId('deep', catalog)).toBe('glm-5.3');
     });
 
-    it('目录里没有 glm ⇒ undefined（调用方保持现状、不拦截；不再回退旧 Qwen）', () => {
+    it('某档模型不在目录里 ⇒ 只有那一档 undefined（其余档不受影响）', () => {
       expect(resolveModeModelId('fast', ['deepseek-v4-flash', FAST_MODEL_ALIAS_ID])).toBeUndefined();
       expect(resolveModeModelId('smart', ['qwen3.7-flash'])).toBeUndefined();
       expect(resolveModeModelId('deep', [])).toBeUndefined();
+      // 关键：缺档不连坐 —— 有 glm-5.3 时深度档照常解析
+      expect(resolveModeModelId('deep', ['glm-5.3'])).toBe('glm-5.3');
     });
 
     it('目录 id 带命名空间（clawrouter/…）也认，返回**目录里那个 id 本体**', () => {
-      expect(resolveModeModelId('smart', ['clawrouter/glm-5.3-flash'])).toBe('clawrouter/glm-5.3-flash');
+      expect(resolveModeModelId('smart', ['clawrouter/glm-5.3-flashx'])).toBe('clawrouter/glm-5.3-flashx');
       expect(resolveModeModelId('fast', ['clawrouter/glm-5.3-flash'])).toBe('clawrouter/glm-5.3-flash');
+      expect(resolveModeModelId('deep', ['clawrouter/glm-5.3'])).toBe('clawrouter/glm-5.3');
     });
   });
 

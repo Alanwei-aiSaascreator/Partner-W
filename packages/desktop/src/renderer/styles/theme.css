@@ -1074,3 +1074,92 @@ button.tool-summary__trigger:hover {
     transition: none;
   }
 }
+
+/* 「小盈」灵宠（2026-10-17）：只做轻微上下浮动；减少动态偏好下静止。 */
+.mascot-pet img {
+  animation: mascot-bob 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 14px rgba(160, 40, 110, 0.18));
+}
+@keyframes mascot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot-pet img { animation: none; }
+}
+
+/* 桌面宠物小窗（2026-10-17）：整个页面透明；**整窗背景是拖拽区**，按钮/吉祥物是 nodrag。 */
+.pet-surface,
+body.pet-surface,
+body.pet-surface #root {
+  /* ⚠️ `#root` 必须一起清：全局 `html, body, #root` 背景是 `--bg-primary`，
+     只清 html/body 时 `#root` 仍会铺一块不透明的浅色板（2026-10-18 实机截图）。 */
+  background: transparent !important;
+}
+.pet-window {
+  /* ⚠️ 2026-10-18 实机第二轮：只给"单独一层透明的 drag 层"时，Electron 仍然拖不动 ——
+     透明区域在 Chromium 里常常不参与拖拽区命中（没有绘制）。两条一起做才可靠：
+     ① 整个窗口本身是可拖区（交互元素各自 no-drag）；
+     ② 给拖拽区一个**几乎不可见**的底色（0.2% 黑，肉眼看不出，但保证有绘制）。 */
+  -webkit-app-region: drag;
+  background: rgba(0, 0, 0, 0.002);
+  user-select: none;
+}
+.pet-window .drag {
+  -webkit-app-region: drag;
+  /* 透明窗没有边框，光标是唯一能说明"这里能拖"的线索。 */
+  cursor: grab;
+}
+.pet-window .drag:active {
+  cursor: grabbing;
+}
+.pet-window .nodrag {
+  -webkit-app-region: no-drag;
+}
+.pet-bubble {
+  max-width: 100%;
+}
+.pet-bob {
+  animation: mascot-bob 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 14px rgba(160, 40, 110, 0.18));
+  /* 2026-10-18 现场：「拖不动」。这里原来是 `cursor: grab`，但吉祥物本身是
+     `nodrag`（点击要冒泡、右键要开菜单，`drag` 会把这些事件吞掉）——
+     于是"看着能抓、抓着不动"。现在吉祥物只表示可点，能拖的是整窗 drag 层。 */
+  cursor: pointer;
+}
+/* 「吃掉」动画：整理/删除成功后弹一下。 */
+.pet-eat {
+  animation: pet-eat 0.9s ease-in-out 1;
+}
+@keyframes pet-eat {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.18) rotate(-6deg); }
+  50% { transform: scale(0.92) rotate(4deg); }
+  75% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-bob, .pet-eat { animation: none; }
+}
+
+/* 技能库分类卡（2026-10-17 设计稿）：四类渐变 + 一个中性「其他」。
+   渐变只在 CSS 里定义，组件里不写裸色（UI 契约）。 */
+.skill-tile {
+  color: var(--accent-foreground);
+  box-shadow: var(--shadow-elevated);
+}
+.skill-tile--content {
+  background: linear-gradient(135deg, #a0219e 0%, #d51f7a 100%);
+}
+.skill-tile--commerce {
+  background: linear-gradient(135deg, #d5235b 0%, #f0623a 100%);
+}
+.skill-tile--research {
+  background: linear-gradient(135deg, #6d1bb0 0%, #a52a9e 100%);
+}
+.skill-tile--office {
+  background: linear-gradient(135deg, #c2410c 0%, #e05252 100%);
+}
+.skill-tile--other {
+  background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%);
+}

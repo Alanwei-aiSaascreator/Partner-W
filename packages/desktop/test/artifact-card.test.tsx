@@ -155,6 +155,27 @@ describe('ArtifactCard', () => {
     },
   );
 
+  /**
+   * ⭐ BUG-120（2026-10-17）：视频有了专属类型后，缩略图要给出**视频**图标
+   * （改型前 `type='file'` 落进通用文件图标，和 pdf/docx 长得一模一样）。
+   * 同时钉住：video **不是** image —— 不许去请求图片缩略图（主进程也不会为它生成）。
+   */
+  it('⭐ BUG-120：type=video 的产物缩略图是视频图标，且不请求图片缩略图', () => {
+    const readArtifactThumbnail = vi.fn(async () => ({
+      ok: true,
+      result: { dataUrl: 'data:image/png;base64,AAAA' },
+    }));
+    Object.assign(window.clawwork as object, { readArtifactThumbnail });
+    const video: Artifact = { ...artifact, type: 'video', name: '短片.mp4', mimeType: 'video/mp4' };
+
+    const { container, unmount } = render(<ArtifactCard artifact={video} />);
+
+    expect(container.querySelector('svg.lucide-video')).not.toBeNull();
+    expect(container.querySelector('svg.lucide-file')).toBeNull();
+    expect(readArtifactThumbnail).not.toHaveBeenCalled();
+    unmount();
+  });
+
   it('对照：available 时预览按钮可用', () => {
     const onPreview = vi.fn();
     const { container, unmount } = render(<ArtifactCard artifact={artifact} onPreview={onPreview} />);

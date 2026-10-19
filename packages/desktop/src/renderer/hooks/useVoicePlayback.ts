@@ -3,26 +3,14 @@ import { createSpeechPlayback } from '@/lib/voice/speech-playback';
 import {
   answerRevisionDigest,
   deriveVoiceSentenceRequestId,
-  voicePlaybackTargetString,
+  voicePlaybackStorageKey,
+  loadPlaybackGeneration,
+  completePlaybackGeneration,
   type VoicePlaybackIdentity,
 } from '@/lib/voice/playback-identity';
 
 export type VoicePlaybackPhase = 'idle' | 'preparing' | 'playing' | 'failed';
 
-/** 每个播放目标记住"完整播完"次数；只保留最近几十条，避免随朗读次数无限增长。 */
-const COMPLETED_PLAYBACK_LIMIT = 64;
-
-/**
- * 朗读播放器（R8-05 / VV-1）。
- *
- * 请求身份**在这里派生并逐层透传**（renderer → preload → main IPC → relay），不再让
- * main 侧每次 `randomUUID()`：
- *  - 失败（如 `voice-settlement-pending`：供应商已成功、结算已 COMMIT 但 ACK 丢失）后
- *    保留 `phase='failed'` 的**明确可重试状态**，不进静默 idle；用户再点朗读同一回答时
- *    沿用**同一身份**重放 —— relay 幂等回放已存结果，不会让供应商再跑一次、再扣一次费；
- *  - 一个目标**完整播完**后再点朗读 = 用户明确发起的新合成 ⇒ 身份前进一代（新请求）；
- *  - 换账号 / 换任务 / 换会话 / 文本变更 ⇒ 绑定字段变化 ⇒ 必然换身份（旧账号结果不复用）。
- */
 export function useVoicePlayback(scopeKey: string, identity: VoicePlaybackIdentity) {
   const [phase, setPhase] = useState<VoicePlaybackPhase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +23,12 @@ export function useVoicePlayback(scopeKey: string, identity: VoicePlaybackIdenti
   const identityRef = useRef(identity);
   identityRef.current = identity;
   /** 本次播放冻结的绑定：中途换账号/换任务也不改本轮各分句的身份。 */
-  const operation = useRef<{ target: VoicePlaybackIdentity; answerDigest: string } | null>(null);
-  const completedPlaybacks = useRef(new Map<string, number>());
+  const operation = useRef<{
+    target: VoicePlaybackIdentity;
+    answerDigest: string;
+    generation: number;
+    epoch: number;
+  } | null>(null);
   const cancel = useCallback(() => {
     const node = source.current;
     source.current = null;
@@ -66,10 +58,11 @@ export function useVoicePlayback(scopeKey: string, identity: VoicePlaybackIdenti
         const requestId = await deriveVoiceSentenceRequestId({
           target,
           answerDigest,
-          completedPlaybacks: completedPlaybacks.current.get(voicePlaybackTargetString(target, answerDigest)) ?? 0,
+          completedPlaybacks: frozen?.generation ?? 0,
           sentenceIndex,
           text,
         });
+        if (!frozen || frozen.epoch !== epoch.current) throw new Error('voice-cancelled');
         const response = await window.clawwork.synthesizeSpeech(text, requestId);
         if (!response.ok || !response.result) throw new Error(response.error ?? 'voice-playback-failed');
         return response.result;
@@ -118,7 +111,7 @@ export function useVoicePlayback(scopeKey: string, identity: VoicePlaybackIdenti
     setPhase('idle');
   }, []);
   const start = useCallback(
-    async (text: string) => {
+    async (text: string, messageKey?: string) => {
       if (running.current) return;
       stop();
       running.current = true;
@@ -127,10 +120,13 @@ export function useVoicePlayback(scopeKey: string, identity: VoicePlaybackIdenti
       let failed = false;
       try {
         // 绑定在点击那一刻冻结：本轮的每个分句、以及失败后的重试，都用同一套字段。
-        const target: VoicePlaybackIdentity = { ...identityRef.current };
+        const target: VoicePlaybackIdentity = { ...identityRef.current, ...(messageKey ? { messageKey } : {}) };
         const answerDigest = await answerRevisionDigest(text);
         if (current !== epoch.current) return;
-        operation.current = { target, answerDigest };
+        const storageKey = await voicePlaybackStorageKey(target, answerDigest);
+        if (current !== epoch.current) return;
+        const generation = loadPlaybackGeneration(storageKey);
+        operation.current = { target, answerDigest, generation, epoch: current };
         // Create/resume in the user gesture, before waiting for synthesis.
         const active = new AudioContext();
         context.current = active;
@@ -144,10 +140,7 @@ export function useVoicePlayback(scopeKey: string, identity: VoicePlaybackIdenti
         // 只有整轮播完（无失败、无打断）才记一次"完整播完"：
         // 失败/中断不算 ⇒ 下一次点击按"结果未知的恢复"沿用同一身份重放。
         if (current === epoch.current) {
-          const key = voicePlaybackTargetString(target, answerDigest);
-          const map = completedPlaybacks.current;
-          map.set(key, (map.get(key) ?? 0) + 1);
-          if (map.size > COMPLETED_PLAYBACK_LIMIT) map.delete(map.keys().next().value!);
+          completePlaybackGeneration(storageKey, generation);
         }
       } catch (failure) {
         const message = failure instanceof Error ? failure.message : 'voice-playback-failed';

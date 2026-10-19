@@ -39,6 +39,7 @@
     "test:e2e:ledger": "playwright test --config=e2e/playwright.config.ts --project=packaged profile-ledger",
     "check:i18n": "node --test scripts/lib/i18n-usage.test.mjs && node scripts/check-i18n.mjs",
     "check:udisk-delivery": "node --test scripts/lib/udisk-delivery.test.mjs scripts/lib/udisk-archive.test.mjs scripts/lib/udisk-diagnose.test.mjs",
+    "check:release-signatures": "node scripts/check-release-signatures.mjs",
     "check:gateway-probe": "node --test scripts/lib/gateway-probe.test.mjs",
     "udisk:delivery": "node scripts/udisk-delivery.mjs",
     "gateway:probe": "node scripts/gateway-probe.mjs",

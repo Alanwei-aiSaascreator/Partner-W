@@ -115,7 +115,8 @@ describe('generateVideosFromMessage（编排）', () => {
     expect(client.download).toHaveBeenCalledWith('task-1');
     const saveParams = mocks.saveArtifactFromBuffer.mock.calls[0][0] as Record<string, unknown>;
     expect(saveParams.fileName).toBe('小猫.mp4');
-    expect(saveParams.artifactType).toBe('file');
+    // ⭐ BUG-120：视频登记专属类型 `video`（改型前是 'file'，与 docx/pptx 混在一档）。
+    expect(saveParams.artifactType).toBe('video');
     expect(String(saveParams.sourceKey)).toMatch(/^videogen:[0-9a-f]{16}$/);
     expect(phases).toEqual(['generating-video', 'saving-artifacts']);
   });
@@ -286,4 +287,124 @@ describe('generateVideosFromMessage（编排）', () => {
     expect(result.saved).toHaveLength(1);
     expect(client.create).toHaveBeenCalledTimes(1);
   });
+});
+
+it('billing pending is a terminal generation failure: no retry loop, download or artifact', async () => {
+  const client = fakeClient();
+  makeQueue(client, [{ status: 'failed', failure: { code: 'videogen-billing-pending' } }]);
+  const result = await generateVideosFromMessage({
+    workspacePath: 'C:/ws',
+    taskId: TASK_ID,
+    messageId: MESSAGE_ID,
+    content: block({ prompt: 'flower' }),
+    client,
+    pollIntervalMs: 1,
+  });
+  expect(result.failed).toEqual([{ code: 'videogen-billing-pending' }]);
+  expect(result.saved).toEqual([]);
+  expect(client.query).toHaveBeenCalledTimes(1);
+  expect(client.download).not.toHaveBeenCalled();
+  expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+});
+
+it('canceled source before entry makes no create, replay, or activity calls', async () => {
+  const client = fakeClient(),
+    activity = vi.fn();
+  const result = await generateVideosFromMessage({
+    workspacePath: 'C:/ws',
+    taskId: TASK_ID,
+    messageId: MESSAGE_ID,
+    content: block({ prompt: 'flower' }),
+    client,
+    sourceCurrent: () => false,
+    onActivity: activity,
+  });
+  expect(result).toEqual({ saved: [], failed: [] });
+  expect(client.create).not.toHaveBeenCalled();
+  expect(mocks.findReplayArtifact).not.toHaveBeenCalled();
+  expect(activity).not.toHaveBeenCalled();
+});
+it.each(['create', 'query', 'download', 'save'] as const)(
+  'source cancellation while awaiting %s prevents subsequent side effects',
+  async (stage) => {
+    let current = true;
+    const client = fakeClient();
+    client.create.mockImplementationOnce(async () => {
+      if (stage === 'create') current = false;
+      return { ok: true, taskId: 'provider-1' };
+    });
+    client.query.mockImplementationOnce(async () => {
+      if (stage === 'query') current = false;
+      return { status: 'finished', outputSeconds: 4, inputSeconds: 0, inputImageCount: 0, resolution: '768P' };
+    });
+    client.download.mockImplementationOnce(async () => {
+      if (stage === 'download') current = false;
+      return { ok: true, buffer: mp4Buffer() };
+    });
+    if (stage === 'save')
+      mocks.saveArtifactFromBuffer.mockImplementationOnce(async (params) => {
+        current = false;
+        return {
+          id: 'late',
+          name: String(params.fileName),
+          taskId: params.taskId,
+          messageId: params.messageId,
+          availability: 'available',
+          ...params,
+        };
+      });
+    const result = await generateVideosFromMessage({
+      workspacePath: 'C:/ws',
+      taskId: TASK_ID,
+      messageId: MESSAGE_ID,
+      content: block({ prompt: 'flower' }),
+      client,
+      sourceCurrent: () => current,
+      pollIntervalMs: 1,
+    });
+    expect(result).toEqual({ saved: [], failed: [] });
+    if (stage === 'create') expect(client.query).not.toHaveBeenCalled();
+    if (stage === 'create' || stage === 'query') expect(client.download).not.toHaveBeenCalled();
+    if (stage !== 'save') expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  },
+);
+
+it('canceling from the saving activity callback prevents persistence', async () => {
+  let current = true;
+  const client = fakeClient();
+  makeQueue(client, [
+    { status: 'finished', outputSeconds: 4, inputSeconds: 0, inputImageCount: 0, resolution: '768P' },
+  ]);
+  const result = await generateVideosFromMessage({
+    workspacePath: 'C:/ws',
+    taskId: TASK_ID,
+    messageId: MESSAGE_ID,
+    content: block({ prompt: 'flower' }),
+    client,
+    sourceCurrent: () => current,
+    onActivity: (phase) => {
+      if (phase === 'saving-artifacts') current = false;
+    },
+  });
+  expect(result).toEqual({ saved: [], failed: [] });
+  expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+});
+it('source cancellation during polling sleep cannot make a second query', async () => {
+  let current = true;
+  const client = fakeClient();
+  makeQueue(client, [{ status: 'running' }]);
+  const result = await generateVideosFromMessage({
+    workspacePath: 'C:/ws',
+    taskId: TASK_ID,
+    messageId: MESSAGE_ID,
+    content: block({ prompt: 'flower' }),
+    client,
+    sourceCurrent: () => current,
+    sleep: async () => {
+      current = false;
+    },
+  });
+  expect(result).toEqual({ saved: [], failed: [] });
+  expect(client.query).toHaveBeenCalledTimes(1);
+  expect(client.download).not.toHaveBeenCalled();
 });

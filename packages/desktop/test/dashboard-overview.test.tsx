@@ -58,7 +58,20 @@ const mocks = vi.hoisted(() => ({
   },
   overview: {
     account: { id: 'user-1' },
-    license: { tokenQuotaMicros: 800_000_000, tokenUsedMicros: 200_000_000 },
+    // ⚠️ r14 返工：带上一次**成功读到的**在途预占读数（明确"没有预占"= 0）。
+    //    读数缺省不再等于"确定没有预占"：账户页 / Dashboard / 顶栏会显示"暂不可用"
+    //    而不是一个确定的余额 —— 所以"要断言确定余额"的夹具必须显式给出读数。
+    license: {
+      tokenQuotaMicros: 800_000_000,
+      tokenUsedMicros: 200_000_000,
+      tokenHeldMicros: 0,
+      heldComplete: true,
+    } as {
+      tokenQuotaMicros: number;
+      tokenUsedMicros: number;
+      tokenHeldMicros?: number;
+      heldComplete?: boolean;
+    },
   },
 }));
 
@@ -117,6 +130,55 @@ describe('Dashboard overview', () => {
     mocks.fetchDashboard.mockClear();
     mocks.loadCommercial.mockClear();
     mocks.refreshCommercial.mockClear();
+  });
+
+  /**
+   * r14 返工（BUG-082 二阶）：Dashboard 与账户页 / 顶栏**共用** `readHeldView` 判据。
+   * 预占口径不可判定时（读数缺省 / 后端明说不可判定）不许给确定余额 —— 否则
+   * 账户页说"暂不可用"、Dashboard 照给数字，同一块屏自相矛盾。
+   */
+  it('持仓读数不可判定 ⇒ Dashboard 不给确定余额（r14 返工）', () => {
+    const previous = mocks.overview.license;
+    // 读数缺省 = 老后端 / relay 不可达：客户端分不出是哪种，一律按未知。
+    mocks.overview.license = { ...mocks.overview.license, tokenHeldMicros: undefined, heldComplete: undefined };
+    try {
+      const { container, unmount } = render(<Dashboard />);
+      // 600.00 是 quota − used 的本地推算 ⇒ 读数不可判定时**不许**上屏。
+      expect(container.textContent).not.toContain('600.00');
+      expect(container.querySelector('[data-quota-held-unknown]')).not.toBeNull();
+      // 确定事实（已用 / 总额）照旧给，不因为预占读不到就一起藏起来。
+      expect(container.textContent).toContain('200.00');
+      expect(container.textContent).toContain('800.00');
+      unmount();
+    } finally {
+      mocks.overview.license = previous;
+    }
+  });
+
+  it('后端明确报了"没有预占" ⇒ Dashboard 照常给确定余额（不显示未知）', () => {
+    const { container, unmount } = render(<Dashboard />);
+    expect(container.textContent).toContain('600.00');
+    expect(container.querySelector('[data-quota-held-unknown]')).toBeNull();
+    unmount();
+  });
+
+  /**
+   * 读数贯通：**可用额 = 额度 − 已用 − 预占**。旧实现 Dashboard 只算 `quota − used`
+   * ⇒ held > 0 时与账户页显示成两个不同的可用额（600.00 vs 550.00）。
+   */
+  it('读到读数且预占 > 0 ⇒ Dashboard 显示 quota − used − held（与账户页同一个数）', () => {
+    const previous = mocks.overview.license;
+    // 800 − 200 − 50 = 550.00
+    mocks.overview.license = { ...mocks.overview.license, tokenHeldMicros: 50_000_000, heldComplete: true };
+    try {
+      const { container, unmount } = render(<Dashboard />);
+      expect(container.textContent).toContain('550.00');
+      expect(container.textContent).not.toContain('600.00');
+      expect(container.querySelector('[data-quota-held-unknown]')).toBeNull();
+      unmount();
+    } finally {
+      mocks.overview.license = previous;
+    }
   });
 
   it('shows a failed request distinctly from unavailable statistics', () => {

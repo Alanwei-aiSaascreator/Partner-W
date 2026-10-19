@@ -54,6 +54,12 @@ import {
   INBOX_TRUSTED_CWD_PATCH_ID,
 } from './lib/inbox-trusted-cwd-runtime.mjs';
 import { patchInboxExecutorPathRuntime, INBOX_EXECUTOR_PATH_PATCH_ID } from './lib/inbox-executor-path-runtime.mjs';
+// ⚠️ rongying-thinking-segment-id-v1（BUG-075 / T26）的接线**已于 2026-10-17 撤除**
+// （独立审核 ⚠️：接线无条件、无开关 ⇒ 任何人跑一次本脚本都会把补丁静默打进随包内核）。
+// 补丁模块与它的测试**原样保留**（提案与证据，不是死代码）：
+//   scripts/lib/thinking-segment-id-runtime.mjs（启用/回滚门写在文件头）
+//   scripts/lib/thinking-segment-id-runtime.test.mjs
+// 重新接线前，必须先满足模块头部列出的四道启用门（真机帧证据等）。见该模块头部注释。
 import { bundleNativeTools, verifyNativeToolRuntime } from './lib/native-tool-runtime.mjs';
 import { bundleWindowsVideoFrames } from './lib/windows-video-frames-runtime.mjs';
 import { bundleWindowsDebugSkills } from './lib/windows-debug-skills.mjs';
@@ -368,6 +374,10 @@ async function main() {
     inboxTrustedCwdRuntime,
     patchInboxExecutorPathRuntime(fs.readFileSync(inboxTrustedCwdRuntime, 'utf8')),
   );
+  // ⚠️ rongying-thinking-segment-id-v1（BUG-075 / T26）接线**已撤除**（2026-10-17）。
+  // 此处原为：patchThinkingSegmentIdRuntime 打 `builtin-openclaw-*.mjs`（thinking 发射点补 itemId）。
+  // 撤除理由：接线无条件、无开关 ⇒ 任何人跑一次本脚本都会把补丁静默打进随包内核，且无独立决策点。
+  // 补丁模块与测试原样保留；重新接线前须先过该模块头部的四道启用门。见文件顶部注释与模块头。
   const nativePatch = bundleNativeTools(stage, args.nativeTools);
   const videoFramesPatch = bundleWindowsVideoFrames(stage);
   const debugSkillsPatch = bundleWindowsDebugSkills(stage);
@@ -428,6 +438,7 @@ async function main() {
       SKILL_PROPOSAL_NAME_PATCH_ID,
       INBOX_TRUSTED_CWD_PATCH_ID,
       INBOX_EXECUTOR_PATH_PATCH_ID,
+      // ⚠️ THINKING_SEGMENT_ID_PATCH_ID 已于 2026-10-17 随接线撤除（补丁未打进本产物 ⇒ 不登记）。
       nativePatch,
       videoFramesPatch,
       debugSkillsPatch,

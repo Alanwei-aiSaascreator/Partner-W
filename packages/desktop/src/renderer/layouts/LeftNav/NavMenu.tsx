@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PUBLIC_MARKET_CLOSED } from '@clawwork/shared';
 import {
@@ -10,9 +10,10 @@ import {
   Feather,
   FlaskConical,
   FolderOpen,
+  GraduationCap,
   List,
-  MessageSquare,
-  Settings as SettingsIcon,
+  MoreHorizontal,
+  Plus,
   Sparkles,
   Store,
   Target,
@@ -62,6 +63,8 @@ export interface NavMenuProps {
   onOpenSettings: () => void;
   /** 有更新时给「设置」挂个角标（原来在图标栏上，本刀搬过来）。 */
   hasUpdate: boolean;
+  /** 2026-10-17 按设计稿：顶部第一行「新建任务」（原来是搜索框旁边的小图标）。 */
+  onNewTask?: () => void;
   /**
    * 「我的助手」切换器 —— 渲染在**「身份中心」上面那一行**（2026-09-19 用户要求：
    * 「把他放身份中心上面，点击后可以选择这几个角色」）。
@@ -87,7 +90,7 @@ export interface NavMenuProps {
 type NavItem = {
   key: string;
   labelKey: string;
-  icon: typeof MessageSquare;
+  icon: typeof Plus;
   /** 点击后落到哪个 `mainView`；不给则用 `onClick`。 */
   view?: MainView;
   onClick?: () => void;
@@ -105,33 +108,66 @@ type NavItem = {
    * （`button[disabled]` 会吞掉 onClick，所以这类占位入口不能用 `disabled`。）
    */
   muted?: boolean;
+  /** 「新建任务」这类主动作行：文字用强调色（设计稿同款）。 */
+  accent?: boolean;
 };
 
 export default function NavMenu({
   mainView,
   settingsOpen,
   onSelectView,
-  onOpenSettings,
-  hasUpdate,
   assistantSlot,
+  onNewTask,
   collapsed = false,
 }: NavMenuProps) {
   const { t } = useTranslation();
+  const [moreOpen, setMoreOpen] = useState(false);
 
-  // ⚠️ 顺序**照设计稿**排（不是按功能分组）。改顺序 = 改与设计稿的对应关系。
-  const items: NavItem[] = [
-    { key: 'search', labelKey: 'leftNav.pages.search', icon: MessageSquare, view: 'chat' },
-    // ⚠️ 位置是**用户点名**的：「最近任务」放在「身份中心」上面（2026-09-20，
-    //    原话「在最下面不好，显示也不全」）⇒ 顺序断言在 `left-nav-menu.test.tsx` 里钉着。
-    { key: 'tasks', labelKey: 'leftNav.recentTasks', icon: List, view: 'tasks' },
-    { key: 'identity', labelKey: 'leftNav.identityCenter', icon: UserRound, view: 'identity' },
+  /*
+    2026-10-18：「更多」展开后**必须收得回去**。
+    现场反馈：点开「更多」再切到别处（对话 / 其它页 / 任务行），它一直摊着，
+    一整列二级入口把任务列表挤到看不见（用户原话"左边栏坏了"）。
+    规则：① mainView 一变就复位；② 点「更多」以外的地方也收起；
+         ③ 点主入口导航项也收起（点在对话页里时 mainView 不变，effect 救不到）。
+  */
+  const moreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [mainView]);
+
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(event.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [moreOpen]);
+
+  /*
+    2026-10-18（用户实测）：左栏顶部六行 ——
+      新建任务 / 罗盘助手（助手槽位）/ 团队 / 技能库 / 智能体 / 智能体市场 / 更多，
+    其余页面全部收进「更多」。底部三个入口（用量与积分 / 游戏化中心 / 应用设置）
+    搬到左栏最底部的个人资料卡（`ProfileMenu`），不在这张清单里。
+
+    「资料库」从顶部挪进「更多」（2026-10-18 用户点名）：
+    顶部让位给「智能体市场」，资料库入口**保留**、只降级为次级项。
+  */
+  const topItems: NavItem[] = [
+    {
+      key: 'new-task',
+      labelKey: 'common.newTask',
+      icon: Plus,
+      onClick: onNewTask,
+      accent: true,
+    },
     { key: 'teams', labelKey: 'leftNav.pages.teams', icon: Users, view: 'teams', badge: 'Beta' },
-    // T-a2：从 `onClick`（打开设置并定位）改成**真正的主页面**。
-    // ⚠️ 顺带修掉了下面那条"不显示选中态"的注释里写的缺口 —— 它当时就是因为
-    //    这一项不是 `mainView` 才没有选中态。
     { key: 'skills', labelKey: 'leftNav.pages.skills', icon: Sparkles, view: 'skills' },
-    // ⚠️ 公开市场关闭期间（W07-57 / 需求 7）：入口置灰不可点，说明气泡指路私有模板。
-    //    重开时把 `PUBLIC_MARKET_CLOSED` 改回 false 即可，入口本身不删。
+    // 设计稿叫「智能体」；底下的真实页面是专家库（`layouts/ExpertsPanel`）。
+    { key: 'experts', labelKey: 'leftNav.pages.agentsSimple', icon: GraduationCap, view: 'experts' },
+    // 「智能体市场」原在「更多」里，2026-10-18 换到顶部（资料库让位）。
+    // ⚠️ 公开市场关闭时**只置灰不删入口**：`disabled` + `title` 说明（见类型注释）。
     {
       key: 'agents',
       labelKey: 'leftNav.pages.agents',
@@ -140,8 +176,14 @@ export default function NavMenu({
       disabled: PUBLIC_MARKET_CLOSED,
       disabledTitleKey: 'market.publicClosedTitle',
     },
-    // 2026-10-06（用户拍板）：需求悬赏暂不可用——置灰 + 点击弹「敬请期待」。
-    // 不删入口（直接删会让用户猜"没了还是藏了"——同 disabled 项的既有纪律）。
+  ];
+
+  /** 「更多」里的次级入口：保留全部既有页面，一个都不删。 */
+  const moreItems: NavItem[] = [
+    { key: 'tasks', labelKey: 'leftNav.recentTasks', icon: List, view: 'tasks' },
+    { key: 'identity', labelKey: 'leftNav.identityCenter', icon: UserRound, view: 'identity' },
+    // 「资料库」2026-10-18 从顶部移入「更多」（入口不丢）。
+    { key: 'kb', labelKey: 'kb.title', icon: BookOpen, view: 'kb' },
     {
       key: 'bounty',
       labelKey: 'leftNav.pages.bounty',
@@ -154,27 +196,14 @@ export default function NavMenu({
     { key: 'usage', labelKey: 'leftNav.usageOverview', icon: ChartNoAxesCombined, view: 'dashboard' },
     { key: 'growth', labelKey: 'leftNav.pages.growth', icon: Trophy, view: 'growth' },
     { key: 'cron', labelKey: 'cron.title', icon: Clock, view: 'cron' },
-    // ── 以下三项是从**图标栏**搬来的（本刀去掉图标栏）──
     { key: 'files', labelKey: 'common.fileManager', icon: FolderOpen, view: 'files' },
     { key: 'archived', labelKey: 'leftNav.archivedChats', icon: Archive, view: 'archived' },
-    { key: 'kb', labelKey: 'kb.title', icon: BookOpen, view: 'kb' },
-  ];
-
-  /** 底部一组：设置类入口（原来在图标栏最下面）。 */
-  const footItems: NavItem[] = [
     ...(isInternalBetaEnabled()
       ? ([{ key: 'betaHub', labelKey: 'beta.title', icon: FlaskConical, view: 'betaHub' }] satisfies NavItem[])
       : []),
-    {
-      key: 'settings',
-      labelKey: hasUpdate ? 'leftNav.updateAvailable' : 'leftNav.appSettings',
-      icon: SettingsIcon,
-      onClick: onOpenSettings,
-      badge: hasUpdate ? '•' : undefined,
-    },
   ];
 
-  const renderItem = (item: NavItem) => {
+  const renderItem = (item: NavItem, after?: () => void) => {
     const Icon = item.icon;
     // ⚠️ 「设置」是覆盖层，而**这一层拿不到"设置停在哪一节"**（那是 App.tsx 的局部 state）
     //    ⇒ 它经过时不显示选中态。这是个已知的小缺口：要做对得把 settingsSection 也传下来。
@@ -200,7 +229,13 @@ export default function NavMenu({
         disabled={item.disabled}
         aria-disabled={item.disabled || undefined}
         title={item.disabled && item.disabledTitleKey ? t(item.disabledTitleKey) : undefined}
-        onClick={() => (item.onClick ? item.onClick() : item.view && onSelectView(item.view))}
+        onClick={() => {
+          // 点主入口 ⇒ 收起「更多」（2026-10-18；点在里面那一项由 `after` 负责）。
+          if (!moreItems.includes(item)) setMoreOpen(false);
+          if (item.onClick) item.onClick();
+          else if (item.view) onSelectView(item.view);
+          after?.();
+        }}
         className={cn(
           'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body transition-colors',
           collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
@@ -208,7 +243,9 @@ export default function NavMenu({
             ? 'cursor-not-allowed text-[var(--text-muted)] opacity-60'
             : item.muted
               ? 'text-[var(--text-muted)] opacity-60 hover:opacity-80'
-              : active
+              : item.accent
+                ? 'text-[var(--accent)] hover:bg-[var(--accent-dim)]'
+                : active
                 ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
                 : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
         )}
@@ -247,16 +284,51 @@ export default function NavMenu({
     );
   };
 
+  /** 「更多」触发行（设计稿最后一项，`…` 图标）。 */
+  const moreButton = (
+    <button
+      type="button"
+      data-nav="more"
+      aria-haspopup="menu"
+      aria-expanded={moreOpen}
+      aria-label={collapsed ? t('leftNav.pages.more') : undefined}
+      onClick={() => setMoreOpen((open) => !open)}
+      className={cn(
+        'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body transition-colors',
+        collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
+        moreOpen
+          ? 'bg-[var(--state-selected)] text-[var(--text-primary)]'
+          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+      )}
+    >
+      <MoreHorizontal size={collapsed ? 18 : 15} className="flex-shrink-0" />
+      <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{t('leftNav.pages.more')}</span>
+    </button>
+  );
+
   return (
     <nav data-testid="left-nav-menu" aria-label={t('leftNav.pages.search')} className="flex flex-col gap-0.5 px-2">
-      {/* ⚠️ 助手切换器插在**「身份中心」上面**（用户点名要的位置）。
-          写法是「第 0 项 + 助手槽位 + 其余项」—— 别改成 `items.map` 里塞条件，
-          那样顺序会随 `items` 的增删飘掉。 */}
-      {renderItem(items[0])}
+      {/* 顺序：新建任务 → 罗盘助手（助手槽位）→ 团队 / 技能库 / 智能体 / 智能体市场 → 更多。 */}
+      {renderItem(topItems[0])}
       {assistantSlot}
-      {items.slice(1).map(renderItem)}
-      <div className="mx-2.5 my-1.5 border-t border-[var(--border-subtle)]" />
-      {footItems.map(renderItem)}
+      {topItems.slice(1).map((item) => renderItem(item))}
+      {/* 「更多」= 就地展开的次级清单（不弹浮层：浮层要 portal，收起态也更好操作）。
+          ⚠️ 触发器与清单同在一个 ref 块里：点它自己不算"点外面"（开合是它的事）。 */}
+      <div ref={moreRef} className="flex flex-col gap-0.5">
+        {collapsed ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{moreButton}</TooltipTrigger>
+            <TooltipContent side="right">{t('leftNav.pages.more')}</TooltipContent>
+          </Tooltip>
+        ) : (
+          moreButton
+        )}
+        {moreOpen ? (
+          <div data-testid="left-nav-more-items" className="flex flex-col gap-0.5 pb-1 pl-3">
+            {moreItems.map((item) => renderItem(item, () => setMoreOpen(false)))}
+          </div>
+        ) : null}
+      </div>
     </nav>
   );
 }

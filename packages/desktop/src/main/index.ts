@@ -18,6 +18,9 @@ import { registerWorkspaceHandlers } from './ipc/workspace-handlers.js';
 import { registerSettingsHandlers } from './ipc/settings-handlers.js';
 import { registerSearchHandlers } from './ipc/search-handlers.js';
 import { registerDataHandlers } from './ipc/data-handlers.js';
+import { registerMemoryHandlers } from './ipc/memory-handlers.js';
+import { ensureMemoryContractPromptWithRetry } from './memory/contract.js';
+import { syncMemoryToAgentsWithRetry } from './memory/sync.js';
 import { registerProfileStorageHandlers, requestQuitStorageFlush } from './ipc/profile-storage-handlers.js';
 import { registerTeamMeetingHandlers } from './ipc/team-meeting-handlers.js';
 import { registerStatsHandlers } from './ipc/stats-handlers.js';
@@ -69,7 +72,12 @@ import {
   readInstanceOwner,
   recordInstanceOwner,
 } from './runtime/instance-guard.js';
-import { bootstrapLocalGatewayRuntime, GATEWAY_PORT_OCCUPIED, shutdownLocalGatewayRuntime } from './runtime/index.js';
+import {
+  bootstrapLocalGatewayRuntime,
+  GATEWAY_PORT_OCCUPIED,
+  getActiveLocalGatewayStateDir,
+  shutdownLocalGatewayRuntime,
+} from './runtime/index.js';
 import type { RuntimeBootstrapResult } from './runtime/index.js';
 import type { DeployProgress } from './runtime/deploy.js';
 import {
@@ -83,6 +91,15 @@ import { bootstrapWithRetry } from './runtime/bootstrap-retry.js';
 import { ensureClientGatewayEntry, LOCAL_GATEWAY_ID } from './runtime/state-config.js';
 import { ensureCapabilityBoundaryPromptWithRetry } from './capability/capability-boundary-prompt.js';
 import { PORTABLE_STATE_MIGRATION_BLOCKED } from './runtime/portable-state-migration.js';
+// 诊断与修复（FEAT-03）：引擎/宿主是**纯逻辑+只读探测**，不 import electron，
+// 所以在主进程里静态引入不会多拉任何窗口/GUI 依赖。
+import { createSessionForHost, readPersistedLanguage, resolveRepairHost } from './repair/host.js';
+import { registerRepairHandlers } from './ipc/repair-handlers.js';
+import { registerConnectorHandlers } from './ipc/connector-handlers.js';
+import { repairFeishuInstallOnStartup } from './connectors/feishu-install-repair.js';
+import { clearProviderBillingCooldowns, resolveCooldownStateDirs } from './commercial/auth-cooldown.js';
+import { registerPetHandlers } from './ipc/pet-handlers.js';
+import { registerVideoQualityHandlers } from './ipc/video-quality-handlers.js';
 import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
@@ -419,10 +436,22 @@ continueAfterPortableAppData(
        * ⚠️ 启动路径与用户点的「重新准备」（IPC `runtime:bootstrap-retry`）**共用这一段**：
        *    两条路各写一遍必然漂移，而漂移的代价是"手动重试和启动跑的不是同一件事"。
        */
-      const runRuntimeBootstrap = (portableWorkspacePath: string | undefined): Promise<RuntimeBootstrapResult> =>
-        bootstrapWithRetry({
+      const runRuntimeBootstrap = (portableWorkspacePath: string | undefined): Promise<RuntimeBootstrapResult> => {
+        // BUG-161：网关尚未拉起时先清一次「计费冷却」——内核在 worker 里缓存那份 store，
+        // 只有启动前清才可靠（换卡后重启客户端即恢复，不必干等 10 分钟）。
+        try {
+          clearProviderBillingCooldowns({
+            stateDirs: resolveCooldownStateDirs(app.getPath('userData'), process.env.OPENCLAW_STATE_DIR),
+          });
+        } catch {
+          // 清不了不影响启动。
+        }
+        return bootstrapWithRetry({
           attempt: () =>
             bootstrapLocalGatewayRuntime({
+              // 2026-10-18：网关"自重启"= 退出等外部拉起（飞书接入会触发）⇒ 必须监督重启。
+              superviseGateway: true,
+              onGatewayRestarted: () => reconnectGateway(LOCAL_GATEWAY_ID),
               userDataDir: app.getPath('userData'),
               runtimeCacheUserDataDir,
               stateCacheUserDataDir: app.getPath('userData'),
@@ -450,6 +479,7 @@ continueAfterPortableAppData(
               data: { attempt, delayMs, reason },
             }),
         });
+      };
 
       /**
        * 「重新准备」重试时用的盘上工作区路径。
@@ -481,6 +511,52 @@ continueAfterPortableAppData(
               domain: 'gateway',
               event: 'capability.boundary',
               data: { ...outcome },
+            });
+          })
+          .catch(() => {});
+      };
+
+      /**
+       * 记忆注入（2026-10-16）：①把「记忆草案」契约写进 main 的 `AGENTS.md`（助手才知道
+       * 怎么提草案）；②把**当前账号**已确认的记忆投影进盘上每个助手的 `MEMORY.md`
+       * （运行时每轮全文注入的召回通道）。
+       *
+       * ⚠️ 与能力边界同样的姿态：**不 await、永不抛**。启动这一刻网关可能还没连上
+       *（首跑那 1–3 分钟里 RPC 本来就不可靠）—— 所以这一跳**必须自己退避重试**：
+       *  2026-10-17 实机取证，三次冷启动（盘符 S→U→V）全部在 `agents.list` 上
+       *  撞 `GATEWAY_NOT_CONNECTED` ⇒ `list-failed`，而它当时**没有重试**，
+       *  等于每次冷启动记忆都没投影进 `MEMORY.md`。见 `memory/sync.ts` 的
+       *  `syncMemoryToAgentsWithRetry`（只重试"没连上"；库不可用/名单为空立刻收手）。
+       * ⚠️ 投影**按当前账号过滤**：换账号后这次跑的是新账号那批 ——
+       *    上一账号的记忆不会通过提示词泄给下一账号。
+       */
+      const kickMemoryInjection = (): void => {
+        const client = getGatewayClient(LOCAL_GATEWAY_ID);
+        if (!client) return;
+        void ensureMemoryContractPromptWithRetry(client, {
+          sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          delaysMs: [5000, 15000, 30000],
+        })
+          .then((outcome) => {
+            getDebugLogger().info({ domain: 'memory', event: 'memory.contract', data: { ...outcome } });
+          })
+          .catch(() => {});
+        void syncMemoryToAgentsWithRetry(client, {
+          sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        })
+          .then((outcome) => {
+            getDebugLogger().info({
+              domain: 'memory',
+              event: 'memory.startup-sync',
+              data: outcome.ok
+                ? {
+                    agents: outcome.agentIds.length,
+                    entries: outcome.entries.length,
+                    written: outcome.result.written.length,
+                    unchanged: outcome.result.unchanged.length,
+                    failed: outcome.result.failed.length,
+                  }
+                : { ...outcome },
             });
           })
           .catch(() => {});
@@ -539,6 +615,7 @@ continueAfterPortableAppData(
           registerSettingsHandlers();
           registerSearchHandlers();
           registerDataHandlers();
+          registerMemoryHandlers();
           // ⭐ V4（I 接线）：有界执行历史 —— 写入 fire-and-forget（不阻塞渲染层）、
           //    恢复读取按当前工作区隔离（换盘/换 userData 即换目录）。
           ipcMain.on('execution-history:append', (_event, sessionKey: unknown, records: unknown) => {
@@ -584,6 +661,49 @@ continueAfterPortableAppData(
           // ⭐ M3（BUG-034）：画像保存成功后的 DOMStorage 落盘请求。
           //    sender 定 session、渲染层无参；`requested` 仅为"已请求"，非物理落盘确认。
           registerProfileStorageHandlers();
+
+          // 诊断与修复（FEAT-03）——「设置 → 诊断与修复」这一条入口。
+          //
+          // ⚠️ 与 `--repair` 独立窗口**共用一个引擎**（`main/repair/*` 单真源），差别只在
+          //    窗口与生命周期。这条路径下 session 挂在**正在跑的应用**上，所以引擎的
+          //    "本机有一份在跑"活锁判据天然成立 ⇒ 会改文件的动作全部 skipped，
+          //    只放行诊断包。这正是要的：应用开着时不该并发改自己的配置。
+          // ⚠️ `resolveRepairHost` / 建 session 都是**只读**的（不建目录、不写盘）。
+          // ⚠️ 语言用 `readPersistedLanguage()` 而不是 `readConfig()`：后者在配置损坏时会
+          //    当场改名隔离 —— 那是一次没经确认的写动作，不该由"打开设置页"触发。
+          const repairHost = resolveRepairHost({
+            userDataDir: app.getPath('userData'),
+            isPackaged: app.isPackaged,
+            resourcesPath: process.resourcesPath ?? null,
+            appVersion: app.getVersion(),
+          });
+          registerRepairHandlers({
+            session: createSessionForHost(repairHost),
+            host: repairHost,
+            language: readPersistedLanguage(repairHost.targets.dataRoot),
+          });
+
+          // 「连接器」——飞书接入（2026-10-17）。状态只报盘上可确认的事实。
+          // ⚠️ 运行时部署根与 userData 在便携形态下不同（`portable-runtime-cache`）：
+          //    不传 `runtimeCacheUserDataDir`，盘（F:/U 盘）上的连接器会一直判
+          //    「运行时不可用」并禁用飞书接入（2026-10-18 同事实机）。
+          registerConnectorHandlers({
+            userDataDir: app.getPath('userData'),
+            runtimeCacheUserDataDir,
+            // 随包 npm 负载（npm.cmd + node_modules/npm + npm-cache）：首次接入飞书时
+            // 惰性复制到已部署的 node 目录，用于生成内核认可的**可信安装记录**。
+            runtimeNodePayloadDir: app.isPackaged
+              ? join(process.resourcesPath, 'runtime', 'node')
+              : join(app.getAppPath(), '..', '..', 'runtime-out', 'node'),
+            // 便携分裂态的真实 state 是 `<…>/state/<token 哈希>`，只有 runtime 层知道。
+            // 惰性读取：注册时启动链还没跑，值必须等到用户真的打开连接器时再解析。
+            // 解析不到（启动早期/失败）⇒ 连接器按"运行时未就绪"处理，不往推测目录写东西。
+            stateDir: () => getActiveLocalGatewayStateDir() ?? process.env.OPENCLAW_STATE_DIR?.trim() ?? null,
+          });
+          // 桌面宠物（2026-10-17）：看桌面 / 整理 / 删除（删除走回收站 + 确认框）。
+          registerPetHandlers();
+          // 视频画质档位（标准 / 豆包 Seedance 2.5 高质量）。
+          registerVideoQualityHandlers();
 
           ipcMain.handle('app:rebuild-menu', () => {
             devModeEnabled = readConfig()?.devMode === true;
@@ -639,6 +759,7 @@ continueAfterPortableAppData(
                 //   唤醒（快照此刻已是 ok，重连照常走；只唤醒本机这一个网关）。
                 reconnectGateway(LOCAL_GATEWAY_ID);
                 kickCapabilityBoundaryInjection();
+                kickMemoryInjection();
               }
               return getRuntimeBootstrapStatus();
             } finally {
@@ -769,8 +890,59 @@ continueAfterPortableAppData(
 
           if (runtimeResult.code !== PORTABLE_STATE_MIGRATION_BLOCKED) initAllGateways();
 
+          // 飞书安装记录启动自愈（BUG-175，2026-10-19）：插件在、但**可信安装记录没了**
+          // （换盘符后 installPath 失效 / 1.0.9 的目录复制从来就没记录）⇒ 用随包 npm
+          // 重装一次，通道才能重新收消息。只在真有问题时动手，每进程最多一次。
+          // ⚠️ 放在 `initAllGateways()` 那一行**之后**是刻意的：那一行是
+          //    `test/runtime-main-publication.test.ts` 切片的终点，自愈不能进切片。
+          if (runtimeResult.code !== PORTABLE_STATE_MIGRATION_BLOCKED) {
+            /**
+             * 为什么是"退避重试"而不是一次 10s（2026-10-19 自审）：
+             * 全新盘/清缓存盘首次启动的运行时部署实测要 **149s**，而这里 10s 就会触发。
+             * 自愈在运行时未就绪时返回 `deferred`（不消耗"每进程一次"的门闩），
+             * 由这里按 10/30/60/120/180s 继续等 —— 累计 400s，跨得过首次部署与它的重试。
+             */
+            const repairDelaysMs = [10_000, 30_000, 60_000, 120_000, 180_000];
+            const runFeishuInstallRepair = (attempt: number): void => {
+              if (attempt >= repairDelaysMs.length) return;
+              setTimeout(() => {
+                void repairFeishuInstallOnStartup({
+                  stateDir: getActiveLocalGatewayStateDir() ?? process.env.OPENCLAW_STATE_DIR?.trim() ?? null,
+                  deploymentDir: runtimeCacheUserDataDir,
+                  runtimeNodePayloadDir: app.isPackaged
+                    ? join(process.resourcesPath, 'runtime', 'node')
+                    : join(app.getAppPath(), '..', '..', 'runtime-out', 'node'),
+                  bundledPluginDir: app.isPackaged
+                    ? join(process.resourcesPath, 'connectors', 'feishu')
+                    : join(app.getAppPath(), 'resources', 'connectors', 'feishu'),
+                  log: (event, detail) => {
+                    // 2026-10-19 现场：这行原来只进 stdout，打包后**看不到** ——
+                    // 用户只看到"插件缺少可信安装记录"，我们无法判断自愈是没跑、
+                    // 跑了失败、还是被跳过。现在同时进主进程日志（next run 可取证）。
+                    getDebugLogger().info({ domain: 'connector', event, data: detail ?? {} });
+                    console.log(`[connectors] ${event}`, detail ?? '');
+                  },
+                })
+                  .then((result) => {
+                    getDebugLogger().info({
+                      domain: 'connector',
+                      event: 'connectors.feishu-install.repair-result',
+                      data: { result, attempt },
+                    });
+                    if (result === 'deferred') runFeishuInstallRepair(attempt + 1);
+                  })
+                  .catch(() => {
+                    /* 自愈失败不影响启动；界面按“通道未就绪”如实提示 */
+                  });
+              }, repairDelaysMs[attempt]);
+            };
+            runFeishuInstallRepair(0);
+          }
+
           // 能力边界注入（BUG-043）：网关刚起来、连接刚建好，这是本进程里第一个"能调网关 RPC"的点。
           kickCapabilityBoundaryInjection();
+          // 记忆注入（2026-10-16）：同一时刻 —— 契约写 `AGENTS.md`、已确认记忆投影 `MEMORY.md`。
+          kickMemoryInjection();
 
           // ⚠️ **runtime ready ≠ commercial ready**：网关活着只说明连得上；模型能不能用
           // 要看中转配置有没有落到网关（clawrouter provider）。

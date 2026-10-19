@@ -138,3 +138,42 @@ export const WEB_ROUTING_FACTS = {
     toolId: 'browser',
   },
 } as const;
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+export function resolveVisionRecipients(
+  sessionKeys: string[],
+  sessions: unknown,
+  snapshot: unknown,
+  catalog: readonly ModelCatalogEntry[],
+): Array<{ sessionKey: string; model: string }> | null {
+  const rows = record(sessions)?.sessions;
+  const providers = record(record(record(record(snapshot)?.config)?.models)?.providers);
+  if (!Array.isArray(rows) || !providers) return null;
+  const recipients: Array<{ sessionKey: string; model: string }> = [];
+  for (const sessionKey of sessionKeys) {
+    const matches = rows.map(record).filter((row) => row?.key === sessionKey);
+    if (matches.length !== 1) return null;
+    const row = matches[0];
+    const provider = row?.modelProvider;
+    const model = row?.model;
+    if (typeof provider !== 'string' || !provider.trim() || typeof model !== 'string' || !model.trim()) return null;
+    const prefix = `${provider}/`;
+    const modelId = model.startsWith(prefix) ? model.slice(prefix.length) : model;
+    const qualified = `${prefix}${modelId}`;
+    const entries = catalog.filter(
+      (entry) => entry.provider === provider && (entry.id === modelId || entry.id === qualified),
+    );
+    const configured = record(providers[provider])?.models;
+    if (entries.length !== 1 || !Array.isArray(configured)) return null;
+    const overrides = configured.map(record).filter((entry) => entry?.id === modelId || entry?.id === qualified);
+    if (overrides.length !== 1 || !Array.isArray(overrides[0]?.input) || !overrides[0].input.includes('image'))
+      return null;
+    recipients.push({ sessionKey, model: qualified });
+  }
+  return recipients;
+}

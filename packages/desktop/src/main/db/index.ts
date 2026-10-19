@@ -5,6 +5,7 @@ import { mkdirSync } from 'fs';
 import { DB_FILE_NAME } from '@clawwork/shared';
 import * as schema from './schema.js';
 import { initFTS } from './fts.js';
+import { ensureMemoryTable } from '../memory/schema.js';
 import { initKbSchema } from './kb-schema.js';
 import { setWorkspaceDatabaseOwner } from '../workspace/scope.js';
 
@@ -163,6 +164,8 @@ function openAndMigrate(dbPath: string): void {
   // 这条回复**实际**是哪个模型生成的（逐条来自网关 transcript）。
   // 老数据留空 —— 不 backfill、也不拿会话级模型兜底（那是"选中的"不是"生成它的"）。
   migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN model TEXT');
+  // 2026-10-18：整轮用时（用户发出 → 本轮定稿）。老库补列；老行 = NULL ⇒ 界面不显示。
+  migrateAddColumn(sqlite, 'ALTER TABLE messages ADD COLUMN duration_ms INTEGER');
   // 交付成功的最小持久化标记（r7-1 / BUG-026 跨重开残余）：main 在产物交付可信结算为
   // `succeeded` 时置位。老行留 NULL —— 语义是"没有可恢复的成功证据"，不 backfill
   // （见 `@clawwork/shared` 的 `Message.deliverySucceeded` 与 `useClaimGuardToast` 的恢复路径）。
@@ -349,7 +352,20 @@ function openAndMigrate(dbPath: string): void {
     )
   `);
 
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS imagegen_request_identities (
+      operation_key TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   initFTS(sqlite);
+  // 长期记忆（2026-10-16）：条目 / 草案 / 归属账号。**随盘走**（与库同在），
+  // 不进网关 state 目录。DDL 与测试共用 `memory/schema.ts` 那**一句** SQL。
+  ensureMemoryTable(sqlite);
   // 资料库（T6a）：kb_meta / kb_sources / kb_chunks + kb_chunks_fts。
   // 表与库同生共死（工作区可指向 U 盘），**不落服务器**。
   initKbSchema(sqlite);

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildPortableFileManifest } from './lib/portable-update-release.mjs';
-import { APP_DIR_NAME, auditDelivery, LAUNCHER_EXE_NAME, README_NAME } from './lib/udisk-delivery.mjs';
+import { APP_DIR_NAME, auditDelivery, LAUNCHER_EXE_NAME, README_NAME, walkTreeNames } from './lib/udisk-delivery.mjs';
 
 const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -24,16 +24,7 @@ function parseArguments(argv) {
 }
 
 function walkNames(root) {
-  const names = [];
-  const walk = (directory, prefix) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      names.push(relative);
-      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(join(directory, entry.name), relative);
-    }
-  };
-  walk(root, '');
-  return names;
+  return walkTreeNames(root);
 }
 
 async function auditOutput(outDir) {

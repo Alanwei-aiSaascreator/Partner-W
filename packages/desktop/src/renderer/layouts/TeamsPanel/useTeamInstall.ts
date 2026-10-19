@@ -339,11 +339,55 @@ export function useTeamInstall(onDone?: () => void) {
           if (!agent.existingAgentId) continue;
           const model = modelResolution.models.get(agent.id);
           if (!model) continue;
-          const update = await window.clawwork.updateAgent(gwId, { agentId: agent.existingAgentId, model });
+          const name = agent.name.trim();
+          const update = await window.clawwork.updateAgent(gwId, {
+            agentId: agent.existingAgentId,
+            model,
+            // ⭐ 2026-10-19 闭环：编辑页一直允许改姓名，但此前只提交了 model ——
+            //    用户改完名字点保存，界面回到列表还是旧名字。
+            ...(name ? { name } : {}),
+          });
           if (!update.ok) {
             setInstallEvents([{ type: 'error', message: update.error ?? 'Failed to update agent model' }]);
             setInstallStatus('error');
             return;
+          }
+
+          // ⭐ 同一闭环：编辑页把 IDENTITY.md/SOUL.md 读出来给用户改（`AgentDraftCard`
+          //    的 details 加载），但保存路径从来没写回。只在**有内容**时写：
+          //    读取失败时草稿是空串，此时绝不能拿空串覆盖盘上的真实文件。
+          const identity = serializeIdentityMd(agent.description, agent.agentMd.trim());
+          if (identity.trim()) {
+            const written = await window.clawwork.setAgentFile(
+              gwId,
+              agent.existingAgentId,
+              'IDENTITY.md',
+              identity,
+            );
+            if (!written.ok) {
+              setInstallEvents([
+                {
+                  type: 'error',
+                  message: `助手“${agent.name}”的 IDENTITY.md 保存失败，团队未保存本次修改：${written.error ?? 'unknown'}`,
+                },
+              ]);
+              setInstallStatus('error');
+              return;
+            }
+          }
+          const soul = agent.soulMd.trim();
+          if (soul) {
+            const written = await window.clawwork.setAgentFile(gwId, agent.existingAgentId, 'SOUL.md', soul);
+            if (!written.ok) {
+              setInstallEvents([
+                {
+                  type: 'error',
+                  message: `助手“${agent.name}”的 SOUL.md 保存失败，团队未保存本次修改：${written.error ?? 'unknown'}`,
+                },
+              ]);
+              setInstallStatus('error');
+              return;
+            }
           }
         }
         for (const agent of agents) {

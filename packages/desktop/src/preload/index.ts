@@ -19,6 +19,7 @@ import type {
   DocgenFailure,
   HtmlgenFailure,
   VideogenFailure,
+  ImagegenFailure,
   PortableUpdatePublicState,
   QuestionResolveParams,
   RelayBootstrapPublicState,
@@ -285,6 +286,11 @@ function buildApi(): ClawWorkAPI {
         ipcRenderer.removeListener('htmlgen:failed', listener);
       };
     },
+    onImagegenFailed: (callback: (failures: ImagegenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: ImagegenFailure[]): void => callback(failures);
+      ipcRenderer.on('imagegen:failed', listener);
+      return () => ipcRenderer.removeListener('imagegen:failed', listener);
+    },
     onVideogenFailed: (callback: (failures: VideogenFailure[]) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, failures: VideogenFailure[]): void => {
         callback(failures);
@@ -386,6 +392,26 @@ function buildApi(): ClawWorkAPI {
     ) => ipcRenderer.invoke('settings:test-gateway', url, auth),
 
     getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+    // 「连接器」（2026-10-17）：状态只报盘上可确认的事实。
+    getConnectors: () => ipcRenderer.invoke('connectors:status'),
+    // 2026-10-18：飞书改为**应用内扫码**（OAuth 设备码），不再开系统终端。
+    getFeishuState: () => ipcRenderer.invoke('connectors:feishu-state'),
+    beginFeishuRegistration: () => ipcRenderer.invoke('connectors:feishu-registration-begin'),
+    getFeishuRegistration: () => ipcRenderer.invoke('connectors:feishu-registration-status'),
+    cancelFeishuRegistration: () => ipcRenderer.invoke('connectors:feishu-registration-cancel'),
+    bindFeishuAgent: (agentId: string | null) => ipcRenderer.invoke('connectors:feishu-bind', { agentId }),
+    setFeishuChannelEnabled: (enabled: boolean) => ipcRenderer.invoke('connectors:feishu-enabled', { enabled }),
+    /** 旧终端的扫码窗口（保留兼容；界面已改走应用内扫码）。 */
+    connectFeishu: () => ipcRenderer.invoke('connectors:feishu-login'),
+    // 桌面宠物（2026-10-17）：开/关置顶小窗；整理/删除都由主进程先弹确认框。
+    petOpen: () => ipcRenderer.invoke('pet:open'),
+    petClose: () => ipcRenderer.invoke('pet:close'),
+    petMove: () => ipcRenderer.invoke('pet:move'),
+    petDesktopSummary: () => ipcRenderer.invoke('pet:desktop-summary'),
+    petOrganize: () => ipcRenderer.invoke('pet:organize'),
+    petTrash: () => ipcRenderer.invoke('pet:trash'),
+    getVideoQuality: () => ipcRenderer.invoke('videogen:get-quality'),
+    setVideoQuality: (quality: 'standard' | 'seedance') => ipcRenderer.invoke('videogen:set-quality', quality),
     reportPortableUpdateRendererReady: () => ipcRenderer.send('app:portable-update-renderer-ready'),
     checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
     getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),
@@ -493,6 +519,8 @@ function buildApi(): ClawWorkAPI {
       thinkingContent?: string;
       /** 实际生成这条回复的模型 id（逐条来自网关）。 */
       model?: string;
+      /** 整轮用时（本地量，ms）；缺省不覆盖已落库的值。 */
+      durationMs?: number;
       /** ⚠️ DOCX-205 合同：整轮终态证据（见 core session-sync 的可信历史终态校验）。 */
       terminal?: { kind: 'final'; runId: string; stopReason?: string; source?: string };
       /** ⚠️ DOCX-205 合同：同步链路标记（带标记的消息在主进程只认终态证据）。 */
@@ -854,6 +882,33 @@ function buildApi(): ClawWorkAPI {
     privacyRequestDeletion: (payload: { reason?: string }) => ipcRenderer.invoke('privacy:request-deletion', payload),
     privacyCancelDeletion: (payload: { id: string }) => ipcRenderer.invoke('privacy:cancel-deletion', payload),
     privacyDownloadExport: () => ipcRenderer.invoke('privacy:download-export', {}),
+
+    // 长期记忆（2026-10-16）：库是真源；助手真正读到的是 `MEMORY.md`（由 main 投影并回读）。
+    memoryList: () => ipcRenderer.invoke('memory:list'),
+    memoryCreate: (payload: { text: string; gatewayId?: string }) => ipcRenderer.invoke('memory:create', payload),
+    memoryDelete: (payload: { id: string; gatewayId?: string }) => ipcRenderer.invoke('memory:delete', payload),
+    memoryConfirmDraft: (payload: { id: string; text?: string; gatewayId?: string }) =>
+      ipcRenderer.invoke('memory:draft-confirm', payload),
+    memoryRejectDraft: (payload: { id: string; gatewayId?: string }) =>
+      ipcRenderer.invoke('memory:draft-reject', payload),
+    memorySync: (payload?: { gatewayId?: string }) => ipcRenderer.invoke('memory:sync', payload ?? {}),
+    memoryRecallProof: (payload?: { gatewayId?: string }) => ipcRenderer.invoke('memory:recall-proof', payload ?? {}),
+    onMemoryChanged: (callback: (payload: { gatewayId: string | null }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { gatewayId: string | null }): void =>
+        callback(payload);
+      ipcRenderer.on('memory:changed', listener);
+      return () => ipcRenderer.removeListener('memory:changed', listener);
+    },
+
+    // ── 诊断与修复（FEAT-03）─────────────────────────────────────────
+    // 两条入口（`--repair` 独立窗口 / 设置页嵌入）**同一组通道**：判据只在主进程的
+    // 引擎里有一份，preload 是纯管道（与 analyticsTrack 同款纪律 —— 这一层不加工）。
+    repairBootstrap: () => ipcRenderer.invoke('repair:bootstrap'),
+    repairScan: () => ipcRenderer.invoke('repair:scan'),
+    repairApply: (payload: { actionIds: string[] }) => ipcRenderer.invoke('repair:apply', payload),
+    repairReveal: (targetPath: string) => ipcRenderer.invoke('repair:reveal', targetPath),
+    // T31：把这一轮的备份写回原路径（`apply` 回给界面的 `backupDir`）。
+    repairRestore: (backupDir: string) => ipcRenderer.invoke('repair:restore', backupDir),
   };
 }
 

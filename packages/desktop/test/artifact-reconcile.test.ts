@@ -199,9 +199,11 @@ describe('artifact reconciliation', () => {
 
   it('registers generated MP4/WebM files with video MIME without duplicate rows', () => {
     const result = runProbe(workspacePath, 'videos') as unknown as { first: ReconcileResult; second: ReconcileResult };
+    // ⭐ BUG-120（2026-10-17）：mp4/webm 现在登记成专属类型 `video`（改型前一律 'file'）。
+    //    扫描登记这条路与 videogen 显式保存那条路**同一口径** —— 同一份片子不该因为走哪条路就换个类型。
     expect(result.first.saved).toEqual([
-      expect.objectContaining({ name: 'clip.mp4', type: 'file', mimeType: 'video/mp4' }),
-      expect.objectContaining({ name: 'clip.webm', type: 'file', mimeType: 'video/webm' }),
+      expect.objectContaining({ name: 'clip.mp4', type: 'video', mimeType: 'video/mp4' }),
+      expect.objectContaining({ name: 'clip.webm', type: 'video', mimeType: 'video/webm' }),
     ]);
     expect(result.second.saved).toEqual([]);
     expect(result.second.existing).toHaveLength(2);

@@ -39,6 +39,8 @@ export interface SessionSyncDeps {
         toolCalls?: unknown[];
         thinkingContent?: string;
         model?: string | null;
+        /** 整轮用时（本地量，ms）。老行没有这一列 ⇒ `null`/`undefined`。 */
+        durationMs?: number | null;
         /** 交付成功的最小持久化标记（r7-1）：老行/老调用方没有它 ⇒ `null`/`undefined`。 */
         deliverySucceeded?: boolean | null;
         deliveryFailureClosed?: boolean | null;
@@ -57,6 +59,8 @@ export interface SessionSyncDeps {
       toolCalls?: unknown[];
       thinkingContent?: string;
       model?: string;
+      /** 整轮用时（本地量，ms）；缺省时主进程条件覆盖。 */
+      durationMs?: number;
       /**
        * ⚠️ DOCX-205 合同（2026-10-10，终审修订）：**整轮终态证据**。只附在
        * **承载可信历史终态的那一条 canonical**（历史末条 assistant 的 stop 记录，
@@ -304,6 +308,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
       thinkingContent: message.thinkingContent,
       // 消息级模型：落库后重启才还在（重载读回见 hydrateFromLocal）。
       model: message.model,
+      // 整轮用时同理：落库后重开仍显示（老数据缺失就不显示，不拿 0 充数）。
+      durationMs: message.durationMs,
       // ⚠️ DOCX-205 合同：同步链路标记 —— 带标记的消息在主进程只认终态证据。
       sync: true,
       ...(terminal ? { terminal } : {}),
@@ -426,6 +432,8 @@ export function createSessionSync(deps: SessionSyncDeps) {
                   thinkingContent: r.thinkingContent,
                   // 老行没有这一列 ⇒ 读出 `null`，规整成 undefined（UI 据此不渲染徽章）。
                   model: r.model ?? undefined,
+                  // 整轮用时：同上，老行 = undefined ⇒ 界面不显示。
+                  ...(typeof r.durationMs === 'number' && r.durationMs > 0 ? { durationMs: r.durationMs } : {}),
                   // ⭐ r7-1：交付成功的最小持久化标记随消息一起水合 —— 重开后失败去重周期的
                   //    边界靠它（+ 交付活动快照）重建，不再只活在 hook 内存里。老行 = undefined。
                   ...(r.deliverySucceeded === true ? { deliverySucceeded: true } : {}),
@@ -585,10 +593,13 @@ export function createSessionSync(deps: SessionSyncDeps) {
       if (i === newest.length - 1) {
         currentStore.promoteActiveTurn(sessionKey, taskId, canonical);
       } else {
+        // 整轮用时只挂在**本轮最后一条** assistant 消息上：一轮可能产出多条 canonical
+        //（正文段 + 交付镜像等），每条都挂会变成"每段都用了这么久"（2026-10-18 独立审核）。
+        const mergedWithoutDuration = { ...mergedCanonical, durationMs: undefined };
         currentStore.setState((s) => ({
           messagesByTask: {
             ...s.messagesByTask,
-            [taskId]: [...(s.messagesByTask[taskId] ?? []), mergedCanonical],
+            [taskId]: [...(s.messagesByTask[taskId] ?? []), mergedWithoutDuration],
           },
         }));
       }

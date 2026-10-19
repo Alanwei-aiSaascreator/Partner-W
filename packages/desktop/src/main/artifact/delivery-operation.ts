@@ -42,7 +42,11 @@ export function captureArtifactDeliveryOperation(identity: {
   messageId: string;
   runId?: string;
   gatewayId?: string;
-}): { operationId: string; phase: ArtifactActivityCallback; finish: (status: ArtifactDeliveryTerminalStatus) => void } {
+}): {
+  operationId: string;
+  phase: ArtifactActivityCallback;
+  finish: (status: ArtifactDeliveryTerminalStatus, artifactId?: string) => void;
+} {
   const owner = getWorkspaceScope();
   const captured = { ...identity };
   // ⭐ P-3（2026-10-14）：帧身份里的 scope/revision = **捕获时**快照（不是发射时现取）——
@@ -87,10 +91,11 @@ export function captureArtifactDeliveryOperation(identity: {
           emitMainExecutionEvents(eventIdentity, [{ type: 'delivery.phase', payload: { operationId, phase } }]);
       }
     },
-    finish: (status) => {
+    finish: (status, artifactId) => {
       if (ended) return;
       ended = true;
-      operation?.finish(status);
+      if (artifactId) operation?.finish(status, artifactId);
+      else operation?.finish(status);
       if (ownsWorkspace())
         emitMainExecutionEvents(eventIdentity, [
           { type: 'delivery.settled', payload: { operationId, outcome: settlementOutcome(status) } },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getArtifactLabel } from '../src/renderer/lib/artifact-labels';
+import { getArtifactKindFilter, getArtifactLabel } from '../src/renderer/lib/artifact-labels';
 
 /**
  * 产物类型标签。
@@ -51,5 +51,27 @@ describe('产物标签 × HTML', () => {
     expect(label({ type: 'code', mimeType: '', name: 'a.ts' })).toBe('artifactKinds.code');
     expect(label({ type: 'link', mimeType: '', name: 'a' })).toBe('artifactKinds.link');
     expect(label({ type: 'structured_data', mimeType: '', name: 'a' })).toBe('artifactKinds.data');
+  });
+});
+
+/**
+ * ⭐ BUG-120（2026-10-17）：视频有了专属类型 `video` 之后，
+ * **标签**要跟着说"视频"（改型前它落进 `artifactKinds.file`，界面上写着「文件」），
+ * 而**筛选档**必须仍然留在「文件」那一档 —— 否则老用户在文件列表里就找不到自己刚生成的视频了。
+ */
+describe('产物标签 × 视频（BUG-120）', () => {
+  it('type=video ⇒ 标签是「视频」，不是「文件」', () => {
+    expect(label({ type: 'video', mimeType: 'video/mp4', name: '短片.mp4' })).toBe('artifactKinds.video');
+    expect(label({ type: 'video', mimeType: 'video/webm', name: 'clip.webm' })).toBe('artifactKinds.video');
+  });
+
+  it('⚠️ 筛选档仍是 file（改型不能把视频从「文件」筛选里挤出去）', () => {
+    expect(getArtifactKindFilter({ type: 'video', mimeType: 'video/mp4', name: '短片.mp4' })).toBe('file');
+  });
+
+  it('对照：图片/代码的筛选档不受影响', () => {
+    expect(getArtifactKindFilter({ type: 'image', mimeType: 'image/png', name: 'a.png' })).toBe('image');
+    expect(getArtifactKindFilter({ type: 'code', mimeType: '', name: 'a.ts' })).toBe('code');
+    expect(getArtifactKindFilter({ type: 'file', mimeType: 'application/pdf', name: 'a.pdf' })).toBe('file');
   });
 });

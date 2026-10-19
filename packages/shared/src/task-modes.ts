@@ -10,14 +10,24 @@
  *
  * ## 三档 + 高级（custom）
  *
- * （2026-10-10 Cephalon 批：三档统一 `glm-5.3-flash`，只差思考强度。）
+ * **2026-10-17 用户拍板：三档按能力分模型（GLM 家族阶梯）**，不再三档共用一个模型。
+ * 选同一家族是为了让"贵一档 = 强一档"单调可预测（1× / 2.5× / 10× 价格）：
  *
- * | 模式 | 模型 | 思考档 |
- * |---|---|---|
- * | `fast` 快速 | `glm-5.3-flash` | `low` |
- * | `smart` 智能（默认） | `glm-5.3-flash` | `high` |
- * | `deep` 深度 | `glm-5.3-flash` | `max` |
+ * | 模式 | 模型 | 售价（元/M in/out） | 思考档 |
+ * |---|---|---|---|
+ * | `fast` 快速 | `glm-5.3-flash` | 1.28 / 4.48 | `low` |
+ * | `smart` 智能（默认） | `glm-5.3-flashx` | 3.20 / 11.20 | `high` |
+ * | `deep` 深度 | `glm-5.3` | 12.80 / 44.80 | `max` |
  * | `custom` 高级：指定模型 | **用户自己选的模型**（保留既有行为） | 用户自己的档位 |
+ *
+ * ⚠️ `thinkingLevel` 是**偏好**：内核按目录里该模型声明的 `supportedReasoningEfforts`
+ *    取交集（`resolveSupportedThinking`）。`glm-5.3-flash` / `-flashx` 的候选行没有声明
+ *    档位 ⇒ 这两个模型上不额外下发 `reasoning_effort`（端脑侧思考本来就常开）；
+ *    `glm-5.3` 声明了 low/high/max ⇒ 深度档的 `max` 真实生效。
+ *
+ * ⚠️ 生图 / 生视频 / 生产物**不在这张表里**：那三类由助手的技能块自动路由
+ *    （图片→`qwen-image-2.1-turbo`、视频→`seedance-2.5`、PPT→DeepSeek 钉死），
+ *    用户说"画一张图/做个视频/做个 PPT"就已经自动匹配，不需要选模型。
  *
  * ## 存量保护（硬要求）
  *
@@ -48,13 +58,28 @@ export const DEFAULT_TASK_MODE: TaskMode = 'smart';
  */
 export const FAST_MODEL_ALIAS_ID = 'qwen3.7-flash-fast';
 
-/** 三档共用的基础模型（id 本体，不带 `clawrouter/` 前缀）。 */
-export const MODE_BASE_MODEL_ID = 'glm-5.3-flash';
+/**
+ * 三档各自的模型（id 本体，不带 `clawrouter/` 前缀）。
+ *
+ * 阶梯必须**在目录里真实存在**：`resolveModeModelId` 解析不到就返回 `undefined`
+ * （保持现状、不拦截），所以某个模型被下架时不会把用户卡死。
+ */
+export const MODE_MODEL_IDS: Record<TaskMode, string> = {
+  fast: 'glm-5.3-flash',
+  smart: 'glm-5.3-flashx',
+  deep: 'glm-5.3',
+};
+
+/**
+ * 旧导出名（三档共用一个模型时代）。保留 = **智能档（默认档）的模型**，
+ * 仍是 `COMMERCIAL_DEFAULT_MODEL_ID` 的同源值。
+ */
+export const MODE_BASE_MODEL_ID = MODE_MODEL_IDS.smart;
 
 export const MODE_POLICY: Record<TaskMode, { modelId: string; thinkingLevel: string }> = {
-  fast: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'low' },
-  smart: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'high' },
-  deep: { modelId: MODE_BASE_MODEL_ID, thinkingLevel: 'max' },
+  fast: { modelId: MODE_MODEL_IDS.fast, thinkingLevel: 'low' },
+  smart: { modelId: MODE_MODEL_IDS.smart, thinkingLevel: 'high' },
+  deep: { modelId: MODE_MODEL_IDS.deep, thinkingLevel: 'max' },
 };
 
 /** 模式专用别名（不是"某个可选模型"）—— 高级模型列表里要隐藏它们。 */

@@ -307,6 +307,30 @@ describe('ChatInput draft requests', () => {
     view.unmount();
   });
 
+  it('⭐ autoSend：草稿落进空输入框后直接发送（专家「开个任务」）', () => {
+    const onDraftResolved = vi.fn();
+    const draftRequest: DraftPromptRequest = {
+      id: 'request-auto',
+      prompt: '请使用你已安装的技能「架构决策记录」来完成：给登录模块写一份 ADR',
+      source: 'expert-launch',
+      autoSend: true,
+    };
+    const view = renderChatInput({ draftRequest, onDraftResolved });
+
+    expect(textarea(view.container).value).toContain('架构决策记录');
+    expect(onDraftResolved).toHaveBeenCalledWith(draftRequest, 'applied');
+    expect(mocks.handleSend).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+  });
+
+  it('对照：普通草稿（无 autoSend）只填不发', () => {
+    const view = renderChatInput({ draftRequest: request('request-plain', '普通预填') });
+    expect(textarea(view.container).value).toBe('普通预填');
+    expect(mocks.handleSend).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('opens a conflict dialog without changing existing composer text', () => {
     const onDraftResolved = vi.fn();
     const view = renderChatInput({ draftRequest: null, onDraftResolved });

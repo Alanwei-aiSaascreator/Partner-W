@@ -36,6 +36,7 @@ const CASES: Array<[VideogenFailure, string]> = [
   [{ code: 'videogen-create-failed', httpStatus: 503 }, 'videogen.createFailedStatus|{"status":503}'],
   [{ code: 'videogen-content-rejected' }, 'videogen.contentRejected'],
   [{ code: 'videogen-task-failed', upstreamCode: 70001 }, 'videogen.taskFailed'],
+  [{ code: 'videogen-billing-pending' }, 'videogen.billingPending'],
   [{ code: 'videogen-timeout', waitedMs: 60_000 }, 'videogen.timeout'],
   [{ code: 'videogen-download-failed' }, 'videogen.downloadFailed'],
   [{ code: 'videogen-save-failed' }, 'videogen.saveFailed'],

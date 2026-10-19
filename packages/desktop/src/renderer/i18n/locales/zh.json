@@ -6,6 +6,8 @@
     "notActivated": "未激活",
     "offline": "离线，数据可能不是最新",
     "plan": "当前套餐",
+    "quotaHeld": "预占",
+    "quotaHeldUnknown": "在途预占状态暂不可用，暂时无法计算可用额度",
     "quotaPending": "额度待开通",
     "recharge": "充值",
     "rechargeCardRequired": "请先在「激活」中绑定一张授权卡，再发起充值",
@@ -18,6 +20,7 @@
     "rechargeCustomInvalid": "请输入 ¥{{min}} – ¥{{max}} 之间的金额",
     "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeFailed": "发起支付失败，请重试",
+    "rechargeOrderFailed": "这笔支付失败了，积分未到账",
     "rechargePaid": "支付成功，积分已到账",
     "rechargePickAmount": "选择充值金额",
     "rechargeRate": "充值比例：1元=100积分",
@@ -103,7 +106,8 @@
     "image": "图片",
     "link": "链接",
     "markdown": "Markdown 文档",
-    "text": "文本文件"
+    "text": "文本文件",
+    "video": "视频"
   },
   "assistantWorkspaces": {
     "compass": {
@@ -397,7 +401,36 @@
     "tab": "悬赏",
     "titlePlaceholder": "一句话说清要做什么"
   },
+  "mascot": {
+    "talk": "和小盈说句话",
+    "hide": "收起小盈",
+    "line0": "我在这儿，随时待命～",
+    "line1": "活儿太多？我可以帮你切成小块。",
+    "line2": "你先忙，进度我盯着。",
+    "desktop": "放到桌面"
+  },
   "chatInput": {
+    "queuedWhileRunning": "任务进行中：可继续输入，Enter 会排队，本轮结束后自动发送",
+    "queuedToast": "已排队：这一轮结束后自动发送",
+    "queuedChip": "排队中：{{text}}",
+    "queuedCancel": "取消这条排队消息",
+    "workingLines": {
+      "0": "正在捋思路…",
+      "1": "马上就好，别急～",
+      "2": "大任务切成小块，一块块下锅",
+      "3": "正在翻资料，稍等一下",
+      "4": "这一步有点认真，再等等我",
+      "5": "快了快了，深呼吸 emm ovo"
+    },
+    "videoQuality": {
+      "title": "视频画质",
+      "standardShort": "标准",
+      "seedanceShort": "高质量",
+      "standard": "标准档 · MiniMax H3",
+      "standardDesc": "便宜、出片快；不支持用图片做首帧。按秒计费。",
+      "seedance": "高质量档 · 豆包 Seedance 2.5",
+      "seedanceDesc": "更清晰，支持「图生视频」：本轮附一张图就当作首帧。单价明显更高，按秒计费。"
+    },
     "abortFailed": "停止生成失败",
     "addFiles": "添加文件",
     "addFolder": "添加文件夹",
@@ -433,6 +466,7 @@
       "downloading-media": "正在下载图片或视频…",
       "generating-document": "正在生成文档…",
       "generating-html": "正在生成网页…",
+      "generating-image": "正在生成图片…",
       "generating-presentation": "正在生成演示文稿…",
       "generating-video": "正在生成视频，可能需要几分钟…",
       "reconciling-artifacts": "正在检查生成的文件…",
@@ -448,6 +482,7 @@
         "downloading-media": "下载图片或视频",
         "generating-document": "生成文档",
         "generating-html": "生成网页",
+        "generating-image": "生成图片",
         "generating-presentation": "生成演示文稿",
         "generating-video": "生成视频",
         "reconciling-artifacts": "检查文件",
@@ -482,6 +517,7 @@
     "materialTrimToLimit": "只保留前 {{count}} 个",
     "materialUnavailable": "材料 {{fileName}} 已移动或不可用",
     "mode": {
+      "mediaModelsNote": "生图、生视频由助手自动挑选对应模型（图片、视频模型不在本列表）。直接说「画一张图」或「做段视频」即可。",
       "advanced": "高级：指定模型",
       "deep": "深度",
       "deepDesc": "深入思考，适合复杂分析与长文任务",
@@ -506,6 +542,7 @@
     "recognizeImage": "识别图片",
     "relayActivationLimitReachedDetail": "这张卡的激活名额已满，请换一张卡，或联系客服处理。",
     "relayActivationRequiredDetail": "请到「设置 → 激活授权」完成激活。",
+    "relayApplyFailedDetail": "模型配置没有在本地生效。可以再试一次；如果一直失败，请把日志发给我们。",
     "relayEntitlementRejectedDetail": "这张激活卡已经不能用了，请到「设置 → 激活授权」重新激活或换一张卡。",
     "relayOrganizationMismatchDetail": "激活卡绑定的组织与当前账号不一致，请到「设置 → 激活授权」查看。",
     "relayRetryableDetail": "商业服务还没准备好，可以再试一次。",
@@ -544,7 +581,6 @@
     "unsupportedCapability": "当前暂不支持该能力，可以换用工作台里已有的能力完成。",
     "unsupportedModel": "当前暂不支持该模型，请从工作台的模型列表里选择可用模型。",
     "visionFallbackSwitched": "已为该图片使用支持看图的模型：{{model}}",
-    "visionMentionBlocked": "图片暂不能发送给团队岗位。请移除图片后 @ 岗位，或去掉 @ 直接发送图片。",
     "visionUnavailable": "当前模型无法确认支持本次图片。请切换到支持识图的模型，或移除图片后发送；含图 PPT 请先完成识图。",
     "waiting": {
       "awaitingAnswer": "等待你的回答",
@@ -569,9 +605,14 @@
     }
   },
   "chatMessage": {
+    "turnDurationMinutesSeconds": "用时 {{minutes}} 分 {{seconds}} 秒",
+    "turnDurationSeconds": "用时 {{seconds}} 秒",
     "autoRetryNotice": "刚才没有完成，正在自动重试一次（会再扣一次积分）。",
     "conductor": "协调者",
     "copied": "已复制",
+    "turnCost": "本轮消耗 {{credits}} 积分",
+    "liveTaskCost": "本次任务已消耗 {{credits}} 积分",
+    "taskCostTotal": "本次任务累计消耗 {{credits}} 积分",
     "copyCode": "复制代码",
     "copyMessage": "复制消息",
     "docgenDelivered": "文档已生成",
@@ -584,9 +625,15 @@
     "htmlgenGenerating": "正在生成网页…",
     "htmlgenPending": "网页内容待处理",
     "htmlgenUnconfirmed": "网页尚未确认已登记——请在右侧「产物」核对最新文件",
+    "imagegenDelivered": "图片已生成",
+    "imagegenFailed": "图片未生成成功",
+    "imagegenGenerating": "正在生成图片…",
+    "imagegenPending": "图片等待处理",
+    "imagegenUnconfirmed": "图片交付尚未确认",
     "noVisibleAnswer": "助手没有返回可显示的内容，请重试。",
     "retryHint": "重发上一条消息，会再扣一次积分",
     "thinking": {
+      "liveTailHint": "只显示最近的内容，完整思考在结束后可查看",
       "title": "深度思考"
     },
     "toolCallSummary": "执行了 {{count}} 个工具调用",
@@ -1043,6 +1090,15 @@
     "workspace": "工作区读写"
   },
   "errors": {
+    "userStopped": "已停止这一轮",
+    "human": {
+      "not-connected": "本地服务还没连上，请稍后重试。",
+      "timeout": "这次请求超时了，请重试。",
+      "rate-limit": "请求太频繁，稍等一下再试。",
+      "context-length": "对话太长了，开个新任务或清理上下文后再试。",
+      "insufficient-credits": "积分不足或额度不够，充值后再试。",
+      "send-failed": "发送失败，请重试。"
+    },
     "agentMissing": "这个助手不在本机，换一个助手再发送。",
     "agentNotResponding": "Agent 未响应 — 可能不可用或服务端配置有误，请尝试其他 Agent",
     "boundaryTitle": "应用出现异常",
@@ -1070,6 +1126,27 @@
     "wrapper": {
       "providerRequestRejected": "服务暂时不可用。可以换一个模型再试，或稍后重试。"
     }
+  },
+  "experts": {
+    "countLabel": "共 {{n}} 位专家",
+    "domain": {
+      "all": "全部",
+      "design": "设计",
+      "engineering": "工程",
+      "knowledge": "知识",
+      "news": "资讯"
+    },
+    "filterLabel": "按领域筛选",
+    "installHint": "每位专家都靠一份随包技能干活。还没装的话，先去「技能市场」把它装上。",
+    "launch": "开个任务",
+    "launchPrompt": "请使用你已安装的技能「{{name}}」来完成：",
+    "subtitle": "随应用一起提供的专家。选一位，就用对应的方法开一个任务。",
+    "title": "专家库",
+    "dialogTitle": "请「{{name}}」做什么？",
+    "dialogDescription": "写一句你要完成的事，点“开始”会直接开一个任务并发送。",
+    "dialogPlaceholder": "例如：给这个模块写一份架构决策记录",
+    "dialogStart": "开始",
+    "dialogCancel": "取消"
   },
   "export": {
     "exportedToFiles": "已导出到文件管理"
@@ -1258,6 +1335,50 @@
       "engineer": {},
       "legal": {}
     },
+    "industryBriefLabel": {
+      "focus": "行业重点：",
+      "method": "行业方法：",
+      "template": "交付结构："
+    },
+    "industryMethod": "行业方法",
+    "industryMethodBrief": {
+      "C": {
+        "focus": "产能、良率、交付周期与质量；数据要落到产线与批次。",
+        "method": "先界定规格与验收标准，再做方案与排产；用产能与良率数据验证。",
+        "template": "交付结构：工艺与产能说明 → 方案与排产表 → 质量与验收清单。"
+      },
+      "H": {
+        "focus": "客流、口碑、翻台/入住率与成本；数据要落到门店与时段。",
+        "method": "先明确目标客群与时段，再设计流程与菜单；用翻台率与评价验证。",
+        "template": "交付结构：门店与客群说明 → 流程与菜单方案 → 服务与成本清单。"
+      },
+      "J": {
+        "focus": "合规、风险敞口、收益与可追溯；数字要有来源与口径。",
+        "method": "先确定合规边界与口径，再做测算与情景；用风险指标验证。",
+        "template": "交付结构：口径与合规说明 → 测算与情景表 → 风险与复核清单。"
+      },
+      "K": {
+        "focus": "区位、去化、成本与政策；结论要落到项目与周期。",
+        "method": "先框定范围与政策前提，再做测算与比较；用去化与成本数据验证。",
+        "template": "交付结构：项目与区位说明 → 测算与比较表 → 成本与风险清单。"
+      },
+      "L": {
+        "focus": "客户获取、履约质量与服务成本；结论要落到合同与排期。",
+        "method": "先弄清客户需求与合同约束，再做方案与排期；用履约指标验证。",
+        "template": "交付结构：客户与合同说明 → 方案与排期表 → 履约与成本清单。"
+      },
+      "P": {
+        "focus": "学习目标、学情差异与效果证据；结论要落到课程与班级。",
+        "method": "先明确学习目标与起点，再设计教学与练习；用测评证据验证。",
+        "template": "交付结构：学情与目标说明 → 课程与活动方案 → 测评与改进清单。"
+      },
+      "R": {
+        "focus": "受众、内容节奏与传播效果；结论要落到作品与档期。",
+        "method": "先确定受众与主题，再搭内容结构与节奏；用传播数据验证。",
+        "template": "交付结构：受众与主题说明 → 内容与节奏方案 → 发布与效果清单。"
+      }
+    },
+    "industryMethodNone": "未选择行业 —— 不会往助手里额外写入内容。",
     "needTag": "请至少选一个标签",
     "nickname": "昵称",
     "portraitHint": "来自首跑引导，只读展示。",
@@ -1273,6 +1394,7 @@
     },
     "shuffle": "换一个标签",
     "skill": {},
+    "skillsConfirmed": "首跑确认的能力：",
     "skillsHint": "这六类能力已随包提供；在对话里直接说需求，团队会用它。",
     "subtitle": "你的画像、工作身份、AI 团队、常用技能和偏好都收在这一页；保存后写进每个助手的记忆。",
     "tag": {
@@ -1307,6 +1429,17 @@
       }
     },
     "title": "个性化中心"
+  },
+  "imagegen": {
+    "blockInvalid": "图片请求不完整或规格不受支持，请调整后重试。",
+    "failedTitle": "图片生成状态",
+    "generationFailed": "图片生成失败，请调整描述后再生成。",
+    "imageInvalid": "图片无法完整打开或尺寸不符，未登记成果。",
+    "requestUnconfirmed": "图片任务结果尚未确认，请沿用原操作编号恢复，避免重复生成。",
+    "resultUnconfirmed": "图片结果或结算尚未确认，未登记成果。请沿用原操作编号恢复。",
+    "saveFailed": "图片尚未保存成功。请沿用原操作编号恢复。",
+    "unavailable": "图片生成当前不可用，未发起新的生成请求。",
+    "workspaceChanged": "工作区或登录状态已变化，已停止保存本次图片。"
   },
   "kb": {
     "addDone": "已加入 {{count}} 份资料",
@@ -1359,6 +1492,17 @@
     "title": "资料库"
   },
   "leftNav": {
+    "taskGroups": {
+      "header": "任务",
+      "today": "今天",
+      "yesterday": "昨天",
+      "week": "本周",
+      "earlier": "更早",
+      "all": "全部任务",
+      "empty": "还没有任务",
+      "running": "正在运行",
+      "untitled": "未命名任务"
+    },
     "addAssistant": "添加助手",
     "appSettings": "应用设置",
     "archivedChats": "归档对话",
@@ -1376,17 +1520,21 @@
       "search": "搜索任务",
       "skills": "技能市场",
       "square": "广场",
-      "teams": "团队"
+      "teams": "团队",
+      "more": "更多",
+      "agentsSimple": "智能体"
     },
     "recentTasks": "最近任务",
     "searchTasks": "搜索任务…",
     "updateAvailable": "有新版本可用",
-    "usageOverview": "我的 AI 使用概览"
+    "usageOverview": "我的 AI 使用概览",
+    "profile": "个人资料",
+    "usageAndCredits": "用量与积分"
   },
   "login": {
     "agreement": "我已阅读并同意{0}与{1}",
     "authenticatedForActivation": "已登录，请确认此账号的使用资格。",
-    "betaPhoneNotice": "手机号仅用于内测账号的注册与通知；测试结束后 30 天内删除，不用于其他用途。",
+    "betaPhoneNotice": "手机号仅用于账号注册、登录与必要的服务通知，不会用于其他用途。",
     "brandSubline": "登录后，说出你想完成的事，即可开始。",
     "changeAccount": "更换账号",
     "changePhone": "更换手机号",
@@ -1422,7 +1570,6 @@
     "currentAssistant": "当前助手",
     "messageLayoutCentered": "切回居中消息区域",
     "messageLayoutWide": "铺开消息区域",
-    "refreshUsage": "刷新用量",
     "scrollToBottom": "滚动到底部",
     "toggleContextPanel": "切换上下文面板",
     "welcomeSubtitle": "直接描述你的任务，荣盈魔方会帮你选择合适的助手和模型。",
@@ -1635,7 +1782,6 @@
       },
       "industry": "主营行业",
       "introduction": "一句话介绍（选填）",
-      "model": "实际模型",
       "nicknameFallback": "我的工作资料",
       "personaSourceDefault": "人物来源：默认形象",
       "personaSourceRule": "人物来源：已保存的批准规则",
@@ -1752,9 +1898,7 @@
           "name": "鉴赏家"
         },
         "partial": "含未答题，结果仅供参考。"
-      },
-      "usagePending": "费用状态：待核定",
-      "usageSettled": "费用状态：已按实际回执结算"
+      }
     },
     "goalAnalysisHint": "先记录工作目标，不会自动调用 AI。进入工作台后可选择助手发起任务。",
     "multipleHint": "可以多选",
@@ -1979,6 +2123,60 @@
     "contextReset": "会话上下文已重置"
   },
   "settings": {
+    "connectors": {
+      "nav": "连接器",
+      "title": "连接器",
+      "subtitle": "把手机上的飞书接到这台电脑，出门也能给魔方派活。通道跑在本机网关里，端口不对公网开放。",
+      "refresh": "刷新状态",
+      "feishu": {
+        "stateClosed": "通道已关闭",
+        "boundAgent": "接收飞书消息的助手",
+        "bindNone": "不绑定",
+        "bindUnset": "尚未绑定",
+        "unboundWarning": "还没有绑定助手，飞书消息会无人处理。请选择一个助手。",
+        "unbind": "取消绑定",
+        "disableChannel": "关闭通道",
+        "enableChannel": "开启通道",
+        "bindChanged": "已更换绑定助手",
+        "bindCleared": "已取消绑定",
+        "actionFailed": "操作失败，请重试",
+        "channelEnabled": "通道已开启",
+        "channelDisabled": "通道已关闭（凭证保留，可随时重新开启）",
+        "dialogTitle": "扫码接入飞书",
+        "dialogDescription": "用手机飞书扫描下方二维码，确认后即完成接入。",
+        "userCode": "验证码：{{code}}",
+        "scanWaiting": "等待手机扫码确认…",
+        "scanSuccess": "扫码成功，飞书已接入",
+        "scanDenied": "扫码被拒绝，请重试",
+        "scanExpired": "二维码已过期，请重新获取",
+        "scanFailed": "接入失败，请重试",
+        "scanCancelled": "已取消扫码",
+        "scanUnavailable": "飞书暂时不支持扫码接入，请稍后再试",
+        "scanNetworkFailed": "网络连接失败，请检查网络后重试",
+        "cancelScan": "取消",
+        "retryScan": "重新获取二维码",
+        "done": "完成",
+        "title": "飞书",
+        "description": "用手机飞书私聊机器人派活，任务在这台电脑上执行。",
+        "stateIdle": "未接入",
+        "stateConfigured": "已配置",
+        "stateUnavailable": "运行时不可用",
+        "appId": "已接入 · 应用 ID：{{appId}}",
+        "pluginMissing": "飞书插件随包自带，点「接入飞书」即可（无需下载、无需手动解压）。",
+        "runtimeMissing": "本机运行时还没准备好，暂时无法接入。请先确认魔方可以正常使用。",
+        "connect": "接入飞书",
+        "reconnect": "重新扫码",
+        "scanHint": "扫码完成后回到本页点「刷新状态」。这里只显示本机配置，不代表在线状态。",
+        "billingNote": "在飞书里派的任务同样消耗本机账号的积分，计费与桌面端一致。",
+        "gatewayUnavailable": "本机 AI 服务还没就绪，现在无法接入飞书。稍等片刻再试一次。",
+        "writeFailed": "飞书配置已写入，但本机 AI 服务没有接受。请重新扫码一次。",
+        "invalidAgent": "选中的助手已不存在，请换一个助手再试。",
+        "pluginInstallFailed": "随包飞书插件没能装好。重启应用后再试一次。",
+        "unsupportedAuth": "这个飞书账号不支持当前扫码方式。请用飞书手机端重试，或联系客服。",
+        "unknownError": "飞书接入失败。请重试；如果一直失败，重启应用再试。",
+        "ingressUnavailable": "飞书通道未就绪：插件缺少可信安装记录，消息收不到。请在这里重新扫码接入一次（会自动重装插件），或重启应用后再试。"
+      }
+    },
     "about": "关于",
     "aboutDesc": "版本、更新和链接",
     "account": "账户",
@@ -2103,17 +2301,54 @@
     "memory": "记忆",
     "memoryAboutYou": "关于你",
     "memoryAboutYouHint": "你的习惯、你在意的事、你希望它们怎么配合你。保存后会同步给这块盘上的每一个助手。",
+    "memoryAboutYouScope": "这个框是助手每轮都会读到的「关于你」那一份，和下面的长期记忆是两回事 —— 下面那份按账号分开保存，换账号看不到 —— 它会写给这块盘上的每个助手。",
+    "memoryAdd": "记住这条",
+    "memoryAdded": "已保存，助手从下一轮起就会读到。",
+    "memoryAddPlaceholder": "写下一件你想让助手长期记住的事。",
+    "memoryConfirmed": "已确认，助手从下一轮起就会读到。",
     "memoryCounter": "{{used}} / {{max}}",
+    "memoryDelete": "删除",
+    "memoryDeleted": "已删除，助手不会再读到它。",
+    "memoryDraftCancelEdit": "取消",
+    "memoryDraftConfirm": "确认",
+    "memoryDraftCount": "{{count}} 条待确认",
+    "memoryDraftEdit": "编辑",
+    "memoryDraftReject": "拒绝",
+    "memoryDrafts": "待确认的草案",
+    "memoryDraftSaveEdit": "按编辑后的确认",
+    "memoryDraftsEmpty": "助手还没有提出要记住的事。",
+    "memoryDraftsHint": "由助手提出。你没点确认之前，它不算记住。",
+    "memoryDraftSourceAssistant": "助手提出",
     "memoryDraftTrackNotYet": "⚠️ 这一版只有「你自己写」这一条路：助手还不会自己提草案让你确认。",
+    "memoryEntries": "长期记忆",
+    "memoryEntriesEmpty": "还没有已确认的记忆。",
+    "memoryEntriesHint": "已确认的记忆会写进助手每一轮都会读到的提示词里。",
+    "memoryEntryCount": "已保存 {{count}} 条",
+    "memoryErrorBlockFull": "长期记忆已满 —— 请先删掉一条再加。",
+    "memoryErrorControlCharacters": "这段文字里有无法保存的字符。",
+    "memoryErrorCountFull": "记忆条数已达上限 —— 请先删掉一条再加。",
+    "memoryErrorDuplicate": "这条已经记过了。",
+    "memoryErrorEmpty": "请先写点内容。",
+    "memoryErrorNotFound": "这条记忆已经不在了。",
+    "memoryErrorOverLimit": "太长了 —— 一条记忆最多 {{max}} 个字。",
+    "memoryErrorUnavailable": "记忆暂时不可用。",
     "memoryIntro": "这块盘上的助手每轮都会读到下面这些。写在这里的事，它们都会记得。",
     "memoryNoAgents": "这块盘上还没有助手，先建一个再回来。",
     "memoryPlaceholder": "例如：我习惯先看结论再看过程；报价一律用含税价；不要在周末给我排任务。",
     "memoryReadFailed": "读不到这份记忆，可以重开这一页试试。",
+    "memoryRejected": "已拒绝，没有保存。",
+    "memoryRejectNote": "被拒绝的草案会留痕，助手不会为同一件事再问你一次。",
     "memorySave": "保存",
     "memorySaved": "已保存，{{count}} 个助手都会读到。",
     "memorySaveFailed": "保存失败，请再试一次。",
     "memorySavePartial": "有 {{failed}} / {{total}} 个助手没写成，请再存一次。",
+    "memoryStoredOnDisk": "记忆存在这块盘上，并按账号分开保存 —— 换一个账号登录看不到它们。",
+    "memorySyncPartial": "已保存，但有 {{failed}} 个助手没有收到 —— 联网状态下再打开一次就会同步。",
+    "memorySyncPending": "改动已记下，但助手还没收到 —— 本地服务未连接。联网后打开这一页或重开应用会自动同步。",
     "memoryTooLong": "超出上限了（最多 {{max}} 字）。超出的部分不会被保存，请先精简。",
+    "memoryUserMdTitle": "关于你",
+    "memoryUserMdObserved": "观察日期：{{date}} ｜ 状态：有效",
+    "memoryUserMdSampleDirective": "- 用中文简洁地汇报进度",
     "memoryUnsaved": "有未保存的改动",
     "mobile": "移动端",
     "mobileDesc": "在手机上访问 荣盈魔方",
@@ -2168,6 +2403,145 @@
     "quickLaunchUpdateFailed": "无法更新快速启动配置",
     "readyToInstall": "重启以更新",
     "remove": "移除",
+    "repair": {
+      "applySelected": "修复选中项（{{count}}）",
+      "code": {
+        "apply": {
+          "already-current": "已经是最新状态，没有改动任何文件。",
+          "already-gone": "已经不需要处理了（文件已经被处理过或不存在）。",
+          "backup-failed": "没有执行：备份没成功，按纪律不动原文件。",
+          "became-live": "取消了：这个锁在刚才变成了正在使用的活锁。",
+          "blocked-live-instance": "没有执行：检测到本机有荣盈魔方正在运行。",
+          "diagnostics-failed": "诊断包导出失败（盘可能写不进去）。",
+          "diagnostics-written": "诊断包已导出到：{{path}}",
+          "invalid-json": "没有执行：配置文件不是合法 JSON。",
+          "not-object": "没有执行：配置文件格式不认识。",
+          "plugin-dir-missing": "没有执行：当前盘的插件目录建不出来（盘可能只读）。",
+          "quarantined": "已隔离（原文件改名保留，副本已备份）。",
+          "read-failed": "没有执行：配置文件读不出来。",
+          "rebased": "已按当前盘重新归并插件路径。",
+          "rename-failed": "没有执行：隔离改名失败（文件可能被占用）。",
+          "rewritten": "已用当前版本重写能力边界区块。",
+          "skill-migrated": "技能安装记录已迁到当前的技能目录。",
+          "unreadable-lock": "没有执行：锁文件还在，但读不出来，可能正被别的程序占用。",
+          "unsafe-target-link": "没有执行：这个位置不是普通文件（可能是指向别处的链接），出于安全不动它。",
+          "write-failed": "没有执行：写回配置失败。"
+        },
+        "capability": {
+          "block-corrupt": "能力边界区块的起止标记不配对（半写），需要重写：{{path}}",
+          "block-missing": "AGENTS.md 里没有能力边界区块，助手可能被旧规则误导：{{path}}",
+          "block-newer": "能力边界区块比当前程序还新（v{{version}}），不会降级它：{{path}}",
+          "block-stale": "能力边界区块停在旧版本（v{{version}} < v{{current}}）：{{path}}",
+          "no-downgrade": "区块版本高于当前程序，保持原样（避免把新版本写旧）：{{path}}",
+          "no-file": "助手还没有写过 AGENTS.md，跳过了区块检查。",
+          "no-workspace": "这份状态里没有助手工作区，跳过了区块检查：{{path}}",
+          "none": "没有找到可以检查的助手工作区。",
+          "ok": "能力边界区块已是最新版本（v{{version}}）：{{path}}",
+          "rewrite-block": "用当前版本重写能力边界区块（只动区块内部，升到 v{{version}}）：{{path}}"
+        },
+        "diagnostics": {
+          "export": "导出诊断包到：{{path}}",
+          "failed": "诊断包导出失败（盘可能写不进去）。",
+          "ready": "可以导出一份诊断包发给客服（会去掉口令类内容，只打包到 {{path}}，不会自动上传）",
+          "written": "诊断包已经导出到：{{path}}"
+        },
+        "env": {
+          "data-root-not-writable": "运行数据目录不可写，修复动作会失败：{{path}}",
+          "data-root-writable": "运行数据目录可以写入：{{path}}",
+          "guide-antivirus-quarantine": "很可能是杀毒软件把它隔离了。请在杀毒软件的隔离区里把它恢复并加白名单，然后重新打开本程序。详见《使用说明》的「首次启动被杀软拦截」一节。",
+          "guide-never-started": "这份程序可能还没成功启动过一次。请先正常打开一次本程序，让它准备好运行环境，再回来做修复。",
+          "guide-readonly-drive": "盘可能处于只读状态（写保护开关、或被系统改了权限）。请检查 U 盘的写保护开关，或换一个 USB 接口重试。",
+          "guide-workspace": "工作区在那块盘上找不到或写不进去。请确认盘没有被写保护，或换一个 USB 接口重试。",
+          "mode-installed": "当前是安装版运行，运行数据在：{{root}}",
+          "mode-portable": "当前是盘上运行，运行数据在：{{root}}",
+          "runtime-deployed": "本机运行环境已部署：{{path}}",
+          "runtime-media-dev-skip": "当前不是打包运行，跳过随包运行环境检查。",
+          "runtime-media-missing": "找不到随包运行环境，本机服务起不来。",
+          "runtime-media-present": "随包运行环境存在：{{path}}",
+          "runtime-not-deployed": "本机还没有部署运行环境（第一次打开时会自动准备，需要几分钟）。",
+          "state-found": "找到 {{count}} 份状态目录，例如：{{path}}",
+          "state-missing": "没有找到状态目录：{{path}}",
+          "workspace-ok": "用户资料工作区可用：{{path}}",
+          "workspace-unusable": "用户资料工作区不可用（不存在或不可写）：{{path}}"
+        },
+        "live": {
+          "gateway-lock": "发现一把正在使用的网关锁，说明本机服务还在跑：{{path}}。请先完全退出荣盈魔方，再回来点「重新全检」。",
+          "instance-owner": "这台电脑上正开着一份荣盈魔方（进程 PID {{pid}}），所有修复动作都不会执行。请先完全退出它，再回来点「重新全检」。",
+          "port-listener": "本机端口上有一个进程在监听（PID {{pid}}），可能是本机服务还在跑。请先完全退出荣盈魔方，再回来点「重新全检」。"
+        },
+        "lock": {
+          "corrupt": {
+            "bad-pid": "锁文件里没有可用的进程号：{{path}}",
+            "not-json": "锁文件内容不是合法 JSON（多半是写到一半断电）：{{path}}",
+            "not-object": "锁文件内容不是一个对象：{{path}}",
+            "unreadable": "锁文件读不出来（可能被占用）：{{path}}"
+          },
+          "live": {
+            "start-time-match": "这是正在运行的网关留下的锁，不会动它：{{path}}",
+            "unverifiable": "无法确认这个锁是不是死锁（拿不到进程启动时间），保守起见不动它：{{path}}"
+          },
+          "no-state": "没有找到状态目录，跳过了锁检查。",
+          "none": "本机网关锁文件正常（检查了 {{count}} 个状态目录）。",
+          "quarantine": "把这个坏锁改名隔离：{{path}}",
+          "stale": {
+            "pid-gone": "锁里的进程（PID {{pid}}）已经退出了，属于死锁：{{path}}",
+            "pid-reused": "锁里的进程号（PID {{pid}}）已经被系统回收给别的程序，属于死锁：{{path}}"
+          }
+        },
+        "plugin": {
+          "foreign-dead-path": "配置里有一条指向别的程序的死路径，我们不会替你删：{{path}}",
+          "no-state": "没有找到状态目录，跳过了插件路径检查。",
+          "none": "插件加载路径都还在。",
+          "own-dead-path": "配置里指着一条已经不存在的应用插件目录（通常是换了盘符）：{{path}}",
+          "rebase": "按当前盘重新归并插件路径（改 {{path}}，涉及 {{count}} 条死路径）"
+        },
+        "skill": {
+          "ambiguous": "发现了多个状态目录，无法确定哪一个是当前的，记录保持不变。",
+          "matched": "技能安装记录与当前技能目录一致。",
+          "migrate": "把技能安装记录迁到当前的技能目录（{{count}} 项，迁到：{{path}}）",
+          "no-access": "当前模式下读不到技能记录，检查已跳过。",
+          "no-config": "读不到配置文件，技能记录检查已跳过。",
+          "no-state": "没有找到状态目录，技能记录检查已跳过。",
+          "none": "还没有技能安装记录，无需处理。",
+          "orphan": "技能安装记录还指向 {{count}} 个已经不存在的技能目录（通常发生在换网关或换盘之后）。"
+        }
+      },
+      "item": {
+        "capability-block": "能力边界提示词",
+        "diagnostics-pack": "诊断包",
+        "environment": "运行环境自查",
+        "gateway-locks": "启动锁（坏锁 / 半写锁）",
+        "plugin-paths": "插件加载路径",
+        "skill-records": "技能安装记录"
+      },
+      "nav": "诊断与修复",
+      "needsYou": "需要你处理",
+      "noChanges": "这一轮没有改动任何文件。",
+      "notApplicable": "这里用不上",
+      "nothingDesc": "全检没有发现问题。如果还是用不了，可以导出一份诊断包发给客服。",
+      "nothingTitle": "没有需要修的东西",
+      "offlineNote": "整个过程不联网：修好之前不会连接服务器，诊断包也只存在本机、需要你自己发出去。",
+      "openBackup": "打开备份目录（{{path}}）",
+      "rescan": "重新全检",
+      "restore": {
+        "blocked-live-instance": "荣盈魔方正在运行，未做任何还原。请完全退出后再试。",
+        "nothing": "这里没有可还原的备份。",
+        "partial": "{{total}} 个文件里有 {{count}} 个放回原处，其余没能还原。",
+        "restored": "已把 {{count}} 个文件放回原处。"
+      },
+      "restoreBackup": "撤销这一轮（把备份放回去）",
+      "resultTitle": "刚才做了什么",
+      "scanFailed": "全检没有完成：{{error}}",
+      "scannedRoots": "已检查 {{count}} 个位置",
+      "scanning": "正在全检…",
+      "severity": {
+        "attention": "可修复",
+        "blocked": "检查不了",
+        "broken": "需要处理",
+        "ok": "正常"
+      },
+      "title": "诊断与修复"
+    },
     "rightPanelShortcut": "切换上下文面板",
     "selectGateway": "选择网关",
     "sendCmdEnter": "{{mod}} 回车",
@@ -2263,6 +2637,11 @@
     "version": "版本",
     "webSearch": "允许助手联网搜索",
     "webSearchHint": "开着时，助手需要实时资料会自动联网搜索，并标注信息来源——每次搜索单独计费（约 6 积分）。qwen-plus、qwen-turbo 和 qwen3.7-flash 还支持模型内置联网：网页内容会一起计入输入，费用大约是同长度提问的百倍。改完会自动重新准备一次。",
+    "showMascot": "显示小盈",
+    "showMascotHint": "对话区右下角的吉祥物；关掉后可以随时在这里重新打开",
+    "desktopMascot": "桌面小盈",
+    "desktopMascotHint": "在桌面上放一个可以拖动的小盈，帮你看和整理桌面",
+    "desktopMascotOpen": "打开",
     "webSearchSection": "联网搜索",
     "workspace": "工作空间",
     "workspaceChange": "更改",
@@ -2303,7 +2682,6 @@
   },
   "skillMarket": {
     "actionFailed": "操作失败：{{reason}}",
-    "count": "共 {{total}} 个 · 已装 {{installed}} 个",
     "empty": "这个版本没有随包的技能。",
     "gatewayRequired": "还没连上网关；装上技能需要先连上。连上后回来刷新即可。",
     "install": "装上",
@@ -2320,11 +2698,25 @@
     "repairConfirmTitle": "修复「{{name}}」？",
     "repaired": "已修复「{{name}}」",
     "repairedBackup": "修复前的备份在：{{path}}",
-    "subtitle": "这些是随程序一起提供的技能，装上之后所有助手都能用。",
     "verdictBlocked": "这个助手暂时用不了它",
     "verdictChecking": "正在确认助手能不能用…",
     "verdictUnknown": "没问出来：暂时不知道助手那边能不能用",
-    "verdictUsable": "这个助手现在已经能用它"
+    "verdictUsable": "这个助手现在已经能用它",
+    "tabSkills": "技能",
+    "tabAgents": "智能体",
+    "tabPrompts": "提示词",
+    "promptsSoon": "提示词库即将开放",
+    "searchPlaceholder": "搜索技能",
+    "allInstalled": "{{n}} 个技能 · 已全部预装",
+    "tileCount": "{{n}} 个技能",
+    "category": {
+      "content": "内容创作",
+      "commerce": "电商运营",
+      "research": "学习研究",
+      "office": "办公提效",
+      "other": "其他"
+    },
+    "noMatch": "没有匹配的技能"
   },
   "slash": {
     "argOptions": "/{{command}} 的可选项"
@@ -2347,6 +2739,18 @@
     "tooltip": "命令面板"
   },
   "slidegen": {
+    "detail": {
+      "footerOverlap": "页脚 #{{footer}} 侵入了正文区域 #{{body}}。给页脚上方留出空间，或把正文区域上移；文字一个都别删。",
+      "lowContrast": "{{who}} 与实测纯色底的对比度只有 {{ratio}}:1，低于目标 {{minimum}}:1。改文字颜色或背景色。",
+      "occluded": "{{who}} 有部分被 {{occludedBy}} 盖住了。把它的位置或盖住它的那块挪开。",
+      "outOfBounds": "{{who}} 冲出画布：{{sides}}。这一块导出后在幻灯片外面，放映时看不到。",
+      "side": {
+        "bottom": "下边超出 {{px}}px",
+        "left": "左边超出 {{px}}px",
+        "right": "右边超出 {{px}}px",
+        "top": "上边超出 {{px}}px"
+      }
+    },
     "fail": {
       "blockEmpty": "助手给的版面是空的。",
       "blockUnclosed": "这次的内容太长、被截断了，所以没能生成。可以让助手分成两份、分两次来做。",
@@ -2364,6 +2768,12 @@
       "unparsable": "版面写法有语法错误，读不出来。"
     },
     "failedTitle": "演示文稿没能生成",
+    "kind": {
+      "block": "色块",
+      "image": "图片",
+      "text": "文字"
+    },
+    "listJoiner": "、",
     "unconfirmedTitle": "演示文稿未能自动确认",
     "warn": {
       "footerOverlap": "第 {{page}} 页的页脚侵入了正文卡片区域",
@@ -2372,7 +2782,11 @@
       "occluded": "第 {{page}} 页有文字被别的元素盖住了",
       "outOfBounds": "第 {{page}} 页有内容超出画面，放映时看不到"
     },
-    "warnedTitle": "演示文稿已生成，但有几处要调整"
+    "warnedTitle": "演示文稿已生成，但有几处要调整",
+    "who": {
+      "plain": "{{kind}}（#{{id}}）",
+      "withText": "{{kind}}「{{snippet}}」（#{{id}}）"
+    }
   },
   "startupReadiness": {
     "aiCatalogFailed": "没能取到模型列表",
@@ -2404,6 +2818,7 @@
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "这张卡的激活名额已满，请换一张卡或联系客服",
     "relayActivationRequired": "这台设备上还没有可用的激活，请先完成激活",
+    "relayApplyFailed": "本地服务没有接受模型配置。可以再试一次；但如果一直失败，这是需要排查的问题，等待不会好。请把日志发给我们。",
     "relayEntitlementRejected": "这张激活卡已经不能用了，请重新激活或换一张卡",
     "relayOrganizationMismatch": "这张激活卡属于另一个组织，当前账号无权使用",
     "relayRetryable": "商业服务还没准备好，你可以再试一次",
@@ -2474,6 +2889,8 @@
       "compass": "主罗盘",
       "emptyHint": "创建团队后，这里会按五个岗位显示真实的协作状态。",
       "latest": "最近会议：{{question}}",
+      "participants": "本轮实际参与",
+      "positions": "五个岗位",
       "status": {
         "attention": "需要处理",
         "disabled": "未启用",
@@ -2630,8 +3047,6 @@
     "degradeTitle": "额度即将用尽",
     "quotaTotal": "总额度",
     "quotaUsed": "已用",
-    "rateLimits": "速率限制",
-    "resetsAt": "{{time}} 重置",
     "unknownDesc": "网络似乎不稳，没能读到你的额度。这不代表额度用尽 —— 稍后重试即可；已确认过的余额不会因为这次读取失败而消失。",
     "unknownTitle": "暂时没能确认你的额度",
     "unlicensedDesc": "激活或兑换卡密后即可继续使用。",
@@ -2640,6 +3055,7 @@
   },
   "videogen": {
     "aspectInvalid": "画面比例「{{value}}」不支持（可用：{{allowed}}），这一份没生成。让助手改一下。",
+    "billingPending": "视频生成未成功，费用状态尚待核实。请保留任务记录，不要重复生成。",
     "blockInvalid": "回复里那个要生成视频的块（videogen）没通过校验，没有发起生成。让助手照技能里的格式重写一次。",
     "contentRejected": "视频内容被安全检查拦下了（这类拦截不收费）。让助手换一种画面描述再来。",
     "createFailedNetwork": "网络暂时连不上视频服务，这一份没生成。稍后让助手重试。",
@@ -2656,14 +3072,16 @@
     "saveFailed": "视频文件没能存到本机。让助手重新生成一次。",
     "taskFailed": "视频生成失败。让助手再试一次。",
     "timeout": "等的时间太长了，已停止等待（这次没有计费）。可以让助手重新生成一次。",
-    "unsupportedField": "视频请求里带了当前版本不支持的字段「{{field}}」（暂不支持参考图/首尾帧）。让助手去掉它再来一次。"
+    "unsupportedField": "视频请求里带了当前版本不支持的字段「{{field}}」（暂不支持参考图/首尾帧）。让助手去掉它再来一次。",
+    "imageRequiresSeedance": "这条视频要用你附的图，只有「高质量」档支持图生视频。请把输入框的「视频画质」切到高质量（Seedance 2.5）后再发一次；如果只想做纯文字视频，也可以把图去掉再发。本次没有生成，也没有扣费。"
   },
   "voiceInput": {
     "answerTooLong": "回答超过6000字符，请先让助手精简后再朗读。",
+    "discardRecording": "放弃本次录音恢复",
     "introConfirm": "知道了",
     "introDescription": "点击麦克风或按住 Space 说话，最长60秒",
     "introSkip": "暂不使用",
-    "introStepBeta": "语音经云端识别，按显示单价收费",
+    "introStepBeta": "语音经云端识别，按秒计费，费用从积分中扣除。",
     "introStepHold": "识别结果会写入输入框，不会自动发送。",
     "introStepInsert": "短按 Space 仍然会输入普通空格。",
     "introTitle": "语音输入",
@@ -2675,19 +3093,38 @@
     "playing": "正在播放…",
     "preparingSpeech": "正在准备播报…",
     "readAnswer": "朗读最新回答",
-    "readAnswerFee": "朗读最新回答（预计 {{fee}} 积分）",
     "recognitionFailed": "语音识别失败",
-    "serviceFeeAsr": "语音识别 {{fee}} 积分/分钟",
-    "serviceFeeTts": "朗读 {{fee}} 积分/100字符",
+    "recoveryPending": "本次语音结果尚未确认；点击重试会沿用原请求。",
+    "retryRecognition": "重试语音识别",
     "stop": "停止语音",
     "tooltip": "语音输入",
     "transcribing": "正在识别…",
     "unsupported": "语音输入暂不可用，请继续使用文字输入。",
-    "unsupportedTooltip": "此应用暂时无法使用语音输入。"
+    "unsupportedTooltip": "语音服务当前不可用，请检查登录状态或网络后重试。"
   },
   "workspaceNotice": {
     "dismiss": "知道了",
     "openSettings": "打开工作区设置",
     "recreated": "原工作区目录不存在（可能已被移动或删除），已在本机新建空工作区。如需找回旧数据：请检查原目录，或切换工作区。"
+  },
+  "pet": {
+    "title": "小盈 · 桌面伙伴",
+    "peek": "看看桌面",
+    "organize": "整理桌面",
+    "trash": "删除文件",
+    "close": "收起小盈",
+    "desktopClean": "桌面很干净，没有要整理的文件～",
+    "desktopSummary": "桌面有 {{count}} 个文件：{{detail}}",
+    "peekFailed": "看不到桌面（可能没有权限）",
+    "organized": "整理好了，吃掉 {{count}} 个乱文件～",
+    "organizeFailed": "整理失败了，再试一次？",
+    "trashed": "已把 {{count}} 个文件放进回收站",
+    "trashFailed": "删除失败，文件没动",
+    "cancelled": "好的，不动了",
+    "line3": "嗝～吃饱了",
+    "line4": "点我干嘛呀～",
+    "menuGreet": "打个招呼",
+    "menu": "更多",
+    "menuMove": "换个位置"
   }
 }

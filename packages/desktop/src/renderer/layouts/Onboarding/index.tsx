@@ -36,7 +36,6 @@ import {
   type OnboardingQuestionAnswer,
   type OnboardingQuestionAnswers,
   type OnboardingWorkMatch,
-  type OnboardingWorkMatchInput,
   type OnboardingProfile,
   type OnboardingRoleId,
   type OnboardingUseCaseId,
@@ -58,6 +57,7 @@ import {
   type PortraitGender,
 } from '@/lib/user-portrait';
 import { readLoginPurpose, resolveLoginPurposeUseCase } from '@/lib/login-purpose';
+import { resolveAssistantWorkspace, STARTER_AGENT_BY_ID } from '@/lib/preset-agents';
 
 interface OnboardingProps {
   userId: string;
@@ -66,10 +66,6 @@ interface OnboardingProps {
   initialProfile?: OnboardingProfile | null;
   onComplete: (profile: OnboardingProfile) => void;
   onCancel?: () => void;
-  workMatch?: {
-    scopeKey: string;
-    request: (input: OnboardingWorkMatchInput, signal: AbortSignal) => Promise<unknown>;
-  };
 }
 
 const STEPS = ['role', 'purpose', 'assignment', 'personalize'] as const;
@@ -548,27 +544,49 @@ function FirstRunOnboarding({
   initialProfile,
   onComplete,
   onCancel,
-  workMatch,
 }: OnboardingProps) {
   const { t } = useTranslation();
   /**
    * V1 收口（2026-10-06）新顺序：工作资料 → 趣味画像 → 团队确认（结果）。
-   * ⚠️ 旧顺序是「趣味画像 → 工作资料 → 匹配 → 结果」；本批次**不开放 AI 匹配通道**
-   *    （生产从不传 workMatch），匹配页删除，生成改走本地 basic() 路径。
-   * ⚠️ 编辑模式与首跑都默认落在「工作资料」；本流程改动只影响首跑页序，
-   *    draft / 存储键 / 保存路径均未变。
+   * ⚠️ 旧顺序是「趣味画像 → 工作资料 → 匹配 → 结果」；匹配页已删除，生成只走本地
+   *    `basic()`（**零模型调用**）。
+   *
+   * ⭐ AI 匹配通道**已整条删除**（N3，2026-10-16）：
+   *    - 发起方：`App.tsx` 从任何版本起都**没有**传过匹配适配器（本仓历史可查）；
+   *    - 校验方：`validateOnboardingWorkMatchReply` 只有测试引用；
+   *    - 展示方：结果页的 `source === 'ai'` 分支因此只能在测试里到达。
+   *    ⇒ 生产里"AI 建议"既不可能产生、也不可能存下来；留着它等于留一个看起来在跑、
+   *      其实永远不跑的通道。故删除 `workMatch` 入参（含 `request` 适配器）与那份
+   *      回执的渲染块。结果页只保留**能真实解释**的来源标签（`sourceBasic`；档案里若
+   *      残留一份旧回执，标签按它自己的 `source` 如实显示，不冒充本地规则）。
+   *
+   * ⭐ 重开向导回到已确认的那一步（N1，2026-10-16）：`mode="edit"` 且档案里有已确认
+   *    回执时直接落在「团队确认」（结果页），用户能复核自己确认过的名单；没有回执仍
+   *    落在资料页。首登页序一个字未变。
    *
    * ⭐ 首跑草稿（2026-10-07 体检问题 7）：中途刷新/关掉应用再进来，**接着填**。
-   *    作用域 = `userId:scopeKey`（与 `App` 挂这个组件用的 key 同一把）——换账号或换工作区
-   *    都拿不到上一份草稿。编辑模式**不读不写**（有真档案，草稿只会打架）。
+   *    作用域 = `onboardingDraftScope(userId)`（= `userId:account-local`）——换账号拿不到
+   *    上一份草稿。编辑模式**不读不写**（有真档案，草稿只会打架）。
    */
-  const draftScope = onboardingDraftScope(userId, workMatch?.scopeKey);
+  const draftScope = onboardingDraftScope(userId);
   const [restoredDraft] = useState(() => (mode === 'first-run' ? readOnboardingDraft(draftScope) : null));
-  const [page, setPage] = useState<'profile' | 'portrait' | 'result'>(
-    // 结果页需要那份本地回执（`page === 'result' && match` 才渲染）；名单丢了就退回资料页，
-    // 不留一个白屏。
-    restoredDraft?.page === 'result' && !restoredDraft.match ? 'profile' : (restoredDraft?.page ?? 'profile'),
-  );
+  const [page, setPage] = useState<'profile' | 'portrait' | 'result'>(() => {
+    if (mode === 'edit') {
+      // ⭐ N1（2026-10-16）「重开向导」必须回到**用户已经确认过的那一步**，而不是永远从头。
+      //    判据 = 档案里有一份**完整的**已确认回执：
+      //      · `workMatch` 只在 `confirm()` 里写入 ⇒ 「有回执」⇔「用户走完了团队确认」；
+      //      · 再加行业与名单非空 —— 少了它们，结果页的主按钮会静默失效（`confirm()` 直接
+      //        return），等于把用户送到一个点不动的页面上。缺任何一样都退回资料页。
+      return initialProfile?.version === 3 &&
+        initialProfile.workMatch &&
+        initialProfile.industry &&
+        (initialProfile.selectedAssistantIds?.length ?? 0) > 0
+        ? 'result'
+        : 'profile';
+    }
+    // 首跑：接着草稿的断点走；草稿说在结果页但没有回执 ⇒ 退回资料页，不留一个白屏。
+    return restoredDraft?.page === 'result' && !restoredDraft.match ? 'profile' : (restoredDraft?.page ?? 'profile');
+  });
   const [portraitDone, setPortraitDone] = useState(
     restoredDraft?.portraitDone ?? (mode === 'edit' && Boolean(initialProfile?.portrait)),
   );
@@ -606,11 +624,12 @@ function FirstRunOnboarding({
   const [selectedAssistantIds, setSelectedAssistantIds] = useState<StarterId[]>(
     restoredDraft?.selectedAssistantIds ?? initialProfile?.selectedAssistantIds ?? [],
   );
-  const [aiAssistantOptions] = useState<StarterId[]>(
-    mode === 'edit' && initialProfile?.version === 3 && initialProfile.workMatch?.source === 'ai'
-      ? (initialProfile.selectedAssistantIds ?? [])
-      : [],
-  );
+  /**
+   * N3（2026-10-16）：这里原本还有一个 `aiAssistantOptions` —— 从「AI 匹配回执」的
+   * `selectedAssistantIds` 里现拼一份候选名单。那份回执在生产里**从来不可能存在**
+   * （见文件头「AI 匹配通道已删除」），随通道一并删除；结果页的候选统一走
+   * `assistantOptionIds`（本地推荐 ∪ 已选）这一条路。
+   */
   const [responseDetail, setResponseDetail] = useState<ResponseDetail>(initialProfile?.responseDetail ?? 'balanced');
   const [filePermission, setFilePermission] = useState<FilePermissionPreference>(
     initialProfile?.filePermission ?? 'ask-every-time',
@@ -661,6 +680,19 @@ function FirstRunOnboarding({
     ...(portraitRecord ? { portrait: portraitRecord } : {}),
   };
   const recommendations = recommendAssistants(draft).slice(0, 3);
+  /**
+   * 结果页上**能看见**的名单 = 本次本地推荐 ∪ 已经选中的（N1，2026-10-16）。
+   *
+   * ⚠️ 只渲染推荐那 3 个时，重开复核会「名单在档案里、屏上没有」：用户确认过的 id
+   *    （例如家庭/研究）不一定落在当次的本地推荐里，于是既看不见、也点不掉 ——
+   *    看起来像"名单丢了"。取并集之后：推荐照旧可选，**确认过的必定在屏上且是选中态**。
+   *    首跑里 `selectedAssistantIds` 只能从这些按钮里来 ⇒ 并集 == 推荐，首登一个字不变。
+   */
+  const assistantOptionIds = useMemo<StarterId[]>(() => {
+    const ids = recommendations.map((item) => item.id);
+    for (const id of selectedAssistantIds) if (!ids.includes(id)) ids.push(id);
+    return ids;
+  }, [recommendations, selectedAssistantIds]);
   const canSubmit = Boolean(industry);
 
   /** 把当前进度落进首跑草稿（见上面 `draftScope` 的说明）；写失败一律忽略。 */
@@ -733,7 +765,7 @@ function FirstRunOnboarding({
    */
   const basic = (target: 'portrait' | 'result' = 'result') => {
     if (!canSubmit) return;
-    const input = buildOnboardingWorkMatchInput(draft, workMatch?.scopeKey ?? 'account-local');
+    const input = buildOnboardingWorkMatchInput(draft, 'account-local');
     setMatch({ source: 'basic', profileVersion: input.profileVersion });
     setSelectedAssistantIds(recommendations.map((item) => item.id));
     setPage(target);
@@ -802,8 +834,10 @@ function FirstRunOnboarding({
           <h1 className="type-page-title min-w-0 break-words">{t(`onboarding.firstRun.titles.${page}`)}</h1>
           {page === 'result' && match && (
             <div data-result-actions className="flex flex-wrap gap-3">
+              {/* 标签按**这是首跑还是重开**分：首跑是"进入工作台"，重开是"保存设置"
+                  （重开的人已经在工作台里，再让他"进入工作台"是句错话）。 */}
               <Button data-primary-action disabled={selectedAssistantIds.length === 0} onClick={confirm}>
-                {t('onboarding.firstRun.confirm')}
+                {t(mode === 'edit' ? 'onboarding.save' : 'onboarding.firstRun.confirm')}
                 <Check size={16} />
               </Button>
               <Button variant="ghost" onClick={() => setPage('profile')}>
@@ -1058,9 +1092,10 @@ function FirstRunOnboarding({
                     {t('onboarding.save')}
                   </Button>
                 )}
-                {/* 主按钮：本地生成（不调模型）。首跑先过画像四题，编辑模式直接看结果。
-                    旧版依赖 workMatch 的 AI 匹配在本批次不开放——生产从不传 workMatch，
-                    导致按钮恒为 disabled（真机"死按钮"根因），禁用条件改为只看资料是否完整。 */}
+                {/* 主按钮：本地生成（零模型调用）。首跑先过画像四题；编辑模式直接重算
+                    本地基础方案并进结果页（**会按当次资料重算推荐**——要复核确认过的名单
+                    就留在结果页，别按它）。禁用条件只看资料是否完整（旧版依赖已删除的
+                    AI 匹配通道 ⇒ 按钮恒 disabled 的"死按钮"根因）。 */}
                 <Button
                   data-primary-action
                   disabled={!canSubmit}
@@ -1119,29 +1154,13 @@ function FirstRunOnboarding({
                       {customGoal.trim()}
                     </p>
                   )}
+                  {/* 来源标签按回执自己的 `source` 如实显示（生产只有本地规则这一种会产生）。 */}
                   <p data-match-source={match.source} className="type-support text-[var(--accent)]">
                     {t(match.source === 'ai' ? 'onboarding.firstRun.sourceAi' : 'onboarding.firstRun.sourceBasic')}
                   </p>
-                  {match.source === 'ai' ? (
-                    <>
-                      <p className="type-body">{match.summary}</p>
-                      <p className="type-support text-[var(--text-muted)]">
-                        {t('onboarding.firstRun.model')}: {match.modelId}
-                      </p>
-                      <p className="type-support text-[var(--text-muted)]">
-                        {t(
-                          match.usageStatus === 'pending'
-                            ? 'onboarding.firstRun.usagePending'
-                            : 'onboarding.firstRun.usageSettled',
-                        )}
-                      </p>
-                      <ul className="type-support list-inside list-disc text-[var(--text-secondary)]">
-                        {match.starters.map((entry) => (
-                          <li key={entry}>{entry}</li>
-                        ))}
-                      </ul>
-                    </>
-                  ) : !customGoal.trim() && !useCases.length ? (
+                  {/* N3：AI 回执的渲染块（summary / modelId / usageStatus / starters）随通道删除。
+                      它只能由那份回执产生，而回执在任何一个版本里都无法产生（见文件头）。 */}
+                  {!customGoal.trim() && !useCases.length ? (
                     <p className="type-support text-[var(--text-secondary)]">
                       {t('onboarding.firstRun.basicDescription')}
                     </p>
@@ -1155,10 +1174,12 @@ function FirstRunOnboarding({
                     {t('onboarding.firstRun.result.capabilityNotice')}
                   </p>
                   <div className="space-y-3">
-                    {(match.source === 'ai' ? aiAssistantOptions : recommendations.map((item) => item.id)).map((id) => {
+                    {assistantOptionIds.map((id) => {
                       const active = selectedAssistantIds.includes(id);
                       const Icon = ASSISTANT_ICONS[id];
                       const recommendation = recommendations.find((item) => item.id === id);
+                      const workspace = resolveAssistantWorkspace(STARTER_AGENT_BY_ID[id]);
+                      const exampleTask = workspace?.starters[0];
                       return (
                         <button
                           key={id}
@@ -1183,12 +1204,13 @@ function FirstRunOnboarding({
                             >
                               {recommendation
                                 ? t(`onboarding.firstRun.result.reasons.${id}`)
-                                : t(`assistantWorkspaces.${id}.description`)}
+                                : t(workspace?.descriptionKey ?? `onboarding.firstRun.result.reasons.${id}`)}
                             </span>
-                            <span data-skill-task className="type-support block text-[var(--text-muted)]">
-                              {t(`assistantWorkspaces.${id}.starters.1.title`)} ·{' '}
-                              {t(`assistantWorkspaces.${id}.starters.1.description`)}
-                            </span>
+                            {exampleTask && (
+                              <span data-skill-task className="type-support block text-[var(--text-muted)]">
+                                {t(exampleTask.titleKey)} · {t(exampleTask.descriptionKey)}
+                              </span>
+                            )}
                           </span>
                           <span
                             className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-[var(--border)]"
@@ -1262,10 +1284,8 @@ export default function Onboarding(props: OnboardingProps) {
   const profile = props.initialProfile?.userId === props.userId ? props.initialProfile : null;
   if (props.mode === 'edit' && profile?.version !== 3) return <LegacyOnboarding {...props} initialProfile={profile} />;
   return (
-    <FirstRunOnboarding
-      key={`${props.userId}:${props.workMatch?.scopeKey ?? 'account-local'}`}
-      {...props}
-      initialProfile={profile}
-    />
+    // `key` 只按账号重挂（换账号 ⇒ 上一份输入一个字都不许继承）。
+    // N3：原来的 `:scopeKey` 尾缀来自已删除的匹配通道，生产恒为 `account-local`。
+    <FirstRunOnboarding key={props.userId} {...props} initialProfile={profile} />
   );
 }

@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import {
   relayBootstrapPublicStateStore,
   relayLivenessPublicStateStore,
@@ -30,6 +30,7 @@ import {
   retryCommercialRelayBootstrap,
 } from '../commercial/relay-startup.js';
 import { probeRelayLivenessNow } from '../commercial/relay-liveness.js';
+import { resyncMemoryOnAccountBoundary } from '../memory/account-switch.js';
 import { buildCommercialAccessCleanupDeps, requestCommercialAccessCleanup } from '../commercial/relay-cleanup.js';
 import { runUsageReport } from '../commercial/usage-reporter.js';
 import {
@@ -38,6 +39,41 @@ import {
   readRechargeOrder,
   readRechargeSkus,
 } from '../commercial/payment.js';
+import { clearProviderBillingCooldowns, resolveCooldownStateDirs } from '../commercial/auth-cooldown.js';
+
+/**
+ * 换卡/恢复授权成功后：清掉内核的**计费冷却**（BUG-161，2026-10-18 实机）。
+ *
+ * 旧卡欠费时网关会给 `clawrouter` 打 10 分钟 `billing` 冷却，且**按 provider 记、
+ * 持久化在 agent 库里**（换卡、重启都清不掉）。用户充完钱还得干等 10 分钟，
+ * 这是最伤的场景。这里：
+ *   ① 清 DB 里 `inline-api-key:clawrouter` 这一条；
+ *   ② 只有真的清到了东西才重启本机网关 —— 内核在 worker 里缓存了这份 store，
+ *      不重启就不会重新读盘。
+ *
+ * ⚠️ 全程 fire-and-forget、不抛：激活结果绝不能因为收尾动作失败而变红。
+ * ⚠️ 动态 import：`runtime/index` 会拉进 ws 客户端与大量运行时代码，静态引入会破坏
+ *    本档测试的模块隔離（见 BUG-127 第三次）。
+ */
+function clearBillingCooldownAfterLicenseChange(): void {
+  void (async () => {
+    try {
+      const stateDirs = resolveCooldownStateDirs(app.getPath('userData'), process.env.OPENCLAW_STATE_DIR);
+      const result = clearProviderBillingCooldowns({ stateDirs });
+      if (result.cleared === 0) return;
+      const { restartLocalGatewayRuntime } = await import('../runtime/index.js');
+      const restarted = await restartLocalGatewayRuntime();
+      if (!restarted?.ok) return;
+      const { reconnectGateway } = await import('../ws/index.js');
+      reconnectGateway('local-runtime');
+      // 重启会让 relay 配置重新走一遍写入校验；显式排一次 relay bootstrap，
+      // 避免"网关回来了、模型却没配上"的中间态。
+      retryCommercialRelayBootstrap();
+    } catch {
+      // 收尾动作：失败不回传、不打断激活。
+    }
+  })();
+}
 
 export function registerCommercialHandlers(): void {
   ipcMain.handle('commercial:get-config', () => {
@@ -89,6 +125,11 @@ export function registerCommercialHandlers(): void {
       //    而"换账号了"这件事已经成立 —— 旧账号的结论不该因为清理失败而留在界面上。
       resetRelayBootstrapPublicState();
       clearLicense();
+      // ⭐ BUG-133：`clearLicense` 之后归属已变匿名 —— 立刻重投影 `MEMORY.md`，
+      //    否则上一个账号的已确认记忆会随共享文件留到下一轮提示词里。
+      //    刻意放在清理**之前**：清理一旦抛错（它自己去碰网关），"换账号了"仍成立，
+      //    上一账号的记忆不该因为清理失败而继续被读到。
+      await resyncMemoryOnAccountBoundary();
       // 即使没有先点退出，也不能沿用旧账号的 relay。
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
@@ -101,6 +142,8 @@ export function registerCommercialHandlers(): void {
     if (res.ok) {
       resetRelayBootstrapPublicState(); // 同上：账户边界，先作废旧账号的公开状态
       clearLicense();
+      // ⭐ BUG-133：同上 —— 归属变匿名后立刻重投影，别把上一账号的记忆留给下一轮。
+      await resyncMemoryOnAccountBoundary();
       await requestCommercialAccessCleanup(buildCommercialAccessCleanupDeps());
       notifyCommercialSignedIn();
     }
@@ -119,6 +162,10 @@ export function registerCommercialHandlers(): void {
       // 一旦抛错，写在 try 里的重置就永远不会执行，而用户已经登出了 —— 旧账号的
       // `blocked` 会留给下一个登录的人看。
       resetRelayBootstrapPublicState();
+      // ⭐ BUG-133：登出也是账户边界 —— 归属已在开头 `clearLicense` 时变匿名，
+      //    这里把 `MEMORY.md` 重投影一次（清空受管区块），否则旧账号的已确认记忆
+      //    会随共享文件留到下一个登录的人那一轮提示词里。放 `finally` 保证清理抛错也照做。
+      await resyncMemoryOnAccountBoundary();
     }
   });
   ipcMain.handle('commercial:session', () => readSessionState());
@@ -149,14 +196,26 @@ export function registerCommercialHandlers(): void {
     //    这里补跑一次（调度器会等网关连上，最长 240 秒）。
     // ⚠️ 与登录不同：**不做**账户清理 —— 那会把刚激活的 license 清掉。
     if (res.ok) notifyCommercialActivated();
+    // ⭐ BUG-133：激活成功后授权绑定已落盘（`activateLicense` 内部 persist），归属
+    //    已是**这张卡的主人** —— 重投影一次，助手才读得到新账号自己的那批记忆。
+    if (res.ok) await resyncMemoryOnAccountBoundary();
+    // BUG-161：旧卡欠费留下的 10 分钟计费冷却必须随换卡清掉（否则充完钱还要干等）。
+    if (res.ok) clearBillingCooldownAfterLicenseChange();
     return trackOnSuccess(res, 'license_activated');
   });
   ipcMain.handle('commercial:license-recover-activation', async (_event, licenseKey: string) => {
     const res = await recoverLicenseActivation(String(licenseKey ?? ''));
     if (res.ok) notifyCommercialActivated();
+    if (res.ok) await resyncMemoryOnAccountBoundary(); // BUG-133：同上（恢复授权也是账户边界）
+    if (res.ok) clearBillingCooldownAfterLicenseChange(); // BUG-161
     return res;
   });
-  ipcMain.handle('commercial:license-clear', () => clearLicense());
+  ipcMain.handle('commercial:license-clear', async () => {
+    const res = clearLicense();
+    // ⭐ BUG-133：清卡 = 归属变匿名 —— 同步清掉受管区块，别把这张卡的记忆留给下一张卡。
+    await resyncMemoryOnAccountBoundary();
+    return res;
+  });
   ipcMain.handle('commercial:device-fingerprint', () => deviceFingerprint());
 
   // 手动触发一次上报，返回本次是否产生了可用结果（0 表示无可报内容/失败）。

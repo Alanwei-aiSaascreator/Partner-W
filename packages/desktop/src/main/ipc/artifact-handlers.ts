@@ -1,8 +1,10 @@
 import { ipcMain, BrowserWindow, dialog, shell, nativeImage, type NativeImage } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync, statSync, writeFileSync } from 'fs';
+import { realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'node:url';
-import { isAbsolute, relative, resolve, sep } from 'path';
+import { basename, isAbsolute, relative, resolve, sep } from 'path';
 import { eq } from 'drizzle-orm';
 import { getDb, getSqlite } from '../db/index.js';
 import { artifacts, tasks, messages } from '../db/schema.js';
@@ -10,9 +12,11 @@ import { saveArtifact, saveArtifactFromBuffer } from '../artifact/save.js';
 import { getWorkspacePath } from '../workspace/config.js';
 import { searchArtifacts } from '../db/search.js';
 import { safeFetch } from '../net/safe-fetch.js';
+import { verifyImagegenFile } from '../imagegen/verify.js';
 import { getArtifactAvailability } from '../artifact/reconcile.js';
 import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
 import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
+import { identityOf, sameIdentity } from '../util/file-identity.js';
 import { isVerifiedFileName, verifyArtifactBuffer } from '../artifact/verify.js';
 import { getGatewayClient } from '../ws/index.js';
 import { parseAgentIdFromSessionKey } from '@clawwork/shared';
@@ -117,7 +121,7 @@ export function registerArtifactHandlers(): void {
               // ⚠️ 根解析不出来（网关没连上/冷启动/切工作区）⇒ `'unknown'` —— **不是** `'missing'`。
               //    旧值 `'missing'` 会让助手根那一批整族折进"历史与问题文件"（冷启动时"交付物没了"），
               //    而这时候我们其实**不知道**文件在不在（见 `artifact-versions.ts` 的折叠规则）。
-              availability: rootPath ? getArtifactAvailability(row.localPath, rootPath) : 'unknown',
+              availability: rootPath ? await imagegenAwareAvailability(row, rootPath) : 'unknown',
             };
           }),
         ),
@@ -143,7 +147,7 @@ export function registerArtifactHandlers(): void {
           ...rows[0],
           ...(filePath ? { filePath } : {}),
           // 同 `artifact:list`：根解析不出来 ⇒ `'unknown'`（不知道），不是 `'missing'`（没有）。
-          availability: rootPath ? getArtifactAvailability(rows[0].localPath, rootPath) : 'unknown',
+          availability: rootPath ? await imagegenAwareAvailability(rows[0], rootPath) : 'unknown',
         },
       };
     } catch (err) {
@@ -160,6 +164,19 @@ export function registerArtifactHandlers(): void {
       //    而不是应用工作区（解析不到就是 `workspace not configured`，不回落）。
       const rootPath = await rootForArtifact(artifact);
       if (!rootPath) return { ok: false, error: 'workspace not configured' };
+      // ⭐ D5（2026-10-15 F owner）：**另存与打开同一套 M1 判据**。
+      //    `artifact:open-file` 在交 shell 之前复核受检格式字节（登记后被写坏/半截/外部改坏
+      //    的件一律拒，见图14/16 同族）。另存原来是"直拷"：同一份坏件「打不开却导出成
+      //    保存成功」——正是"失败条目伪装可下载"。这里在**弹对话框之前**过同一道门，
+      //    既与打开一致，也免得让用户先选好路径再被拒。
+      const verified = await verifyArtifactBeforeOpen(
+        artifact.name,
+        rootPath,
+        artifact.localPath,
+        artifact.sourceKey,
+        artifact.size,
+      );
+      if (!verified.ok) return { ok: false, error: verified.error };
       const win = BrowserWindow.getAllWindows()[0];
       const options = { defaultPath: artifact.name };
       const choice = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
@@ -168,7 +185,14 @@ export function registerArtifactHandlers(): void {
         //    「打开对话框又关掉」不算一次 artifact_saved。
         return { ok: true, result: { status: 'cancelled' as const } };
       }
-      const result = await copyArtifactToDestination(rootPath, artifact.localPath, choice.filePath);
+      // ⭐ D5（2026-10-16 审计反例 SAVE_RACE）：**导出的必须是校验过的那份字节**。
+      //    旧实现弹框之后才去读源文件 ⇒ 校验与导出读的是两个时刻的两份字节：保存框停留
+      //    期间源文件被截断，导出的是坏件却回 `saved`。复核拿到快照时一律按快照导出
+      //    （见 `copyVerifiedSnapshot`）；没拿到快照的只有三种**本来就没读字节**的情况
+      //    （不受检的扩展名 / imagegen / 超 64MB 放行），沿用原来的复制。
+      const result = verified.snapshot
+        ? await copyVerifiedSnapshot(rootPath, artifact.localPath, verified.snapshot, choice.filePath)
+        : await copyArtifactToDestination(rootPath, artifact.localPath, choice.filePath);
       return trackOnSuccess({ ok: true, result }, 'artifact_saved');
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
@@ -401,7 +425,13 @@ export function registerArtifactHandlers(): void {
       // 已登记、此后没再被动过的坏件（写坏 / 崩溃半截 / 外部改坏）会永远留在列表里，
       // 而点开这条路**不复核**，"能点开但打不开"就在这里回归（图14/16 同族）。
       // 受检格式（pptx/docx/xlsx/pdf）在交给 shell 之前做一次与登记门同一份轻量判据。
-      const verified = await verifyArtifactBeforeOpen(artifact.name, rootPath, artifact.localPath);
+      const verified = await verifyArtifactBeforeOpen(
+        artifact.name,
+        rootPath,
+        artifact.localPath,
+        artifact.sourceKey,
+        artifact.size,
+      );
       if (!verified.ok) return { ok: false, error: verified.error };
       const result = await shell.openPath(revalidated.absolutePath);
       if (result) return { ok: false, error: classifyOpenPathFailure(result) };
@@ -494,7 +524,7 @@ export function registerArtifactHandlers(): void {
 function loadArtifactForAction(
   artifactId: string,
   taskId?: string,
-): Pick<typeof artifacts.$inferSelect, 'id' | 'taskId' | 'name' | 'localPath' | 'root'> | null {
+): Pick<typeof artifacts.$inferSelect, 'id' | 'taskId' | 'name' | 'localPath' | 'root' | 'sourceKey' | 'size'> | null {
   if (!artifactId) return null;
   const rows = getDb().select().from(artifacts).where(eq(artifacts.id, artifactId)).all();
   const artifact = rows[0];
@@ -597,20 +627,118 @@ function classifyOpenPathFailure(message: string): string {
   return NO_OPENER_PATTERNS.some((pattern) => pattern.test(message)) ? NO_OPENER_ARTIFACT_ERROR : message;
 }
 
+async function imagegenAwareAvailability(
+  row: { localPath: string; sourceKey: string; size: number },
+  rootPath: string,
+) {
+  const availability = getArtifactAvailability(row.localPath, rootPath);
+  if (availability !== 'available' || !row.sourceKey?.startsWith('imagegen:')) return availability;
+  return (await verifyImagegenFile(rootPath, row.localPath, undefined, row.size)) ? 'available' : 'unsafe';
+}
+
 async function verifyArtifactBeforeOpen(
   fileName: string,
   rootPath: string,
   localPath: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+  sourceKey?: string,
+  size?: number,
+): Promise<{ ok: true; snapshot?: Buffer } | { ok: false; error: string }> {
+  if (sourceKey?.startsWith('imagegen:')) {
+    return (await verifyImagegenFile(rootPath, localPath, undefined, size))
+      ? { ok: true }
+      : { ok: false, error: INVALID_ARTIFACT_ERROR };
+  }
   if (!isVerifiedFileName(fileName)) return { ok: true };
   let buffer: Buffer;
   try {
     buffer = await readVerifiedArtifactFile(rootPath, localPath, { maxBytes: MAX_OPEN_VERIFY_BYTES });
   } catch (err) {
+    // ⚠️ 超上限**放行且不带快照**：这条路本来就不为超过 `MAX_OPEN_VERIFY_BYTES` 的件读字节
+    //    （见该常量注释），所以"没读"不是这次修法漏掉的一档 —— 调用方按原样处理。
     if (err instanceof ArtifactTooLargeError) return { ok: true };
     return { ok: false, error: err instanceof Error ? err.message : INVALID_ARTIFACT_ERROR };
   }
-  return verifyArtifactBuffer(fileName, buffer).ok ? { ok: true } : { ok: false, error: INVALID_ARTIFACT_ERROR };
+  // ⭐ D5：`snapshot` 是**这份判据读到的那些字节本身**。打开路径用完即弃；
+  //    另存路径必须拿它当导出的源（否则校验与导出是两时刻的两份字节）。
+  return verifyArtifactBuffer(fileName, buffer).ok
+    ? { ok: true, snapshot: buffer }
+    : { ok: false, error: INVALID_ARTIFACT_ERROR };
+}
+
+/**
+ * ⭐ BUG-090 残余（2026-10-16 r14 独立终审）：**"另存到了源文件自己"必须按真实文件身份判**。
+ *
+ * 反例：源 `report.docx` → 保存框里选同一目录的 `REPORT.DOCX`。Windows/NTFS 上这是
+ * **同一个文件**，旧 `copyArtifactToDestination` 的 dev/ino 判据（`access.ts:281`）会拒绝；
+ * 而 D5 快照路只做 `resolve()` **字符串等价**（大小写敏感）⇒ 放行 ⇒ 把保存框停留期间
+ * 用户新编辑的 **420B 覆盖回 395B 旧快照**却回 `saved`（`keptEdit=false` /
+ * `revertedToSnapshot=true`）。同文件 / 别名（大小写、硬链接、junction）保护在那条路上丢了。
+ *
+ * 修法：复用 `util/file-identity.ts`（全仓**唯一**一份正确实现：bigint dev/ino，
+ * 不做第二套比较），把源与目标的**真实身份**比一遍；字符串等价保留为路径兜底
+ * （身份不可用的文件系统 / 目标尚不存在的形状）。
+ *
+ * ⚠️ 比较的是**源文件**与目标，不是快照暂存文件与目标 —— 暂存件本来就是另一个 inode，
+ *    拿它比永远不相等（那正是这条保护原先失效的原因）。
+ * ⚠️ 与旧路一致：源读不到 / 目标不存在 ⇒ 不是"同一个文件"，交给后面的复制判据。
+ *    方向保守，不误拒合法另存。
+ */
+async function destinationMatchesSource(
+  rootPath: string,
+  localPath: string,
+  destinationPath: string,
+): Promise<boolean> {
+  const sourcePath = resolve(rootPath, localPath);
+  const targetPath = resolve(destinationPath);
+  if (targetPath === sourcePath) return true;
+  try {
+    const [sourceStats, targetStats] = await Promise.all([
+      stat(sourcePath, { bigint: true }),
+      stat(targetPath, { bigint: true }),
+    ]);
+    return sameIdentity(identityOf(sourceStats), identityOf(targetStats));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * ⭐ D5（2026-10-16 审计反例 SAVE_RACE）：把**校验过的那份字节**写到用户选定的路径。
+ *
+ * 反例形状（替身只接管对话框/DB，读盘与复制全走真实 access 模块，实测可复现）：
+ * 有效 DOCX 通过登记前复核 → 保存对话框停留期间源文件被编辑器/生成过程截断 →
+ * 用户点确定 → 旧实现 `copyArtifactToDestination` **这时才去读源文件**，读到 60B 坏件
+ * ⇒ 导出**打不开的文件**却回 `saved`（`originalValid=true → result.ok=true → exportedValid=false`）。
+ *
+ * 修法：校验时抓到的字节先落一枚**临时快照**（`os.tmpdir()` —— 与 `artifact:save` 的
+ * 受信前缀同一档：`[工作区, tmpdir]`），再交给既有的 `copyArtifactToDestination` 做原子发布
+ * （临时文件 + 逐字节校验 + rename；目标目录 realpath / 符号链接判据一条不减）。
+ * 于是导出的**只可能**是受检的那份字节，源文件此后怎么变都不影响这一次导出；
+ * 快照用完即删（成功、失败都一样走 `finally`）。
+ *
+ * ⚠️ 快照换掉了"源文件身份"，`copyArtifactToDestination` 里那条
+ *    `destination matches source`（另存到源文件自己）在快照路上必须**自己补判回来** ——
+ *    否则"另存到原路径 / 同文件别名"会从"拒绝"变成"静默自覆盖"。
+ *    判据见 `destinationMatchesSource`（r14 起：**真实文件身份**，不是字符串等价）。
+ */
+async function copyVerifiedSnapshot(
+  rootPath: string,
+  localPath: string,
+  snapshot: Buffer,
+  destinationPath: string,
+): Promise<{ status: 'saved'; filePath: string }> {
+  if (await destinationMatchesSource(rootPath, localPath, destinationPath)) {
+    throw new Error('destination matches source');
+  }
+  const stagingRoot = await realpath(tmpdir());
+  const stagedName = `.mofang-save-as-${process.pid}-${randomUUID()}-${basename(localPath)}`;
+  const stagedPath = resolve(stagingRoot, stagedName);
+  await writeFile(stagedPath, snapshot, { flag: 'wx', mode: 0o600 });
+  try {
+    return await copyArtifactToDestination(stagingRoot, stagedName, destinationPath);
+  } finally {
+    await unlink(stagedPath).catch(() => undefined);
+  }
 }
 
 const TEXT_EXTS = new Set([

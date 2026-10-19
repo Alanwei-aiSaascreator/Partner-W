@@ -62,6 +62,152 @@ describe('extractClaimedFileNames：从回复里抠产物文件名', () => {
     const names = extractClaimedFileNames('路径是 C:\\Users\\xxx\\a.pptx');
     // 路径里的 a.pptx 不算「声称的文件名」—— 模型说的是文件名，不是路径
     expect(names).toHaveLength(0);
+    // ⭐ 这一句才是**真判据**（2026-10-16 审计 `test-validity`）：上一句没有完成声称词，
+    //    本来就被 `lineClaimsFile` 挡住 —— 把路径 lookbehind 整个删掉它也照样绿（假绿）。
+    //    加上「已生成」之后，只有路径判据真的在起作用才回空。
+    expect(extractClaimedFileNames('已生成 C:\\Users\\xxx\\a.pptx')).toHaveLength(0);
+  });
+
+  /**
+   * ⭐⭐ markdown 链接（2026-10-15 F owner；2026-10-16 D2-a 扩写）：链接文字是文件名，
+   * 链接 URL 里的路径**不算**第二条声称，也**不许**从句中切出半截名。
+   *
+   * 旧口径在 `[报告.pptx](relative/报告.pptx)` 上抠出 `[报告.pptx`（前导方括号）
+   * 和 `eport.pptx`（URL 里 `/` 挡住 `report` 后引擎**回退**切出的半截名）——
+   * 前者的候选拼写都还原不出真名 ⇒ 判 missing ⇒ 整轮 delivery-failed。
+   * 修法 = 抽取前把**行内链接**改写成它的文字（地址整段丢弃）。
+   */
+  it('⭐ markdown 链接：只抠链接文字，不抠 URL 路径，也不切半截名', () => {
+    const names = extractClaimedFileNames('已完成，见 [report.pptx](sub/report.pptx) 请查收').map((n) => n.name);
+    expect(names).toEqual(['report.pptx']);
+  });
+
+  it('⭐ markdown 链接（中文名）同理：不出现前导方括号名，也不出现半截名', () => {
+    const names = extractClaimedFileNames('已生成 [季度汇报.pptx](relative/季度汇报.pptx) 请查收').map(
+      (n) => n.name,
+    );
+    expect(names).toEqual(['季度汇报.pptx']);
+  });
+
+  /**
+   * ⭐⭐ D2-a（2026-10-16 审计反例）：文件名**只写在链接地址里**也要算交付声明。
+   *
+   * 真机形状：用户只说「请帮我整理成一份报告文件」（**没指定扩展名** ⇒
+   * `expectedArtifactKindsFromRequest` 回空），助手回 `已生成 [下载报告](report.docx)，请查收`。
+   * 旧改写把地址整段丢掉 ⇒ 这条回复里一个文件名都不剩 ⇒ 空工作区、空登记也判"交付成功"
+   * （审计在 IPC 层实测 `artifact:delivery-settled status=succeeded`，HEAD 为 failed）。
+   * 链接目标是**下载目标**，它里面的文件名必须参与存在性核对。
+   */
+  it('⭐ D2-a：名字只在链接**地址**里 ⇒ 仍算声称（空工作区必须判 missing）', () => {
+    expect(extractClaimedFileNames('已生成 [下载报告](report.docx)，请查收').map((n) => n.name)).toEqual([
+      'report.docx',
+    ]);
+    expect(checkClaimedFiles('已生成 [下载报告](report.docx)，请查收', []).missing.map((f) => f.name)).toEqual([
+      'report.docx',
+    ]);
+  });
+
+  it('⭐ D2-a 负对照：远端地址 / 站点绝对路径里的扩展名**不是**本地交付证据（不凭空冤枉模型）', () => {
+    expect(extractClaimedFileNames('已生成 [官网](https://example.com/guide.html) 请查收')).toEqual([]);
+    expect(extractClaimedFileNames('已生成 [下载页](https://example.com/dl/report.docx) 请查收')).toEqual([]);
+    expect(extractClaimedFileNames('已生成 [站点根](/files/report.docx) 请查收')).toEqual([]);
+  });
+
+  /**
+   * ⭐ D2-a 之二：目标名**带空格**（产品自己的成品名就长这样）也要能被找到 ——
+   * 抽取只抠到最后一个 token，全名靠既有的候选拼写回扫还原（与散文里那条路同一套）。
+   */
+  it('⭐ D2-a：链接目标名带空格 ⇒ 仍能按全名找到盘上那份文件（不误报 missing）', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-spaced-link-'));
+    writeFileSync(join(tmp, '我的 报告.docx'), 'fake');
+    const result = checkClaimedFiles('已生成 [下载](我的 报告.docx) 请查收', [tmp]);
+    expect(result.missing).toEqual([]);
+    expect(result.present.map((f) => f.name)).toEqual(['报告.docx']);
+  });
+
+  /**
+   * ⭐⭐ D2-b（2026-10-16 审计反例）：**代码区域**里的 `[Q3](final).docx` 是**字面文件名**，
+   * 不是 markdown 链接 —— 全串改写会把它改成 `Q3.docx` ⇒ 真件在盘上却判 missing ⇒ 整轮假失败
+   * （HEAD 为 succeeded）。
+   */
+  it('⭐ D2-b：代码区域（行内 / 围栏）里的字面文件名一个字都不许改', () => {
+    expect(extractClaimedFileNames('已生成 `[Q3](final).docx` 请查收').map((n) => n.name)).toEqual([
+      '[Q3](final).docx',
+    ]);
+    expect(
+      extractClaimedFileNames('说明如下：\n```\n已生成 `[Q3](final).docx`\n```\n请查收').map((n) => n.name),
+    ).toEqual(['[Q3](final).docx']);
+    // 真件在盘上 ⇒ present（假失败的正面形状）
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-literal-'));
+    writeFileSync(join(tmp, '[Q3](final).docx'), 'fake');
+    expect(checkClaimedFiles('已生成 `[Q3](final).docx` 请查收', [tmp]).missing).toEqual([]);
+  });
+
+  it('⭐ D2-b 负对照：代码区里**演示 markdown 链接**（文字或目标自己就是文件名）仍按链接处理', () => {
+    expect(extractClaimedFileNames('已生成 `[报告.docx](sub/报告.docx)` 请查收').map((n) => n.name)).toEqual([
+      '报告.docx',
+    ]);
+    expect(extractClaimedFileNames('已生成 `[下载报告](report.docx)` 请查收').map((n) => n.name)).toEqual([
+      'report.docx',
+    ]);
+  });
+
+  /**
+   * ⭐⭐ BUG-089 残余（2026-10-16 r14 独立终审）：链接**目标**的三种形状全落在
+   * **误名 / 误缺失**方向（真件在盘上，却判 missing 或真名被改写）。
+   *
+   * 这跟 D2-a 那条"空成果不能假成功"是**一体两面**，两个方向都要守：只堵假成功
+   * 而放任假失败，界面就会天天弹「说好的文件不在」，用户真以为自己丢了东西。
+   *
+   *  ① 目标带**配对圆括号**（`report(final).docx`）：旧正则 `[^)\n]*` 在**第一个** `)`
+   *     截断 ⇒ 目标被认成 `report(final`（不带扩展名 ⇒ 整段丢弃）⇒ 真名不参与核对，
+   *     残句反而拼出「下载报告.docx」（误名 + 把真名抹掉）。
+   *  ② 目标带**百分号编码**（`%E6%8A%A5%E5%91%8A.docx` 就是 `报告.docx`）：
+   *     链接目标是 **URL**，不解码就拿编码串查存在性 ⇒ 明明在，判 missing。
+   *  ③ `)` 后面**紧跟扩展名**（`[report.docx](final).docx`）：旧正则只吃掉
+   *     `[report.docx](final)`，拼回去成了 `report.docx` + `.docx` ⇒ 抠出
+   *     `report.docx.docx`（误名）。行内代码区里这条最要命：它本来就是**字面文件名**。
+   */
+  it('⭐ BUG-089 残余①：目标带配对圆括号 ⇒ 仍抠出真正缺失的那个名字', () => {
+    expect(checkClaimedFiles('已生成 [下载报告](report(final).docx)，请查收', []).missing.map((f) => f.name)).toContain(
+      'report(final).docx',
+    );
+  });
+
+  it('⭐ BUG-089 残余②：目标带百分号编码 ⇒ 按解码后的名字找到盘上那份文件', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-encoded-link-'));
+    writeFileSync(join(tmp, '报告.docx'), 'fake');
+    const result = checkClaimedFiles('已生成 [下载报告](%E6%8A%A5%E5%91%8A.docx)，请查收', [tmp]);
+    expect(result.missing).toEqual([]);
+    expect(result.present.map((f) => f.name)).toEqual(['报告.docx']);
+  });
+
+  it('⭐ BUG-089 残余③：`)` 紧跟扩展名的字面名（行内代码区）⇒ 一个字都不许改', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-literal-ext-'));
+    writeFileSync(join(tmp, '[report.docx](final).docx'), 'fake');
+    expect(extractClaimedFileNames('已生成 `[report.docx](final).docx` 请查收').map((n) => n.name)).toEqual([
+      '[report.docx](final).docx',
+    ]);
+    expect(checkClaimedFiles('已生成 `[report.docx](final).docx` 请查收', [tmp]).missing).toEqual([]);
+  });
+
+  it('⭐ BUG-089 残余② 负对照：解不开的百分号（`100%报告.docx`）按字面名处理，不当成编码', () => {
+    expect(extractClaimedFileNames('已生成 [下载](100%报告.docx) 请查收').map((n) => n.name)).toEqual([
+      '100%报告.docx',
+    ]);
+  });
+
+  /**
+   * ⭐ 负对照（2026-10-15）：**真名带方括号**的不许被链接修法误伤。
+   *   产品按标题出片时 `.pptx` 主名会原样保留 `[`/`]`（`documentFileStem` 只洗
+   *   非法字符与连续点），所以 `[Q3]报告.docx` 是可能存在的真名。
+   */
+  it('⭐ 负对照：真名带方括号（非链接）⇒ 完整抠出，不许切半截', () => {
+    expect(extractClaimedFileNames('已生成 [Q3]报告.docx 请查收').map((n) => n.name)).toEqual(['[Q3]报告.docx']);
+  });
+
+  it('⭐ 负对照：普通反引号名照旧（markdown 链接的修法不误伤显式文件名）', () => {
+    expect(extractClaimedFileNames('文件已经存成 `report.pptx` 了').map((n) => n.name)).toContain('report.pptx');
   });
 
   it('没提到任何产物文件名 ⇒ 空', () => {
@@ -542,5 +688,69 @@ describe('claimedFilesRejectedByIntegrity：声称的文件在盘上但不是有
   it('文件根本不在 ⇒ 不归这一档（那是 missing 的事，别两头都报）', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'claim-absent-docx-'));
     expect(claimedFilesRejectedByIntegrity(claimed(docxClaim), [tmp], { sinceMs: Date.now() - 60_000 })).toEqual([]);
+  });
+});
+
+/**
+ * ⭐⭐ BUG-132（2026-10-17 第二位独立审核）：**括号**（半角 `()` / 全角 `（）`）——
+ * 盘上文件真在却弹「说好的文件不在」的**冤枉模型**假失败。
+ *
+ * 旧口径把括号当普通名字字符**贪婪左吃** ⇒ `已生成（报告.pptx）` 被抠成半截假名
+ * `已生成（报告.pptx` ⇒ 拿去查存在性 ⇒ 明明盘上有 `报告.pptx` 也判 missing。
+ * 半角 `(报告.pptx)`、混用（`（…）` / `(…)`）同病。**无任何测试覆盖此边界。**
+ *
+ * ⚠️ 对称面（"半截名"的另一头）：括号**长在名字内部**（`文件名（含括号）.docx`、
+ * `报告(2024).pptx`）必须**整名保留**。修的时候很容易为了堵一头而把另一头切坏 ——
+ * 下面两组用例一起钉住（"排除集"与"合法名内括号"两形态都实测）。
+ */
+describe('⭐ BUG-132：括号包裹 / 括号在名内 都要正确（全角 + 半角 + 混用）', () => {
+  const namesOf = (content: string) => extractClaimedFileNames(content).map((f) => f.name);
+
+  it('全角括号包裹：`已生成（报告.pptx）` ⇒ 抠出 `报告.pptx`（不是半截假名）', () => {
+    expect(namesOf('已生成（报告.pptx）')).toEqual(['报告.pptx']);
+  });
+
+  it('半角括号包裹：`已生成(报告.pptx)` ⇒ 抠出 `报告.pptx`', () => {
+    expect(namesOf('已生成(报告.pptx)')).toEqual(['报告.pptx']);
+  });
+
+  it('混用：全开半闭 `（…）` / 半开全闭 `(…)` 都抠出 `报告.pptx`', () => {
+    expect(namesOf('已生成（报告.pptx)')).toEqual(['报告.pptx']);
+    expect(namesOf('已生成(报告.pptx）')).toEqual(['报告.pptx']);
+  });
+
+  it('未闭合的全角开括号：`已生成（报告.pptx` ⇒ 仍抠出 `报告.pptx`', () => {
+    expect(namesOf('已生成（报告.pptx')).toEqual(['报告.pptx']);
+  });
+
+  it('⭐ 对称面：括号**在名字内部** ⇒ 整名保留，不许切半截（全角 / 半角）', () => {
+    expect(namesOf('已生成 文件名（含括号）.docx 请查收')).toEqual(['文件名（含括号）.docx']);
+    expect(namesOf('已生成 文件名(含括号).docx 请查收')).toEqual(['文件名(含括号).docx']);
+    expect(namesOf('已生成 报告（2024）.pptx 请查收')).toEqual(['报告（2024）.pptx']);
+    expect(namesOf('已生成 报告(v2).pptx 请查收')).toEqual(['报告(v2).pptx']);
+  });
+
+  it('⭐⭐ 盘上真有 `报告.pptx` ⇒ present（不是 missing）—— 本条就是那个假失败', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-fw-paren-'));
+    writeFileSync(join(tmp, '报告.pptx'), 'fake');
+    const result = checkClaimedFiles('已生成（报告.pptx）', [tmp]);
+    expect(result.missing, '括号包裹不该把真件判成缺失').toEqual([]);
+    expect(result.present.map((f) => f.name)).toEqual(['报告.pptx']);
+  });
+
+  it('⭐ 盘上真有括号在名内的文件 ⇒ present（对称面的正面形状）', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-inner-paren-'));
+    writeFileSync(join(tmp, '文件名（含括号）.docx'), 'fake');
+    const result = checkClaimedFiles('已生成 文件名（含括号）.docx 请查收', [tmp]);
+    expect(result.missing).toEqual([]);
+    expect(result.present.map((f) => f.name)).toEqual(['文件名（含括号）.docx']);
+  });
+
+  it('负对照：半角圆括号包裹同理（两种括号同一口径，不偏一型）', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-hw-paren-'));
+    writeFileSync(join(tmp, '报告.pptx'), 'fake');
+    const result = checkClaimedFiles('已生成(报告.pptx)', [tmp]);
+    expect(result.missing).toEqual([]);
+    expect(result.present.map((f) => f.name)).toEqual(['报告.pptx']);
   });
 });

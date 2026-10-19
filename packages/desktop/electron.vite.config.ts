@@ -65,6 +65,8 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           'quick-launch': resolve('src/renderer/quick-launch.html'),
+          // 修复模式（FEAT-03）独立单页：`--repair` 只加载它，不挂主界面那条链。
+          repair: resolve('src/renderer/repair.html'),
         },
       },
     },

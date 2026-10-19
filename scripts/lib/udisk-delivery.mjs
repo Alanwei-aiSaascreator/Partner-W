@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { launcherOutputName } from './portable-launcher-build.mjs';
@@ -56,6 +57,41 @@ function finding(id, title, detail, fix) {
   };
 }
 
+/**
+ * 递归列出交付夹内的相对路径。
+ *
+ * 真实 U 盘根下一定有 `System Volume Information`（以及可能存在的回收站目录），
+ * 普通权限读它会抛 EPERM。体检工具的目标是"这个包能不能发"，不是"整块盘读得全"——
+ * 读不动的子树按"未知"跳过（它不在交付内容里），绝不能把工具本身崩掉。
+ * `readDir` 可注入，便于用测试模拟 EPERM。
+ */
+export function walkTreeNames(root, readDir = (directory, options) => fs.readdirSync(directory, options)) {
+  const names = [];
+  const walk = (directory, prefix) => {
+    let entries;
+    try {
+      entries = readDir(directory, { withFileTypes: true });
+    } catch (error) {
+      // 盘根自带的这几个目录普通权限一定读不了（`System Volume Information` 实测 EPERM）。
+      // 它们不属于交付内容 ⇒ 跳过。**其余读不动的目录必须让体检失败** ——
+      // 静默跳过等于把"读不到"当成"没问题"，交付包里藏着什么就谁都不知道了。
+      if (SYSTEM_UNREADABLE_DIRECTORIES.has(path.basename(directory).toLowerCase())) return;
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
+      throw new Error(`无法读取目录（${code}）：${directory} —— 权限不足时不能判定交付包完整`);
+    }
+    for (const entry of entries) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      names.push(relative);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) walk(path.join(directory, entry.name), relative);
+    }
+  };
+  walk(String(root), '');
+  return names;
+}
+
+/** 盘根自带的、普通权限读不了且不属于交付内容的目录（小写比较）。 */
+const SYSTEM_UNREADABLE_DIRECTORIES = new Set(['system volume information', '$recycle.bin', 'recycler', 'recycled']);
+
 function relativeTreeEntries(io, root) {
   if (typeof io.walkNames === 'function') return io.walkNames(root);
   return io.listNames(root);
@@ -88,7 +124,13 @@ export function auditDelivery(io, root) {
     );
   }
 
-  const batchFiles = allNames.filter((name) => name.toLowerCase().endsWith('.bat'));
+  // 2026-10-19：随包 npm 自带的 node-gyp 里有一个 `gyp.bat`。这条规则的本意是
+  // "盘根不许放 .bat 启动器"，不是"vendor 工具链里一个文件都不许有"——只在这一个
+  // 精确前缀下放行；其余任何位置的 .bat 照旧报错（"嵌套 .bat 必须拒绝"那条测试不变）。
+  const bundledNpmPrefix = `${APP_DIR_NAME}/resources/runtime/node/node_modules/npm/`.toLowerCase();
+  const batchFiles = allNames
+    .filter((name) => name.toLowerCase().endsWith('.bat'))
+    .filter((name) => !name.toLowerCase().startsWith(bundledNpmPrefix));
   for (const name of batchFiles) {
     findings.push(
       finding(

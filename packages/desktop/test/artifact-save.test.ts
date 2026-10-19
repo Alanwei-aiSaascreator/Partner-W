@@ -503,8 +503,8 @@ describe('⭐ BUG-058② · 同键重放：读源字节之前探测', () => {
     expect(mockCopyFileSync).not.toHaveBeenCalled();
     expect(db.insert).not.toHaveBeenCalled();
     expect(mockUnlinkSync).not.toHaveBeenCalled();
-    // 探测的键就是 (task, message, sourceKey)
-    expect(db.get).toHaveBeenCalledWith('task-1', 'msg-1', 'docgen:pptx:hash-1');
+    // ⭐ T20：探测键是 (task, sourceKey) —— 跨 assistant 消息的同源去重（不再带 messageId）
+    expect(db.get).toHaveBeenCalledWith('task-1', 'docgen:pptx:hash-1');
   });
 
   it('⭐ 目标被改坏（受检格式字节坏）+ 新源有效 ⇒ 不当重放：清陈旧行、重材化，不伪成功', async () => {

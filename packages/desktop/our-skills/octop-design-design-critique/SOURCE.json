@@ -1,0 +1,33 @@
+{
+  "upstream": "Octop",
+  "sourceType": "knowledge-work-plugins",
+  "sourcePlugin": "design",
+  "commit": "f79015b078c4d5d4c309a1bf6f3cd39ac06cc18f",
+  "license": "Apache-2.0",
+  "modified": true,
+  "sources": [
+    {
+      "path": "src/octop/infra/agents/experts/library/design/skills/design-critique/SKILL.md",
+      "sha256": "4b51de88442cd8a0b7ca5c8c7583b28c65277c09466df2ab23457d57bf03aa23"
+    },
+    {
+      "path": "src/octop/infra/agents/experts/library/LICENSE",
+      "sha256": "1b1689d7864727a02a2682067f9c5328c891518db0a513663ef5a949052bd40b"
+    },
+    {
+      "path": "src/octop/infra/agents/experts/library/design/manifest.json",
+      "sha256": "1d5bd5630ee6d9b67324cb4b828a66880cf9663781d5f8c5faced766de64f57b"
+    }
+  ],
+  "adaptedSha256": "e0c658b8edfc16074a9b4b908d91dd80afe37ba94666f498822039da968a37f1",
+  "adaptationNotes": [
+    "Modified/adapted: Chinese name and description; stable octop-design skillKey.",
+    "Retained substantive upstream workflow, checklists and output templates; source manifest identifies knowledge-work-plugins/design.",
+    "Removed slash invocation syntax, connector placeholders and nonexistent CONNECTORS references; no assumed Figma access.",
+    "Added input/evidence limits, explicit authorization for external writes and paid operations, and existing artifact delivery boundary.",
+    "Copied the nearest expert-library LICENSE verbatim (Apache-2.0); repository-root MIT is not used as this package license.",
+    "先确认目标用户、任务与设计阶段；每项反馈写具体元素、证据、影响、替代方案与优先级。区分可观察问题与审美偏好，保留有效设计，不把个人判断当成用户研究结论。"
+  ],
+  "repository": "https://github.com/TencentCloud/Octop",
+  "upstreamRepository": "https://github.com/anthropics/knowledge-work-plugins"
+}

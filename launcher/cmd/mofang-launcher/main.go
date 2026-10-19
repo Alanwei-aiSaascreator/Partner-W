@@ -91,6 +91,16 @@ func decodePublicKey(encoded string) (ed25519.PublicKey, error) {
 	return key, nil
 }
 
+// programIsPresent reports whether the program the launcher would start is on
+// the disk. It decides whether a defective update record may block startup:
+// when the program is there, it may not (2026-10-19 — a record written on E:
+// stopped the launcher from starting a perfectly good program, and the user had
+// to open the .exe by hand to discover that).
+func programIsPresent(ops update.Ops, root string) bool {
+	exists, err := ops.Exists(filepath.Join(root, update.ProgramDirectoryName, update.ProgramExecutableName))
+	return err == nil && exists
+}
+
 func launchProgram(deps dependencies, root string) int {
 	exePath := filepath.Join(root, update.ProgramDirectoryName, update.ProgramExecutableName)
 	exists, existsErr := deps.ops.Exists(exePath)
@@ -107,6 +117,19 @@ func launchProgram(deps dependencies, root string) int {
 		return exitLaunchFailed
 	}
 	return exitOK
+}
+
+// parkUnusableRecord keeps an update record the launcher cannot reconcile out of
+// the startup path without losing it: rename, never delete. The next launch then
+// starts from a clean state instead of logging the same rejection forever, and
+// support still has the exact record to look at (2026-10-19).
+func parkUnusableRecord(deps dependencies, statePath string) {
+	parked := statePath + ".unreconciled-" + time.Now().UTC().Format("20060102T150405Z")
+	if err := deps.ops.Rename(statePath, parked); err != nil {
+		deps.logf("parking the unusable update record failed: %v", err)
+		return
+	}
+	deps.logf("parked the unusable update record as %s", filepath.Base(parked))
 }
 
 // restoredNoticeHold 是"已恢复"提示在界面上停留的时长（经 ops.Sleep，测试里不真等）。
@@ -222,8 +245,31 @@ func run(args []string, deps dependencies) int {
 	transaction, decodeErr := update.DecodeTransaction(data)
 	if decodeErr != nil {
 		deps.logf("the handed-over state is unusable: %v", decodeErr)
+		// A record we cannot read is not a reason to keep someone out of the
+		// program that is already on the disk (2026-10-19: a stale record left
+		// the launcher showing a dialog while the program folder itself started
+		// fine). Leave the record untouched for support to read.
+		if !explicitState && programIsPresent(deps.ops, root) {
+			deps.logf("starting the program on the disk; the unusable record is parked")
+			parkUnusableRecord(deps, statePath)
+			return launchProgram(deps, root)
+		}
 		deps.screen.Error(deps.messages.InvalidState, deps.messages.InvalidStateDetail)
 		return exitInvalidState
+	}
+
+	// The record may have been written while the disk had a different drive
+	// letter — the same stick is E: at the office and F: at home, which is the
+	// move this product exists to survive. The record was just read from this
+	// root, so rebasing it onto this root is the only reading consistent with
+	// where the file was found. Persist the rewrite so later launches are cheap.
+	if rebased, changed := update.RebaseTransaction(transaction, root); changed {
+		transaction = rebased
+		if _, writeErr := update.WriteTransaction(deps.ops, transaction); writeErr != nil {
+			deps.logf("persisting the rebased update record failed: %v", writeErr)
+		} else {
+			deps.logf("rebased the update record onto %s", root)
+		}
 	}
 
 	lock, _, lockErr := update.AcquireLock(deps.ops, transaction, func() (update.RecoveryResult, error) {
@@ -243,6 +289,16 @@ func run(args []string, deps dependencies) int {
 	recovery, recoverErr := update.Recover(context.Background(), transaction, deps.ops)
 	if recoverErr != nil {
 		deps.logf("recovery stopped: %v", recoverErr)
+		// Same rule as above: a transaction we cannot reconcile is not a reason
+		// to keep someone out of the program that is already on the disk. The
+		// record stays where it is, so the next launch (or support) can look at it.
+		if programIsPresent(deps.ops, root) {
+			deps.logf("starting the program on the disk; the unusable update record is parked")
+			if !explicitState {
+				parkUnusableRecord(deps, statePath)
+			}
+			return launchProgram(deps, root)
+		}
 		deps.screen.Error(deps.messages.RollbackFailed, deps.messages.RollbackFailedDetail+root)
 		return exitApplyFailed
 	}

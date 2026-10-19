@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactElement } from 'react';
+import { act, type ComponentProps, type ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -65,6 +65,15 @@ function skipPortrait(container: HTMLElement) {
 function toPortrait(container: HTMLElement, code = 'H') {
   industry(container, code);
   click(container, 'onboarding.firstRun.generate');
+}
+
+/**
+ * N1（2026-10-16）：已确认过的档案（v3 + 回执）**重开时落在「团队确认」（结果页）**，
+ * 不再是资料页。要走"改资料"的老路径，先点结果页上的「修改我的资料」回到资料页 ——
+ * 这就是重开之后的真实用户路径（不是测试迂回）。
+ */
+function toProfile(container: HTMLElement) {
+  click(container, 'onboarding.firstRun.editProfile');
 }
 
 function fill(container: HTMLElement, selector: string, value: string) {
@@ -142,11 +151,8 @@ describe('first-run local onboarding', () => {
   });
 
   it('puts the work action before compact result content and renders real skill reasons and task examples', () => {
-    const request = vi.fn();
     const onComplete = vi.fn();
-    const view = render(
-      <Onboarding userId="user-1" onComplete={onComplete} workMatch={{ scopeKey: 'workspace-a', request }} />,
-    );
+    const view = render(<Onboarding userId="user-1" onComplete={onComplete} />);
     click(view.container, 'onboarding.useCases.office.title');
     fill(view.container, '[data-first-run-goal]', 'Prepare manufacturing monthly reports');
     toPortrait(view.container, 'C');
@@ -172,17 +178,13 @@ describe('first-run local onboarding', () => {
     expect(view.container.textContent).toContain('onboarding.firstRun.result.capabilityNotice');
     click(view.container, 'onboarding.firstRun.result.viewPortrait');
     expect(document.body.querySelector('[role="dialog"] [data-testid="portrait-radar"]')).not.toBeNull();
-    expect(request).not.toHaveBeenCalled();
     view.unmount();
   });
 
   it('opens on the work profile page with the slimmed form and eight named industry choices without charging', () => {
     // 反转（2026-10-06 V1 收口）：旧首屏是趣味画像页（画像→资料→匹配→结果）；
     // 新流程工作资料在前（资料→画像→结果），匹配页随 AI 匹配通道下线。
-    const request = vi.fn();
-    const view = render(
-      <Onboarding userId="user-1" onComplete={vi.fn()} workMatch={{ scopeKey: 'workspace-a', request }} />,
-    );
+    const view = render(<Onboarding userId="user-1" onComplete={vi.fn()} />);
     expect(view.container.querySelector('[data-first-run-nickname]')).not.toBeNull();
     expect(view.container.querySelectorAll('[data-industry]')).toHaveLength(8);
     expect(view.container.textContent).toContain('onboarding.firstRun.chargeNotice');
@@ -206,7 +208,6 @@ describe('first-run local onboarding', () => {
     expect(primary.disabled).toBe(false);
     click(view.container, 'onboarding.firstRun.generate');
     expect(view.container.querySelector('[data-question="popular"]')).not.toBeNull();
-    expect(request).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -364,14 +365,24 @@ describe('first-run local onboarding', () => {
     again.unmount();
   });
 
-  it('keeps the optional matching adapter unused now that generation is fully local', () => {
-    // 反转（2026-10-06 V1 收口）：旧版主按钮会调 workMatch.request 购买 AI 匹配；
-    // 本批次 AI 匹配通道不开放，生成只跑本地 basic()，适配器全程不得被调用。
+  it('N3 · AI 匹配通道已整条删除：向导不再接受任何匹配适配器，生成只跑本地 basic()', () => {
+    // 删依据（本仓历史可查）：`App.tsx` 从任何版本起都没传过匹配适配器；
+    // `validateOnboardingWorkMatchReply` 只有测试引用；结果页的 `source === 'ai'` 分支
+    // 因此只能在测试里到达 ⇒ 留着的是一条"看起来在跑、其实永远不跑"的通道。
+    // ① 类型面：入参表里已经没有 `workMatch`（`@ts-expect-error` 由 typecheck:tests 钉住；
+    //    哪天有人把它加回来，这一行会变成"未使用的 expect-error"直接红）。
+    // @ts-expect-error N3：`workMatch` 入参已删除（AI 匹配通道整条下线）
+    const removedProp = <Onboarding userId="user-1" onComplete={vi.fn()} workMatch={{ scopeKey: 'workspace-a' }} />;
+    expect(removedProp).toBeTruthy();
+    // ② 行为面：就算运行时硬塞回来（绕过类型），向导也不认它 —— 不是通路就不该被当通路。
     const request = vi.fn();
     const onComplete = vi.fn();
-    const view = render(
-      <Onboarding userId="user-1" onComplete={onComplete} workMatch={{ scopeKey: 'workspace-a', request }} />,
-    );
+    const smuggled = {
+      userId: 'user-1',
+      onComplete,
+      workMatch: { scopeKey: 'workspace-a', request },
+    } as unknown as ComponentProps<typeof Onboarding>;
+    const view = render(<Onboarding {...smuggled} />);
     toPortrait(view.container, 'general');
     skipPortrait(view.container);
     click(view.container, 'onboarding.portrait.next');
@@ -403,22 +414,20 @@ describe('first-run local onboarding', () => {
     view.unmount();
   });
 
-  it('remounts the wizard when the workspace scope changes instead of reusing the previous scope', () => {
-    // 反转（2026-10-06 V1 收口）：旧的「挂起 AI 回执不得跨 workspace 应用」随 AI 匹配通道下线；
-    // 保留下沉断言——scopeKey 变化必须重挂向导、清空上一 scope 的输入。
-    const request = vi.fn();
-    const onComplete = vi.fn();
-    const view = render(
-      <Onboarding userId="user-1" onComplete={onComplete} workMatch={{ scopeKey: 'workspace-a', request }} />,
-    );
-    industry(view.container, 'H');
-    view.rerender(
-      <Onboarding userId="user-1" onComplete={onComplete} workMatch={{ scopeKey: 'workspace-b', request }} />,
-    );
-    expect(view.container.querySelector('[data-industry="H"]')?.getAttribute('aria-pressed')).toBe('false');
-    expect(request).not.toHaveBeenCalled();
-    expect(onComplete).not.toHaveBeenCalled();
-    view.unmount();
+  it('N3 · 首跑草稿作用域只剩账号：删掉 scopeKey 之后老草稿仍然接得上', () => {
+    // 生产从来不传 scopeKey ⇒ 实际写进 sessionStorage 的键一直是 `userId:account-local`。
+    // 删掉入参后这个键**不能变**（否则用户升级后填了一半的草稿会失联），所以把它钉死。
+    expect(onboardingDraftScope('user-1')).toBe('user-1:account-local');
+    const first = render(<Onboarding userId="user-1" onComplete={vi.fn()} />);
+    fill(first.container, '[data-first-run-nickname]', '接得上的草稿');
+    industry(first.container, 'H');
+    expect(readOnboardingDraft(onboardingDraftScope('user-1', undefined))?.nickname).toBe('接得上的草稿');
+    first.unmount();
+
+    const again = render(<Onboarding userId="user-1" onComplete={vi.fn()} />);
+    expect(again.container.querySelector<HTMLInputElement>('[data-first-run-nickname]')!.value).toBe('接得上的草稿');
+    expect(again.container.querySelector('[data-industry="H"]')?.getAttribute('aria-pressed')).toBe('true');
+    again.unmount();
   });
 
   it('⭐ 首跑草稿（资料页）：卸载再进来，填过的昵称/介绍/行业都还在（问题 7）', () => {
@@ -509,6 +518,8 @@ describe('first-run local onboarding', () => {
         }}
       />,
     );
+    // ⚠️ N1：本夹具是**没有确认名单**的档案（`selectedAssistantIds` 缺省）⇒ 按新规则仍落在
+    //    资料页（没有可复核的名单可去），所以这里不需要先跳页 —— 直接断言资料页两块。
     // 编辑模式仍保留「回答详细程度 / 文件访问方式」两块（首跑已瘦身，编辑不受影响）。
     expect(view.container.textContent).toContain('onboarding.responseDetail');
     expect(view.container.textContent).toContain('onboarding.filePermission');
@@ -517,7 +528,7 @@ describe('first-run local onboarding', () => {
     click(view.container, 'onboarding.firstRun.generate');
     expect(view.container.textContent).toContain('onboarding.firstRun.personaSourceUser');
     expect(view.container.textContent).not.toContain('onboarding.firstRun.personaSourceDefault');
-    click(view.container, 'onboarding.firstRun.confirm');
+    click(view.container, 'onboarding.save');
     expect(onComplete).toHaveBeenCalledWith(
       expect.objectContaining({ persona: { id: 'approved-user-character', source: 'user', ruleVersion: null } }),
     );
@@ -525,20 +536,15 @@ describe('first-run local onboarding', () => {
   });
 
   it.each(['pending', 'settled'] as const)(
-    'saves ordinary v3 edits without losing %s AI receipts or manually selected assistants',
+    'saves ordinary v3 edits without losing %s stored receipts or manually selected assistants',
     (usageStatus) => {
       const profile = savedAiProfile(usageStatus);
-      const request = vi.fn();
       const onComplete = vi.fn((result: OnboardingProfile) => saveOnboardingProfile(result));
       const view = render(
-        <Onboarding
-          userId="user-1"
-          mode="edit"
-          initialProfile={profile}
-          onComplete={onComplete}
-          workMatch={{ scopeKey: 'workspace-a', request }}
-        />,
+        <Onboarding userId="user-1" mode="edit" initialProfile={profile} onComplete={onComplete} />,
       );
+      // N1：已确认档案重开落在结果页 ⇒ 先回资料页，再走画像页。
+      toProfile(view.container);
       // 四题在「趣味画像」页：进去把第一题改成「否」，其余按原答案走完再回资料页。
       click(view.container, 'onboarding.portrait.editEntry');
       click(view.container, 'onboarding.firstRun.answerNo');
@@ -567,7 +573,6 @@ describe('first-run local onboarding', () => {
         persona: profile.persona,
         workMatch: profile.workMatch,
       });
-      expect(request).not.toHaveBeenCalled();
       expect(profile.nickname).toBe('Saved nickname');
       view.unmount();
     },
@@ -575,17 +580,11 @@ describe('first-run local onboarding', () => {
 
   it('keeps the original receipt version after work fields change without purchasing another suggestion', () => {
     const profile = savedAiProfile();
-    const request = vi.fn();
     const onComplete = vi.fn();
     const view = render(
-      <Onboarding
-        userId="user-1"
-        mode="edit"
-        initialProfile={profile}
-        onComplete={onComplete}
-        workMatch={{ scopeKey: 'workspace-a', request }}
-      />,
+      <Onboarding userId="user-1" mode="edit" initialProfile={profile} onComplete={onComplete} />,
     );
+    toProfile(view.container);
     industry(view.container, 'C');
     fill(view.container, '[data-first-run-goal]', 'Prepare manufacturing budgets');
     click(view.container, 'onboarding.save');
@@ -598,7 +597,6 @@ describe('first-run local onboarding', () => {
       saved.workMatch?.profileVersion,
     );
     expect(saved.selectedAssistantIds).toEqual(['family', 'research']);
-    expect(request).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -606,17 +604,12 @@ describe('first-run local onboarding', () => {
     // 反转（2026-10-06 V1 收口）：旧版这里购买的是新的 AI 建议（source=ai）；
     // 生成改本地 basic() 后语义不变——显式生成的结果与手动勾选在后续编辑中不被悄悄还原。
     const profile = savedAiProfile();
-    const request = vi.fn();
     const onComplete = vi.fn();
     const view = render(
-      <Onboarding
-        userId="user-1"
-        mode="edit"
-        initialProfile={profile}
-        onComplete={onComplete}
-        workMatch={{ scopeKey: 'workspace-a', request }}
-      />,
+      <Onboarding userId="user-1" mode="edit" initialProfile={profile} onComplete={onComplete} />,
     );
+    // N1：重开落在结果页 ⇒ 先回资料页（要复核确认过的名单就留在结果页别按生成）。
+    toProfile(view.container);
     // 「使用基础方案」已删除 ⇒ 编辑模式显式生成改点主按钮（本地 basic()，直接看结果）。
     click(view.container, 'onboarding.firstRun.generate');
     act(() => view.container.querySelector<HTMLButtonElement>('[data-assistant="research"]')!.click());
@@ -630,7 +623,6 @@ describe('first-run local onboarding', () => {
         workMatch: expect.objectContaining({ source: 'basic' }),
       }),
     );
-    expect(request).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -641,6 +633,7 @@ describe('first-run local onboarding', () => {
     };
     const onComplete = vi.fn();
     const view = render(<Onboarding userId="user-1" mode="edit" initialProfile={profile} onComplete={onComplete} />);
+    toProfile(view.container);
     fill(view.container, '[data-first-run-nickname]', 'Basic nickname');
     click(view.container, 'onboarding.save');
     expect(onComplete).toHaveBeenCalledWith(
@@ -664,6 +657,7 @@ describe('first-run local onboarding', () => {
     const profile: OnboardingProfile = { ...savedAiProfile(), portrait: stored };
     const onComplete = vi.fn();
     const view = render(<Onboarding userId="user-1" mode="edit" initialProfile={profile} onComplete={onComplete} />);
+    toProfile(view.container);
     // 没动过四题 ⇒ 原样保留档案里的旧规则画像，不许用当前规则偷偷重算
     click(view.container, 'onboarding.save');
     expect(onComplete).toHaveBeenCalledTimes(1);
@@ -694,6 +688,8 @@ describe('first-run local onboarding', () => {
       <Onboarding userId="user-1" mode="edit" initialProfile={savedAiProfile()} onComplete={onComplete} />,
     );
     // 「使用基础方案」已删除 ⇒ 编辑模式显式生成改点主按钮（本地 basic()，直接看结果）。
+    // N1：重开落在结果页 ⇒ 主按钮在资料页上，先回资料页再点。
+    toProfile(view.container);
     click(view.container, 'onboarding.firstRun.generate');
     // 逐个取消勾选本地推荐助手，直到一个不剩
     const ids = [...view.container.querySelectorAll('[data-assistant]')].map((button) =>
@@ -732,17 +728,8 @@ describe('first-run local onboarding', () => {
       filePermission: 'ask-every-time',
       completedAt: '2026-09-30T00:00:00.000Z',
     };
-    const request = vi.fn();
     const onComplete = vi.fn();
-    const view = render(
-      <Onboarding
-        userId="user-1"
-        mode="edit"
-        initialProfile={profile}
-        onComplete={onComplete}
-        workMatch={{ scopeKey: 'workspace-a', request }}
-      />,
-    );
+    const view = render(<Onboarding userId="user-1" mode="edit" initialProfile={profile} onComplete={onComplete} />);
     click(view.container, 'onboarding.next');
     click(view.container, 'onboarding.next');
     click(view.container, 'onboarding.next');
@@ -751,7 +738,6 @@ describe('first-run local onboarding', () => {
       expect.objectContaining({ version: 2, selectedAssistantIds: ['family', 'research'] }),
     );
     expect(onComplete.mock.calls[0][0]).not.toHaveProperty('workMatch');
-    expect(request).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -815,11 +801,10 @@ describe('first-run local onboarding', () => {
   });
 
   it.each(['pending', 'settled'] as const)(
-    'preserves v3 input and the %s AI receipt while a visible save failure is retried',
+    'preserves v3 input and the %s stored receipt while a visible save failure is retried',
     (usageStatus) => {
       const original = savedAiProfile(usageStatus);
       saveOnboardingProfile(original);
-      const request = vi.fn();
       const onCancel = vi.fn();
       const onComplete = vi.fn((profile: OnboardingProfile) => saveOnboardingProfile(profile));
       const view = render(
@@ -829,9 +814,10 @@ describe('first-run local onboarding', () => {
           initialProfile={original}
           onComplete={onComplete}
           onCancel={onCancel}
-          workMatch={{ scopeKey: 'workspace-a', request }}
         />,
       );
+      // N1：已确认档案重开落在结果页 ⇒ 先回资料页。
+      toProfile(view.container);
       // 四题在「趣味画像」页：Q1 改成「否」，其余按原答案走完，再回资料页改工作资料。
       click(view.container, 'onboarding.portrait.editEntry');
       click(view.container, 'onboarding.firstRun.answerNo');
@@ -862,7 +848,6 @@ describe('first-run local onboarding', () => {
           workMatch: original.workMatch,
         });
         expect(onCancel).not.toHaveBeenCalled();
-        expect(request).not.toHaveBeenCalled();
         expect(failure.observedErrors).toEqual([]);
         click(view.container, 'onboarding.save');
         expect(onComplete).toHaveBeenCalledTimes(2);
@@ -877,7 +862,6 @@ describe('first-run local onboarding', () => {
           workMatch: original.workMatch,
         });
         expect(view.container.querySelector('[role="alert"]')).toBeNull();
-        expect(request).not.toHaveBeenCalled();
       } finally {
         failure.restore();
         view.unmount();
@@ -892,16 +876,8 @@ describe('first-run local onboarding', () => {
       saveOnboardingProfile(original);
       const onComplete = vi.fn((profile: OnboardingProfile) => saveOnboardingProfile(profile));
       const onCancel = vi.fn();
-      const request = vi.fn();
       const view = render(
-        <Onboarding
-          userId="user-1"
-          mode="edit"
-          initialProfile={original}
-          onComplete={onComplete}
-          onCancel={onCancel}
-          workMatch={{ scopeKey: 'workspace-a', request }}
-        />,
+        <Onboarding userId="user-1" mode="edit" initialProfile={original} onComplete={onComplete} onCancel={onCancel} />,
       );
       click(view.container, 'onboarding.next');
       fill(view.container, 'textarea', 'Edited legacy goal');
@@ -919,7 +895,6 @@ describe('first-run local onboarding', () => {
         expect(view.container.querySelector<HTMLInputElement>('input')!.value).toBe('Edited legacy nickname');
         expect(loadOnboardingProfile('user-1')).toMatchObject({ nickname: original.nickname });
         expect(onCancel).not.toHaveBeenCalled();
-        expect(request).not.toHaveBeenCalled();
         expect(failure.observedErrors).toEqual([]);
         const first = onComplete.mock.calls[0][0];
         expect(first.selectedAssistantIds).toContain(manual.dataset.assistant);
@@ -934,7 +909,6 @@ describe('first-run local onboarding', () => {
           filePermission: 'task-folder',
         });
         expect(view.container.querySelector('[role="alert"]')).toBeNull();
-        expect(request).not.toHaveBeenCalled();
       } finally {
         failure.restore();
         view.unmount();
@@ -951,14 +925,12 @@ describe('first-run local onboarding', () => {
     translationMode.real = true;
     const initialProfile = surface === 'v3-edit' ? savedAiProfile() : { ...savedAiProfile(), version: 2 as const };
     const onComplete = vi.fn((profile: OnboardingProfile) => saveOnboardingProfile(profile));
-    const request = vi.fn();
     const view = render(
       <Onboarding
         userId="user-1"
         mode={surface === 'first-run' ? 'first-run' : 'edit'}
         initialProfile={surface === 'first-run' ? null : initialProfile}
         onComplete={onComplete}
-        workMatch={{ scopeKey: 'workspace-a', request }}
       />,
     );
     if (surface === 'first-run') {
@@ -987,7 +959,6 @@ describe('first-run local onboarding', () => {
       expect(onComplete).toHaveBeenCalledTimes(2);
       expect(loadOnboardingProfile('user-1')).toMatchObject({ userId: 'user-1' });
       expect(view.container.querySelector('[role="alert"]')).toBeNull();
-      expect(request).not.toHaveBeenCalled();
     } finally {
       failure.restore();
       view.unmount();

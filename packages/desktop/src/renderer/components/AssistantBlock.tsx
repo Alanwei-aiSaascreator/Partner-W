@@ -157,6 +157,25 @@ export function AssistantFinalizedBody({ message, agentName, onImageClick, onRet
           onRetry={onRetry ? () => onRetry(message.id) : undefined}
         />
       )}
+      {/*
+        整轮用时（2026-10-18）：**本地量**（发出 → 定稿），落库后重开仍在。
+        ⚠️ 不显示网关的单条消息时长（4 分 46 秒的一轮只报 0.4 秒）；老数据没有 ⇒ 整行不渲染。
+      */}
+      {typeof message.durationMs === 'number' && message.durationMs > 0 ? (
+        <div
+          data-testid="assistant-turn-duration"
+          className="mt-1.5 type-meta tabular-nums text-[var(--text-muted)]"
+        >
+          {(() => {
+            const totalSeconds = Math.max(1, Math.round(message.durationMs / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return minutes > 0
+              ? t('chatMessage.turnDurationMinutesSeconds', { minutes, seconds })
+              : t('chatMessage.turnDurationSeconds', { seconds });
+          })()}
+        </div>
+      ) : null}
       {!hasVisibleAnswer ? (
         <div
           data-testid="assistant-no-visible-answer"

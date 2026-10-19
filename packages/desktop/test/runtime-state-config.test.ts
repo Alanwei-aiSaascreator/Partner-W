@@ -129,6 +129,27 @@ describe('ensureStateConfig', () => {
     expect(fs.existsSync(stateDirFor(userDataDir))).toBe(false);
   });
 
+  /**
+   * ⭐ 2026-10-17 现场（安装版）：主罗盘的工作区被网关默认成了 `<stateDir>/workspace`，
+   * 模型生成的 pptx 落在那儿；而「产物」面板与"说好的文件不在"检查都看**应用工作区**
+   * ⇒ 文件明明在，用户看到的是"工作区里没有这些文件"，右侧永远空。
+   *
+   * 便携版靠 `mergePortableAgentDefaults` 把 main.workspace 指到盘上工作区；安装版
+   * 从来没传过工作区 ⇒ 这条分支必须补上，且**不套便携的 skipBootstrap**（安装版行为不变）。
+   */
+  it('⭐ 安装版：主罗盘 workspace 指向应用工作区，且不套便携 defaults', () => {
+    const appWorkspace = path.join(tmpRoot, 'app-workspace');
+    const res = ensureStateConfig(userDataDir, undefined, undefined, appWorkspace);
+    const raw = JSON.parse(fs.readFileSync(res.configPath, 'utf-8')) as {
+      agents?: { defaults?: Record<string, unknown>; entries?: Record<string, { workspace?: string }> };
+    };
+    expect(raw.agents?.entries?.main?.workspace).toBe(appWorkspace);
+    expect(raw.agents?.defaults?.skipBootstrap, '安装版不该被套上便携的 skipBootstrap').toBeUndefined();
+
+    const again = ensureStateConfig(userDataDir, undefined, undefined, appWorkspace);
+    expect(again.created, '已对齐 ⇒ 不重写').toBe(false);
+  });
+
   it('首跑：建 openclaw.json，token 是 32 字节的 base64url', () => {
     const res = ensureStateConfig(userDataDir);
 

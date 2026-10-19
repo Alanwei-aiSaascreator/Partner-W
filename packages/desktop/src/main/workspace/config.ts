@@ -298,8 +298,70 @@ export function readConfig(): AppConfig | null {
   }
 }
 
+/**
+ * 读盘上**原始** JSON（不解密、不迁移）；不存在/坏 JSON ⇒ `null`。
+ *
+ * 只给"保留解不开的密文"用 —— 它是唯一能看到 `enc:` 原文的入口
+ * （`readConfig()` 已经把解不开的字段变成 `undefined` 了）。
+ */
+function readRawConfigFile(): Record<string, unknown> | null {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(configFilePath(), 'utf-8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 「调用方没给值」+「盘上那份是密文且**当前解不开**」⇒ 原样带回旧密文。
+ *
+ * 为什么（Owner C / T16 硬红线「解不开不得无备份地删除凭据」）：DPAPI 按 Windows
+ * 用户加密 —— 换 Windows 用户 / 换机器后当前用户解不开，但用户切回原账户时
+ * 那份密文**本来解得开**。旧实现把它读成 `undefined`，下一次 `writeConfig`
+ * （启动路径上 `updateConfig` 随时会调）就把它从盘上抹掉。保留 = 给"切回去"留机会。
+ *
+ * ⚠️ **显式值优先**：`''` 或新值一律照写 —— 只有"我们读不出来"才保留，
+ *    用户清空 / 换 token 的意图不被吞。
+ */
+function carryForwardIfUnreadable(incoming: string | undefined, rawValue: unknown): string | undefined {
+  if (incoming !== undefined) return incoming;
+  if (typeof rawValue !== 'string' || !rawValue.startsWith(ENCRYPTED_PREFIX)) return incoming;
+  if (decryptField(rawValue) !== undefined) return incoming; // 解得开 ⇒ 调用方不给值就是用户意图
+  return rawValue;
+}
+
+/**
+ * 把盘上**解不开**的凭据密文补回待写入的 config（按网关 id 对齐）。
+ *
+ * `encryptGatewayCredentials` 的 `encryptField` 对已带前缀的值原样返回，
+ * 所以带回来的密文会**逐字节**落盘。
+ */
+function preserveUnreadableSecrets(config: AppConfig): AppConfig {
+  const raw = readRawConfigFile();
+  if (!raw) return config;
+  const rawGateways = Array.isArray(raw.gateways) ? (raw.gateways as unknown[]) : [];
+  const rawById = new Map<string, Record<string, unknown>>();
+  for (const entry of rawGateways) {
+    if (entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string') {
+      rawById.set((entry as { id: string }).id, entry as Record<string, unknown>);
+    }
+  }
+
+  const clone = structuredClone(config);
+  for (const gw of clone.gateways) {
+    const rawEntry = rawById.get(gw.id);
+    gw.token = carryForwardIfUnreadable(gw.token, rawEntry?.token);
+    gw.password = carryForwardIfUnreadable(gw.password, rawEntry?.password);
+    gw.pairingCode = carryForwardIfUnreadable(gw.pairingCode, rawEntry?.pairingCode);
+  }
+  clone.bootstrapToken = carryForwardIfUnreadable(clone.bootstrapToken, raw.bootstrapToken);
+  clone.password = carryForwardIfUnreadable(clone.password, raw.password);
+  return clone;
+}
+
 export function writeConfig(config: AppConfig): void {
-  writeJsonAtomic(configFilePath(), encryptGatewayCredentials(config));
+  writeJsonAtomic(configFilePath(), encryptGatewayCredentials(preserveUnreadableSecrets(config)));
 }
 
 export function updateConfig(partial: Partial<AppConfig>): AppConfig {

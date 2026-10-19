@@ -44,6 +44,19 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     }
   });
 
+  it('⭐ BUG-166：视频能力以技能为准，禁止旧试用口径（5 秒 / 480P / 不支持图生视频）', () => {
+    // 旧条款是 2026-09 的试用口径，而 SOUL.md 每轮全文注入、优先级高于技能 ⇒
+    // 2026-10-18 实机里模型照着它回答"只有文字生视频，5 秒、480P，不支持图生视频"。
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/text-to-video, 5 seconds, 480P/);
+    expect(COMMON_OPERATING_CONTRACT).not.toMatch(/Seedance trial currently accepts/);
+    // 新条款：以技能为准 + 两档能力差异说清楚 + 禁止一刀切否认
+    expect(COMMON_OPERATING_CONTRACT).toContain('video-generation');
+    expect(COMMON_OPERATING_CONTRACT).toContain('4–15 seconds');
+    expect(COMMON_OPERATING_CONTRACT).toContain('image-to-video');
+    expect(COMMON_OPERATING_CONTRACT).toContain('Never claim image-to-video is unsupported as a blanket statement');
+    expect(COMMON_OPERATING_CONTRACT).toContain('the high-quality tier');
+  });
+
   it('allows an available real-file generator when a skill route is unavailable or fails', () => {
     expect(COMMON_OPERATING_CONTRACT).toContain('another available document-generation tool or installed library');
     expect(COMMON_OPERATING_CONTRACT).toContain('verify that the final file exists and is readable');
@@ -151,10 +164,12 @@ describe('预置助手的交付合同：每条通道都要在清单里', () => {
     // 同一版还引入了主罗盘（`main`）的交付合同文件。
     // 2026-10-08 提版：合同新增「ask_user 形态规范」（B8 实证：自由文本问句 /
     // 选项超量会被内核校验 blocked，问题到不了用户）。
+    // 2026-10-18 提版（BUG-166）：视频交付条款删掉旧试用口径（5 秒 / 480P /
+    // 不支持图生视频），改成"以 video-generation 技能为准 + 两档能力差异"。
     // 版本号是"将来能不能安全升级已发出去的盘"的唯一依据
     // （见 preset-agents.ts 里 PRESET_PROMPT_VERSION 的注释）——
     // ⚠️ 所以**改了合同文本就必须动它**，否则已装的盘拿不到新合同。
-    expect(PRESET_PROMPT_VERSION).toBe('2026-10-08.1');
+    expect(PRESET_PROMPT_VERSION).toBe('2026-10-18.1');
   });
 
   it('⭐ ask_user 形态规范：固定选项、≤3 问、禁自由文本、失败回退普通消息（B8）', () => {

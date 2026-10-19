@@ -36,6 +36,30 @@ describe('artifact search', () => {
     expect(result.map((r) => r.id)).toEqual(['artifact-code']);
   });
 
+  /**
+   * ⭐ BUG-120（2026-10-17）：视频有了专属类型 `video` 之后，**SQL 侧的 kind 判据必须跟着改**。
+   *
+   * 改型前视频就是 `type='file'`，所以"文件"筛选天然包含它；只改登记侧不改这里，
+   * 视频会**从「文件」筛选里消失、并冒到「其他」档**（`NOT IN ('image','code','file')` 会把它捞走）。
+   */
+  it('⭐ BUG-120：kind=file 的筛选把视频产物一起算进来', () => {
+    const { db, prepare } = mockDb([]);
+
+    searchArtifacts(db as never, 'clip', { kind: 'file' });
+
+    const sql = String(prepare.mock.calls[0][0]).replace(/\s+/g, ' ');
+    expect(sql).toContain("(a.type = 'file' OR a.type = 'video')");
+  });
+
+  it('⭐ BUG-120：kind=other 不许把视频吞进来（否则视频在「其他」档里出现两次语义）', () => {
+    const { db, prepare } = mockDb([]);
+
+    searchArtifacts(db as never, 'clip', { kind: 'other' });
+
+    const sql = String(prepare.mock.calls[0][0]).replace(/\s+/g, ' ');
+    expect(sql).toContain("a.type NOT IN ('image', 'code', 'file', 'video')");
+  });
+
   it('does not expose stored filenames as search snippets', () => {
     const { db } = mockDb([
       {

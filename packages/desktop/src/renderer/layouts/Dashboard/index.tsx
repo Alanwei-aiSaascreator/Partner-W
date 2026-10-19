@@ -7,7 +7,7 @@ import { PROVIDER_DISPLAY_NAMES } from '@clawwork/shared';
 import { useDashboardStore } from '@/stores/dashboardStore';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { formatCredits, formatCreditsPrecise } from '@/lib/utils';
-import { deriveQuotaDisplay } from '@/lib/quota-display';
+import { deriveAvailableDisplay, readHeldView } from '@/lib/quota-display';
 import { Button } from '@/components/ui/button';
 import { resolveAgentDisplayNameKey } from '@/lib/preset-agents';
 
@@ -176,7 +176,15 @@ export default function Dashboard() {
   const license = commercialOverview?.license ?? null;
   const quotaMicros = license?.tokenQuotaMicros ?? null;
   const usedMicros = license?.tokenUsedMicros ?? null;
-  const quotaDisplay = quotaMicros === null || usedMicros === null ? null : deriveQuotaDisplay(quotaMicros, usedMicros);
+  // 在途预占三态（与账户页/顶栏共用同一判据，见 `@/lib/quota-display`）：
+  // 口径不可判定时**不许**给确定数字 —— `quota − used` 那个数可能偏高。
+  const heldView = readHeldView(license);
+  const balanceUnknown = heldView.unknown;
+  // 可用额同样只走那一处派生：`quota − used − held`（held > 0 时不许显示 quota − used）。
+  const quotaDisplay =
+    quotaMicros === null || usedMicros === null
+      ? null
+      : deriveAvailableDisplay(quotaMicros, usedMicros, heldView.micros);
   const remainingMicros = quotaDisplay?.remaining ?? null;
   const remainingPercent = quotaDisplay?.remainingPercent ?? 0;
 
@@ -221,8 +229,13 @@ export default function Dashboard() {
             />
             <Tile
               label={t('dashboard.remainingCredits')}
-              value={remainingMicros === null ? placeholder : formatCreditsPrecise(remainingMicros)}
-              hint={remainingMicros === null ? t('dashboard.unavailable') : t('dashboard.accountScope')}
+              // 口径不可判定（读数缺省 / 后端明说不可判定）⇒ 不给确定数字。
+              value={remainingMicros === null || balanceUnknown ? placeholder : formatCreditsPrecise(remainingMicros)}
+              hint={
+                remainingMicros === null || balanceUnknown
+                  ? t('dashboard.unavailable')
+                  : t('dashboard.accountScope')
+              }
             />
             <Tile
               label={t('dashboard.favoriteAssistant')}
@@ -253,6 +266,25 @@ export default function Dashboard() {
               <div className="type-label text-[var(--text-secondary)]">{t('dashboard.accountBalance')}</div>
               {quotaMicros === null || usedMicros === null ? (
                 <div className="mt-4 type-support text-[var(--text-muted)]">{t('dashboard.unavailable')}</div>
+              ) : balanceUnknown ? (
+                // 预占口径不可判定 ⇒ **只**给确定事实（已用 / 总额），可用额度显示"暂不可用"，
+                // 与账户页同一文案、同一 `data-quota-held-unknown` 标记（见 `@/lib/quota-display`）。
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="type-support text-[var(--text-secondary)]">{t('dashboard.remainingCredits')}</span>
+                    <span data-quota-held-unknown className="type-support text-[var(--text-muted)]">
+                      {t('account.quotaHeldUnknown')}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between type-meta text-[var(--text-muted)]">
+                    <span>
+                      {t('usage.quotaUsed')} {formatCreditsPrecise(usedMicros)}
+                    </span>
+                    <span>
+                      {t('usage.quotaTotal')} {formatCreditsPrecise(quotaMicros)}
+                    </span>
+                  </div>
+                </div>
               ) : (
                 <div className="mt-4 space-y-3">
                   <div className="flex items-baseline justify-between gap-3">
@@ -261,6 +293,9 @@ export default function Dashboard() {
                       {formatCreditsPrecise(remainingMicros ?? 0)} {t('usage.creditsUnit')}
                     </span>
                   </div>
+                  {/* 2026-10-17 用户要求：充值口径要看得见（1 元 = 100 积分）。
+                      与充值对话框同一把尺（lib/recharge-display.ts 的 1 分 = 1 积分）。 */}
+                  <p className="type-support text-[var(--text-muted)]">{t('account.rechargeRate')}</p>
                   <div
                     className="h-2 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"
                     role="progressbar"

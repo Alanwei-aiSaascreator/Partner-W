@@ -690,3 +690,75 @@ describe('报告里的输出位置（B 包）', () => {
     expect(collect()).toMatchObject({ receipts: [{ receiptFile, receipt: input }], rejected: 0 });
   });
 });
+
+/**
+ * ⭐ **2026-10-18 真机（任务 b4cf0d84）的完整工具形状**。
+ *
+ * 现场这一轮里：写源稿 → `preflight.cjs`（`source-valid`，**不是**生成报告）→ `generate.cjs`
+ * （10 条进度 + 终止报告）→ 复制 v1 为 v2 → 改稿 → 再 preflight → 再 generate → `Get-Item` 核实。
+ * 收据 2 条、rejected 0、两份 pptx 都登记上了 —— 整轮被判"未能自动确认"的那条判据**不是**这里。
+ *
+ * 这条用例把形状钉住：任何一条**非生成**的 exec 输出（`source-valid` / `(no output)` / 纯文本）
+ * 都不许被当成"未认领的报告"。
+ */
+it('真机形状（b4cf0d84）：预检/复制/改稿/核实文件都不毒化整轮，两次 generate 各自被收据认领', () => {
+  // ⚠️ 页数与夹具收据一致（`input.pages`）：报告里的 `pages` 必须等于进度流的 `total`，
+  //    且逐字段与收据相等才会被认领 —— 这里改的只是页数，形状（多行流 + 尾部终止报告）不变。
+  const pages = input.pages;
+  const stream = Array.from({ length: pages }, (_, index) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      status: 'slidegen-progress',
+      sourceSha256: hash(source),
+      completed: index + 1,
+      total: pages,
+    }),
+  )
+    .concat(report({ pages }))
+    .join('\n');
+  const preflight = JSON.stringify({
+    schemaVersion: 1,
+    status: 'source-valid',
+    sourceSha256: hash(source),
+    bytes: 15491,
+    checks: ['syntax', 'evaluation', 'page-budget'],
+    decks: [{ title: '可莉角色介绍', pages }],
+    diagnostics: [],
+    diagnosticsTruncated: false,
+    artifactCreated: false,
+    visualReview: 'not-performed',
+  });
+  const command = (script: string) => ({
+    command: `node "C:\\skills\\deck-layout\\scripts\\${script}" "${input.sourceFile}"`,
+  });
+  const tools: ToolCall[] = [
+    { id: 'read', name: 'read', status: 'done', startedAt: '', result: '---\nname: deck-layout\n---' },
+    { id: 'write', name: 'write', status: 'done', startedAt: '', result: `Successfully wrote ${input.bytes} bytes` },
+    { id: 'preflight-1', name: 'exec', status: 'done', startedAt: '', result: preflight, args: command('preflight.cjs') },
+    { id: 'generate-1', name: 'exec', status: 'done', startedAt: '', result: stream, args: command('generate.cjs') },
+    {
+      id: 'copy',
+      name: 'exec',
+      status: 'done',
+      startedAt: '',
+      result: '(no output)',
+      args: { command: 'Copy-Item "a.slidegen" "a-v2.slidegen"' },
+    },
+    { id: 'edit', name: 'edit', status: 'done', startedAt: '', result: 'Successfully replaced 1 block(s)' },
+    { id: 'preflight-2', name: 'exec', status: 'done', startedAt: '', result: preflight, args: command('preflight.cjs') },
+    { id: 'generate-2', name: 'exec', status: 'done', startedAt: '', result: stream, args: command('generate.cjs') },
+    {
+      id: 'stat',
+      name: 'exec',
+      status: 'done',
+      startedAt: '',
+      result: `Name          : ${input.fileName}\nLength        : ${input.bytes}\nLastWriteTime : 2026/10/18 13:42:01`,
+      args: { command: `Get-Item "${input.fileName}" | Select-Object Name, Length, LastWriteTime | Format-List` },
+    },
+  ];
+  const entries = collect().receipts;
+  expect(entries).toHaveLength(1);
+  expect(collector.hasUnconfirmedSlideToolOutput(tools, entries)).toBe(false);
+  // 负对照：把收据拿掉 ⇒ 同一个形状必须判"未确认"（守卫强度不变）
+  expect(collector.hasUnconfirmedSlideToolOutput(tools, [])).toBe(true);
+});

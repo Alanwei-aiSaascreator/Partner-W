@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { File, FileCode, FileText, Image } from 'lucide-react';
+import { File, FileCode, FileText, Image, Video } from 'lucide-react';
 import type { Artifact, ArtifactType } from '@clawwork/shared';
 import { cn } from '@/lib/utils';
 
@@ -12,11 +12,17 @@ interface ArtifactThumbnailProps {
 function getTypeConfig(type: ArtifactType, name: string) {
   if (type === 'image') return { Icon: Image, color: 'text-[var(--info)]', bg: 'bg-[var(--info)]/10' };
   if (type === 'code') return { Icon: FileCode, color: 'text-[var(--accent)]', bg: 'bg-[var(--accent-dim)]' };
+  // BUG-120（2026-10-17）：视频有了专属类型 —— 缩略图给视频图标（改型前落进下面的通用 File）。
+  if (type === 'video') return { Icon: Video, color: 'text-[var(--info)]', bg: 'bg-[var(--info)]/10' };
   if (name.endsWith('.md') || name.endsWith('.txt'))
     return { Icon: FileText, color: 'text-[var(--warning)]', bg: 'bg-[var(--warning)]/10' };
   return { Icon: File, color: 'text-[var(--text-muted)]', bg: 'bg-[var(--bg-tertiary)]' };
 }
 
+/**
+ * ⚠️ `'video'` **不是**图片：不给它去主进程要缩略图（那边只按图片生成）。
+ *    视频在列表里呈现的是「视频图标」，不是首帧。
+ */
 function isImageArtifact(artifact: Artifact): boolean {
   return artifact.type === 'image' || artifact.mimeType.startsWith('image/');
 }

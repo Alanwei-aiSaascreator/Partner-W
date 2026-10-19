@@ -578,6 +578,36 @@ describe('useTeamInstall 的工作区守卫', () => {
     expect(api?.installEvents.find((event) => event.type === 'error')?.message).toContain('deepseek-v4-flash');
   });
 
+  it('⭐ 编辑已装成员：姓名 / IDENTITY / SOUL 必须真的写回网关（不能只改模型）', async () => {
+    const agents = makeAgents().map((draft, index) => ({
+      ...draft,
+      existingAgentId: `existing-${index}`,
+      name: `新名字${index}`,
+      model: 'deepseek-v4-flash',
+      description: '负责后端服务',
+      agentMd: '你要先讲清楚边界。',
+      soulMd: '保持克制，不编造。',
+    }));
+
+    await mount();
+    await act(async () => {
+      await api?.runUpdate('team-1', '2026-09-20T00:00:00.000Z', teamInfo, agents);
+    });
+
+    expect(clawwork.updateAgent).toHaveBeenCalledWith(
+      'gw-1',
+      expect.objectContaining({ agentId: 'existing-0', name: '新名字0' }),
+    );
+    expect(clawwork.setAgentFile).toHaveBeenCalledWith(
+      'gw-1',
+      'existing-0',
+      'IDENTITY.md',
+      expect.stringContaining('负责后端服务'),
+    );
+    expect(clawwork.setAgentFile).toHaveBeenCalledWith('gw-1', 'existing-0', 'SOUL.md', '保持克制，不编造。');
+    expect(api?.installStatus).toBe('done');
+  });
+
   it('⭐ 编辑已有团队时显式模型无法解析 ⇒ 不能跳过更新后仍保存并显示成功', async () => {
     const agents = makeAgents();
     agents[0].existingAgentId = 'backend-existing';

@@ -12,6 +12,7 @@ vi.mock('react-i18next', () => ({
 }));
 
 import Login from '../src/renderer/layouts/Login';
+import { useUiStore } from '../src/renderer/stores/uiStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -677,5 +678,26 @@ describe('Login', () => {
     } finally {
       unmount();
     }
+  });
+
+  /**
+   * 1.0.11：**登录页也要能检查更新**（用户原话："用户不登陆就可以更新"）。
+   *
+   * 更新检查与下载走的是主进程 IPC，本身与登录态无关（`registerUpdateHandlers`
+   * 在启动阶段就注册，handler 里没有 auth 门控）。缺的只是**入口**：登录页
+   * 没挂 `Settings`，所以必须在这里给一个直接打开应用级 `UpdateDialog` 的按钮。
+   */
+  it('⭐ 登录页有不登录也能打开更新弹窗的入口', () => {
+    useUiStore.setState({ updateDialogOpen: false });
+    const { container, unmount } = render(<Login onSignedIn={vi.fn()} />);
+
+    const entry = container.querySelector('[data-testid="login-check-updates"]') as HTMLButtonElement | null;
+    expect(entry, '登录页必须有「检查更新」入口').not.toBeNull();
+    expect(entry?.textContent).toContain('settings.checkForUpdates');
+
+    act(() => entry?.click());
+    expect(useUiStore.getState().updateDialogOpen).toBe(true);
+
+    unmount();
   });
 });

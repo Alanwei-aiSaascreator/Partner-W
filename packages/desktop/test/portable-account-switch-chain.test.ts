@@ -398,6 +398,9 @@ vi.mock('../src/main/ws/index.js', () => {
       if (h.gateway.connected) clients.set('local-runtime', makeClient());
       return clients;
     },
+    // BUG-133：登录 / 登出 / 激活 handler 会走 `memory/account-switch` 重投影 `MEMORY.md`。
+    // 本用例只关心中转配置 ⇒ 把记忆那一路钉成"没有网关"，重投影静默跳过。
+    getGatewayClient: () => null,
   };
 });
 

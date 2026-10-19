@@ -53,6 +53,14 @@ export const PLUGIN_SKILLS_DIR_NAME = 'plugin-skills';
 export const MANAGED_NPM_PROJECTS_SEGMENTS = ['npm', 'projects'] as const;
 /** 项目里那条 host 链接的相对位置。 */
 export const MANAGED_NPM_LINK_SEGMENTS = ['node_modules', 'openclaw'] as const;
+/**
+ * 官方插件根（`<state>\extensions\<插件>`）。
+ *
+ * 2026-10-19 现场：`openclaw plugins install` 装的插件会在
+ * `<插件>\node_modules\openclaw` 建一条指向随包运行时的 junction —— 第三种链接形状。
+ * 盘符一变它就悬空，而网关**不会**重建它（它的判据是字符串相等），表现是插件加载不了。
+ */
+export const EXTENSIONS_DIR_NAME = 'extensions';
 
 /**
  * 换根前缀时的**锚点**：链接目标里第一次出现 `node_modules\openclaw` 的地方。
@@ -112,9 +120,9 @@ export function isUnderRoot(child: string, root: string): boolean {
  */
 export function classifyStateLink(
   facts: LinkProbeFacts,
-  opts: { expectedRoot: string; needed: boolean | null | undefined },
+  opts: { expectedRoot: string; needed: boolean | null | undefined; alsoAllowedRoot?: string },
 ): LinkJudgement {
-  const { expectedRoot, needed } = opts;
+  const { expectedRoot, needed, alsoAllowedRoot } = opts;
 
   if (!facts.lstat || facts.lstat.exists === false) {
     if (needed === false) {
@@ -161,7 +169,10 @@ export function classifyStateLink(
     return { kind: 'real-file', target, detail: `链接指向的不是目录：${target ?? '?'}` };
   }
 
-  if (expectedRoot && target && !isUnderRoot(target, expectedRoot)) {
+  const underAllowed =
+    (expectedRoot !== undefined && target !== null && isUnderRoot(target, expectedRoot)) ||
+    (alsoAllowedRoot !== undefined && target !== null && isUnderRoot(target, alsoAllowedRoot));
+  if (!underAllowed && target) {
     return {
       kind: 'elsewhere',
       target,
@@ -227,8 +238,49 @@ export function rewriteLinkTarget(target: string, newRoot: string): LinkRewrite 
   return { ok: true, target: rewritten };
 }
 
+/** 去掉 Windows 扩展前缀（`\\?\` / `\\?\UNC\`）——只用于比较与重写，不写回。 */
+function stripExtendedPrefix(value: string): string {
+  return value.replace(/^\\\\\?\\UNC\\/iu, '\\\\').replace(/^\\\\\?\\/iu, '');
+}
+
+/**
+ * 换**盘符**而不是换运行时根（2026-10-19 现场盘）。
+ *
+ * 插件自带的技能链（`plugin-skills\feishu-doc` 这类）指向的是 **state 目录**
+ * （`<state>\extensions\feishu\skills\...`），里面**没有** `node_modules\openclaw`
+ * 锚点 ⇒ 换根那条路按设计拒绝。可它与当前 state 根**只差一个盘符**：
+ * 换掉盘符后目标在盘上真实存在 ⇒ 这是映射，不是猜。
+ */
+export function rewriteLinkVolume(target: string, root: string): string | null {
+  const bare = stripExtendedPrefix(target);
+  const targetDrive = /^([A-Za-z]):(?=[\\/])/u.exec(bare);
+  const rootDrive = /^([A-Za-z]):(?=[\\/])/u.exec(stripExtendedPrefix(root));
+  if (!targetDrive || !rootDrive) return null;
+  if (targetDrive[1].toLowerCase() === rootDrive[1].toLowerCase()) return null;
+  return rootDrive[1] + bare.slice(1);
+}
+
+/**
+ * 换盘符的**安全版**：换完必须仍在 `stateDir`（当前 state 根）之下。
+ *
+ * 2026-10-19 自审：只判"换完之后目标存在"是不够的。旧盘符被另一台装了本产品的电脑
+ * 占用时，`E:\<别人的运行数据>\state\<别的身份哈希>\...` 换到 F: 也可能"恰好存在"——
+ * 那是别人那块盘上的数据，不是这份 state 的。路径里的身份哈希段就是身份证据：
+ * 要求换完仍 `isUnderRoot(…, stateDir)`，不满足就一个字节都不改。
+ */
+export function rewriteLinkVolumeForState(target: string, stateDir: string): string | null {
+  const rewritten = rewriteLinkVolume(target, stateDir);
+  if (rewritten === null) return null;
+  return isUnderRoot(rewritten, stateDir) ? rewritten : null;
+}
+
 /** 一条链的实际探测（只读）。 */
-function probeOne(linkPath: string, expectedRoot: string, needed: boolean | null): StateLinkFinding {
+function probeOne(
+  linkPath: string,
+  expectedRoot: string,
+  needed: boolean | null,
+  alsoAllowedRoot?: string,
+): StateLinkFinding {
   const empty: LinkProbeFacts = { lstat: { exists: false }, readlink: null, stat: { ok: false, code: 'ENOENT' } };
   let facts = empty;
   try {
@@ -239,7 +291,7 @@ function probeOne(linkPath: string, expectedRoot: string, needed: boolean | null
       stat: { ok: false, code: 'ENOENT' },
     };
   } catch {
-    return { ...classifyStateLink(empty, { expectedRoot, needed }), path: linkPath };
+    return { ...classifyStateLink(empty, { expectedRoot, needed, alsoAllowedRoot }), path: linkPath };
   }
 
   if (facts.lstat.symlink) {
@@ -255,7 +307,7 @@ function probeOne(linkPath: string, expectedRoot: string, needed: boolean | null
   } catch (err) {
     facts.stat = { ok: false, code: (err as NodeJS.ErrnoException).code ?? 'UNKNOWN' };
   }
-  return { ...classifyStateLink(facts, { expectedRoot, needed }), path: linkPath };
+  return { ...classifyStateLink(facts, { expectedRoot, needed, alsoAllowedRoot }), path: linkPath };
 }
 
 function readJsonFile(file: string): unknown {
@@ -274,8 +326,40 @@ function dirEntries(dir: string): fs.Dirent[] {
   }
 }
 
+/** 目录项本身存在（悬空链接的 `existsSync` 会是 false，所以用 lstat）。 */
+function entryExists(target: string): boolean {
+  try {
+    fs.lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * 只读探测 state 目录里那两类链接（`plugin-skills\*` 与 managed npm 的 `node_modules\openclaw`）。
+ * npm 项目里每个包自己的 peer 链候选：`<pkg>/node_modules/openclaw`（含 `@scope/name`）。
+ *
+ * 只列**候选**，是否探测由调用方按"这条链本来就在"决定；跳过 `.bin` 与顶层那条
+ * managed 链（顶层由 `MANAGED_NPM_LINK_SEGMENTS` 单独负责）。
+ */
+function nestedPeerLinks(projectRoot: string): string[] {
+  const modules = path.join(projectRoot, 'node_modules');
+  const out: string[] = [];
+  for (const entry of dirEntries(modules)) {
+    if (entry.name.startsWith('.') || entry.name.toLowerCase() === 'openclaw') continue;
+    const packageNames = entry.name.startsWith('@')
+      ? dirEntries(path.join(modules, entry.name)).map((pkg) => path.join(entry.name, pkg.name))
+      : [entry.name];
+    for (const name of packageNames) {
+      out.push(path.join(modules, name, 'node_modules', 'openclaw'));
+    }
+  }
+  return out;
+}
+
+/**
+ * 只读探测 state 目录里那三类链接：`plugin-skills\*`、managed npm 的
+ * `node_modules\openclaw`、以及官方插件的 `extensions\<插件>\node_modules\openclaw`。
  * 目录不存在 ⇒ 返回空（不是错误：新机器上本来就没有）。
  */
 export function probeStateLinks(opts: {
@@ -290,7 +374,8 @@ export function probeStateLinks(opts: {
   if (fs.existsSync(skillsDir)) {
     // 技能链是网关自己建的 ⇒ 少了是"还没建"，不当坏链（与工具一致：needed: true）
     for (const e of dirEntries(skillsDir)) {
-      out.push(probeOne(path.join(skillsDir, e.name), deployedRoot, true));
+      // 插件技能链可能指向**运行时**（随包插件）或 **state**（npm 装的插件）—— 两种都算正常。
+      out.push(probeOne(path.join(skillsDir, e.name), deployedRoot, true, stateDir));
     }
   } else {
     opts.notes?.push(`${PLUGIN_SKILLS_DIR_NAME}：目录不存在（网关还没建过技能链）`);
@@ -307,9 +392,28 @@ export function probeStateLinks(opts: {
       const manifestFile = path.join(projectRoot, 'package.json');
       const needed = fs.existsSync(manifestFile) ? openclawPeerLinkNeeded(readJsonFile(manifestFile)).needed : null;
       out.push(probeOne(link, deployedRoot, needed));
+      // ⭐ 2026-10-19（用户实测「登不进去」）：项目里**包自己**的 node_modules 下
+      //    还可能有一条 peer 链（`node_modules/@openclaw/feishu/node_modules/openclaw`）。
+      //    它同样指向运行时、同样会因换盘符悬空；旧探测看不到它 ⇒ 插件拿到旧盘的内核。
+      //    只探**已经存在**的那条（没有就是没建，不算坏）。
+      for (const peerLink of nestedPeerLinks(projectRoot)) {
+        if (!entryExists(peerLink)) continue;
+        out.push(probeOne(peerLink, deployedRoot, false));
+      }
     }
   } else {
     opts.notes?.push(`${MANAGED_NPM_PROJECTS_SEGMENTS.join('\\')}：目录不存在（没装过 npm 插件项目）`);
+  }
+
+  const extensionsDir = path.join(stateDir, EXTENSIONS_DIR_NAME);
+  if (fs.existsSync(extensionsDir)) {
+    for (const plugin of dirEntries(extensionsDir)) {
+      if (!plugin.isDirectory()) continue;
+      // 装过就应当有这条链（插件靠它拿到宿主内核）⇒ needed: true。
+      out.push(probeOne(path.join(extensionsDir, plugin.name, ...MANAGED_NPM_LINK_SEGMENTS), deployedRoot, true));
+    }
+  } else {
+    opts.notes?.push(`${EXTENSIONS_DIR_NAME}：目录不存在（没装过官方插件）`);
   }
 
   return out;
@@ -372,16 +476,20 @@ export function runStateLinksSelfCheck(opts: { stateDir: string; deployedRoot: s
       continue;
     }
     const rewrite = rewriteLinkTarget(oldTarget, opts.deployedRoot);
-    if (!rewrite.ok) {
-      failures.push({ path: f.path, target: oldTarget, reason: rewrite.why });
+    // ① 指向运行时的链：换根前缀（既有行为）。
+    // ② 指向 state 目录的链（插件自带技能）：没有锚点，但常常**只差一个盘符** ⇒ 换盘符。
+    // 两条路都必须过"换过去的目标真的存在"，否则一个字节都不改。
+    const byVolume = rewrite.ok ? null : rewriteLinkVolumeForState(oldTarget, opts.stateDir);
+    const nextTarget = rewrite.ok ? rewrite.target : byVolume;
+    if (nextTarget === null) {
+      failures.push({ path: f.path, target: oldTarget, reason: rewrite.ok ? '换盘符后的目标不可用' : rewrite.why });
       continue;
     }
-    // ⭐ 换过去的目标**必须真的存在**才动手 —— 这条是"不猜"的全部保证
-    if (!fs.existsSync(rewrite.target)) {
+    if (!fs.existsSync(nextTarget)) {
       failures.push({
         path: f.path,
-        target: rewrite.target,
-        reason: `换根后的目标也不存在：${rewrite.target} ⇒ 不猜（这份运行时里可能没有它指的那个扩展/技能）`,
+        target: nextTarget,
+        reason: `换根后的目标也不存在：${nextTarget} ⇒ 不猜（这份运行时/这块盘上可能没有它指的那个扩展/技能）`,
       });
       continue;
     }
@@ -391,13 +499,13 @@ export function runStateLinksSelfCheck(opts: { stateDir: string; deployedRoot: s
     } catch (err) {
       failures.push({
         path: f.path,
-        target: rewrite.target,
+        target: nextTarget,
         reason: `删不掉那条悬空链接：${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`,
       });
       continue;
     }
     try {
-      fs.symlinkSync(rewrite.target, f.path, DIRECTORY_LINK_TYPE);
+      fs.symlinkSync(nextTarget, f.path, DIRECTORY_LINK_TYPE);
       repaired += 1;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
@@ -409,7 +517,7 @@ export function runStateLinksSelfCheck(opts: { stateDir: string; deployedRoot: s
       } catch {
         rollback = '（原来那条也挂不回去了 ⇒ 这条链会变成"还没建过"，网关下次启动会重建）';
       }
-      failures.push({ path: f.path, target: rewrite.target, reason: `重建链接失败：${code}${rollback}` });
+      failures.push({ path: f.path, target: nextTarget, reason: `重建链接失败：${code}${rollback}` });
     }
   }
 

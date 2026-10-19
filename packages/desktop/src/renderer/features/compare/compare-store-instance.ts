@@ -31,6 +31,7 @@ export function compareStore(): CompareStore {
     onToast: (type, title, opts) => {
       if (type === 'error') toast.error(title, { description: opts?.description });
       else if (type === 'warning') toast.warning(title, { description: opts?.description });
+      else if (type === 'info') toast.info(title, { description: opts?.description });
       else toast.success(title, { description: opts?.description });
     },
   });

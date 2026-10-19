@@ -30,6 +30,8 @@ function createHarness(
     upsertToolCall: vi.fn(),
     appendStreamDelta: vi.fn(),
     appendThinkingDelta: vi.fn(),
+    replaceThinkingText: vi.fn(),
+    appendThinkingText: vi.fn(),
     finalizeStream: vi.fn(),
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
@@ -37,6 +39,9 @@ function createHarness(
     setSessionProgressText: vi.fn(),
     // 包 D：错误释放点会登记「自动重试候选」——手写桩必须跟着长（缺了它错误分支会 TypeError）。
     markAutoRetryFailure: vi.fn(),
+    // E1（2026-10-15）：`final` / `error` / `end` 三个回合收尾点新增「压缩状态清零」，
+    // 同属错误/收尾分支 —— 与包 D 同一类手写桩缺口，缺了照样 TypeError。
+    setSessionCompacting: vi.fn(),
   };
 
   const deps: GatewayDispatcherDeps = {

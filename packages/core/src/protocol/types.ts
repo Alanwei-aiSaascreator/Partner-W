@@ -75,6 +75,21 @@ export interface RawContentBlock {
   name?: string;
   arguments?: Record<string, unknown> | string;
   result?: unknown;
+  /**
+   * **源端段身份**（BUG-075 / T26）：网关/运行时给这一块的稳定标识。
+   *
+   * 对 `type:'thinking'` 而言，它是"这一段推理"的身份 —— 同一段内的累计快照共用它，
+   * 工具边界之后的新段换新值。文本相同的新段与旧段的回声在纯文本上不可分（那正是
+   * BUG-075 两条未决反例），**身份到位后就可分**。
+   *
+   * ⚠️ 现役随包运行时（openclaw 2026.9.3）**不发**这个字段 —— 收到缺失时客户端逐字
+   *    回落到原来的文本启发式，行为不变（见 `mergeThinkingSnapshot`）。
+   *    运行时侧补字段属独立的 runtime 批（BUG-075 结论：身份在 runtime 内部存在、
+   *    在 thinking 发射点被丢弃）。
+   */
+  itemId?: string;
+  /** `itemId` 的别名（不同产出方命名不同；两者都给时 `itemId` 优先）。 */
+  segmentId?: string;
 }
 
 export type ChatContentBlock = RawContentBlock & {

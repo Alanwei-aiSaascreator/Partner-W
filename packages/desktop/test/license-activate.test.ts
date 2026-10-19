@@ -156,15 +156,28 @@ describe('activateLicense', () => {
     vi.unstubAllGlobals();
   });
 
-  it('calls the activate_license rpc with the device fingerprint', async () => {
+  it('calls the activate_license rpc with the v2 fingerprint and the legacy one', async () => {
     const { activateLicense } = await import('../src/main/commercial/license.js');
     const res = await activateLicense('RY-AAAA-BBBB');
 
     expect(rpcMock).toHaveBeenCalledWith('activate_license', {
       p_license_key: 'RY-AAAA-BBBB',
+      // v2：只认随盘的 deviceId —— 同一块盘换电脑不会变成新设备
       p_device_fingerprint: expect.any(String),
+      // 过渡期：让服务端把旧的（按电脑算的）登记原地升级，不占新名额
+      p_legacy_fingerprint: expect.any(String),
     });
     assertOk(res);
+  });
+
+  it('v2 指纹只由随盘 deviceId 决定：同进程内稳定，且与旧算法不同', async () => {
+    const { deviceFingerprint, legacyDeviceFingerprint } = await import('../src/main/commercial/license.js');
+    const v2a = deviceFingerprint();
+    const v2b = deviceFingerprint();
+    expect(v2a).toBe(v2b);
+    expect(v2a).toMatch(/^[0-9a-f]{64}$/);
+    // 两个算法必须给出不同的值 —— 否则说明 v2 没真正改（这条是防"改了等于没改"）
+    expect(legacyDeviceFingerprint()).not.toBe(v2a);
   });
 
   it('激活成功后把中转配置写进网关', async () => {

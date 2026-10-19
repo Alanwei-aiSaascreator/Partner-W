@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/TencentCloud/Octop",
+  "commit": "f79015b078c4d5d4c309a1bf6f3cd39ac06cc18f",
+  "sources": [
+    {
+      "path": "src/octop/infra/agents/experts/library/karpathy-knowledge-base/skills/llm-wiki/SKILL.md",
+      "sha256": "6bb7eaae92d66d1aed5cf0ec14cab4139e3d8bc652ac6f0da26490b60471f1d9"
+    },
+    {
+      "path": "src/octop/infra/agents/experts/library/karpathy-knowledge-base/SOUL.md",
+      "sha256": "806a0ae293520d839ced96cb09722e0cf45f73443ac7da74a7e587e3b9702667"
+    }
+  ],
+  "adaptedSha256": "f6bb9abe4bfecc86bd8d25903d2a51cb6cc9e7d116c0ca3a487a02924f6b6e5b",
+  "license": "Apache-2.0",
+  "adapted": true,
+  "changes": [
+    "Chinese OpenClaw-compatible frontmatter",
+    "Workflow adaptation, not verbatim runtime integration",
+    "Use only currently available authorized tools",
+    "No publishing, dependency installation, paid calls or global memory mutation",
+    "Retain Mofang artifact verification contract"
+  ],
+  "runtimeDependenciesAdded": [],
+  "businessAcceptance": "NOT RUN"
+}

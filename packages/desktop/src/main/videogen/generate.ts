@@ -47,10 +47,15 @@ export interface VideogenGenerateInput {
   content: string;
   client: VideogenRelayClient;
   onActivity?: ArtifactActivityCallback;
+  sourceCurrent?: () => boolean;
   pollIntervalMs?: number;
   deadlineMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** 用户界面选择的画质档（见 blocks.ts 的 VideogenBlockOptions）。 */
+  blockOptions?: import('./blocks.js').VideogenBlockOptions;
+  /** 首帧读取的授权路径（用户在**发送那一轮**附的图，见 session-image.ts）。 */
+  authorizedAttachmentPaths?: readonly string[];
 }
 
 export interface VideogenGenerateResult {
@@ -98,7 +103,9 @@ async function runOneRequest(
     return { artifact: replay };
   }
 
+  owner.assertCurrent();
   notifyArtifactActivity(input.onActivity, 'generating-video');
+  owner.assertCurrent();
 
   // ② Seedance 首帧装载（R8-06）：解析出的只是**路径**，创建前必须换成**受信字节**。
   //
@@ -115,7 +122,9 @@ async function runOneRequest(
       const firstFrameData = await readVideogenFirstFrame({
         workspacePath: input.workspacePath,
         path: request.firstFrame,
+        ...(input.authorizedAttachmentPaths ? { authorizedAttachmentPaths: input.authorizedAttachmentPaths } : {}),
       });
+      owner.assertCurrent();
       effective = { ...request, firstFrameData };
     } catch (error) {
       log.warn({
@@ -126,6 +135,8 @@ async function runOneRequest(
       return { failure: { code: 'videogen-block-invalid' } };
     }
   }
+
+  owner.assertCurrent();
 
   // ③ 稳定逻辑身份（R8-06）：同操作重放/进程重启 ⇒ 同一把 requestId；新操作才是新 id。
   //    只在 Seedance 通道用（H3 的创建体里没有这个字段，传了也无处安放）。
@@ -146,6 +157,7 @@ async function runOneRequest(
   }
 
   const created = await input.client.create(effective, requestId);
+  owner.assertCurrent();
   if (!created.ok) {
     log.warn({
       domain: 'artifact',
@@ -168,6 +180,7 @@ async function runOneRequest(
     }
 
     const queried = await input.client.query(created.taskId);
+    owner.assertCurrent();
     if (queried.status === 'finished') break;
     if (queried.status === 'failed') {
       if (queried.failure.code === 'videogen-task-failed' && queried.failure.upstreamCode === null) {
@@ -175,6 +188,7 @@ async function runOneRequest(
         consecutiveQueryFailures += 1;
         if (consecutiveQueryFailures < VIDEOGEN_QUERY_FAILURE_TOLERANCE) {
           await sleep(pollInterval);
+          owner.assertCurrent();
           continue;
         }
       }
@@ -195,9 +209,12 @@ async function runOneRequest(
       return { failure: { code: 'videogen-timeout', waitedMs: now() - startedAt } };
     }
     await sleep(pollInterval);
+    owner.assertCurrent();
   }
 
+  owner.assertCurrent();
   const downloaded = await input.client.download(created.taskId);
+  owner.assertCurrent();
   if (!downloaded.ok) {
     log.warn({ domain: 'artifact', event: 'videogen.download-failed', data: { taskId: input.taskId } });
     return { failure: downloaded.failure };
@@ -217,6 +234,7 @@ async function runOneRequest(
 
   owner.assertCurrent();
   notifyArtifactActivity(input.onActivity, 'saving-artifacts');
+  owner.assertCurrent();
   try {
     const artifact = await saveArtifactFromBuffer({
       workspacePath: input.workspacePath,
@@ -224,9 +242,11 @@ async function runOneRequest(
       messageId: input.messageId,
       fileName: videoFileNameFor(request),
       buffer: downloaded.buffer,
-      artifactType: 'file',
+      // BUG-120（2026-10-17）：视频登记专属类型 —— 此前记 `'file'`，卡片只能靠 `.mp4` 文件名反推。
+      artifactType: 'video',
       sourceKey,
     });
+    owner.assertCurrent();
     log.info({
       domain: 'artifact',
       event: 'videogen.saved',
@@ -244,9 +264,17 @@ async function runOneRequest(
 }
 
 export async function generateVideosFromMessage(input: VideogenGenerateInput): Promise<VideogenGenerateResult> {
-  const owner = captureArtifactWorkspaceOwner();
+  const workspace = captureArtifactWorkspaceOwner();
+  const current = () => workspace.current() && (input.sourceCurrent?.() ?? true);
+  const owner = {
+    current,
+    assertCurrent: () => {
+      if (!current()) throw new Error('videogen-source-changed');
+    },
+  };
   const result: VideogenGenerateResult = { saved: [], failed: [] };
-  const { requests, failures } = extractVideogenBlocks(input.content);
+  if (!current()) return result;
+  const { requests, failures } = extractVideogenBlocks(input.content, input.blockOptions);
   result.failed.push(...failures.map((entry) => entry.failure));
   if (failures.length > 0) {
     getDebugLogger().warn({
@@ -260,9 +288,15 @@ export async function generateVideosFromMessage(input: VideogenGenerateInput): P
   // 顺序执行：一个块一段视频，排队比并发诚实（进度可见、上游并发配额也不浪费）。
   for (const request of requests) {
     if (!owner.current()) break;
-    const outcome = await runOneRequest(input, request, owner);
-    if ('artifact' in outcome) result.saved.push(outcome.artifact);
-    else result.failed.push(outcome.failure);
+    try {
+      const outcome = await runOneRequest(input, request, owner);
+      if (!current()) return { saved: [], failed: [] };
+      if ('artifact' in outcome) result.saved.push(outcome.artifact);
+      else result.failed.push(outcome.failure);
+    } catch (error) {
+      if (!current()) return { saved: [], failed: [] };
+      throw error;
+    }
   }
   return result;
 }

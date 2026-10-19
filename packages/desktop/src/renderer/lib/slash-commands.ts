@@ -115,6 +115,16 @@ const NATIVE_OVERLAY: CommandEntry[] = [
     acceptsArgs: false,
   },
   {
+    // 无参命令。派发在 `useChatSend`（与 `/model`、`/think` 同一条 `applySlashCommand`），
+    // 复用既有压缩链（`runManualCompaction`），不新造第二套。
+    name: 'compact',
+    description: 'Compact the session history',
+    source: 'native',
+    scope: 'text',
+    category: 'session',
+    acceptsArgs: false,
+  },
+  {
     name: 'agent',
     description: 'Switch agent (or open picker)',
     source: 'native',

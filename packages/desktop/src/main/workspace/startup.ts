@@ -15,7 +15,7 @@ import { existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { DB_FILE_NAME } from '@clawwork/shared';
 import { closeDatabase, initDatabase } from '../db/index.js';
-import { ensureWorkspaceId, initWorkspace, readWorkspaceId } from './init.js';
+import { initWorkspace, readWorkspaceId } from './init.js';
 import { removableDrives, setRemovableDrives } from './removable-drives.js';
 import {
   bindingForPickedDirectory,
@@ -88,6 +88,14 @@ export interface PrepareWorkspaceOptions {
   /** 默认 `listRemovableDrives()`（PowerShell 枚举，进程内记忆一次）。 */
   removableDrives?: readonly string[];
   exists?: (p: string) => boolean;
+  /**
+   * 默认读工作区标记里的身份（`init.ts` 的 `readWorkspaceId`）。
+   *
+   * 留这个注入口是为了让**编排层测试**跟 `exists` 一样不碰真文件系统：身份判定
+   * 一旦绕过注入直接读真盘，本机恰好存在的盘符（例如真有 E: 盘）就会污染用例，
+   * 让"虚拟盘"上的自愈时灵时不灵。
+   */
+  readWorkspaceId?: (workspacePath: string) => string | null;
   /** 默认 `initWorkspace()`（建目录 + 放工作区标记）。 */
   workspaceInit?: (workspacePath: string) => void | Promise<void>;
   /** 默认什么都不做。**唯一的真实调用方是 `app.quit()`** —— 只有用户选了「退出」才会走到。 */
@@ -102,6 +110,7 @@ interface StartupContext {
   dialogs: WorkspaceStartupDialogs;
   database: WorkspaceDatabasePort;
   exists: (p: string) => boolean;
+  readId: (workspacePath: string) => string | null;
   /** 惰性：常规启动（记录的位置还在）一次 PowerShell 都不跑。 */
   drives: () => readonly string[];
   prepare: (workspacePath: string) => void | Promise<void>;
@@ -158,6 +167,7 @@ export async function prepareWorkspaceAtStartup(options: PrepareWorkspaceOptions
 
 async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<WorkspaceStartupResult> {
   const exists = options.exists ?? existsSync;
+  const readId = options.readWorkspaceId ?? readWorkspaceId;
   const quit = options.quit ?? ((): void => {});
   const database = options.database ?? { init: initDatabase, close: closeDatabase };
 
@@ -180,6 +190,7 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     dialogs: options.dialogs,
     database,
     exists,
+    readId,
     drives,
     prepare: options.workspaceInit ?? initWorkspace,
     log: options.onEvent ?? ((): void => {}),
@@ -245,7 +256,7 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
     volumeMarker: config?.volumeMarker,
     workspaceBinding: config?.workspaceBinding,
     workspaceId: config?.workspaceId,
-    readWorkspaceId: (workspacePath) => readWorkspaceId(workspacePath),
+    readWorkspaceId: readId,
     portableRoot,
     defaultPath: getHomedirWorkspacePath(),
     // ⚠️ 记录的位置还在 ⇒ 判定必然停在第一分支（`configured`），压根不会读这个列表，
@@ -273,7 +284,10 @@ async function runWorkspaceStartup(options: PrepareWorkspaceOptions): Promise<Wo
        */
       if (!config?.workspaceId) {
         try {
-          const id = ensureWorkspaceId(decision.path);
+          // 走注入端口：`prepare` = 建目录 + 写/补铸标记（默认真 `initWorkspace`），
+          // `readId` = 读回身份。与 `ensureWorkspaceId()` 等价，但不再绕过测试的虚拟盘。
+          await ctx.prepare(decision.path);
+          const id = ctx.readId(decision.path);
           if (id) updateConfig({ workspaceId: id });
         } catch (err) {
           ctx.log('workspace.identity.backfill.failed', {
@@ -348,7 +362,7 @@ function locationOf(
     binding,
     // 身份（P-A v2）：所有"确认写入"的路径都先过 ensureWorkspace（标记已补铸），
     // 这里读出来随线索一起写进配置。
-    workspaceId: readWorkspaceId(workspacePath),
+    workspaceId: ctx.readId(workspacePath),
   });
 }
 

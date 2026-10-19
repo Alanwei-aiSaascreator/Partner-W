@@ -20,6 +20,10 @@ import type { ExecutionEvent } from '../protocol/execution-events.js';
 
 const EMPTY_MESSAGES: Message[] = [];
 
+/** 思考段之间的分隔（与 renderThinkingSegments 一致：一个空行）。 */
+const THINKING_SEGMENT_SEPARATOR = '\n\n';
+
+
 export interface ActiveTurn {
   id: string;
   streamingText: string;
@@ -41,12 +45,27 @@ export interface ActiveTurn {
   thinkingCompleted?: string;
   thinkingCurrent?: string;
   thinkingLastSealed?: string;
+  /**
+   * 当前段 / 刚归档段的**源端身份**（BUG-075 / T26，2026-10-16）。空串 = 该帧没有身份
+   * （旧运行时 / 旧协议）。有身份时 `mergeThinkingSnapshot` 逐 id 判段边界，不再靠文本猜。
+   */
+  thinkingCurrentId?: string;
+  thinkingLastSealedId?: string;
   toolCalls: ToolCall[];
   finalized: boolean;
   content: string;
   thinkingContent?: string;
   runId?: string;
   timestamp: string;
+  /**
+   * **整轮用时**（发出 → 定稿），毫秒；没有可信起算点时为 `undefined`（不瞎编）。
+   *
+   * 为什么不直接用网关的 `message.durationMs`：那是**单条消息生成时间** —— 实测一次
+   * 4 分 46 秒的任务，产物消息只报 0.4 秒、正文只报 1.8 秒。用户要的"这一轮用了多久"
+   * 必须覆盖排队 + 工具等待 + 续写，所以按本地 `turnStartedAtBySession`（空闲→忙那一刻
+   * 打点，见该字段的注释）算整轮。落库后重开仍可显示（`messages.duration_ms`）。
+   */
+  durationMs?: number;
   /**
    * 本轮**最新活动**（仅展示 · 2026-10-08 对话可视化改造）。
    *
@@ -239,6 +258,16 @@ export interface MessageState {
    */
   turnStartedAtBySession: Record<string, number>;
   /**
+   * **整轮起算点**（用户发出 → 本轮定稿），`Date.now()` 毫秒。
+   *
+   * 为什么必须与 `turnStartedAtBySession` 分开（2026-10-18 独立审核抓到的真缺陷）：
+   * 上面那个是**等待相计时器**的起算点 —— 首个正文 delta 与 `final` 都会
+   * `setProcessing(false)`，而它按契约在变空闲时**删键**。把它复用成"整轮起点"，
+   * `finalizeStream` 读到的永远是 `undefined` ⇒ `durationMs` 从来不会被算出来。
+   * ⇒ 独立记一份：只在"从空闲变忙"打点，只在**定稿/清理**时删。
+   */
+  turnBeganAtBySession: Record<string, number>;
+  /**
    * 「临时会话」（多模型对比的每一列）本轮的失败文案，按 sessionKey 存。
    *
    * 为什么不复用时间线的 system 消息：对比的每一列**还没被采纳**，它不是这个任务的
@@ -369,7 +398,28 @@ export interface MessageState {
    *    见 `extractDeltaText` 的说明。
    */
   replaceStreamText: (sessionKey: string, text: string) => void;
-  appendThinkingDelta: (sessionKey: string, delta: string) => void;
+  /**
+   * @param segmentId 源端**段身份**（BUG-075 / T26）：给了就逐 id 判段边界；不给（`undefined`）
+   *   则逐字回落到原来的文本启发式 + 回声守卫。
+   */
+  appendThinkingDelta: (sessionKey: string, delta: string, segmentId?: string) => void;
+  /**
+   * 用一帧**累计快照**替换当前思考段（agent 通道 `thinking.text` 的常规形状）。
+   *
+   * 与 `appendThinkingDelta` 的分工：**真增量**（只有 `delta`）才 append；
+   * `text` 是"到此刻为止的全部推理"，当成增量会按帧数平方膨胀（同事现场实测
+   * 512 帧 / 末帧 1,312 字 ⇒ 界面 722,539 字）。这里**原位替换当前段**：
+   * 完成段（`completed`）不动，也不新开段 —— 段边界由工具调用 seal / 源端段身份决定。
+   */
+  replaceThinkingText: (sessionKey: string, text: string, segmentId?: string) => void;
+  /**
+   * 真增量（帧里**只有** `delta`、没有累计快照）⇒ 追加到当前段末尾。
+   *
+   * 为什么不能复用 `appendThinkingDelta`：那个的语义是"给一帧**快照**" ——
+   * 文本既非延伸也非前缀时它会归档旧段再开新段（对快照是对的、对增量是错的）。
+   * 只有 `segmentId` 变了才代表源端开了新段（此时才归档）。
+   */
+  appendThinkingText: (sessionKey: string, delta: string, segmentId?: string) => void;
   finalizeStream: (sessionKey: string, meta?: { runId?: string }) => void;
   promoteActiveTurn: (sessionKey: string, taskId: string, canonical: Message) => void;
   /**
@@ -475,6 +525,8 @@ export interface MessageStoreDeps {
     thinkingContent?: string;
     /** 实际生成这条回复的模型 id（逐条来自网关）。 */
     model?: string;
+    /** 整轮用时（本地量，ms）。缺省时主进程条件覆盖，不抹掉已落库的值。 */
+    durationMs?: number;
     /**
      * ⚠️ DOCX-205 合同（2026-10-10）：同步链路标记。经消息 store 的 upsert 落库的
      * 消息一律带 `sync: true`（**绝不带终态证据** —— 这里只有正文/工具快照，没有
@@ -497,6 +549,8 @@ function newActiveTurn(): ActiveTurn {
     thinkingCompleted: '',
     thinkingCurrent: '',
     thinkingLastSealed: '',
+    thinkingCurrentId: '',
+    thinkingLastSealedId: '',
     toolCalls: [],
     finalized: false,
     content: '',
@@ -509,15 +563,25 @@ function newActiveTurn(): ActiveTurn {
  * 等价于"还没有归档过任何段"，不丢已有内容。
  */
 function thinkingSegmentsOf(
-  turn: Pick<ActiveTurn, 'streamingThinking' | 'thinkingCompleted' | 'thinkingCurrent' | 'thinkingLastSealed'>,
+  turn: Pick<
+    ActiveTurn,
+    | 'streamingThinking'
+    | 'thinkingCompleted'
+    | 'thinkingCurrent'
+    | 'thinkingLastSealed'
+    | 'thinkingCurrentId'
+    | 'thinkingLastSealedId'
+  >,
 ): ThinkingSegments {
   if (turn.thinkingCompleted === undefined && turn.thinkingCurrent === undefined) {
-    return { completed: '', current: turn.streamingThinking, lastSealed: '' };
+    return { completed: '', current: turn.streamingThinking, lastSealed: '', currentId: '', lastSealedId: '' };
   }
   return {
     completed: turn.thinkingCompleted ?? '',
     current: turn.thinkingCurrent ?? '',
     lastSealed: turn.thinkingLastSealed ?? '',
+    currentId: turn.thinkingCurrentId ?? '',
+    lastSealedId: turn.thinkingLastSealedId ?? '',
   };
 }
 
@@ -606,6 +670,9 @@ export function mergeCanonicalMessageWithActiveTurn(canonical: Message, turn?: A
     thinkingContent: turn?.thinkingContent ?? canonical.thinkingContent,
     toolCalls: mergeToolCalls(canonical.toolCalls, turn?.toolCalls ?? []),
     runId: turn?.runId ?? canonical.runId,
+    // 取两者**较大**：网关那条是单条消息生成时间（4 分钟的轮次只报 0.4 秒），
+    // 本地量的是整轮。历史消息两者都没有 ⇒ 保持 undefined（界面不显示用时）。
+    durationMs: Math.max(canonical.durationMs ?? 0, turn?.durationMs ?? 0) || canonical.durationMs,
   };
 }
 
@@ -621,6 +688,7 @@ export function activeTurnToMessage(turn: ActiveTurn, taskId: string, sessionKey
     sessionKey,
     agentId: sessionKey ? parseAgentIdFromSessionKey(sessionKey) : undefined,
     runId: turn.runId,
+    durationMs: turn.durationMs,
     timestamp: turn.timestamp,
   };
 }
@@ -641,6 +709,8 @@ function persistMessageUpdate(deps: MessageStoreDeps, msg: Message): void {
       thinkingContent: msg.thinkingContent,
       // 中途 upsert（工具调用/推理）拿不到它 ⇒ undefined ⇒ 主进程那边条件覆盖，不会抹掉已有值。
       model: msg.model,
+      // 整轮用时（本地量）：同上，缺省不覆盖已落库的值。
+      durationMs: msg.durationMs,
       // ⚠️ DOCX-205 合同：同步链路标记（本路径只有正文/工具快照，永远不带终态证据）。
       sync: true,
     })
@@ -681,6 +751,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
     compactingBySession: {},
     progressTextBySession: {},
     turnStartedAtBySession: {},
+    turnBeganAtBySession: {},
     errorBySession: {},
     retryableErrorBySession: {},
     autoRetryFailureBySession: {},
@@ -754,6 +825,8 @@ export function createMessageStore(deps: MessageStoreDeps) {
                   thinkingCompleted: sealed.completed,
                   thinkingCurrent: sealed.current,
                   thinkingLastSealed: sealed.lastSealed,
+                  thinkingCurrentId: sealed.currentId ?? '',
+                  thinkingLastSealedId: sealed.lastSealedId ?? '',
                   streamingThinking: renderThinkingSegments(sealed),
                 },
               },
@@ -941,14 +1014,15 @@ export function createMessageStore(deps: MessageStoreDeps) {
         };
       }),
 
-    appendThinkingDelta: (sessionKey, delta) =>
+    appendThinkingDelta: (sessionKey, delta, segmentId) =>
       set((s) => {
         const existing = s.activeTurnBySession[sessionKey];
         const turn = existing ?? newActiveTurn();
         // ⚠️ 思考走**显式分段状态**合并（2026-10-13 复审整改）：只跟"当前段最新快照"比，
         //    不跟整个历史猜段 —— 跨段空行由 `renderThinkingSegments` 负责。
+        // ⭐ T26：有源端段身份（`segmentId`）时**逐 id 判段**，文本同不同文都不再影响判定。
         const prev = thinkingSegmentsOf(turn);
-        const next = mergeThinkingSnapshot(prev, delta);
+        const next = mergeThinkingSnapshot(prev, delta, segmentId);
         // R1：累计快照原样重发 / 当前段旧快照重投 ⇒ 状态**同引用**返回 ⇒ 不是新活动
         //    （连 state 都不动；activity revision 不涨）。
         if (next === prev && existing) return s;
@@ -962,6 +1036,104 @@ export function createMessageStore(deps: MessageStoreDeps) {
               thinkingCompleted: next.completed,
               thinkingCurrent: next.current,
               thinkingLastSealed: next.lastSealed,
+              thinkingCurrentId: next.currentId ?? '',
+              thinkingLastSealedId: next.lastSealedId ?? '',
+            },
+          },
+        };
+      }),
+
+    /**
+     * 累计快照**原位替换当前段**（2026-10-18）。
+     *
+     * 与 `appendThinkingDelta` 共用同一套分段状态，只是不走"新快照像不像新一段"的猜测：
+     *  - 有段身份 ⇒ 沿用 `mergeThinkingSnapshot`（同 id 替换、异 id 开新段）；
+     *  - 没段身份 ⇒ **一律替换当前段**，不归档、不开新段。
+     *
+     * 为什么能不让它开新段：段边界本来就由**工具调用 seal**（新工具 id 落地）与
+     * 源端段身份决定，文本相似度从来不是可靠判据（见 `mergeThinkingSnapshot` 的复审反例）。
+     * 让"改写前面的话"落成新段，只会把旧快照归档成一份近似全文 —— 帧越多越长，
+     * 同事现场实测到 72 万字。
+     *
+     * 回声守卫保留：当前段为空、而快照是刚归档段的重投 ⇒ 原样不动（同引用返回）。
+     */
+    replaceThinkingText: (sessionKey, text, segmentId) =>
+      set((s) => {
+        if (!text) return s;
+        const existing = s.activeTurnBySession[sessionKey];
+        const turn = existing ?? newActiveTurn();
+        const prev = thinkingSegmentsOf(turn);
+        let next: ThinkingSegments;
+        if (segmentId) {
+          next = mergeThinkingSnapshot(prev, text, segmentId);
+        } else if (!prev.current) {
+          if (prev.lastSealed.startsWith(text)) return s;
+          next = { ...prev, current: text, currentId: '' };
+        } else if (prev.current === text || prev.current.startsWith(text)) {
+          return s;
+        } else if (prev.lastSealed.startsWith(text) && !text.startsWith(prev.current)) {
+          // 回声守卫（2026-10-18 独立审核反例）：工具 seal 之后**新段已经开局**，
+          // 这时再收到刚归档段的旧快照（无身份）—— 别把它当成"改写"覆盖掉新段。
+          return s;
+        } else {
+          next = { ...prev, current: text };
+        }
+        if (
+          next.current === prev.current &&
+          next.completed === prev.completed &&
+          next.currentId === prev.currentId &&
+          existing
+        )
+          return s;
+        const streamingThinking = renderThinkingSegments(next);
+        return {
+          activeTurnBySession: {
+            ...s.activeTurnBySession,
+            [sessionKey]: {
+              ...turn,
+              streamingThinking,
+              thinkingCompleted: next.completed,
+              thinkingCurrent: next.current,
+              thinkingLastSealed: next.lastSealed,
+              thinkingCurrentId: next.currentId ?? '',
+              thinkingLastSealedId: next.lastSealedId ?? '',
+            },
+          },
+        };
+      }),
+
+    appendThinkingText: (sessionKey, delta, segmentId) =>
+      set((s) => {
+        if (!delta) return s;
+        const existing = s.activeTurnBySession[sessionKey];
+        const turn = existing ?? newActiveTurn();
+        const prev = thinkingSegmentsOf(turn);
+        const id = segmentId ?? '';
+        let next: ThinkingSegments;
+        if (id && prev.currentId && id !== prev.currentId) {
+          // 源端换段（工具之后的新一段）：归档当前段再起新段。
+          next = {
+            completed: prev.current ? (prev.completed ? prev.completed + THINKING_SEGMENT_SEPARATOR + prev.current : prev.current) : prev.completed,
+            current: delta,
+            currentId: id,
+            lastSealed: prev.current,
+            lastSealedId: prev.currentId,
+          };
+        } else {
+          next = { ...prev, current: prev.current + delta, currentId: id || prev.currentId };
+        }
+        const streamingThinking = renderThinkingSegments(next);
+        return {
+          activeTurnBySession: {
+            ...s.activeTurnBySession,
+            [sessionKey]: {
+              ...turn,
+              streamingThinking,
+              thinkingCompleted: next.completed,
+              thinkingCurrent: next.current,
+              thinkingLastSealed: next.lastSealed,
+              thinkingCurrentId: next.currentId ?? '',
+              thinkingLastSealedId: next.lastSealedId ?? '',
             },
           },
         };
@@ -971,6 +1143,15 @@ export function createMessageStore(deps: MessageStoreDeps) {
       set((s) => {
         const turn = s.activeTurnBySession[sessionKey];
         if (!turn) return s;
+        // 整轮用时：**只在定稿那一刻结算一次**（迟到/重复的 final 不把用时越写越大）。
+        // 起算点走 `turnBeganAtBySession`（不是等待相计时器 —— 那个在这时早被删了）。
+        // 没有起算点（迟到 final / 历史轮）⇒ `undefined`：**不拿第一个事件时间凑一个数**。
+        const beganAt = s.turnBeganAtBySession[sessionKey];
+        const durationMs =
+          turn.durationMs ?? (typeof beganAt === 'number' ? Math.max(0, Date.now() - beganAt) : undefined);
+        // 结算完就清：下一轮必须重新打点（不许把上一轮的起点漏给下一轮）。
+        const nextBeganAt = { ...s.turnBeganAtBySession };
+        delete nextBeganAt[sessionKey];
 
         // ⚠️ 推理可能**混在正文里**（有些模型只给闭标签 `</think>`、没有单独的 thinking
         //    块 —— 2026-09-14 线上实测 qwen3.5-27b）。这里原本是
@@ -989,6 +1170,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
               ...s.activeTurnBySession,
               [sessionKey]: {
                 ...turn,
+                durationMs,
                 streamingText: '',
                 streamingThinking: '',
                 thinkingCompleted: '',
@@ -996,15 +1178,18 @@ export function createMessageStore(deps: MessageStoreDeps) {
                 thinkingLastSealed: '',
               },
             },
+            turnBeganAtBySession: nextBeganAt,
           };
         }
 
         return {
+          turnBeganAtBySession: nextBeganAt,
           activeTurnBySession: {
             ...s.activeTurnBySession,
             [sessionKey]: {
               ...turn,
               finalized: true,
+              durationMs,
               content,
               thinkingContent,
               streamingText: '',
@@ -1024,13 +1209,21 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const turn = s.activeTurnBySession[sessionKey];
         const merged = mergeCanonicalMessageWithActiveTurn(canonical, turn);
         const nextTurns = { ...s.activeTurnBySession };
-        if (!turn?.runId || canonical.runId === turn.runId) delete nextTurns[sessionKey];
+        // 网关历史收编掉的那一轮同样要清**整轮起算点**：不清的话它会留到**下一轮**，
+        // 下一轮 `setProcessing(true)`（"只在缺失时打点"）就不会重新打点 ⇒ 用时被算成
+        // 从上一轮开始（2026-10-18 自审发现）。条件与删 turn 的条件保持一致。
+        const nextBeganAt = { ...s.turnBeganAtBySession };
+        if (!turn?.runId || canonical.runId === turn.runId) {
+          delete nextTurns[sessionKey];
+          delete nextBeganAt[sessionKey];
+        }
         return {
           messagesByTask: {
             ...s.messagesByTask,
             [taskId]: [...(s.messagesByTask[taskId] ?? []), merged],
           },
           activeTurnBySession: nextTurns,
+          turnBeganAtBySession: nextBeganAt,
         };
       }),
 
@@ -1055,10 +1248,14 @@ export function createMessageStore(deps: MessageStoreDeps) {
         delete nextTurns[sessionKey];
         const nextErrors = { ...s.errorBySession };
         delete nextErrors[sessionKey];
+        // 起算点同生命周期（自审 2026-10-18）：采纳走人，计时也得跟着走。
+        const nextBeganAt = { ...s.turnBeganAtBySession };
+        delete nextBeganAt[sessionKey];
         return {
           messagesByTask: { ...s.messagesByTask, [taskId]: [...(s.messagesByTask[taskId] ?? []), adopted] },
           activeTurnBySession: nextTurns,
           errorBySession: nextErrors,
+          turnBeganAtBySession: nextBeganAt,
         };
       });
       persistMessageUpdate(deps, adopted);
@@ -1073,14 +1270,22 @@ export function createMessageStore(deps: MessageStoreDeps) {
         // 孤立投影（activeTurn 已被 canonical 提升摘掉）也必须能被明确清理清掉。
         // 带上 `options.runId` 的陈旧异步清理：投影已属**别的 run**（新轮）⇒ 保新轮。
         const clearsExecution = Boolean(projection) && (!options?.runId || projection?.runId === options.runId);
-        if (!hasTurn && !clearsExecution) return s;
+        // 只有**整轮起算点也没有**才允许早退：一轮可能在"已 setProcessing(true) 但还没写
+        // 任何内容"时被清理，那种孤儿打点必须一起清掉（否则下一轮不会重新打点）。
+        if (!hasTurn && !clearsExecution && s.turnBeganAtBySession[sessionKey] === undefined) return s;
         const nextTurns = { ...s.activeTurnBySession };
         delete nextTurns[sessionKey];
-        if (!clearsExecution) return { activeTurnBySession: nextTurns };
+        const nextBeganAt = { ...s.turnBeganAtBySession };
+        delete nextBeganAt[sessionKey];
+        if (!clearsExecution) return { activeTurnBySession: nextTurns, turnBeganAtBySession: nextBeganAt };
         // V2：执行投影与活动轮次同生命周期（换会话/作废轮次即清该 scope 投影）。
         const nextExecutions = { ...s.executionBySession };
         delete nextExecutions[sessionKey];
-        return { activeTurnBySession: nextTurns, executionBySession: nextExecutions };
+        return {
+          activeTurnBySession: nextTurns,
+          executionBySession: nextExecutions,
+          turnBeganAtBySession: nextBeganAt,
+        };
       }),
 
     clearMessages: (taskId) =>
@@ -1092,6 +1297,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         const nextRetryable = { ...s.retryableErrorBySession };
         const nextAutoRetry = { ...s.autoRetryFailureBySession };
         const nextTurnStartedAt = { ...s.turnStartedAtBySession };
+        const nextTurnBeganAt = { ...s.turnBeganAtBySession };
         const nextRunRetry = { ...s.runRetryBySession };
         // V2：同 scope 清理执行投影（换账号/工作区即清该任务全部会话的投影）。
         const nextExecutions = { ...s.executionBySession };
@@ -1115,6 +1321,9 @@ export function createMessageStore(deps: MessageStoreDeps) {
         for (const key of Object.keys(nextTurnStartedAt)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextTurnStartedAt[key];
         }
+        for (const key of Object.keys(nextTurnBeganAt)) {
+          if (parseTaskIdFromSessionKey(key) === taskId) delete nextTurnBeganAt[key];
+        }
         for (const key of Object.keys(nextRunRetry)) {
           if (parseTaskIdFromSessionKey(key) === taskId) delete nextRunRetry[key];
         }
@@ -1130,6 +1339,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
           retryableErrorBySession: nextRetryable,
           autoRetryFailureBySession: nextAutoRetry,
           turnStartedAtBySession: nextTurnStartedAt,
+          turnBeganAtBySession: nextTurnBeganAt,
           runRetryBySession: nextRunRetry,
           executionBySession: nextExecutions,
         };
@@ -1154,6 +1364,12 @@ export function createMessageStore(deps: MessageStoreDeps) {
         // 「自动重试候选」同一条纪律、同一个理由（正是"有人已经重发过"的那道天然闸）：
         // 新一轮起来 ⇒ 这个候选的使命结束；定时器到点时现读它，读到没了就放弃自动重发。
         let nextAutoRetry = s.autoRetryFailureBySession;
+        // 整轮起算点：只在"从空闲变忙"打一次，**不随 setProcessing(false) 清**
+        //（清它的是定稿与清理 —— 见 finalizeStream / clearActiveTurn）。
+        let beganAt = s.turnBeganAtBySession;
+        if (processing && !wasProcessing && beganAt[sessionKey] === undefined) {
+          beganAt = { ...beganAt, [sessionKey]: Date.now() };
+        }
         if (processing) {
           if (!wasProcessing) {
             startedAt[sessionKey] = Date.now();
@@ -1173,6 +1389,7 @@ export function createMessageStore(deps: MessageStoreDeps) {
         return {
           processingBySession: next,
           turnStartedAtBySession: startedAt,
+          turnBeganAtBySession: beganAt,
           retryableErrorBySession: nextRetryable,
           autoRetryFailureBySession: nextAutoRetry,
         };

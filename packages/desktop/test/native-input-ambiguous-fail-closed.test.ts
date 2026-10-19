@@ -142,6 +142,44 @@ function writeCall(id: string, path: string, content: string, completedAt: strin
   };
 }
 
+/** ⭐ T23 源端半边：一条带**运行时执行记录**（`toolCallId` + 真实起止）的原生渲染 exec。 */
+type ExecCall = {
+  id: string;
+  name: 'exec';
+  status: 'done';
+  startedAt: string;
+  completedAt?: string;
+  args: { command: string };
+};
+
+function execCall(id: string, file: string, completedAt?: string): ExecCall {
+  const base = `node "C:/skills/deck-layout/scripts/generate.cjs" "${file}"`;
+  return {
+    id,
+    name: 'exec',
+    status: 'done',
+    startedAt: completedAt ?? '',
+    ...(completedAt ? { completedAt } : {}),
+    args: { command: base },
+  };
+}
+
+/**
+ * ⭐ 2026-10-17 统一审核 §T23②：`cd "<...>/deck-layout" && node scripts/generate.cjs "<file>"`
+ * —— 命令里**没有**连续的 `deck-layout/scripts/generate.cjs`，旧判据读不出目标（仍 fail-closed）。
+ */
+function execCallCd(id: string, file: string, completedAt?: string): ExecCall {
+  const base = `cd "C:/skills/deck-layout" && node scripts/generate.cjs "${file}"`;
+  return {
+    id,
+    name: 'exec',
+    status: 'done',
+    startedAt: completedAt ?? '',
+    ...(completedAt ? { completedAt } : {}),
+    args: { command: base },
+  };
+}
+
 /**
  * 两个合法候选：磁盘字节与 write 证据逐字一致，且 mtime **完全相同**（平局）。
  *
@@ -157,7 +195,7 @@ function seedTiedCandidates(): void {
   utimesSync(join(workspacePath, 'b.native-ppt.json'), stamp, stamp);
 }
 
-async function runAmbiguousTurn(tools: WriteCall[]): Promise<{ prompt: string }> {
+async function runAmbiguousTurn(tools: Array<WriteCall | ExecCall>): Promise<{ prompt: string }> {
   const { beginArtifactRun, registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
   registerDataHandlers();
   beginArtifactRun(workspacePath, taskId, sessionKey, {
@@ -260,6 +298,107 @@ describe('BUG-058④ · 无可信目标时 mtime 平局必须 fail-closed（真�
     expect(prompt).toContain('native-input-ambiguous');
     expect(prompt).toContain('a.native-ppt.json');
     expect(prompt).toContain('b.native-ppt.json');
+    expect(settlements().at(-1)?.status).toBe('failed');
+  });
+
+  /**
+   * ⭐ T23 源端半边（2026-10-16）：**平局有确定出口**。
+   *
+   * 两条 exec 指名**不同**目标时，产物侧半边（单条指名）无从裁决；这里钉的是
+   * **运行时执行记录透传**那条线：run 收尾把 agent `item` 帧的 `toolCallId`/`startedAt`/
+   * `endedAt`（落在工具调用上）压成 `execOrder` 交给 helper，取**最后真的跑过**那条 exec
+   * 的目标 ⇒ 不再报歧义、也不再 fail-closed。
+   */
+  it('⭐ 源端身份透传：两条 exec 指名不同目标 + 运行时执行顺序 ⇒ 平局有确定出口（不再歧义）', async () => {
+    const { prompt } = await runAmbiguousTurn([
+      writeCall('w1', 'a.native-ppt.json', 'A', '2026-10-14T00:00:02.000Z'),
+      writeCall('w2', 'b.native-ppt.json', 'B', '2026-10-14T00:00:03.000Z'),
+      execCall('x1', 'a.native-ppt.json', '2026-10-14T00:00:04.000Z'),
+      execCall('x2', 'b.native-ppt.json', '2026-10-14T00:00:05.000Z'),
+    ]);
+
+    // 具名歧义**不再**发给模型（运行时顺序把它裁掉了）。
+    expect(prompt).not.toContain('native-input-ambiguous');
+    // ⭐ 钉住**赢家**（2026-10-17 统一审核 §T23①）：只断言"不含 ambiguous"是**弱理由** ——
+    //    把裁决改成"取最早"（或取另一条 exec 的目标）它照样绿。真正的证据是**最终渲染用的是哪一份**：
+    //    生产出口 `renderNativePptFile(source, …)` 的第一个实参就是裁出来的源文件。运行时顺序里
+    //    x2（指名 b）最后跑 ⇒ 必须渲染 b，**绝不能**是 a。改裁决（取最早/取数组首）这里立刻变红。
+    expect(renderMock).toHaveBeenCalledTimes(1);
+    expect(renderMock.mock.calls[0]?.[0]).toBe('b.native-ppt.json');
+    expect(renderMock.mock.calls[0]?.[0]).not.toBe('a.native-ppt.json');
+  });
+
+  /**
+   * ⭐ 反例（钉"取最早也变红"）：把**数组序**与**运行时序**都摆成"最早那条 = a"的反面。
+   * 数组里 b 的 exec 在前、a 的 exec 在后；运行时刻 **a 最后跑** ⇒ 赢家必须是 a。
+   * 任何"取第一条 / 取最早"的实现都会给出 b ⇒ 本用例变红。（见交付报告：临时把 `index > latest.index`
+   * 改成 `index < latest.index` 会当场红，跑给我看过。）
+   */
+  it('⭐ 反例（取最早必红）：运行时 a 最后跑 ⇒ 渲染 a（不是 b，也不是数组序第一条）', async () => {
+    const { prompt } = await runAmbiguousTurn([
+      writeCall('w1', 'a.native-ppt.json', 'A', '2026-10-14T00:00:02.000Z'),
+      writeCall('w2', 'b.native-ppt.json', 'B', '2026-10-14T00:00:03.000Z'),
+      // 数组序：b 的 exec 在前，a 的 exec 在后。
+      execCall('x2', 'b.native-ppt.json', '2026-10-14T00:00:04.000Z'),
+      execCall('x1', 'a.native-ppt.json', '2026-10-14T00:00:05.000Z'),
+    ]);
+
+    expect(renderMock).toHaveBeenCalledTimes(1);
+    expect(renderMock.mock.calls[0]?.[0]).toBe('a.native-ppt.json');
+    expect(prompt).not.toContain('native-input-ambiguous');
+  });
+
+  /**
+   * ⭐ 2026-10-17 统一审核 §T23②（生产路径）：模型 `cd "<...>/deck-layout"` 再 `node
+   * scripts/generate.cjs` 时，命令里没有连续的 `deck-layout/scripts/generate.cjs` ⇒ 旧判据
+   * 读不出目标、仍 fail-closed。补上"cd + 相对调用"识别后，这条**本该有的出口**要用得上：
+   * 单条 cd 形态的 exec 指名 b ⇒ 渲染 b，不再歧义。
+   */
+  it('⭐ cd + 相对调用形态：单条这类 exec 指名 b ⇒ 渲染 b（旧判据读不出、仍 fail-closed）', async () => {
+    const { prompt } = await runAmbiguousTurn([
+      writeCall('w1', 'a.native-ppt.json', 'A', '2026-10-14T00:00:02.000Z'),
+      writeCall('w2', 'b.native-ppt.json', 'B', '2026-10-14T00:00:03.000Z'),
+      execCallCd('x1', 'b.native-ppt.json', '2026-10-14T00:00:04.000Z'),
+    ]);
+
+    expect(renderMock).toHaveBeenCalledTimes(1);
+    expect(renderMock.mock.calls[0]?.[0]).toBe('b.native-ppt.json');
+    expect(prompt).not.toContain('native-input-ambiguous');
+  });
+
+  it('⭐ 反例（不放松 fail-closed）：cd 的目录**不是** deck-layout ⇒ 读不出目标 ⇒ 仍具名歧义、不渲染', async () => {
+    const { prompt } = await runAmbiguousTurn([
+      writeCall('w1', 'a.native-ppt.json', 'A', '2026-10-14T00:00:02.000Z'),
+      writeCall('w2', 'b.native-ppt.json', 'B', '2026-10-14T00:00:03.000Z'),
+      {
+        id: 'x1',
+        name: 'exec',
+        status: 'done',
+        startedAt: '2026-10-14T00:00:04.000Z',
+        completedAt: '2026-10-14T00:00:04.000Z',
+        args: { command: 'cd "C:/skills/other-dir" && node scripts/generate.cjs "b.native-ppt.json"' },
+      },
+    ]);
+
+    expect(renderMock).not.toHaveBeenCalled();
+    expect(prompt).toContain('native-input-ambiguous');
+    expect(settlements().at(-1)?.status).toBe('failed');
+  });
+
+  /**
+   * ⭐ 反例（无身份必须不选）：同样的两条 exec，但**没有运行时记录**（`startedAt` 空、
+   * 无 `completedAt`）⇒ `execOrder` 为空 ⇒ 与从前一字不差地保持具名歧义、不渲染、不猜。
+   */
+  it('⭐ 反例：同一组 exec 但缺运行时时间戳 ⇒ 无执行顺序 ⇒ 仍 fail-closed 具名歧义', async () => {
+    const { prompt } = await runAmbiguousTurn([
+      writeCall('w1', 'a.native-ppt.json', 'A', '2026-10-14T00:00:02.000Z'),
+      writeCall('w2', 'b.native-ppt.json', 'B', '2026-10-14T00:00:03.000Z'),
+      execCall('x1', 'a.native-ppt.json'),
+      execCall('x2', 'b.native-ppt.json'),
+    ]);
+
+    expect(renderMock).not.toHaveBeenCalled();
+    expect(prompt).toContain('native-input-ambiguous');
     expect(settlements().at(-1)?.status).toBe('failed');
   });
 

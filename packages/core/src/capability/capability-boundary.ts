@@ -36,7 +36,7 @@ import { type CapabilityEntry } from './capability-registry.js';
  * 从"暂不支持"清单移除、改为可用能力行。修复现场矛盾：主罗盘被告知"视频不支持"
  * 而其它助手能看到视频技能照常生成（用户实测"有的助手可以、有的直接说不可以"）。
  */
-export const CAPABILITY_BOUNDARY_PROMPT_VERSION = 3;
+export const CAPABILITY_BOUNDARY_PROMPT_VERSION = 4;
 
 /** 用户点名了不存在的**模型**时，界面要说的话（i18n 键）。 */
 export const UNSUPPORTED_MODEL_COPY_KEY = 'chatInput.unsupportedModel';
@@ -108,6 +108,13 @@ export function buildCapabilityBoundaryPrompt(registry: readonly CapabilityEntry
   // 不写进注册表 —— 避免模型把 `videogen` 当成可调用的工具名去 tool-call（BUG-060 教训），
   // 此处只作能力陈述，具体规范由随包《视频生成》技能承载。
   capabilityLines.push('- 视频生成：按随包《视频生成》技能规范输出 videogen 围栏块（客户端执行生成，按输出秒数计费）');
+  // v4（2026-10-17 用户实机反馈 BUG-141）：生图**已接入**（relay /v1/imagegen + 随包技能）。
+  // 旧文案「图片生成（本轮未接入）」会让主罗盘在用户说"画一只猫"时直接拒答 ——
+  // 现场实录：模型按这一段回答"当前暂不支持直接生成图片"。同一条纪律也适用于视频：
+  // 只陈述能力，不把 `imagegen` 写成可调用的工具名（BUG-060 教训）。
+  capabilityLines.push(
+    '- 图片生成：按随包《图片生成》技能规范输出 imagegen 围栏块（客户端执行生成，按张数计费）',
+  );
 
   return [
     '## 能力边界（自动维护区块，请勿手改本区块；用户如需自定义请写在本区块之外）',
@@ -117,8 +124,8 @@ export function buildCapabilityBoundaryPrompt(registry: readonly CapabilityEntry
     ...(capabilityLines.length > 0 ? ['已实测可用的能力：', ...capabilityLines, ''] : []),
     '当前暂不支持（直接如实说明，不要调用工具试错、不要假装可以）：',
     `- 其它厂商模型：${UNAVAILABLE_MODEL_FAMILIES}`,
-    '- 图片生成（本轮未接入）',
-    '- 语音合成 / 声音克隆（Windows 桌面版未接入）',
+    // v4：图片生成已接入（见上），不再列在"暂不支持"里。
+    '- 声音克隆 / 声音复刻（未接入；朗读与语音输入是客户端按钮，不属于本条）',
     '',
     '用户请求以上内容时：明确回答「当前暂不支持该模型或能力」，并给出替代方案',
     '（例如改用上面列出的可用模型，或用现有的文档 / 文件能力完成任务），不要反复尝试。',

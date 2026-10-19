@@ -37,6 +37,7 @@ interface UseVoiceInputResult {
   isSupported: boolean;
   isListening: boolean;
   isTranscribing: boolean;
+  canRetry: boolean;
   isIntroOpen: boolean;
   interimTranscript: string;
   errorCode: VoiceErrorCode | null;
@@ -59,7 +60,9 @@ export function useVoiceInput({
   markIntroSeen,
   requestPermission,
   createSession,
-  pressHoldDelayMs = 220,
+  // 220ms → 400ms（2026-10-17）：220ms 落在"正常打字稍慢"的区间里，误触会**真发起一次计费请求**。
+  // 400ms 仍远低于用户有意长按的时长，同时把空格键的误判压到基本为零。
+  pressHoldDelayMs = 400,
   isSupported = true,
   onTextInserted,
   onRecordingStarted,
@@ -122,6 +125,7 @@ export function useVoiceInput({
   const {
     isListening,
     isTranscribing,
+    canRetry,
     interimTranscript,
     errorCode,
     beginListening,
@@ -237,6 +241,7 @@ export function useVoiceInput({
     isSupported,
     isListening,
     isTranscribing,
+    canRetry,
     isIntroOpen,
     interimTranscript,
     errorCode,

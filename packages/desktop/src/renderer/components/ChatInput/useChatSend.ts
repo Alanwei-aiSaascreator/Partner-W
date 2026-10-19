@@ -10,6 +10,8 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from '@/lib/toast';
+import { humanizeErrorKey } from '@/lib/humanize-error';
+import { buildKbContextBlock } from '@/lib/kb-context';
 import { evaluateCommercialSendAccess, type CommercialBlockReason } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { isModelSelectable, modelFamilyLabel, relayModelsFrom, selectableModelsFrom } from './model-families.js';
@@ -50,7 +52,7 @@ import {
   resolveImageInputSupport,
 } from '../../lib/attachment-actions';
 import { planVisionRouting, visionCatalogWithConfiguredInputs } from '../../lib/vision-routing';
-import { planDeckRouting } from '../../lib/deck-intent';
+import { looksLikeDeckRequest, planDeckRouting } from '../../lib/deck-intent';
 import { markModePolicyNotified, shouldNotifyModePolicyChange } from '../../lib/mode-policy-notice';
 import { userMdContentFromReadResult } from '../../lib/identity-persona';
 import { artifactFailureContext } from '../../lib/artifact-delivery-feedback';
@@ -78,6 +80,7 @@ import {
 } from './constants';
 import { getModelLabel, readAsBase64 } from './utils';
 import { resolveCommercialDefaultModel } from '@/lib/commercial-default-model';
+import { enqueueSend, removeQueuedSend, shiftSendForTask, type QueuedSend } from '@/lib/chat-queue';
 import { mergeTeamWorkflowContext } from '@/lib/team-workflow';
 import { normalizePosition } from '@/lib/team-roundtable';
 
@@ -246,6 +249,18 @@ export function useChatSend(opts: UseChatSendOpts) {
     return groups;
   }, [modelCatalog]);
 
+  /**
+   * ⭐ 2026-10-17 用户需求：「模型任务执行中，可以追加对话，不打断模型」。
+   *
+   * 在飞的一轮不能插话（DOCX-205 单飞合同），所以这里做**排队**：用户在这一轮跑着时
+   * 再发一条纯文字 ⇒ 存起来并明确告知"排队中"，等这一轮回到 idle 自动发出去。
+   * 排队项按任务绑定；切换任务不会把话发错地方。
+   */
+  const [queuedSends, setQueuedSends] = useState<QueuedSend[]>([]);
+  const cancelQueuedSend = useCallback((id: string) => {
+    setQueuedSends((queue) => removeQueuedSend(queue, id));
+  }, []);
+
   const responseTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const abortResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sendInFlightTaskIdsRef = useRef(new Set<string>());
@@ -315,6 +330,35 @@ export function useChatSend(opts: UseChatSendOpts) {
         liveState.processingBySession,
       );
       if (liveActivity !== 'idle') {
+        /*
+          2026-10-17：运行中再发一条 ⇒ **排队**，不打断这一轮（用户需求）。
+          只有"纯文字"能排队：附件/材料要在发送前落盘并按任务拼上下文，排到下一轮时
+          上下文可能已经变了；那种情况仍如实拦住（不静默丢弃）。
+          斜杠命令也不排队 —— 它要立刻生效（`/model x` 排到下一轮等于没执行）。
+        */
+        const queuedTextarea = textareaRef.current;
+        const queuedText = queuedTextarea?.value.trim() ?? '';
+        const hasMaterials =
+          pendingAttachments.length > 0 ||
+          selectedImportedFiles.length > 0 ||
+          selectedLocalFiles.length > 0 ||
+          selectedTasks.length > 0 ||
+          selectedArtifacts.length > 0 ||
+          selectedAgents.length > 0;
+        if (queuedText && !hasMaterials && !queuedText.startsWith('/')) {
+          setQueuedSends((queue) =>
+            enqueueSend(queue, { id: crypto.randomUUID(), taskId: activeTask.id, text: queuedText }),
+          );
+          if (queuedTextarea) {
+            queuedTextarea.value = '';
+            queuedTextarea.style.height = 'auto';
+            // 同步输入框自己的"可发送"状态（它靠 onInput 重算，程序性清空不会自动触发）。
+            queuedTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          onComposerCleared?.();
+          toast.info(t('chatInput.queuedToast'));
+          return;
+        }
         toast.error(t('chatInput.turnInFlight'));
         return;
       }
@@ -821,14 +865,23 @@ export function useChatSend(opts: UseChatSendOpts) {
           }
         }
 
-        const slashMatch = finalContent.trim().match(/^\/(model|think)\s+(.+)$/);
-        if (slashMatch && allAttachments.length === 0 && !allMessageAttachments?.length) {
+        const trimmedFinalContent = finalContent.trim();
+        const slashMatch = trimmedFinalContent.match(/^\/(model|think)\s+(.+)$/);
+        // ⭐ `/compact` 是**无参**命令，带参正则（`\s+(.+)`）永远匹配不上 ⇒ 从前它落回
+        //    普通消息被直接发给模型。这里单独识别，派发到与 `/model`、`/think` 同一条
+        //    `applySlashCommand` —— 复用既有压缩链（`runManualCompaction`），不新造第二套。
+        const isBareCompact = trimmedFinalContent === '/compact';
+        if ((slashMatch || isBareCompact) && allAttachments.length === 0 && !allMessageAttachments?.length) {
           if (isMeetingTaskBusy(task.id)) {
             toast.error(t('meeting.taskBusy'));
             return;
           }
-          const command = slashMatch[1] as 'model' | 'think';
-          const result = await composer.applySlashCommand(task.id, command, slashMatch[2].trim());
+          const command = isBareCompact ? 'compact' : (slashMatch![1] as 'model' | 'think');
+          const result = await composer.applySlashCommand(
+            task.id,
+            command,
+            isBareCompact ? undefined : slashMatch![2].trim(),
+          );
           if (!result.ok) {
             // 已知错误给中文，未知错误给网关原文 —— 只报「发送失败」等于没报。
             toast.error(describeGatewayError(result.error, t('errors.sendFailed')));
@@ -883,10 +936,46 @@ export function useChatSend(opts: UseChatSendOpts) {
           useMessageStore.getState().messagesByTask[task.id] ?? [],
           task.sessionKey,
         );
+
+        /**
+         * ⭐ 资料库按需召回（2026-10-19，闭环缺口 1）。
+         *
+         * 背景：资料库的检索结果过去**只到面板自己的搜索框**，模型完全看不到
+         *（设计文档 `docs/plan/2026-09-19-自主任务队列.md:218`）。
+         * 现在每次普通发送先用**用户这句话**查一次本机资料库，命中就取 top-3
+         * 拼进 `contextPrefix`（只发模型，不进气泡、不落库）。
+         *
+         * 三条纪律：
+         *   · **不做全量注入**（沿用 B2 拍板）：有命中才加，最多 3 条、1500 字；
+         *   · 超时 800ms 直接放弃 —— 资料库只是增强，绝不能拖住发送；
+         *   · 任何失败只记控制台，不拦消息、不弹错。
+         */
+        let kbContext = '';
+        // `typeof` 守卫：旧 preload / 测试桩没有 kbSearch 时安静跳过（不是每次发送都报错）。
+        if (content.length >= 2 && typeof window.clawwork.kbSearch === 'function') {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const kbResult = await Promise.race([
+              window.clawwork.kbSearch({ query: content, limit: 5 }),
+              new Promise<null>((resolve) => {
+                timer = setTimeout(() => resolve(null), 800);
+              }),
+            ]);
+            if (kbResult?.ok) {
+              kbContext = buildKbContextBlock(kbResult.outcome, { maxHits: 3, maxChars: 1500 });
+            }
+          } catch (error) {
+            console.warn('[kb] 资料库召回失败（不影响发送）:', error);
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        }
+
         contextPrefix = [
           buildResponseLanguageContext(i18n?.resolvedLanguage ?? i18n?.language ?? 'zh-CN'),
           contextPrefix,
           failureContext,
+          kbContext,
           attachmentDirective,
         ]
           .filter(Boolean)
@@ -964,32 +1053,18 @@ export function useChatSend(opts: UseChatSendOpts) {
           // **绕过视觉门禁** —— 文本模型收下后被 runtime 静默丢图（用户还以为发上去了）。
           // 图片判定必须覆盖这一路（它们随后经 `allAttachments` 真的进入这轮请求）。
           extraAttachments.some((att) => classifyAttachmentFile(att.fileName, att.mimeType) === 'image');
-        /**
-         * ⛔ R8-04（2026-10-15 独立终审 P1）：**带图片的 @ 岗位分发在这里早阻断**。
-         *
-         * 旧 ensemble（`ensemble=true`、无 teamId）里，主任务最终模型过完视觉门禁
-         * **不证明**岗位接收模型支持图像 —— core 的 mention 分支不钉 `presetModel`，
-         * 图片由各岗位自己的模型直接接收（composer 内逐目标校验本批不可靠）。
-         * 真实派发边界上的兜底拒绝在 core（带图片的 mention 整趟拒绝）；这里给用户
-         * 一条**可操作的产品文案**：移除图片后 @ 岗位，或去掉 @ 直接发图。
-         *
-         * 判据与 core 同形（复刻它的 room 前提，避免误伤无 room 的普通 @）：
-         *   图片 × （@ 岗位 或 @all）× ensemble × 无 teamId × room 存在。
-         * ⚠️ 不依赖主模型检查结果、**不切换任何模型**；早于视觉回读（getConfig）与
-         *    任何网关副作用，草稿与附件原样保留。
-         */
-        if (
+        const mentionRoom = task.ensemble && !task.teamId ? useRoomStore.getState().rooms[task.id] : undefined;
+        const hasImageRecipients =
           hasImageAttachment &&
-          (agentMentions.length > 0 || isMentionAll) &&
-          task.ensemble &&
-          !task.teamId &&
-          useRoomStore.getState().rooms[task.id]
-        ) {
-          toast.error(t('chatInput.visionMentionBlocked'));
-          return;
-        }
+          Boolean(
+            mentionRoom &&
+            (isMentionAll ||
+              agentMentions.some((agent) =>
+                mentionRoom.performers.some((performer) => performer.agentId === agent.agentId),
+              )),
+          );
         let visionCatalog: readonly ModelCatalogEntry[] = modelCatalog;
-        if (hasImageAttachment) {
+        if (hasImageAttachment && !hasImageRecipients) {
           // models.list可能来自动态目录，最终override仍以静态config为准；每次带图都回读。
           try {
             const snapshot = await window.clawwork.getConfig(task.gatewayId);
@@ -1010,12 +1085,24 @@ export function useChatSend(opts: UseChatSendOpts) {
         const finalModelEntry = routedModel
           ? visionCatalog.find((entry) => modelIdMatches(entry.id, routedModel))
           : undefined;
+        /*
+          2026-10-17 用户反馈（测试.doc）：PPT 任务会自动钉到 DeepSeek，之后让模型识图就
+          "不会了，让我自己去切换模型"。根因是 deck 路由的**任务粘性**把无关消息也钉回
+          DeepSeek，而视觉备选又被 `preservesDeckModel` 关掉 ⇒ 直接判"不能识别图片"。
+
+          收窄：只有**本轮自己确实在要 PPT**（用户这句话命中 deck 意图，含粘性下的裸"美化"）
+          时才让 deck 模型压住视觉备选；纯识图 / 普通聊天这一轮允许切到能看图的模型。
+          deck 链的稳定性（产品拍板）在真正的 deck 轮次里一字未动。
+        */
+        const deckIntentThisTurn =
+          sendMode !== 'custom' && looksLikeDeckRequest(content, task.deckRouted === true);
         const visionPlan = planVisionRouting({
-          hasImageAttachment,
+          hasImageAttachment: hasImageAttachment && !hasImageRecipients,
           imageInputSupport: resolveImageInputSupport(finalModelEntry),
           currentModelId: finalModelEntry?.id ?? effectiveModel,
           catalog: visionCatalog,
-          allowFallback: sendMode !== 'custom' && !preservesDeckModel,
+          allowFallback:
+            sendMode !== 'custom' && (!preservesDeckModel || (hasImageAttachment && !deckIntentThisTurn)),
         });
         if (visionPlan.kind === 'unavailable') {
           // 保留草稿与附件；不给不能识图的模型发送这轮请求。
@@ -1092,7 +1179,10 @@ export function useChatSend(opts: UseChatSendOpts) {
         }
       } catch (err) {
         setProcessing(task.id, false);
-        const msg = err instanceof Error ? err.message : String(err);
+        // 用户侧只看到一句中文；原始英文仍进控制台，排障不受影响（2026-10-17 反馈）。
+        const raw = err instanceof Error ? err.message : String(err);
+        console.error('[chat-send]', raw);
+        const msg = t(humanizeErrorKey(raw));
         addMessage(task.id, 'system', msg);
         toast.error(msg);
       }
@@ -1136,6 +1226,35 @@ export function useChatSend(opts: UseChatSendOpts) {
     updateTaskMetadata,
     materialByteBudget,
   ]);
+
+  /**
+   * 排队发送的放行：这一轮回到 idle 后，把本任务排队的第一条放进输入框并立刻发出去。
+   *
+   * 三条保守规则：
+   *   · 只有**当前任务**的排队项会被放行（别的任务的话不会串到这里）；
+   *   · 输入框里已经有用户正在打的字 ⇒ **不覆盖**，排队项留着等输入框空出来；
+   *   · 放行期间有重入闸（`flushingQueuedRef`），避免连点/重渲染造成双发。
+   */
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
+  const flushingQueuedRef = useRef(false);
+  useEffect(() => {
+    if (!activeTask || activity !== 'idle' || flushingQueuedRef.current) return;
+    const { next, rest } = shiftSendForTask(queuedSends, activeTask.id);
+    if (!next) return;
+    const ta = textareaRef.current;
+    if (!ta || ta.value.trim()) return;
+    flushingQueuedRef.current = true;
+    setQueuedSends(rest);
+    // 直接写 DOM 再调发送：handleSend 读的是 textarea.value（它自己也会在成功后清空）。
+    ta.value = next.text;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    void handleSendRef.current().finally(() => {
+      flushingQueuedRef.current = false;
+    });
+  }, [activity, activeTask, queuedSends, textareaRef]);
 
   /**
    * 选了一个**具体模型**（高级：指定模型）⇒ 模式落到 `custom`。
@@ -1274,6 +1393,9 @@ export function useChatSend(opts: UseChatSendOpts) {
     quotaDegrade,
     setQuotaDegrade,
     switchToFallbackModel,
+    // 运行中追加对话（2026-10-17）：排队项 + 取消。
+    queuedSends,
+    cancelQueuedSend,
     handleSend,
     handleModeQuickSend,
     handleModelQuickSend,

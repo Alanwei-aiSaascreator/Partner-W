@@ -6,6 +6,8 @@
     "notActivated": "未啟用",
     "offline": "離線，資料可能不是最新",
     "plan": "目前方案",
+    "quotaHeld": "預占",
+    "quotaHeldUnknown": "在途預占狀態暫不可用，暫時無法計算可用額度",
     "quotaPending": "額度待開通",
     "recharge": "儲值",
     "rechargeCardRequired": "請先在「啟用」中綁定一張授權卡，再發起儲值",
@@ -18,6 +20,7 @@
     "rechargeCustomInvalid": "請輸入 ¥{{min}} – ¥{{max}} 之間的金額",
     "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeFailed": "發起付款失敗，請重試",
+    "rechargeOrderFailed": "這筆付款失敗了，點數未入帳",
     "rechargePaid": "付款成功，積分已到帳",
     "rechargePickAmount": "選擇儲值金額",
     "rechargeRate": "儲值比例：1元=100積分",
@@ -103,7 +106,8 @@
     "image": "圖片",
     "link": "連結",
     "markdown": "Markdown 文件",
-    "text": "文字檔"
+    "text": "文字檔",
+    "video": "影片"
   },
   "assistantWorkspaces": {
     "compass": {
@@ -397,7 +401,36 @@
     "tab": "懸賞",
     "titlePlaceholder": "一句話說清要做什麼"
   },
+  "mascot": {
+    "talk": "和小盈說句話",
+    "hide": "收起小盈",
+    "line0": "我在這裡，隨時待命～",
+    "line1": "工作太多？我可以幫你切成小塊。",
+    "line2": "你先忙，進度我盯著。",
+    "desktop": "放到桌面"
+  },
   "chatInput": {
+    "queuedWhileRunning": "任務進行中：可繼續輸入，Enter 會排隊，本輪結束後自動發送",
+    "queuedToast": "已排隊：這一輪結束後自動發送",
+    "queuedChip": "排隊中：{{text}}",
+    "queuedCancel": "取消這條排隊訊息",
+    "workingLines": {
+      "0": "正在整理思緒…",
+      "1": "馬上就好，別急～",
+      "2": "大任務切成小塊，一塊塊來",
+      "3": "正在翻資料，稍等一下",
+      "4": "這一步比較費神，再等等我",
+      "5": "快了快了，深呼吸 emm ovo"
+    },
+    "videoQuality": {
+      "title": "影片畫質",
+      "standardShort": "標準",
+      "seedanceShort": "高品質",
+      "standard": "標準檔 · MiniMax H3",
+      "standardDesc": "便宜、出片快；不支援用圖片做首幀。按秒計費。",
+      "seedance": "高品質檔 · 豆包 Seedance 2.5",
+      "seedanceDesc": "更清晰，支援「圖生影片」：本輪附一張圖即作首幀。單價明顯更高，按秒計費。"
+    },
     "abortFailed": "無法停止生成",
     "addFiles": "新增檔案",
     "addFolder": "新增資料夾",
@@ -433,6 +466,7 @@
       "downloading-media": "正在下載圖片或影片…",
       "generating-document": "正在產生文件…",
       "generating-html": "正在產生網頁…",
+      "generating-image": "正在生成圖片…",
       "generating-presentation": "正在產生簡報…",
       "generating-video": "正在產生影片，可能需要幾分鐘…",
       "reconciling-artifacts": "正在檢查產生的檔案…",
@@ -448,6 +482,7 @@
         "downloading-media": "下載圖片或影片",
         "generating-document": "產生文件",
         "generating-html": "產生網頁",
+        "generating-image": "生成圖片",
         "generating-presentation": "產生簡報",
         "generating-video": "產生影片",
         "reconciling-artifacts": "檢查檔案",
@@ -482,6 +517,7 @@
     "materialTrimToLimit": "只保留前 {{count}} 個",
     "materialUnavailable": "材料 {{fileName}} 已移動或無法使用",
     "mode": {
+      "mediaModelsNote": "生圖、生影片由助手自動挑選對應模型（圖片、影片模型不在本清單）。直接說「畫一張圖」或「做段影片」即可。",
       "advanced": "進階：指定模型",
       "deep": "深度",
       "deepDesc": "深入思考，適合複雜分析與長文任務",
@@ -506,6 +542,7 @@
     "recognizeImage": "辨識圖片",
     "relayActivationLimitReachedDetail": "這張啟用卡的啟用名額已滿，請換一張卡，或聯絡客服處理。",
     "relayActivationRequiredDetail": "請到「設定 → 啟用授權」完成啟用。",
+    "relayApplyFailedDetail": "模型設定沒有在本機生效。可以再試一次；如果一直失敗，請把日誌寄給我們。",
     "relayEntitlementRejectedDetail": "這張啟用卡已經不能用了，請到「設定 → 啟用授權」重新啟用或換一張卡。",
     "relayOrganizationMismatchDetail": "啟用卡綁定的組織與目前帳號不一致，請到「設定 → 啟用授權」查看。",
     "relayRetryableDetail": "商業服務還沒準備好，可以再試一次。",
@@ -544,7 +581,6 @@
     "unsupportedCapability": "目前暫不支援該能力，可以改用工作台中已有的能力完成。",
     "unsupportedModel": "目前暫不支援該模型，請從工作台的模型清單中選擇可用模型。",
     "visionFallbackSwitched": "已為該圖片使用支援看圖的模型：{{model}}",
-    "visionMentionBlocked": "圖片暫不能傳送給團隊職位。請移除圖片後 @ 職位，或移除 @ 後直接傳送圖片。",
     "visionUnavailable": "目前無法確認此模型支援本次圖片。請切換至支援識圖的模型，或移除圖片後傳送；含圖 PPT 請先完成識圖。",
     "waiting": {
       "awaitingAnswer": "等待你的回答",
@@ -569,9 +605,14 @@
     }
   },
   "chatMessage": {
+    "turnDurationMinutesSeconds": "用時 {{minutes}} 分 {{seconds}} 秒",
+    "turnDurationSeconds": "用時 {{seconds}} 秒",
     "autoRetryNotice": "剛才沒有完成，正在自動重試一次（會再扣一次積分）。",
     "conductor": "協調者",
     "copied": "已複製",
+    "turnCost": "本輪消耗 {{credits}} 積分",
+    "liveTaskCost": "本次任務已消耗 {{credits}} 積分",
+    "taskCostTotal": "本次任務累計消耗 {{credits}} 積分",
     "copyCode": "複製程式碼",
     "copyMessage": "複製訊息",
     "docgenDelivered": "文件已生成",
@@ -584,9 +625,15 @@
     "htmlgenGenerating": "正在生成網頁…",
     "htmlgenPending": "網頁內容待處理",
     "htmlgenUnconfirmed": "網頁尚未確認已登記——請在右側「產物」核對最新檔案",
+    "imagegenDelivered": "圖片已生成",
+    "imagegenFailed": "圖片未生成成功",
+    "imagegenGenerating": "正在生成圖片…",
+    "imagegenPending": "圖片等待處理",
+    "imagegenUnconfirmed": "圖片交付尚未確認",
     "noVisibleAnswer": "助手沒有返回可顯示的內容，請重試。",
     "retryHint": "重發上一則訊息，會再扣一次積分",
     "thinking": {
+      "liveTailHint": "只顯示最近的內容，完整思考在結束後可查看",
       "title": "深度思考"
     },
     "toolCallSummary": "已執行 {{count}} 次工具呼叫",
@@ -1043,6 +1090,15 @@
     "workspace": "工作區讀寫"
   },
   "errors": {
+    "userStopped": "已停止這一輪",
+    "human": {
+      "not-connected": "本機服務還沒連上，請稍後重試。",
+      "timeout": "這次請求逾時了，請重試。",
+      "rate-limit": "請求太頻繁，稍等一下再試。",
+      "context-length": "對話太長了，開個新任務或清理上下文後再試。",
+      "insufficient-credits": "積分不足或額度不夠，儲值後再試。",
+      "send-failed": "傳送失敗，請重試。"
+    },
     "agentMissing": "這個助手不在本機，換一個助手再傳送。",
     "agentNotResponding": "代理無回應 — 可能無法使用或伺服器端設定有誤。請嘗試其他代理。",
     "boundaryTitle": "發生錯誤",
@@ -1070,6 +1126,27 @@
     "wrapper": {
       "providerRequestRejected": "服務暫時無法使用。可以換一個模型再試，或稍後重試。"
     }
+  },
+  "experts": {
+    "countLabel": "共 {{n}} 位專家",
+    "domain": {
+      "all": "全部",
+      "design": "設計",
+      "engineering": "工程",
+      "knowledge": "知識",
+      "news": "資訊"
+    },
+    "filterLabel": "按領域篩選",
+    "installHint": "每位專家都靠一份隨包技能幹活。還沒裝的話，先去「技能市集」把它裝上。",
+    "launch": "開個任務",
+    "launchPrompt": "請使用你已安裝的技能「{{name}}」來完成：",
+    "subtitle": "隨應用程式一起提供的專家。選一位，就用對應的方法開一個任務。",
+    "title": "專家庫",
+    "dialogTitle": "請「{{name}}」做什麼？",
+    "dialogDescription": "寫一句你要完成的事，點「開始」會直接開任務並發送。",
+    "dialogPlaceholder": "例如：給這個模組寫一份架構決策記錄",
+    "dialogStart": "開始",
+    "dialogCancel": "取消"
   },
   "export": {
     "exportedToFiles": "已匯出為檔案"
@@ -1258,6 +1335,50 @@
       "engineer": {},
       "legal": {}
     },
+    "industryBriefLabel": {
+      "focus": "行業重點：",
+      "method": "行業方法：",
+      "template": "交付結構："
+    },
+    "industryMethod": "行業方法",
+    "industryMethodBrief": {
+      "C": {
+        "focus": "產能、良率、交期與品質；數據要落在產線與批次。",
+        "method": "先界定規格與驗收標準，再做方案與排程；用產能與良率數據驗證。",
+        "template": "交付結構：製程與產能說明 → 方案與排程表 → 品質與驗收清單。"
+      },
+      "H": {
+        "focus": "客流、口碑、翻檯／住房率與成本；數字要落在門店與時段。",
+        "method": "先明確目標客群與時段，再設計流程與菜單；用翻檯率與評價驗證。",
+        "template": "交付結構：門店與客群說明 → 流程與菜單方案 → 服務與成本清單。"
+      },
+      "J": {
+        "focus": "合規、風險敞口、收益與可追溯；數字要有來源與口徑。",
+        "method": "先確定合規邊界與口徑，再做測算與情境；用風險指標驗證。",
+        "template": "交付結構：口徑與合規說明 → 測算與情境表 → 風險與覆核清單。"
+      },
+      "K": {
+        "focus": "區位、去化、成本與政策；結論要落到專案與週期。",
+        "method": "先框定範圍與政策前提，再做測算與比較；用去化與成本數據驗證。",
+        "template": "交付結構：專案與區位說明 → 測算與比較表 → 成本與風險清單。"
+      },
+      "L": {
+        "focus": "客戶獲取、履約品質與服務成本；結論要落到合約與排程。",
+        "method": "先弄清客戶需求與合約約束，再做方案與排程；用履約指標驗證。",
+        "template": "交付結構：客戶與合約說明 → 方案與排程表 → 履約與成本清單。"
+      },
+      "P": {
+        "focus": "學習目標、學情差異與成效證據；結論要落到課程與班級。",
+        "method": "先明確學習目標與起點，再設計教學與練習；用測評證據驗證。",
+        "template": "交付結構：學情與目標說明 → 課程與活動方案 → 測評與改進清單。"
+      },
+      "R": {
+        "focus": "受眾、內容節奏與傳播成效；結論要落到作品與檔期。",
+        "method": "先確定受眾與主題，再搭內容結構與節奏；用傳播數據驗證。",
+        "template": "交付結構：受眾與主題說明 → 內容與節奏方案 → 發布與成效清單。"
+      }
+    },
+    "industryMethodNone": "未選擇行業 —— 不會往助手裡額外寫入內容。",
     "needTag": "請至少選一個標籤",
     "nickname": "暱稱",
     "portraitHint": "Saved by the first-run guide. Read-only.",
@@ -1273,6 +1394,7 @@
     },
     "shuffle": "換一個標籤",
     "skill": {},
+    "skillsConfirmed": "首跑確認的能力：",
     "skillsHint": "這六類能力已隨包提供；在對話裡直接說需求，團隊會用它。",
     "subtitle": "你的畫像、工作身分、AI 團隊、常用技能與偏好都收在這一頁；儲存後會寫進每個助手的記憶。",
     "tag": {
@@ -1307,6 +1429,17 @@
       }
     },
     "title": "個人化中心"
+  },
+  "imagegen": {
+    "blockInvalid": "圖片請求不完整或規格不受支援，請調整後重試。",
+    "failedTitle": "圖片生成狀態",
+    "generationFailed": "圖片生成失敗，請調整描述後再生成。",
+    "imageInvalid": "圖片無法完整開啟或尺寸不符，未登記成果。",
+    "requestUnconfirmed": "圖片任務結果尚未確認，請沿用原操作編號恢復，避免重複生成。",
+    "resultUnconfirmed": "圖片結果或結算尚未確認，未登記成果。請沿用原操作編號恢復。",
+    "saveFailed": "圖片尚未儲存成功。請沿用原操作編號恢復。",
+    "unavailable": "圖片生成目前無法使用，未發起新的生成請求。",
+    "workspaceChanged": "工作區或登入狀態已變更，已停止儲存本次圖片。"
   },
   "kb": {
     "addDone": "已加入 {{count}} 份資料",
@@ -1359,6 +1492,17 @@
     "title": "資料庫"
   },
   "leftNav": {
+    "taskGroups": {
+      "header": "任務",
+      "today": "今天",
+      "yesterday": "昨天",
+      "week": "本週",
+      "earlier": "更早",
+      "all": "全部任務",
+      "empty": "還沒有任務",
+      "running": "執行中",
+      "untitled": "未命名任務"
+    },
     "addAssistant": "新增助手",
     "appSettings": "應用程式設定",
     "archivedChats": "已封存對話",
@@ -1376,17 +1520,21 @@
       "search": "搜尋任務",
       "skills": "技能市集",
       "square": "廣場",
-      "teams": "團隊"
+      "teams": "團隊",
+      "more": "更多",
+      "agentsSimple": "智能體"
     },
     "recentTasks": "最近任務",
     "searchTasks": "搜尋任務…",
     "updateAvailable": "有可用更新",
-    "usageOverview": "我的 AI 使用概覽"
+    "usageOverview": "我的 AI 使用概覽",
+    "profile": "個人資料",
+    "usageAndCredits": "用量與積分"
   },
   "login": {
     "agreement": "我已閱讀並同意{0}與{1}",
     "authenticatedForActivation": "已登入，請確認此帳號的使用資格。",
-    "betaPhoneNotice": "手機號僅用於內測帳號的註冊與通知；測試結束後 30 天內刪除，不用於其他用途。",
+    "betaPhoneNotice": "手機號僅用於帳號註冊、登入與必要的服務通知，不會用於其他用途。",
     "brandSubline": "登入後，說出你想完成的事，即可開始。",
     "changeAccount": "更換帳號",
     "changePhone": "更換手機號",
@@ -1422,7 +1570,6 @@
     "currentAssistant": "目前助手",
     "messageLayoutCentered": "切回置中訊息區域",
     "messageLayoutWide": "鋪開訊息區域",
-    "refreshUsage": "重新整理用量",
     "scrollToBottom": "捲動至底部",
     "toggleContextPanel": "切換上下文面板",
     "welcomeSubtitle": "直接描述你的任務，榮盈魔方會幫你選擇合適的助手和模型。",
@@ -1635,7 +1782,6 @@
       },
       "industry": "Your main industry",
       "introduction": "A brief introduction (optional)",
-      "model": "Actual model",
       "nicknameFallback": "My work profile",
       "personaSourceDefault": "Character source: default artwork",
       "personaSourceRule": "Character source: saved approved rule",
@@ -1752,9 +1898,7 @@
           "name": "Virtuoso"
         },
         "partial": "Some questions were skipped — this result is for reference only."
-      },
-      "usagePending": "Usage: pending verification",
-      "usageSettled": "Usage: settled against the actual receipt"
+      }
     },
     "goalAnalysisHint": "先記錄工作目標，不會自動呼叫 AI。進入工作台後可選擇助手發起任務。",
     "multipleHint": "可以多選",
@@ -1979,6 +2123,60 @@
     "contextReset": "工作階段上下文已重設"
   },
   "settings": {
+    "connectors": {
+      "nav": "連接器",
+      "title": "連接器",
+      "subtitle": "把電腦上的飛書接到這台電腦，出門也能給魔方派活。通道跑在本機網關裡，連接埠不對公網開放。",
+      "refresh": "重新整理狀態",
+      "feishu": {
+        "stateClosed": "通道已關閉",
+        "boundAgent": "接收飛書訊息的助手",
+        "bindNone": "不綁定",
+        "bindUnset": "尚未綁定",
+        "unboundWarning": "還沒有綁定助手，飛書訊息會無人處理。請選擇一個助手。",
+        "unbind": "取消綁定",
+        "disableChannel": "關閉通道",
+        "enableChannel": "開啟通道",
+        "bindChanged": "已更換綁定助手",
+        "bindCleared": "已取消綁定",
+        "actionFailed": "操作失敗，請重試",
+        "channelEnabled": "通道已開啟",
+        "channelDisabled": "通道已關閉（憑證保留，可隨時重新開啟）",
+        "dialogTitle": "掃碼接入飛書",
+        "dialogDescription": "用手機飛書掃描下方二維碼，確認後即完成接入。",
+        "userCode": "驗證碼：{{code}}",
+        "scanWaiting": "等待手機掃碼確認…",
+        "scanSuccess": "掃碼成功，飛書已接入",
+        "scanDenied": "掃碼被拒絕，請重試",
+        "scanExpired": "二維碼已過期，請重新獲取",
+        "scanFailed": "接入失敗，請重試",
+        "scanCancelled": "已取消掃碼",
+        "scanUnavailable": "飛書暫時不支援掃碼接入，請稍後再試",
+        "scanNetworkFailed": "網路連線失敗，請檢查網路後重試",
+        "cancelScan": "取消",
+        "retryScan": "重新獲取二維碼",
+        "done": "完成",
+        "title": "飛書",
+        "description": "用手機飛書私聊機器人派活，任務在這台電腦上執行。",
+        "stateIdle": "未接入",
+        "stateConfigured": "已設定",
+        "stateUnavailable": "執行環境不可用",
+        "appId": "已接入 · 應用程式 ID：{{appId}}",
+        "pluginMissing": "飛書插件隨包自帶，點「接入飛書」即可（無需下載、無需手動解壓）。",
+        "runtimeMissing": "本機執行環境還沒準備好，暫時無法接入。請先確認魔方可正常使用。",
+        "connect": "接入飛書",
+        "reconnect": "重新掃碼",
+        "scanHint": "掃碼完成後回到本頁點「重新整理狀態」。這裡只顯示本機設定，不代表線上狀態。",
+        "billingNote": "在飛書裡派的任務同樣消耗本機帳號的積分，計費與桌面端一致。",
+        "gatewayUnavailable": "本機 AI 服務還沒就緒，現在無法接入飛書。稍等片刻再試一次。",
+        "writeFailed": "飛書設定已寫入，但本機 AI 服務沒有接受。請重新掃碼一次。",
+        "invalidAgent": "選中的助手已不存在，請換一個助手再試。",
+        "pluginInstallFailed": "隨包飛書外掛沒能裝好。重新啟動應用後再試一次。",
+        "unsupportedAuth": "這個飛書帳號不支援目前的掃碼方式。請用飛書手機端重試，或聯絡客服。",
+        "unknownError": "飛書接入失敗。請重試；如果一直失敗，重新啟動應用再試。",
+        "ingressUnavailable": "飛書通道尚未就緒：外掛缺少可信安裝記錄，訊息收不到。請在這裡重新掃碼接入一次（會自動重裝外掛），或重新啟動應用後再試。"
+      }
+    },
     "about": "關於",
     "aboutDesc": "版本、更新與連結",
     "account": "帳戶",
@@ -2103,17 +2301,54 @@
     "memory": "记忆",
     "memoryAboutYou": "关于你",
     "memoryAboutYouHint": "你的习惯、你在意的事、你希望它们怎么配合你。保存后会同步给这块盘上的每一个助手。",
+    "memoryAboutYouScope": "這個框是助手每一輪都會讀到的「關於你」那一份，和下面的長期記憶是兩回事 —— 下面那份按帳號分開保存，換帳號看不到 —— 它會寫給這塊盤上的每個助手。",
+    "memoryAdd": "記住這條",
+    "memoryAdded": "已儲存，助手從下一輪起就會讀到。",
+    "memoryAddPlaceholder": "寫下一件你想讓助手長期記住的事。",
+    "memoryConfirmed": "已確認，助手從下一輪起就會讀到。",
     "memoryCounter": "{{used}} / {{max}}",
+    "memoryDelete": "刪除",
+    "memoryDeleted": "已刪除，助手不會再讀到它。",
+    "memoryDraftCancelEdit": "取消",
+    "memoryDraftConfirm": "確認",
+    "memoryDraftCount": "{{count}} 條待確認",
+    "memoryDraftEdit": "編輯",
+    "memoryDraftReject": "拒絕",
+    "memoryDrafts": "待確認的草案",
+    "memoryDraftSaveEdit": "按編輯後的確認",
+    "memoryDraftsEmpty": "助手還沒有提出要記住的事。",
+    "memoryDraftsHint": "由助手提出。你沒點確認之前，它不算記住。",
+    "memoryDraftSourceAssistant": "助手提出",
     "memoryDraftTrackNotYet": "⚠️ 这一版只有「你自己写」这一条路：助手还不会自己提草案让你确认。",
+    "memoryEntries": "長期記憶",
+    "memoryEntriesEmpty": "還沒有已確認的記憶。",
+    "memoryEntriesHint": "已確認的記憶會寫進助手每一輪都會讀到的提示詞裡。",
+    "memoryEntryCount": "已儲存 {{count}} 條",
+    "memoryErrorBlockFull": "長期記憶已滿 —— 請先刪掉一條再加。",
+    "memoryErrorControlCharacters": "這段文字裡有無法儲存的字元。",
+    "memoryErrorCountFull": "記憶條數已達上限 —— 請先刪掉一條再加。",
+    "memoryErrorDuplicate": "這條已經記過了。",
+    "memoryErrorEmpty": "請先寫點內容。",
+    "memoryErrorNotFound": "這條記憶已經不在了。",
+    "memoryErrorOverLimit": "太長了 —— 一條記憶最多 {{max}} 個字。",
+    "memoryErrorUnavailable": "記憶暫時無法使用。",
     "memoryIntro": "这块盘上的助手每轮都会读到下面这些。写在这里的事，它们都会记得。",
     "memoryNoAgents": "这块盘上还没有助手，先建一个再回来。",
     "memoryPlaceholder": "例如：我习惯先看结论再看过程；报价一律用含税价；不要在周末给我排任务。",
     "memoryReadFailed": "读不到这份记忆，可以重开这一页试试。",
+    "memoryRejected": "已拒絕，沒有儲存。",
+    "memoryRejectNote": "被拒絕的草案會留痕，助手不會為同一件事再問你一次。",
     "memorySave": "保存",
     "memorySaved": "已保存，{{count}} 个助手都会读到。",
     "memorySaveFailed": "保存失败，请再试一次。",
     "memorySavePartial": "有 {{failed}} / {{total}} 个助手没写成，请再存一次。",
+    "memoryStoredOnDisk": "記憶存在這塊盤上，並按帳號分開保存 —— 換一個帳號登入看不到它們。",
+    "memorySyncPartial": "已儲存，但有 {{failed}} 個助手沒有收到 —— 連網狀態下再開啟一次就會同步。",
+    "memorySyncPending": "改動已記下，但助手還沒收到 —— 本地服務未連線。連網後開啟這一頁或重開應用會自動同步。",
     "memoryTooLong": "超出上限了（最多 {{max}} 字）。超出的部分不会被保存，请先精简。",
+    "memoryUserMdTitle": "關於你",
+    "memoryUserMdObserved": "觀察日期：{{date}} ｜ 狀態：有效",
+    "memoryUserMdSampleDirective": "- 用中文簡潔地回報進度",
     "memoryUnsaved": "有未保存的改动",
     "mobile": "行動端",
     "mobileDesc": "在手機上存取 魔方羅盤",
@@ -2168,6 +2403,145 @@
     "quickLaunchUpdateFailed": "無法更新快速啟動設定",
     "readyToInstall": "重新啟動以更新",
     "remove": "移除",
+    "repair": {
+      "applySelected": "修復選取項目（{{count}}）",
+      "code": {
+        "apply": {
+          "already-current": "已經是最新狀態，沒有改動任何檔案。",
+          "already-gone": "已經不需要處理了（檔案已經處理過或不存在）。",
+          "backup-failed": "沒有執行：備份沒有成功，依規定不動原始檔案。",
+          "became-live": "已取消：這個鎖剛才變成使用中的鎖。",
+          "blocked-live-instance": "沒有執行：偵測到本機有魔方羅盤正在執行。",
+          "diagnostics-failed": "診斷包匯出失敗（磁碟可能寫不進去）。",
+          "diagnostics-written": "診斷包已匯出到：{{path}}",
+          "invalid-json": "沒有執行：設定檔不是合法的 JSON。",
+          "not-object": "沒有執行：設定檔格式無法辨識。",
+          "plugin-dir-missing": "沒有執行：目前磁碟的插件資料夾建立不出來（磁碟可能為唯讀）。",
+          "quarantined": "已隔離（原始檔案改名保留，副本已備份）。",
+          "read-failed": "沒有執行：設定檔讀不出來。",
+          "rebased": "已依目前磁碟重新對應插件路徑。",
+          "rename-failed": "沒有執行：隔離改名失敗（檔案可能被占用）。",
+          "rewritten": "已用目前版本重寫能力界線區塊。",
+          "skill-migrated": "技能安裝記錄已遷到目前的技能目錄。",
+          "unreadable-lock": "沒有執行：鎖定檔案還在，但讀不出來，可能正被別的程式占用。",
+          "unsafe-target-link": "沒有執行：這個位置不是一般檔案（可能是指向別處的連結），為了安全不動它。",
+          "write-failed": "沒有執行：寫回設定失敗。"
+        },
+        "capability": {
+          "block-corrupt": "能力界線區塊的起訖標記不配對（寫到一半），需要重寫：{{path}}",
+          "block-missing": "AGENTS.md 裡沒有能力界線區塊，助理可能被舊規則誤導：{{path}}",
+          "block-newer": "能力界線區塊比目前程式還新（v{{version}}），不會降級它：{{path}}",
+          "block-stale": "能力界線區塊停在舊版本（v{{version}} < v{{current}}）：{{path}}",
+          "no-downgrade": "區塊版本高於目前程式，保持原樣（避免把新版本寫成舊的）：{{path}}",
+          "no-file": "助理還沒有寫過 AGENTS.md，略過了區塊檢查。",
+          "no-workspace": "這份狀態裡沒有助理工作區，略過了區塊檢查：{{path}}",
+          "none": "沒有找到可以檢查的助理工作區。",
+          "ok": "能力界線區塊已是最新版本（v{{version}}）：{{path}}",
+          "rewrite-block": "用目前版本重寫能力界線區塊（只動區塊內部，升到 v{{version}}）：{{path}}"
+        },
+        "diagnostics": {
+          "export": "匯出診斷包到：{{path}}",
+          "failed": "診斷包匯出失敗（磁碟可能寫不進去）。",
+          "ready": "可以匯出一份診斷包發給客服（會移除密碼類內容，只打包到 {{path}}，不會自動上傳）",
+          "written": "診斷包已經匯出到：{{path}}"
+        },
+        "env": {
+          "data-root-not-writable": "執行資料目錄不可寫入，修復動作會失敗：{{path}}",
+          "data-root-writable": "執行資料目錄可以寫入：{{path}}",
+          "guide-antivirus-quarantine": "很可能是防毒軟體把它隔離了。請在防毒軟體的隔離區裡把它還原並加入白名單，然後重新開啟本程式。詳見《使用說明》的「首次啟動被防毒軟體阻擋」一節。",
+          "guide-never-started": "這份程式可能還沒成功啟動過一次。請先正常開啟一次本程式，讓它準備好執行環境，再回來做修復。",
+          "guide-readonly-drive": "磁碟可能處於唯讀狀態（寫入保護開關，或被系統改了權限）。請檢查 USB 隨身碟的寫入保護開關，或換一個 USB 連接埠重試。",
+          "guide-workspace": "工作區在那塊磁碟上找不到或寫不進去。請確認磁碟沒有被寫入保護，或換一個 USB 連接埠重試。",
+          "mode-installed": "目前是安裝版執行，執行資料在：{{root}}",
+          "mode-portable": "目前是從磁碟執行，執行資料在：{{root}}",
+          "runtime-deployed": "本機執行環境已部署：{{path}}",
+          "runtime-media-dev-skip": "目前不是打包執行，略過隨程式附帶的執行環境檢查。",
+          "runtime-media-missing": "找不到隨程式附帶的執行環境，本機服務起不來。",
+          "runtime-media-present": "隨程式附帶的執行環境存在：{{path}}",
+          "runtime-not-deployed": "本機還沒有部署執行環境（第一次開啟時會自動準備，需要幾分鐘）。",
+          "state-found": "找到 {{count}} 份狀態資料夾，例如：{{path}}",
+          "state-missing": "沒有找到狀態資料夾：{{path}}",
+          "workspace-ok": "使用者資料工作區可用：{{path}}",
+          "workspace-unusable": "使用者資料工作區無法使用（不存在或不可寫入）：{{path}}"
+        },
+        "live": {
+          "gateway-lock": "發現一個正在使用中的 Gateway 鎖，表示本機服務還在執行：{{path}}。請先完全結束魔方羅盤，再回來點「重新全檢」。",
+          "instance-owner": "這台電腦上正開著一份魔方羅盤（行程 PID {{pid}}），所有修復動作都不會執行。請先完全結束它，再回來點「重新全檢」。",
+          "port-listener": "本機連接埠上有一個行程在監聽（PID {{pid}}），可能是本機服務還在執行。請先完全結束魔方羅盤，再回來點「重新全檢」。"
+        },
+        "lock": {
+          "corrupt": {
+            "bad-pid": "鎖定檔案裡沒有可用的行程編號：{{path}}",
+            "not-json": "鎖定檔案內容不是合法的 JSON（多半是寫到一半斷電）：{{path}}",
+            "not-object": "鎖定檔案內容不是一個物件：{{path}}",
+            "unreadable": "鎖定檔案讀不出來（可能被占用）：{{path}}"
+          },
+          "live": {
+            "start-time-match": "這是正在執行的 Gateway 留下的鎖，不會動它：{{path}}",
+            "unverifiable": "無法確認這個鎖是不是失效的鎖（拿不到行程啟動時間），為求保守不動它：{{path}}"
+          },
+          "no-state": "沒有找到狀態資料夾，略過了鎖定檢查。",
+          "none": "本機 Gateway 鎖定檔案正常（檢查了 {{count}} 個狀態資料夾）。",
+          "quarantine": "把這個損壞的鎖改名隔離：{{path}}",
+          "stale": {
+            "pid-gone": "鎖裡的行程（PID {{pid}}）已經結束了，屬於失效的鎖：{{path}}",
+            "pid-reused": "鎖裡的行程編號（PID {{pid}}）已經被系統回收給別的程式，屬於失效的鎖：{{path}}"
+          }
+        },
+        "plugin": {
+          "foreign-dead-path": "設定裡有一條指向別的程式的失效路徑，我們不會替你刪除：{{path}}",
+          "no-state": "沒有找到狀態資料夾，略過了插件路徑檢查。",
+          "none": "插件載入路徑都還在。",
+          "own-dead-path": "設定裡指著一個已經不存在的應用插件資料夾（通常是換了磁碟機代號）：{{path}}",
+          "rebase": "依目前磁碟重新對應插件路徑（改 {{path}}，涉及 {{count}} 條失效路徑）"
+        },
+        "skill": {
+          "ambiguous": "發現多個狀態目錄，無法確定哪一個是目前使用的，記錄保持不變。",
+          "matched": "技能安裝記錄與目前技能目錄一致。",
+          "migrate": "把技能安裝記錄遷到目前的技能目錄（{{count}} 項，遷到：{{path}}）",
+          "no-access": "目前模式下讀不到技能記錄，檢查已略過。",
+          "no-config": "讀不到設定檔，技能記錄檢查已略過。",
+          "no-state": "沒有找到狀態目錄，技能記錄檢查已略過。",
+          "none": "還沒有技能安裝記錄，無需處理。",
+          "orphan": "技能安裝記錄還指向 {{count}} 個已不存在的技能目錄（通常發生在換閘道或換碟之後）。"
+        }
+      },
+      "item": {
+        "capability-block": "能力界線提示詞",
+        "diagnostics-pack": "診斷包",
+        "environment": "執行環境自我檢查",
+        "gateway-locks": "啟動鎖（損壞的鎖／寫到一半的鎖）",
+        "plugin-paths": "插件載入路徑",
+        "skill-records": "技能安裝記錄"
+      },
+      "nav": "診斷與修復",
+      "needsYou": "需要你處理",
+      "noChanges": "這一輪沒有改動任何檔案。",
+      "notApplicable": "這裡用不到",
+      "nothingDesc": "全檢沒有發現問題。如果還是用不了，可以匯出一份診斷包發給客服。",
+      "nothingTitle": "沒有需要修的東西",
+      "offlineNote": "整個過程不連網：修好之前不會連線伺服器，診斷包也只存在本機、需要你自己寄出去。",
+      "openBackup": "開啟備份資料夾（{{path}}）",
+      "rescan": "重新全檢",
+      "restore": {
+        "blocked-live-instance": "魔方羅盤正在執行，未做任何還原。請完全結束後再試。",
+        "nothing": "這裡沒有可還原的備份。",
+        "partial": "{{total}} 個檔案中有 {{count}} 個放回原處，其餘沒能還原。",
+        "restored": "已把 {{count}} 個檔案放回原處。"
+      },
+      "restoreBackup": "復原這一輪（把備份放回去）",
+      "resultTitle": "剛才做了什麼",
+      "scanFailed": "全檢沒有完成：{{error}}",
+      "scannedRoots": "已檢查 {{count}} 個位置",
+      "scanning": "正在全檢…",
+      "severity": {
+        "attention": "可修復",
+        "blocked": "無法檢查",
+        "broken": "需要處理",
+        "ok": "正常"
+      },
+      "title": "診斷與修復"
+    },
     "rightPanelShortcut": "切換上下文面板",
     "selectGateway": "選擇 Gateway",
     "sendCmdEnter": "{{mod}} Enter",
@@ -2263,6 +2637,11 @@
     "version": "版本",
     "webSearch": "允许助手联网搜索",
     "webSearchHint": "開著時，助手需要即時資料會自動聯網搜尋，並標註資訊來源——每次搜尋單獨計費（約 6 積分）。qwen-plus、qwen-turbo 和 qwen3.7-flash 還支援模型內建聯網：網頁內容會一併計入輸入，費用大約是同長度提問的百倍。改完會自動重新準備一次。",
+    "showMascot": "顯示小盈",
+    "showMascotHint": "對話區右下角的吉祥物；關閉後可以隨時在這裡重新開啟",
+    "desktopMascot": "桌面小盈",
+    "desktopMascotHint": "在桌面上放一個可以拖動的小盈，幫你看和整理桌面",
+    "desktopMascotOpen": "打開",
     "webSearchSection": "联网搜索",
     "workspace": "工作區",
     "workspaceChange": "變更",
@@ -2303,7 +2682,6 @@
   },
   "skillMarket": {
     "actionFailed": "操作失敗：{{reason}}",
-    "count": "共 {{total}} 個 · 已裝 {{installed}} 個",
     "empty": "這個版本沒有隨附的技能。",
     "gatewayRequired": "還沒連上閘道；安裝技能需要先連上。連上後回來重新整理即可。",
     "install": "裝上",
@@ -2320,11 +2698,25 @@
     "repairConfirmTitle": "修復「{{name}}」？",
     "repaired": "已修復「{{name}}」",
     "repairedBackup": "修復前的備份在：{{path}}",
-    "subtitle": "這些是隨程式一起提供的技能，裝上之後所有助手都能用。",
     "verdictBlocked": "這個助手暫時用不了它",
     "verdictChecking": "正在確認助手能不能用…",
     "verdictUnknown": "沒問出來：暫時不知道助手那邊能不能用",
-    "verdictUsable": "這個助手現在已經能用它"
+    "verdictUsable": "這個助手現在已經能用它",
+    "tabSkills": "技能",
+    "tabAgents": "智能體",
+    "tabPrompts": "提示詞",
+    "promptsSoon": "提示詞庫即將開放",
+    "searchPlaceholder": "搜尋技能",
+    "allInstalled": "{{n}} 個技能 · 已全部預裝",
+    "tileCount": "{{n}} 個技能",
+    "category": {
+      "content": "內容創作",
+      "commerce": "電商運營",
+      "research": "學習研究",
+      "office": "辦公提效",
+      "other": "其他"
+    },
+    "noMatch": "沒有符合的技能"
   },
   "slash": {
     "argOptions": "/{{command}} 的選項"
@@ -2347,6 +2739,18 @@
     "tooltip": "指令"
   },
   "slidegen": {
+    "detail": {
+      "footerOverlap": "頁腳 #{{footer}} 侵入了正文區域 #{{body}}。給頁腳上方留出空間，或把正文區域上移；文字一個都別刪。",
+      "lowContrast": "{{who}} 與實測純色底的對比度只有 {{ratio}}:1，低於目標 {{minimum}}:1。改文字顏色或背景顏色。",
+      "occluded": "{{who}} 有部分被 {{occludedBy}} 蓋住了。把它的位置或蓋住它的那塊挪開。",
+      "outOfBounds": "{{who}} 衝出畫布：{{sides}}。這一塊匯出後在投影片外面，放映時看不到。",
+      "side": {
+        "bottom": "下邊超出 {{px}}px",
+        "left": "左邊超出 {{px}}px",
+        "right": "右邊超出 {{px}}px",
+        "top": "上邊超出 {{px}}px"
+      }
+    },
     "fail": {
       "blockEmpty": "助手給的版面是空的。",
       "blockUnclosed": "這次的內容太長、被截斷了，所以沒能生成。可以讓助手分成兩份、分兩次來做。",
@@ -2364,6 +2768,12 @@
       "unparsable": "版面寫法有語法錯誤，讀不出來。"
     },
     "failedTitle": "簡報沒能生成",
+    "kind": {
+      "block": "色塊",
+      "image": "圖片",
+      "text": "文字"
+    },
+    "listJoiner": "、",
     "unconfirmedTitle": "簡報未能自動確認",
     "warn": {
       "footerOverlap": "第 {{page}} 頁的頁腳侵入了正文卡片區域",
@@ -2372,7 +2782,11 @@
       "occluded": "第 {{page}} 頁有文字被別的元件蓋住了",
       "outOfBounds": "第 {{page}} 頁有內容超出畫面，放映時看不到"
     },
-    "warnedTitle": "簡報已生成，但有幾處要調整"
+    "warnedTitle": "簡報已生成，但有幾處要調整",
+    "who": {
+      "plain": "{{kind}}（#{{id}}）",
+      "withText": "{{kind}}「{{snippet}}」（#{{id}}）"
+    }
   },
   "startupReadiness": {
     "aiCatalogFailed": "沒能取到模型列表",
@@ -2404,6 +2818,7 @@
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "這張啟用卡的啟用名額已滿，請換一張卡或聯絡客服",
     "relayActivationRequired": "這台裝置還沒有可用的啟用，請先完成啟用",
+    "relayApplyFailed": "本地服務沒有接受模型設定。可以再試一次；但如果一直失敗，這是需要排查的問題，等待不會好。請把日誌寄給我們。",
     "relayEntitlementRejected": "這張啟用卡已經不能用了，請重新啟用或換一張卡",
     "relayOrganizationMismatch": "這張啟用卡屬於另一個組織，目前帳號無權使用",
     "relayRetryable": "商業服務還沒準備好，你可以再試一次",
@@ -2474,6 +2889,8 @@
       "compass": "主羅盤",
       "emptyHint": "建立團隊後，這裡會依五個崗位顯示真實的協作狀態。",
       "latest": "最近會議：{{question}}",
+      "participants": "本輪實際參與",
+      "positions": "五個崗位",
       "status": {
         "attention": "需要處理",
         "disabled": "未啟用",
@@ -2630,8 +3047,6 @@
     "degradeTitle": "額度即將用盡",
     "quotaTotal": "總額度",
     "quotaUsed": "已用",
-    "rateLimits": "速率限制",
-    "resetsAt": "{{time}} 重設",
     "unknownDesc": "網路似乎不穩，沒能讀到你的額度。這不代表額度用盡 —— 稍後重試即可。",
     "unknownTitle": "暫時沒能確認你的額度",
     "unlicensedDesc": "啟用或兌換卡密後即可繼續使用。",
@@ -2640,6 +3055,7 @@
   },
   "videogen": {
     "aspectInvalid": "畫面比例「{{value}}」不支援（可用：{{allowed}}），這一份沒有產生。請助手改一下。",
+    "billingPending": "影片生成未成功，費用狀態尚待核實。請保留任務記錄，不要重複生成。",
     "blockInvalid": "回覆裡那個要產生影片的區塊（videogen）沒有通過檢查，沒有發起產生。請助手照技能裡的格式重寫一次。",
     "contentRejected": "影片內容被安全檢查攔下了（這類攔截不收費）。請助手換一種畫面描述再試。",
     "createFailedNetwork": "網路暫時連不上影片服務，這一份沒有產生。稍後請助手重試。",
@@ -2656,14 +3072,16 @@
     "saveFailed": "影片檔案沒能存到本機。請助手重新產生一次。",
     "taskFailed": "影片產生失敗。請助手再試一次。",
     "timeout": "等太久了，已停止等待（這次沒有計費）。可以請助手重新產生一次。",
-    "unsupportedField": "影片請求裡帶了目前版本不支援的欄位「{{field}}」（暫不支援參考圖／首尾幀）。請助手去掉它再試一次。"
+    "unsupportedField": "影片請求裡帶了目前版本不支援的欄位「{{field}}」（暫不支援參考圖／首尾幀）。請助手去掉它再試一次。",
+    "imageRequiresSeedance": "這支影片要用你附的圖，只有「高品質」檔支援圖生影片。請把輸入框的「影片畫質」切到高品質（Seedance 2.5）後再送一次；如果只想做純文字影片，也可以把圖去掉再送。本次沒有生成，也沒有扣費。"
   },
   "voiceInput": {
     "answerTooLong": "回答超過6000字元，請先讓助手精簡後再朗讀。",
+    "discardRecording": "放棄本次錄音恢復",
     "introConfirm": "了解",
     "introDescription": "點擊麥克風或按住 Space 說話，最長60秒",
     "introSkip": "暫時不用",
-    "introStepBeta": "語音經雲端辨識，按顯示單價收費",
+    "introStepBeta": "語音經雲端辨識，按秒計費，費用從積分扣除。",
     "introStepHold": "轉錄文字會插入輸入框，不會自動傳送。",
     "introStepInsert": "短按空白鍵仍會輸入普通空格。",
     "introTitle": "語音輸入",
@@ -2675,19 +3093,38 @@
     "playing": "正在播放…",
     "preparingSpeech": "正在準備播報…",
     "readAnswer": "朗讀最新回答",
-    "readAnswerFee": "朗讀最新回答（預計 {{fee}} 積分）",
     "recognitionFailed": "語音辨識失敗",
-    "serviceFeeAsr": "語音辨識 {{fee}} 積分/分鐘",
-    "serviceFeeTts": "朗讀 {{fee}} 積分/100字元",
+    "recoveryPending": "本次語音結果尚未確認；點擊重試會沿用原請求。",
+    "retryRecognition": "重試語音辨識",
     "stop": "停止語音",
     "tooltip": "語音輸入",
     "transcribing": "轉錄中…",
     "unsupported": "語音輸入暫時無法使用，請繼續使用文字輸入。",
-    "unsupportedTooltip": "此應用程式暫時無法使用語音輸入。"
+    "unsupportedTooltip": "語音服務目前無法使用，請檢查登入狀態或網路後再試。"
   },
   "workspaceNotice": {
     "dismiss": "知道了",
     "openSettings": "開啟工作區設定",
     "recreated": "原工作區目錄不存在（可能已被移動或刪除），已在本機新建空白工作區。如需找回舊資料：請檢查原目錄，或切換工作區。"
+  },
+  "pet": {
+    "title": "小盈 · 桌面夥伴",
+    "peek": "看看桌面",
+    "organize": "整理桌面",
+    "trash": "刪除檔案",
+    "close": "收起小盈",
+    "desktopClean": "桌面很乾淨，沒有要整理的檔案～",
+    "desktopSummary": "桌面上有 {{count}} 個檔案：{{detail}}",
+    "peekFailed": "看不到桌面（可能沒有權限）",
+    "organized": "整理好了，吃掉 {{count}} 個亂檔案～",
+    "organizeFailed": "整理失敗了，再試一次？",
+    "trashed": "已把 {{count}} 個檔案放進回收站",
+    "trashFailed": "刪除失敗，檔案沒動",
+    "cancelled": "好的，不動了",
+    "line3": "嗝～吃飽了",
+    "line4": "點我幹嘛呀～",
+    "menuGreet": "打個招呼",
+    "menu": "更多",
+    "menuMove": "換個位置"
   }
 }

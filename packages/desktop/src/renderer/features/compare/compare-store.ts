@@ -83,7 +83,7 @@ export interface CompareStoreDeps {
     updateTaskMetadata: (id: string, meta: { sessionKey?: string }) => void;
   };
   translate: (key: string, opts?: Record<string, unknown>) => string;
-  onToast?: (type: 'error' | 'warning' | 'success', title: string, opts?: { description?: string }) => void;
+  onToast?: (type: 'error' | 'warning' | 'success' | 'info', title: string, opts?: { description?: string }) => void;
   /** 便于测试注入；生产不传。 */
   now?: () => number;
   newId?: () => string;

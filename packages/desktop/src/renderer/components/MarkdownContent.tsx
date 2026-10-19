@@ -11,7 +11,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Check, Copy, Save, Loader2, Presentation, Globe, Video } from 'lucide-react';
+import { Check, Copy, Save, Loader2, Presentation, Globe, Video, ImageIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -19,7 +19,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { pendingFencedCodeStarts } from '@/lib/markdown-code-pending';
 import { useArtifactDeliveryProof, type RequestCardState } from '@/lib/artifact-delivery-proof';
 
-const REQUEST_CARD_ICON = { docgen: Presentation, htmlgen: Globe, videogen: Video } as const;
+const REQUEST_CARD_ICON = { docgen: Presentation, htmlgen: Globe, videogen: Video, imagegen: ImageIcon } as const;
 
 const REQUEST_CARD_STATE_KEY: Record<RequestCardState, string> = {
   pending: 'Pending',
@@ -45,7 +45,7 @@ function RequestArtifactCard({
   taskId,
   messageId,
 }: {
-  kind: 'docgen' | 'htmlgen' | 'videogen';
+  kind: 'docgen' | 'htmlgen' | 'videogen' | 'imagegen';
   taskId?: string;
   messageId?: string;
 }) {
@@ -53,6 +53,23 @@ function RequestArtifactCard({
   const [openFailed, setOpenFailed] = useState(false);
   const { state, artifactId } = useArtifactDeliveryProof(taskId, messageId, kind);
   const Icon = REQUEST_CARD_ICON[kind];
+  const statusCopy =
+    kind === 'imagegen'
+      ? (() => {
+          switch (state) {
+            case 'pending':
+              return t('chatMessage.imagegenPending');
+            case 'generating':
+              return t('chatMessage.imagegenGenerating');
+            case 'failed':
+              return t('chatMessage.imagegenFailed');
+            case 'unconfirmed':
+              return t('chatMessage.imagegenUnconfirmed');
+            case 'delivered':
+              return t('chatMessage.imagegenDelivered');
+          }
+        })()
+      : t(`chatMessage.${kind}${REQUEST_CARD_STATE_KEY[state]}`);
   const open = async (): Promise<void> => {
     if (!artifactId || !taskId) return;
     try {
@@ -70,7 +87,7 @@ function RequestArtifactCard({
       className="my-1.5 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-[var(--text-secondary)]"
     >
       <Icon size={14} className="shrink-0 text-[var(--accent)]" />
-      <span className="type-support">{t(`chatMessage.${kind}${REQUEST_CARD_STATE_KEY[state]}`)}</span>
+      <span className="type-support">{statusCopy}</span>
       {state === 'delivered' && artifactId && (
         <button
           type="button"
@@ -345,6 +362,8 @@ function MarkdownContent({
               return { kind: 'docgen' as const };
             case 'htmlgen':
               return { kind: 'htmlgen' as const };
+            case 'imagegen':
+              return { kind: 'imagegen' as const };
             case 'videogen':
               return { kind: 'videogen' as const };
             default:

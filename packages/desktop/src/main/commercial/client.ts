@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, safeStorage } from 'electron';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -51,14 +51,49 @@ interface SecureStorage {
   removeItem: (key: string) => void;
 }
 
-function createStorage(): SecureStorage {
+/**
+ * 会话文件是 `enc:` 密文、但**当前作用域解不开**时，先**改名留档**
+ * （`commercial-session.json.superseded-<ts>`），再让调用方覆盖/删除。
+ *
+ * 为什么（Owner C / T16 硬红线「解不开不得无备份地删除凭据」）：
+ * DPAPI 是**按 Windows 用户**加密的 —— 换 Windows 用户 / 换机器后当前用户解不开，
+ * 但用户切回原来那个账户时那份密文**本来解得开**。旧实现直接覆盖 / unlink，
+ * 等于把"切回去还能用"的唯一凭据毁掉，而且没有现场可查。
+ *
+ * ⚠️ 只对"真的解不开"的密文留档：明文（加固前的老文件）与解得开的会话都不留
+ *    （那是用户自己的东西，登出/刷新不该塞一堆备份）。
+ * ⚠️ 绝不抛：留档失败只意味着少一条线索，不能把登出/登录弄失败。
+ */
+function preserveUnreadableSession(filePath: string): string | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    const raw = readFileSync(filePath, 'utf8');
+    if (!raw.startsWith(ENCRYPTED_PREFIX)) return null; // 明文：不是"解不开"
+    if (readSecure(filePath) !== null) return null; // 解得开：用户自己的会话，不留档
+    const target = `${filePath}.superseded-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    renameSync(filePath, target);
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 交给 supabase-js `auth.storage` 的**本地存储适配器**（唯一的会话落盘点）。
+ *
+ * ⚠️ 命名导出是**刻意的**：它就是"会话怎么落盘"的唯一入口，用例直接驱动它
+ *    （走 `client.auth.setSession()` 需要网络，而本机打包默认 supabaseUrl 指向生产）。
+ */
+export function createCommercialSessionStorage(): SecureStorage {
   return {
     getItem: () => readSecure(sessionFilePath()),
     setItem: (_key, value) => {
+      preserveUnreadableSession(sessionFilePath());
       writeSecure(sessionFilePath(), value);
     },
     removeItem: () => {
       const filePath = sessionFilePath();
+      preserveUnreadableSession(filePath);
       if (existsSync(filePath)) unlinkSync(filePath);
     },
   };
@@ -84,7 +119,7 @@ export function getCommercialClient(): SupabaseClient | null {
     //    健康路径零行为改变：正常返回的请求走的是同一条路。
     global: { fetch: createTimeoutFetch() },
     auth: {
-      storage: createStorage(),
+      storage: createCommercialSessionStorage(),
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,

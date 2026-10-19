@@ -96,7 +96,11 @@ export function canStartInstallNow(status: UpdateState, busy: boolean): boolean 
   return installAllowedForStatus(status) && !busy;
 }
 
-export default function AboutSection() {
+/**
+ * @param hideHeading 在**弹窗**里复用它时隐藏页面级标题（`settings.about`）——
+ *   弹窗自己已经有 `DialogTitle`，否则同一句话会出现两遍（2026-10-19）。
+ */
+export default function AboutSection({ hideHeading = false }: { hideHeading?: boolean } = {}) {
   const { t } = useTranslation();
   const [updateState, setUpdateState] = useState<UpdateState>('idle');
   // 盘上运行时，主进程的签名清单相位是唯一的真相源；已安装路径没有这条链。
@@ -355,7 +359,9 @@ export default function AboutSection() {
 
   return (
     <div>
-      <h3 className="type-section-title mb-4 text-[var(--text-primary)]">{t('settings.about')}</h3>
+      {hideHeading ? null : (
+        <h3 className="type-section-title mb-4 text-[var(--text-primary)]">{t('settings.about')}</h3>
+      )}
       <SettingGroup>
         <div>
           <SettingRow label={t('settings.version')}>

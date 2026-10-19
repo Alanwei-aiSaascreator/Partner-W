@@ -22,11 +22,13 @@ const h = vi.hoisted(() => {
   }));
   const patchSession = vi.fn(async (_gwId: string, _sessionKey: string, _patch: unknown) => ({ ok: true }));
   const loadRoom = vi.fn(async (_taskId: string) => ({ ok: true, room: null, performers: [] }));
-  const api: Record<string, unknown> = { sendMessage, patchSession, loadRoom };
+  const listSessions = vi.fn<(...args: unknown[]) => Promise<import('@clawwork/shared').IpcResult>>();
+  const getConfig = vi.fn<(...args: unknown[]) => Promise<import('@clawwork/shared').IpcResult>>();
+  const api: Record<string, unknown> = { sendMessage, patchSession, loadRoom, listSessions, getConfig };
   (globalThis as unknown as { window: { clawwork: unknown } }).window.clawwork = new Proxy(api, {
     get: (target, prop) => (prop in target ? target[prop as string] : vi.fn(async () => ({ ok: true }))),
   });
-  return { sendMessage, patchSession, loadRoom };
+  return { sendMessage, patchSession, loadRoom, listSessions, getConfig };
 });
 
 import { composer, useRoomStore, useTaskStore, useUiStore } from '../src/renderer/platform';
@@ -123,5 +125,92 @@ describe('@ 提及通知的接线 —— conductor 那句话里的名字必须�
     expect(res.ok).toBe(true);
     expect(sentTo(CONDUCTOR_KEY)).toEqual([`[User directed message to ${AGENT_ID}: "看看这个"]`]);
     expect(sentTo(SESSION_KEY)).toEqual(['看看这个']);
+  });
+});
+
+describe('image recipient validation through real platform and composer', () => {
+  const image = { mimeType: 'image/png', fileName: 'random.png', content: 'AP8BEA==' };
+  const catalog = [
+    { id: 'vision-a', name: 'A', provider: 'clawrouter', input: ['text', 'image'] },
+    { id: 'vision-b', name: 'B', provider: 'clawrouter', input: ['text', 'image'] },
+  ];
+  const rows = [
+    { key: CONDUCTOR_KEY, model: 'vision-a', modelProvider: 'clawrouter' },
+    { key: SESSION_KEY, model: 'vision-b', modelProvider: 'clawrouter' },
+  ];
+  const config = (models: unknown = catalog) => ({
+    ok: true,
+    result: { config: { models: { providers: { clawrouter: { models } } } } },
+  });
+  beforeEach(() => {
+    useGatewayDispatcherSetup();
+    h.sendMessage.mockClear();
+    h.patchSession.mockReset().mockResolvedValue({ ok: true });
+    h.listSessions.mockReset().mockResolvedValue({ ok: true, result: { sessions: rows } });
+    h.getConfig.mockReset().mockResolvedValue(config());
+    seed();
+    useUiStore.setState({ modelCatalogByGateway: { [GATEWAY_ID]: catalog } });
+  });
+
+  it.each([false, true])('sends original image bytes for all verified targets: all=%s', async (all) => {
+    const result = await composer.send(TASK_ID, {
+      content: 'inspect',
+      attachments: [image],
+      presetModel: 'main-text-model',
+      ...(all ? { mentionAll: true } : { mentions: [AGENT_ID] }),
+    });
+    expect(result.ok).toBe(true);
+    expect(h.listSessions).toHaveBeenCalledTimes(2);
+    expect(h.getConfig).toHaveBeenCalledTimes(2);
+    expect(h.listSessions).toHaveBeenCalledWith(GATEWAY_ID);
+    expect(h.patchSession).toHaveBeenCalledWith(GATEWAY_ID, SESSION_KEY, { model: 'clawrouter/vision-b' });
+    const dispatched = h.sendMessage.mock.calls.filter((call) => call[3]);
+    expect(dispatched.map((call) => call[1])).toEqual(all ? [CONDUCTOR_KEY, SESSION_KEY] : [SESSION_KEY]);
+    for (const call of dispatched) expect(call[3]).toEqual([image]);
+    composer.dispose();
+  });
+
+  it.each([
+    'mixed',
+    'unknown',
+    'foreign-catalog',
+    'session-read',
+    'config-read',
+    'config-throw',
+    'pin-failure',
+    'pin-throw',
+    'readback-changed',
+    'readback-failure',
+  ] as const)('has zero dispatch for %s', async (failure) => {
+    if (failure === 'mixed') h.getConfig.mockResolvedValue(config([catalog[0], { ...catalog[1], input: ['text'] }]));
+    if (failure === 'unknown') h.listSessions.mockResolvedValue({ ok: true, result: { sessions: [rows[0]] } });
+    if (failure === 'foreign-catalog') useUiStore.setState({ modelCatalogByGateway: { other: catalog } });
+    if (failure === 'config-throw') h.getConfig.mockRejectedValue(new Error('config unavailable'));
+    if (failure === 'pin-throw')
+      h.patchSession.mockResolvedValueOnce({ ok: true }).mockRejectedValueOnce(new Error('pin unavailable'));
+    if (failure === 'readback-failure')
+      h.listSessions
+        .mockResolvedValueOnce({ ok: true, result: { sessions: rows } })
+        .mockRejectedValueOnce(new Error('readback unavailable'));
+    if (failure === 'session-read') h.listSessions.mockRejectedValue(new Error('read failure'));
+    if (failure === 'config-read') h.getConfig.mockResolvedValue({ ok: false });
+    if (failure === 'pin-failure')
+      h.patchSession.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false });
+    if (failure === 'readback-changed')
+      h.listSessions
+        .mockResolvedValueOnce({ ok: true, result: { sessions: rows } })
+        .mockResolvedValueOnce({ ok: true, result: { sessions: [rows[0], { ...rows[1], model: 'vision-a' }] } });
+    const result = await composer.send(TASK_ID, {
+      content: 'inspect',
+      attachments: [image],
+      mentionAll: true,
+      deferUserMessageUntilSent: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(h.sendMessage).not.toHaveBeenCalled();
+    if (['pin-failure', 'pin-throw', 'readback-changed', 'readback-failure'].includes(failure))
+      expect(h.patchSession).toHaveBeenCalledTimes(2);
+    else expect(h.patchSession).not.toHaveBeenCalled();
+    composer.dispose();
   });
 });

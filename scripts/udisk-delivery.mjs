@@ -17,23 +17,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { auditDelivery, planFixes, versionFromFolderName } from './lib/udisk-delivery.mjs';
+import { auditDelivery, planFixes, versionFromFolderName, walkTreeNames } from './lib/udisk-delivery.mjs';
 
 const io = {
   exists: (p) => fs.existsSync(p),
   listNames: (dir) => fs.readdirSync(dir),
-  walkNames: (root) => {
-    const names = [];
-    const walk = (directory, prefix) => {
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-        names.push(relative);
-        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(path.join(directory, entry.name), relative);
-      }
-    };
-    walk(root, '');
-    return names;
-  },
+  walkNames: (root) => walkTreeNames(root),
   readFile: (p) => {
     try {
       return fs.readFileSync(p);

@@ -57,7 +57,15 @@ vi.mock('../src/main/workspace/config.js', () => ({
 }));
 vi.mock('../src/main/ws/index.js', () => ({ getGatewayClient: nativeGatewayMock }));
 vi.mock('../src/main/docgen/native-task-control.js', () => ({ nativeTaskControl: nativeControlMock }));
-vi.mock('../src/main/docgen/native-tool-input.js', () => ({ nativeInputFromCompletedWrites: nativeInputMock }));
+// ⚠️ 用 `importOriginal` 展开真实模块，**不要**只列被 mock 的那一个导出：
+//    工厂是**整模块替换**，生产代码一旦从本模块多 import 一个符号（2026-10-16 T23 就新增了
+//    `nativeExecOrderFromTools`），别处拿到的是 `undefined` ⇒ 调用抛 TypeError ⇒ 被
+//    `data-handlers` 里那圈 try/catch 吞掉 ⇒ 静默走降级分支、mock 一次都不触发。
+//    本文件 5 条用例曾因此全红（spy 0 次调用）。展开后新增导出自动可用。
+vi.mock('../src/main/docgen/native-tool-input.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/main/docgen/native-tool-input.js')>()),
+  nativeInputFromCompletedWrites: nativeInputMock,
+}));
 vi.mock('../src/main/docgen/native-file.js', () => ({ renderNativePptFile: nativeRenderMock }));
 vi.mock('../src/main/slidegen/receipt.js', () => ({ readSlideGenerationReceipt: nativeReceiptMock }));
 vi.mock('../src/main/slidegen/source-file.js', () => ({ readWorkspaceBytes: () => Buffer.from('{}') }));
@@ -153,6 +161,89 @@ function settlements() {
 
 async function waitForSettlement(count = 1): Promise<void> {
   await vi.waitFor(() => expect(settlements()).toHaveLength(count));
+}
+
+/**
+ * 真机 b4cf0d84 的形状（**便携单根** + 根层兜底扫描）：
+ * 两份 pptx 由 `generate.cjs` 渲染完成并带收据；助手工作区 == 应用工作区（助手根那一趟不扫）；
+ * "应用工作区根层"那条扫描把它们登记进库（`registered: true`）或什么都没登记（`registered: false`）。
+ */
+async function deliverRegisteredDecks(input: {
+  registered: boolean;
+  /** 行还在、**文件被删**：这是"产物打不开"的负对照（守卫必须继续报）。 */
+  deleteDecks?: boolean;
+}): Promise<{ workspace: string; names: readonly string[] }> {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const workspace = mkdtempSync(join(tmpdir(), 'deck-registered-'));
+  // 真机上的两份成品：v1 与"改稿后重渲"的 v2（同名不同哈希后缀，收据各一条）
+  const names = ['可莉角色介绍-923cd056.pptx', '可莉角色介绍-051b84c8.pptx'] as const;
+  for (const name of names) writeFileSync(join(workspace, name), `bytes-of-${name}`);
+  if (input.deleteDecks) for (const name of names) rmSync(join(workspace, name));
+
+  const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+  vi.mocked(getWorkspacePath).mockReturnValue(workspace);
+  // ⭐ 便携单根：助手工作区**就是**应用工作区 ⇒ 助手根那一趟不扫 ⇒ `agentIndexed` 恒空。
+  const { resolveAgentWorkspace } = await import('../src/main/artifact/agent-workspace.js');
+  vi.mocked(resolveAgentWorkspace).mockResolvedValue(workspace);
+
+  collectReceiptsMock.mockReturnValue({
+    receipts: names.map((name, index) => ({
+      receiptFile: `.royin-ppt-receipt-0000000${index}-2222-3333-4444-55555555555${index}.json`,
+      source: `\`\`\`slidegen\n// title: Deck ${index}\n<Slide></Slide>\n\`\`\``,
+      receipt: {
+        fileName: name,
+        bytes: Buffer.byteLength(`bytes-of-${name}`),
+        outputSha256: 'c'.repeat(64),
+        sourceFile: index === 0 ? '可莉角色介绍.slidegen' : '可莉角色介绍-v2.slidegen',
+        sourceSha256: 'a'.repeat(64),
+        pages: 10,
+      },
+      outputDir: workspace,
+    })),
+    rejected: 0,
+  });
+
+  const rows = names.map((name, index) => ({
+    ...artifact,
+    id: `registered-deck-${index}`,
+    name,
+    filePath: join(workspace, name),
+    localPath: name,
+    root: 'workspace-root' as const,
+    size: Buffer.byteLength(`bytes-of-${name}`),
+  }));
+  reconcileMock
+    // ① 应用根扫的是 `<工作区>/<taskId>`：两份 pptx 都在**根层**，这一趟什么也收不到
+    .mockResolvedValueOnce(emptyReconciliation)
+    // ② 根层兜底扫描：真机上这一步把它们登记了（面板显示"可以使用"）
+    .mockResolvedValueOnce({ ...emptyReconciliation, saved: input.registered ? rows : [] });
+  // 「库里有这一行」的形态（`isRegisteredDeck` 查的就是它）
+  sqliteMock.mockReturnValue({
+    prepare: () => ({
+      all: () => (input.registered ? names.map((name) => ({ file_path: join(workspace, name) })) : []),
+    }),
+  });
+
+  const { beginArtifactRun, bindArtifactRun } = await import('../src/main/ipc/data-handlers.js');
+  const token = beginArtifactRun(workspace, taskId, sessionKey, { gatewayId: 'gateway-1' });
+  bindArtifactRun(taskId, sessionKey, token, 'registered-run');
+  selectGetMock.mockReturnValueOnce({ id: messageId }).mockReturnValueOnce(undefined);
+  handleMap.get('data:create-message')!(
+    {},
+    {
+      id: 'registered-incoming',
+      taskId,
+      sessionKey,
+      runId: 'registered-run',
+      role: 'assistant',
+      content: 'Done',
+      timestamp: '2026-10-18T05:42:06.372Z',
+    },
+  );
+  await waitForSettlement();
+  return { workspace, names };
 }
 
 describe('slide quality delivery settlement', () => {
@@ -1565,6 +1656,56 @@ describe('slide quality delivery settlement', () => {
         expect(saveArtifactMock).not.toHaveBeenCalled();
       } finally {
         rmSync(realWorkspace, { recursive: true, force: true });
+      }
+    });
+
+    /**
+     * ⭐ **2026-10-18 真机（任务 b4cf0d84）：已登记、面板里"可以使用"的 pptx 仍被判"未能自动确认"。**
+     *
+     * 现场顺序（日志 / 库 / 收据三方对齐）：
+     *   ① 模型用 deck-layout 的 `generate.cjs` 渲染出两份 pptx（收据 2 条、rejected 0）；
+     *   ② **便携单根**形态（助手工作区 == 应用工作区）⇒ 助手根那一趟**不扫** ⇒ `agentIndexed` 恒空；
+     *   ③ "应用工作区根层"这条兜底扫描先把两份收走并登记（面板当场显示"可以使用"）；
+     *   ④ 规范落位那一步见"库里已有这一行"⇒ 直接跳过 ⇒ `relocatedDecks` 也空；
+     *   ⑤ 登记证明汇总为空 ⇒ 判 stale ⇒ 弹红框。**系统便签比登记晚 60ms**（05:42:14.206 vs .147）。
+     *
+     * 判据必须回到产品语义：**库里有没有一份指向这份成品真实路径的产物行**（= 用户能不能在
+     * 面板里看到它），而不是"这一趟收尾流程有没有亲自搬过它"。
+     */
+    it('⭐ 便携单根 + 根层扫描已登记 ⇒ 不得再报"未能自动确认"（真机 b4cf0d84）', async () => {
+      const { rmSync } = await import('node:fs');
+      const { workspace } = await deliverRegisteredDecks({ registered: true });
+      try {
+        expect(saveArtifactMock).not.toHaveBeenCalled();
+        expect(sendMock).not.toHaveBeenCalledWith('slidegen:failed', expect.anything());
+        expect(sendMock).not.toHaveBeenCalledWith('artifact:claim-violation', expect.anything());
+        expect(settlements().at(-1)?.status).not.toBe('failed');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    /** 负对照：**真的没有产物行**（也没搬过）⇒ 仍然必须报"未能自动确认"（守卫不许松）。 */
+    it('⭐ 负对照：库里没有指向成品的产物行 ⇒ 仍然报"未能自动确认"', async () => {
+      const { rmSync } = await import('node:fs');
+      const { workspace } = await deliverRegisteredDecks({ registered: false });
+      try {
+        expect(sendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-output-unconfirmed' }]);
+        expect(settlements().at(-1)?.status).toBe('failed');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
+    /** 负对照②：行还在、**文件被删**（打不开）⇒ 照样报"未能自动确认"。 */
+    it('⭐ 负对照：登记行还在但文件已经不在了 ⇒ 仍然报"未能自动确认"', async () => {
+      const { rmSync } = await import('node:fs');
+      const { workspace } = await deliverRegisteredDecks({ registered: true, deleteDecks: true });
+      try {
+        expect(sendMock).toHaveBeenCalledWith('slidegen:failed', [{ code: 'slidegen-output-unconfirmed' }]);
+        expect(settlements().at(-1)?.status).toBe('failed');
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
       }
     });
 

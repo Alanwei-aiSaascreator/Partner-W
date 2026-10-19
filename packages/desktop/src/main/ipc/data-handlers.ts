@@ -1,11 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { and, eq, desc, sql } from 'drizzle-orm';
 import { getDb, getSqlite, isDbReady } from '../db/index.js';
 import { nativeTaskControl } from '../docgen/native-task-control.js';
-import { nativeInputFromCompletedWrites } from '../docgen/native-tool-input.js';
+import { nativeExecOrderFromTools, nativeInputFromCompletedWrites } from '../docgen/native-tool-input.js';
 import { renderNativePptFile } from '../docgen/native-file.js';
 import { readSlideGenerationReceipt } from '../slidegen/receipt.js';
 import { readWorkspaceBytes } from '../slidegen/source-file.js';
@@ -28,6 +28,7 @@ import { sendArtifactDeliverySettled } from '../artifact/delivery-settlement.js'
 import { captureArtifactDeliveryOperation } from '../artifact/delivery-operation.js';
 import { emitTurnRegistration } from '../artifact/turn-registration.js';
 import { captureArtifactWorkspaceOwner } from '../artifact/workspace-owner.js';
+import { getLicenseGeneration } from '../commercial/license-generation.js';
 import { subscribeWorkspaceScope } from '../workspace/scope.js';
 import { captureTaskArtifactBaseline, reconcileTaskArtifacts, type ArtifactBaseline } from '../artifact/reconcile.js';
 import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
@@ -37,6 +38,9 @@ import { generateDocumentsFromMessage } from '../docgen/generate.js';
 import { resolvePptxTemplatesRoot } from '../docgen/pptx-template/locate.js';
 import { generateHtmlPagesFromMessage } from '../htmlgen/generate.js';
 import { startVideogenJobs } from '../videogen/start.js';
+import { getVideoQuality } from '../videogen/quality.js';
+import { materializeSessionImage, takeSessionImage } from '../videogen/session-image.js';
+import { startImagegenJobs } from '../imagegen/start.js';
 import { generateSlidesFromMessage } from '../slidegen/generate.js';
 import {
   collectToolSlideReceipts,
@@ -61,6 +65,7 @@ import {
 import {
   checkClaimedFiles,
   claimedFilesRejectedByIntegrity,
+  classifyMissingClaims,
   EXPECTED_ARTIFACT_LABELS,
   expectedArtifactKindsFromRequest,
   missingExpectedArtifactKinds,
@@ -82,6 +87,7 @@ import {
 import { getWorkspacePath } from '../workspace/config.js';
 import { getGatewayClient } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
+import { collectMemoryDrafts } from '../memory/draft-intake.js';
 import { withTeamMeetingTaskDeletion } from './team-meeting-handlers.js';
 
 function ipcError(err: unknown): { ok: false; error: string } {
@@ -280,6 +286,9 @@ interface ArtifactRunContext {
   createdAt: number;
   sequence: number;
   expiryTimer: ReturnType<typeof setTimeout>;
+  licenseGeneration: number;
+  backgroundJobs?: number;
+  finalizationDone?: boolean;
   gatewayRunId?: string;
   /** 用户在这一轮明确要求交付的格式；空数组表示普通聊天/格式咨询。 */
   expectedArtifactKinds: ExpectedArtifactKind[];
@@ -553,6 +562,7 @@ export function beginArtifactRun(
     createdAt: Date.now(),
     sequence: nextArtifactRunSequence++,
     expiryTimer,
+    licenseGeneration: getLicenseGeneration(),
     state: 'active',
     expectedArtifactKinds: nativeControlled ? [...new Set([...expectedKinds, 'pptx' as const])] : expectedKinds,
     nativeControlled,
@@ -593,7 +603,7 @@ export function isArtifactTurnInFlight(taskId: string, sessionKey: string): bool
   const queue = artifactRuns.get(key);
   if (queue?.some((run) => run.state === 'active' && !isArtifactRunCanceled(run))) return true;
   for (const run of claimedArtifactRuns.values()) {
-    if (run.taskId === taskId && run.sessionKey === sessionKey) return true;
+    if (run.taskId === taskId && run.sessionKey === sessionKey && !run.finalizationDone) return true;
   }
   return false;
 }
@@ -644,7 +654,7 @@ function sessionTurnRunState(sessionKey: string, since: number): SessionTurnRunS
     }
   }
   for (const run of claimedArtifactRuns.values()) {
-    if (run.sessionKey === sessionKey) return 'running';
+    if (run.sessionKey === sessionKey && !run.finalizationDone) return 'running';
   }
   for (const record of completedAssistantMessages.values()) {
     if (record.sessionKey === sessionKey && record.touchedAt >= since) return 'ended';
@@ -792,6 +802,7 @@ function completedMessageKey(taskId: string, messageId: string): string {
 }
 
 function isArtifactRunCanceled(run: ArtifactRunContext): boolean {
+  if (run.licenseGeneration !== getLicenseGeneration()) return true;
   if (run.state === 'canceled') return true;
   if (!run.nativeFenced) return false;
   const db = getSqlite(),
@@ -930,14 +941,16 @@ export function beginArtifactRunForGatewayDispatch(input: {
  *    大小写不敏感，但语言标记必须恰好是这几种生成围栏之一。
  *    （`videogen` 2026-10-12 并入：视频块也走"截断要取全文"这条链。）
  */
-type StructuredFenceKind = 'docgen' | 'slidegen' | 'htmlgen' | 'videogen';
+type StructuredFenceKind = 'docgen' | 'slidegen' | 'htmlgen' | 'videogen' | 'imagegen';
 
 function hasStructuredFenceKind(content: string, kind: StructuredFenceKind): boolean {
   return new RegExp('^```[ \\t]*' + kind + '[ \\t]*$', 'im').test(content);
 }
 
 function hasStructuredFence(content: string): boolean {
-  return (['docgen', 'slidegen', 'htmlgen', 'videogen'] as const).some((kind) => hasStructuredFenceKind(content, kind));
+  return (['docgen', 'slidegen', 'htmlgen', 'videogen', 'imagegen'] as const).some((kind) =>
+    hasStructuredFenceKind(content, kind),
+  );
 }
 
 async function structuredReplyContent(input: {
@@ -1055,6 +1068,16 @@ function finalizeAssistantArtifacts(input: {
     }
     return 'none';
   }
+  const retainSource = (): (() => void) => {
+    run.backgroundJobs = (run.backgroundJobs ?? 0) + 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      run.backgroundJobs = Math.max(0, (run.backgroundJobs ?? 1) - 1);
+      if (run.finalizationDone && run.backgroundJobs === 0) claimedArtifactRuns.delete(run.token);
+    };
+  };
   const activity = captureArtifactDeliveryOperation(input);
   void (async () => {
     const deliveryFailure: ArtifactDeliveryFailure = {
@@ -1223,7 +1246,19 @@ function finalizeAssistantArtifacts(input: {
         //    **同一局部可信根**（`receiptWorkspace`：助手工作区，解析失败时回落应用工作区）。
         //    只换"从哪读"，write/edit 的 sinceMs 新鲜度守卫一字不放。
         currentNativeInput =
-          nativeInputFromCompletedWrites(receiptWorkspace, tools, { sinceMs: run.createdAt }) ?? undefined;
+          nativeInputFromCompletedWrites(receiptWorkspace, tools, {
+            sinceMs: run.createdAt,
+            // ⭐ T23 源端半边（2026-10-16 本地全量执行）：把本 run 的执行顺序透传进去，
+            //    只用来裁决"两条 exec 指名不同目标"那次 mtime 平局；没有记录 ⇒ 顺序为空 ⇒
+            //    与从前一字不差地保持 `native-input-ambiguous`（fail-closed 不放松）。
+            // ⚠️ 时间戳来源未做判别（Lead 裁决 2026-10-16）：`ToolCall` 的
+            //    `startedAt`/`completedAt` 是 **item 帧（运行时真实起止）与 tool 流（本地收包
+            //    时刻）合并**的产物，字段上**不带来源标记** ⇒ `execOrder` 的先后**可能混入收包
+            //    时刻**，沿用 BUG-058④「真正执行记录」未完全闭合的口径（证据：`gateway-dispatcher.ts`
+            //    `:2001`/`:2173`/`:2333` + `message-store.ts:605/606`）。绑定时机 = run **收尾**
+            //    从 `input.toolCalls` 构造，**不是**帧到即绑（详见 `native-tool-input.ts`）。
+            execOrder: nativeExecOrderFromTools(tools),
+          }) ?? undefined;
       } catch (err) {
         if (run.nativeControlled) {
           // ⭐ BUG-058④ 接线（2026-10-13）：mtime 平局的 `native-input-ambiguous` 携带**具体
@@ -1559,6 +1594,26 @@ function finalizeAssistantArtifacts(input: {
       pipelineFailed = true;
       console.error('[htmlgen]', error);
     }
+    // Image generation owns a separate asynchronous delivery operation, as video does.
+    try {
+      if (isRunCurrent() && structured.status === 'complete') {
+        startImagegenJobs({
+          workspacePath: input.workspacePath,
+          taskId: input.taskId,
+          sessionKey: input.sessionKey,
+          messageId: input.messageId,
+          runId: input.runId,
+          content: structured.content,
+          sourceCurrent: isRunCurrent,
+          retainSource,
+        });
+      } else if (isRunCurrent() && hasStructuredFenceKind(input.content, 'imagegen')) {
+        for (const win of BrowserWindow.getAllWindows())
+          win.webContents.send('imagegen:failed', [{ code: 'imagegen-block-invalid' }]);
+      }
+    } catch (error) {
+      console.error('[imagegen]', error);
+    }
     // ⭐ 视频生成（2026-10-12 视频接入）：助手给出 ```` ```videogen ```` 块（文生视频请求），
     //    去 relay 远端生成一段 mp4 并走同一条产物通道存下来。
     //
@@ -1568,7 +1623,14 @@ function finalizeAssistantArtifacts(input: {
     //    改为 `startVideogenJobs` 的**脱离式后台任务**：自己的活动帧 + 完成时自己广播
     //    （`artifact:saved` / `videogen:failed`）。启动器内含进程内去重（防重复付费）。
     try {
-      if (structured.status === 'complete') {
+      if (isRunCurrent() && structured.status === 'complete') {
+        // ⭐ 画质档（用户界面选择）+ 图生视频（本轮附的那张图当首帧）。
+        //    · 档位只在围栏没写 model 时生效；
+        //    · 首帧只在 Seedance 分支、且围栏没写 firstFrame 时生效；
+        //    · 图片来自 `ws:send-message` 存下的本轮附件（session-image.ts）。
+        const quality = getVideoQuality();
+        const pendingImage = takeSessionImage(input.sessionKey);
+        const firstFramePath = pendingImage ? materializeSessionImage(app.getPath('userData'), pendingImage) : null;
         startVideogenJobs({
           workspacePath: input.workspacePath,
           taskId: input.taskId,
@@ -1576,8 +1638,15 @@ function finalizeAssistantArtifacts(input: {
           messageId: input.messageId,
           runId: input.runId,
           content: structured.content,
+          sourceCurrent: isRunCurrent,
+          retainSource,
+          blockOptions: {
+            ...(quality === 'seedance' ? { forceModel: 'seedance-2.5' as const } : {}),
+            ...(firstFramePath ? { firstFramePath } : {}),
+          },
+          ...(firstFramePath ? { authorizedAttachmentPaths: [firstFramePath] } : {}),
         });
-      } else if (hasStructuredFenceKind(input.content, 'videogen')) {
+      } else if (isRunCurrent() && hasStructuredFenceKind(input.content, 'videogen')) {
         // 回复不完整（截断）但有 videogen 开栏：块可能已经写坏了——如实报"块无效"，
         // 与上面两条通道同款（不猜内容、不发远端请求）。
         for (const win of BrowserWindow.getAllWindows())
@@ -2024,9 +2093,11 @@ function finalizeAssistantArtifacts(input: {
           notifyReconciledArtifacts(agentResult);
         }
         /**
-         * 这条收据有没有**逐字段对得上**的登记证明：主根规范落位（`relocatedDecks`）∪
-         * 可选 agent 扫描的登记行（有助手根时才有）。
-         * ⚠️ 不是 `Map.has()`：taskId / messageId / 字节数 / 文件名（agent 行另核 path）逐项核 ——
+         * 这条收据有没有**对得上**的登记证明，三路取一：
+         *   ① 主根规范落位（`relocatedDecks`，这一趟亲自搬的）—— 逐字段核；
+         *   ② 可选 agent 扫描的登记行（有助手根且不是便携单根时才有）—— 逐字段核；
+         *   ③ **库里真实存在的那一行**（+ 文件还在盘上）—— 见下方 ⭐ 说明。
+         * ⚠️ ①② 不是 `Map.has()`：taskId / messageId / 字节数 / 文件名（agent 行另核 path）逐项核 ——
          *    同一张 Map 里挂着一条 taskId 或字节数对不上的旧行，不许冒充"已登记"。
          */
         const isDeckRegistered = (entry: ToolSlideReceipt): boolean => {
@@ -2039,19 +2110,42 @@ function finalizeAssistantArtifacts(input: {
             relocated.name === entry.receipt.fileName
           )
             return true;
-          if (!agentRoot) return false;
-          const expectedPath = resolve(agentRoot.workspacePath, entry.receipt.fileName);
-          const matchesPath = (value: string) =>
-            process.platform === 'win32' ? value.toLowerCase() === expectedPath.toLowerCase() : value === expectedPath;
-          return agentIndexed.some(
-            (artifact) =>
-              artifact.taskId === input.taskId &&
-              artifact.messageId === input.messageId &&
-              artifact.root === 'agent' &&
-              artifact.size === entry.receipt.bytes &&
-              matchesPath(resolve(artifact.filePath)) &&
-              matchesPath(resolve(agentRoot.workspacePath, artifact.localPath)),
-          );
+          const agentProved = (): boolean => {
+            if (!agentRoot) return false;
+            const expectedPath = resolve(agentRoot.workspacePath, entry.receipt.fileName);
+            const matchesPath = (value: string) =>
+              process.platform === 'win32'
+                ? value.toLowerCase() === expectedPath.toLowerCase()
+                : value === expectedPath;
+            return agentIndexed.some(
+              (artifact) =>
+                artifact.taskId === input.taskId &&
+                artifact.messageId === input.messageId &&
+                artifact.root === 'agent' &&
+                artifact.size === entry.receipt.bytes &&
+                matchesPath(resolve(artifact.filePath)) &&
+                matchesPath(resolve(agentRoot.workspacePath, artifact.localPath)),
+            );
+          };
+          if (agentProved()) return true;
+          // ⭐ **第三路证明：库里真实存在的那一行**（2026-10-18 真机任务 b4cf0d84，工单号待分配）。
+          //
+          // 现场：便携单根形态（助手工作区 == 应用工作区）⇒ 助手根那一趟**不扫**（`agentIndexed` 恒空）；
+          // 成品先被"应用工作区根层"这条兜底扫描收走并登记（面板已经显示"可以使用"）⇒
+          // 规范落位见 `isRegisteredDeck` 命中直接跳过（`relocatedDecks` 也空）⇒
+          // 上面两路证明**同时为空** ⇒ 一份已登记、可打开的 pptx 被判"未能自动确认"，
+          // 系统便签只比登记晚 60ms 上屏。
+          //
+          // 判据回到产品语义：**用户能不能在面板里看到这一份**（= 库里有一行指向这份成品的
+          // 真实路径，与"规范落位"用的是同一个 `isRegisteredDeck`），并且**文件真的还在盘上**。
+          // ⚠️ 不因此放宽任何别的守卫：收据当前性（`isToolSlideOutputCurrent`）照旧另判；
+          //    没有这一行、或文件已经不在了 ⇒ 仍然按未确认上报（负对照钉住）。
+          try {
+            const deckPath = resolve(receiptRootOf(entry), entry.receipt.fileName);
+            return existsSync(deckPath) && isRegisteredDeck(deckPath);
+          } catch {
+            return false;
+          }
         };
         // ⭐ H3：登记核验**移出 agent 分支** —— 收据可能在应用工作区（"规范落位"搬出来的那一行
         //    就是它的登记证明），助手根解析失败时这是父版本证据唯一还拿得到的来源。
@@ -2157,7 +2251,24 @@ function finalizeAssistantArtifacts(input: {
         //    只是版本关联/登记没走完。旧代码把两者拼成一个 missing 列表，于是界面把后者也说成
         //    「工作区里没有这些文件」（当时两份改稿其实都在盘上）。分开报，守卫强度不变：
         //    freshness、版本证明、注册要求全部照旧。
-        const missing = [...new Set(claimResult.missing.map((file) => file.name))];
+        const claimedMissingNames = [...new Set(claimResult.missing.map((file) => file.name))];
+        // ⭐ 2026-10-17 用户反馈（PPT 误报）：本轮**已登记真实产物**时，回复里顺带提到的
+        //    找不到的名字（如模型笔误的 `edits.PPTX`）降级为日志信息，不再报"交付失败"。
+        //    "声称成功却零产物"那一支一字未动（见 `classifyMissingClaims`）。
+        const claimVerdict = classifyMissingClaims(claimedMissingNames, [...producedArtifactNames]);
+        const missing = claimVerdict.blocked;
+        if (claimVerdict.informational.length > 0) {
+          getDebugLogger().warn({
+            domain: 'artifact',
+            event: 'artifact.claim-guard.mentioned-not-found',
+            taskId: input.taskId,
+            data: {
+              mentioned: claimVerdict.informational,
+              produced: [...producedArtifactNames],
+              note: '本轮有真实登记产物；这些名字只是回复里提到但没落盘，不构成交付失败',
+            },
+          });
+        }
         // ⭐ BUG-042-c：`invalidArtifacts` 非空 ⇒ **不再叠** missingKinds。两者说的是同一件事的
         //    两层（"要求的格式没登记" + "没登记的原因是那份文件根本不是有效文档"），
         //    一起报只会先弹一句更含糊的「成果没有登记」。取舍写在案：含义更准的那条胜出；
@@ -2340,7 +2451,8 @@ function finalizeAssistantArtifacts(input: {
       console.error('[artifact] delivery pipeline failed:', error);
     })
     .finally(() => {
-      claimedArtifactRuns.delete(run.token);
+      run.finalizationDone = true;
+      if (!run.backgroundJobs) claimedArtifactRuns.delete(run.token);
       activity.finish('failed');
     });
   // 回执语义 = "登记处置已完成到可对外陈述的程度"：operationId 已定号（delivery.started
@@ -2487,6 +2599,11 @@ export function registerDataHandlers(): void {
         thinkingContent?: string;
         model?: string;
         /**
+         * 整轮用时（本地量，ms）。缺省（工具调用/推理那些中途 upsert）⇒ **不覆盖**
+         * 已落库的值 —— 写成 `?? null` 会把定稿那一刻结算的用时抹掉。
+         */
+        durationMs?: number;
+        /**
          * ⚠️ DOCX-205 合同（2026-10-10）：**整轮终态证据**。由 core 的 session-sync
          * 在可信历史终态（runId 相符 + `stopReason==='stop'`）校验后
          * 随消息下发；中间 tool/read 快照一律不带。交付入口据此决定是否允许
@@ -2535,6 +2652,7 @@ export function registerDataHandlers(): void {
             toolCalls: msg.toolCalls?.length ? JSON.stringify(msg.toolCalls) : null,
             thinkingContent: msg.thinkingContent ?? null,
             model: msg.model ?? null,
+            durationMs: typeof msg.durationMs === 'number' ? msg.durationMs : null,
           })
           .onConflictDoUpdate({
             target:
@@ -2554,6 +2672,8 @@ export function registerDataHandlers(): void {
               // 同上：模型只在**这条写入自己带**的时候覆盖。工具调用/推理那些中途
               // upsert 拿不到它，写成 `?? null` 会把已落库的模型抹掉，重载后徽章消失。
               ...(msg.model ? { model: msg.model } : {}),
+              // 整轮用时同上：只有这条写入自己带的时候才覆盖（中途 upsert 不抹掉）。
+              ...(typeof msg.durationMs === 'number' ? { durationMs: msg.durationMs } : {}),
             },
           })
           .run();
@@ -2572,6 +2692,23 @@ export function registerDataHandlers(): void {
           )
           .get();
         const persistedMessageId = persisted?.id ?? msg.id;
+        // ⭐ 长期记忆草案入口（2026-10-16）：助手在回复里给 ```` ```memory ```` 块 ⇒ 落一条
+        //    **待确认草案**。与交付链**完全解耦**：不消费 artifact run、不影响登记回执、
+        //    不写召回通道（草案绝不进 `MEMORY.md` —— 用户没点头就不算记住）。
+        //    放在这一层是因为它是**每条**助手终态消息都会经过的一处，而不是只有文件任务才走的
+        //    claim 分支（普通聊天里助手同样可以提草案）。内部永不抛，失败只留一条日志。
+        if (msg.role === 'assistant' && msg.content.length > 0) {
+          collectMemoryDrafts({
+            content: msg.content,
+            taskId: msg.taskId,
+            messageId: persistedMessageId,
+            notify: () => {
+              // 新建了草案 ⇒ 让设置页（可能开在别的窗口上）立刻重新读一次。
+              for (const win of BrowserWindow.getAllWindows())
+                win.webContents.send('memory:changed', { gatewayId: null });
+            },
+          });
+        }
         const workspacePath = getWorkspacePath();
         if (
           workspacePath &&

@@ -144,6 +144,43 @@ it('ignores a late error after the workspace owner changes', async () => {
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(list).toHaveBeenCalledTimes(2);
 });
+/**
+ * ⭐ BUG-120（2026-10-17）：视频改型成 `video` 之后，**提及选择器仍要认得它**。
+ *
+ * 选择器这一档不看类型做过滤（列的就是 `useFileStore.artifacts`），风险在于：
+ * 一旦有人给这里补一层"只认某几类"的过滤，视频就会**从 @ 提及里消失**，
+ * 而本文件其它用例（都是 `file`）全绿。图标也一并钉住：视频该是视频图标。
+ */
+it('⭐ BUG-120：type=video 的产物照旧出现在提及列表里，且用视频图标', async () => {
+  window.clawwork = { listArtifacts: vi.fn() } as unknown as Window['clawwork'];
+  await act(async () =>
+    useFileStore.getState().setArtifacts([
+      {
+        id: 'v1',
+        taskId: 'task-1',
+        messageId: 'm1',
+        name: '短片.mp4',
+        mimeType: 'video/mp4',
+        type: 'video',
+        size: 5,
+        filePath: '',
+        localPath: '',
+        createdAt: '2026-10-17T00:00:00.000Z',
+        availability: 'available',
+      } as never,
+    ]),
+  );
+
+  await render();
+
+  // ① 这一行**在**（没有被任何"类型白名单"过滤掉 —— 空列表时会显示 mentionPicker.noFiles）
+  expect(container.textContent).not.toContain('mentionPicker.noFiles');
+  // ② 类型标签是「视频」（改型前这一行显示的是 artifactKinds.file）
+  expect(container.textContent).toContain('artifactKinds.video');
+  // ③ 图标是视频图标（改型前落进通用 File 图标）
+  expect(container.querySelector('svg.lucide-video')).not.toBeNull();
+});
+
 it('clears a former error when reopened with a new live saved artifact', async () => {
   const list = vi.fn().mockResolvedValue({ ok: false, error: 'failed' });
   window.clawwork = { listArtifacts: list } as unknown as Window['clawwork'];

@@ -652,6 +652,42 @@ export function planSkillSync(input: {
   return { kind: 'conflict', paths: deviating.length ? deviating : ['SKILL.md'], reason: 'unverified-origin' };
 }
 
+/**
+ * ⭐ T31（缺口 3）：把**孤儿键**的技能账并回当前托管目录。
+ *
+ * 背景：账按网关报的 `managedSkillsDir`（= `<stateDir>/skills`）做键。换网关 / 换盘 /
+ * 目录布局变过之后，旧键成了孤儿 ⇒ 新键下没有账 ⇒ 开机 ensure 把"我们自己装的旧版"
+ * 判成 `unverified-origin`，在**健康盘**上冒一屏虚假冲突。
+ *
+ * 规则（保守到只做一件事）：
+ *  · `managedDir` 那份账原样保留，**一个条目都不覆盖**。
+ *  · 只有"键的目录**已经不在盘上**"（`pathExists` 为假）的旧键才被并进来 ——
+ *    目录还在的键可能只是这次没连上的另一套 state，动它就是猜。
+ *  · 同 slug 冲突时保留 `managedDir` 那份（它才是"这一版"的账）。
+ *
+ * 纯函数（`pathExists` 注入），不改盘；调用方决定要不要把结果落盘。
+ */
+export function adoptOrphanedSkillRecords(input: {
+  records: Readonly<Record<string, Record<string, string>>>;
+  /** 当前托管目录（网关报的 `managedSkillsDir`）。 */
+  managedDir: string;
+  /** 一个绝对路径在盘上存不存在（目录也算存在）。 */
+  pathExists: (absolutePath: string) => boolean;
+}): { records: Record<string, string>; migratedFrom: string[] } {
+  const current = input.records[input.managedDir] ?? {};
+  const merged: Record<string, string> = { ...current };
+  const migratedFrom: string[] = [];
+  for (const [key, value] of Object.entries(input.records)) {
+    if (key === input.managedDir) continue;
+    if (input.pathExists(key)) continue;
+    migratedFrom.push(key);
+    for (const [slug, record] of Object.entries(value)) {
+      if (!Object.prototype.hasOwnProperty.call(merged, slug)) merged[slug] = record;
+    }
+  }
+  return { records: merged, migratedFrom };
+}
+
 export interface InstallResult {
   ok: boolean;
   error?: string;

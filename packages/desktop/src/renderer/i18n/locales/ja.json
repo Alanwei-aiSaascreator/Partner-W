@@ -6,6 +6,8 @@
     "notActivated": "未認証",
     "offline": "オフラインのため、最新でない可能性があります",
     "plan": "現在のプラン",
+    "quotaHeld": "保留",
+    "quotaHeldUnknown": "進行中の予約（ホールド）を取得できないため、現在の利用可能額を計算できません。",
     "quotaPending": "残高未設定",
     "recharge": "チャージ",
     "rechargeCardRequired": "Bind a license card under Activation before recharging",
@@ -18,6 +20,7 @@
     "rechargeCustomInvalid": "¥{{min}} ～ ¥{{max}} の範囲で入力してください",
     "rechargeCustomPlaceholder": "¥{{min}} ～ ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
+    "rechargeOrderFailed": "この支払いは失敗し、ポイントは加算されていません",
     "rechargePaid": "お支払いが完了し、クレジットが付与されました",
     "rechargePickAmount": "Choose an amount",
     "rechargeRate": "チャージ比率：1元＝100クレジット",
@@ -103,7 +106,8 @@
     "image": "画像",
     "link": "リンク",
     "markdown": "Markdown ドキュメント",
-    "text": "テキストファイル"
+    "text": "テキストファイル",
+    "video": "動画"
   },
   "assistantWorkspaces": {
     "compass": {
@@ -397,7 +401,36 @@
     "tab": "懸賞",
     "titlePlaceholder": "やることを一行で"
   },
+  "mascot": {
+    "talk": "小盈に話しかける",
+    "hide": "小盈を隠す",
+    "line0": "ここにいます、いつでもどうぞ～",
+    "line1": "やることが多い？小さく分けて進められます。",
+    "line2": "どうぞ続けてください、進み具合は見ています。",
+    "desktop": "デスクトップに置く"
+  },
   "chatInput": {
+    "queuedWhileRunning": "タスク実行中：入力できます。Enter でキューに入り、このターンの後に送信します",
+    "queuedToast": "キューに追加しました。このターンが終わると自動送信します",
+    "queuedChip": "送信待ち：{{text}}",
+    "queuedCancel": "この待機メッセージを取り消す",
+    "workingLines": {
+      "0": "考えをまとめています…",
+      "1": "もうすぐです、少しだけ～",
+      "2": "大きな作業を小分けにして進行中",
+      "3": "資料を確認しています…",
+      "4": "この工程は丁寧に、もう少しお待ちを",
+      "5": "あと少し、深呼吸 emm ovo"
+    },
+    "videoQuality": {
+      "title": "動画の画質",
+      "standardShort": "標準",
+      "seedanceShort": "高画質",
+      "standard": "標準 · MiniMax H3",
+      "standardDesc": "安価で速い。画像を先頭フレームにはできません。秒単位の課金です。",
+      "seedance": "高画質 · Doubao Seedance 2.5",
+      "seedanceDesc": "より精細で、画像から動画に対応：このターンで添付した画像が先頭フレームになります。単価は明らかに高く、秒単位の課金です。"
+    },
     "abortFailed": "生成の停止に失敗しました",
     "addFiles": "ファイルを追加",
     "addFolder": "フォルダを追加",
@@ -433,6 +466,7 @@
       "downloading-media": "画像・動画をダウンロード中…",
       "generating-document": "文書を生成中…",
       "generating-html": "ウェブページを生成中…",
+      "generating-image": "画像を生成中…",
       "generating-presentation": "プレゼンテーションを生成中…",
       "generating-video": "動画を生成中です——数分かかる場合があります…",
       "reconciling-artifacts": "生成されたファイルを確認中…",
@@ -448,6 +482,7 @@
         "downloading-media": "画像・動画のダウンロード",
         "generating-document": "文書の生成",
         "generating-html": "ウェブページの生成",
+        "generating-image": "画像生成",
         "generating-presentation": "プレゼンテーションの生成",
         "generating-video": "動画の生成",
         "reconciling-artifacts": "ファイルの確認",
@@ -482,6 +517,7 @@
     "materialTrimToLimit": "先頭の {{count}} 個のみ保持",
     "materialUnavailable": "{{fileName}} は移動されたか利用できません",
     "mode": {
+      "mediaModelsNote": "画像生成・動画生成は専用モデルをアシスタントが自動で選びます（この一覧には表示されません）。「絵を描いて」「動画を作って」と伝えてください。",
       "advanced": "詳細設定：モデルを指定",
       "deep": "深層",
       "deepDesc": "深く考え、複雑な分析や長文の作業に適しています",
@@ -506,6 +542,7 @@
     "recognizeImage": "画像を認識",
     "relayActivationLimitReachedDetail": "この認証は端末数の上限に達しています。別のカードをご利用いただくか、サポートにお問い合わせください。",
     "relayActivationRequiredDetail": "「設定 → Activation」で認証を完了してください。",
+    "relayApplyFailedDetail": "モデル設定がローカルで反映されませんでした。もう一度試せますが、失敗が続く場合はログを送ってください。",
     "relayEntitlementRejectedDetail": "この認証はもう使用できません。「設定 → Activation」で再度認証するか、別のカードをご利用ください。",
     "relayOrganizationMismatchDetail": "この認証は別の組織に紐づいています。「設定 → Activation」をご確認ください。",
     "relayRetryableDetail": "商用サービスの準備がまだ整っていません。もう一度お試しください。",
@@ -544,7 +581,6 @@
     "unsupportedCapability": "この機能は現在ご利用いただけません。ワークスペースで利用できる機能を代わりにお使いください。",
     "unsupportedModel": "このモデルは現在ご利用いただけません。モデル一覧から利用可能なモデルをお選びください。",
     "visionFallbackSwitched": "この画像には画像を認識できるモデルを使用しました：{{model}}",
-    "visionMentionBlocked": "画像はまだチームの役割に送信できません。役割をメンションする前に画像を外すか、@ を外して画像を直接送信してください。",
     "visionUnavailable": "このモデルで画像を処理できることを確認できません。画像対応モデルに切り替えるか、画像を削除して送信してください。画像付きPPTは先に画像を分析してください。",
     "waiting": {
       "awaitingAnswer": "回答を待っています",
@@ -569,9 +605,14 @@
     }
   },
   "chatMessage": {
+    "turnDurationMinutesSeconds": "所要時間 {{minutes}} 分 {{seconds}} 秒",
+    "turnDurationSeconds": "所要時間 {{seconds}} 秒",
     "autoRetryNotice": "前回は完了しませんでした。自動でもう一度だけ再試行します（再課金されます）。",
     "conductor": "コーディネーター",
     "copied": "コピーしました",
+    "turnCost": "このターンの消費：{{credits}} クレジット",
+    "liveTaskCost": "このタスクで {{credits}} ポイント使用",
+    "taskCostTotal": "このタスクの累計消費は {{credits}} ポイントです",
     "copyCode": "コードをコピー",
     "copyMessage": "メッセージをコピー",
     "docgenDelivered": "ドキュメントを生成しました",
@@ -584,9 +625,15 @@
     "htmlgenGenerating": "ウェブページを生成中…",
     "htmlgenPending": "ウェブページ内容は未処理です",
     "htmlgenUnconfirmed": "ウェブページは登録未確認です——右側の「産物」で最新ファイルをご確認ください",
+    "imagegenDelivered": "画像を生成しました",
+    "imagegenFailed": "画像の生成に失敗しました",
+    "imagegenGenerating": "画像を生成中…",
+    "imagegenPending": "画像の処理待ち",
+    "imagegenUnconfirmed": "画像の納品は未確認です",
     "noVisibleAnswer": "アシスタントから表示できる回答が返されませんでした。もう一度お試しください。",
     "retryHint": "前のメッセージを再送します（もう一度消費されます）",
     "thinking": {
+      "liveTailHint": "最新部分のみ表示しています。終了後に完全な推論を確認できます。",
       "title": "深い思考"
     },
     "toolCallSummary": "{{count}} 件のツール呼び出しを実行",
@@ -1043,6 +1090,15 @@
     "workspace": "作業領域の読み書き"
   },
   "errors": {
+    "userStopped": "このターンを停止しました",
+    "human": {
+      "not-connected": "ローカルサービスにまだ接続していません。少し待って再試行してください。",
+      "timeout": "リクエストがタイムアウトしました。再試行してください。",
+      "rate-limit": "リクエストが多すぎます。少し待ってから再試行してください。",
+      "context-length": "会話が長すぎます。新しいタスクを開始するか、コンテキストを整理してから再試行してください。",
+      "insufficient-credits": "ポイントが不足しています。チャージしてから再試行してください。",
+      "send-failed": "送信に失敗しました。再試行してください。"
+    },
     "agentMissing": "そのアシスタントはこのパソコンにありません。別のアシスタントを選んで送信してください。",
     "agentNotResponding": "エージェントが応答していません — サーバー上で利用できないか、設定に誤りがある可能性があります。別のエージェントをお試しください。",
     "boundaryTitle": "問題が発生しました",
@@ -1070,6 +1126,27 @@
     "wrapper": {
       "providerRequestRejected": "サービスが一時的に利用できません。別のモデルに切り替えるか、しばらくしてからもう一度お試しください。"
     }
+  },
+  "experts": {
+    "countLabel": "専門家 {{n}} 人",
+    "domain": {
+      "all": "すべて",
+      "design": "デザイン",
+      "engineering": "エンジニアリング",
+      "knowledge": "ナレッジ",
+      "news": "ニュース"
+    },
+    "filterLabel": "分野で絞り込む",
+    "installHint": "各専門家は同梱スキルを通じて働きます。未インストールの場合は、先に「スキルストア」でインストールしてください。",
+    "launch": "タスクを開始",
+    "launchPrompt": "インストール済みのスキル「{{name}}」を使って次を行ってください：",
+    "subtitle": "アプリに同梱された専門家です。選ぶと、その分野に合った進め方でタスクを開始します。",
+    "title": "専門家ライブラリ",
+    "dialogTitle": "「{{name}}」に何をさせますか？",
+    "dialogDescription": "やることを一行で書いてください。「開始」でタスクを作成し、すぐ送信します。",
+    "dialogPlaceholder": "例：このモジュールのアーキテクチャ決定記録を書く",
+    "dialogStart": "開始",
+    "dialogCancel": "キャンセル"
   },
   "export": {
     "exportedToFiles": "ファイルにエクスポートしました"
@@ -1258,6 +1335,50 @@
       "engineer": {},
       "legal": {}
     },
+    "industryBriefLabel": {
+      "focus": "業界の要点：",
+      "method": "業界の方法：",
+      "template": "成果の構成："
+    },
+    "industryMethod": "業界の進め方",
+    "industryMethodBrief": {
+      "C": {
+        "focus": "生産能力・歩留まり・納期・品質。数字はラインとロットに紐づける。",
+        "method": "先に仕様と合格基準を定め、その後に計画。能力データで検証する。",
+        "template": "成果の構成：工程・能力の説明 → 方案と日程表 → 品質・検収一覧。"
+      },
+      "H": {
+        "focus": "来客数・評判・回転率・コスト。数字は店舗と時間帯に紐づける。",
+        "method": "先に対象客層と時間帯を定め、後に動線とメニュー。回転率で検証する。",
+        "template": "成果の構成：店舗・客層の説明 → 動線とメニュー → サービス・コスト一覧。"
+      },
+      "J": {
+        "focus": "コンプライアンス・リスク・収益・追跡性。数字には出典が要る。",
+        "method": "先に境界と定義を定め、後に試算とシナリオ。リスク指標で検証。",
+        "template": "成果の構成：定義・規制の説明 → 試算とシナリオ表 → リスク一覧。"
+      },
+      "K": {
+        "focus": "立地・販売進捗・コスト・政策。結論は案件と期間に紐づける。",
+        "method": "先に範囲と政策前提を定め、後に試算と比較。販売進捗で検証する。",
+        "template": "成果の構成：案件・立地の説明 → 試算と比較表 → コストとリスク一覧。"
+      },
+      "L": {
+        "focus": "顧客獲得・履行品質・サービスコスト。結論は契約と日程に紐づける。",
+        "method": "先にニーズと契約制約を明確にし、後に方案と日程。履行指標で検証。",
+        "template": "成果の構成：顧客・契約の説明 → 方案と日程表 → 履行とコスト一覧。"
+      },
+      "P": {
+        "focus": "学習目標・学習者差・効果の根拠。結論は講座とクラスに紐づける。",
+        "method": "先に目標と出発点を定め、後に授業と演習。評価の根拠で検証する。",
+        "template": "成果の構成：学情と目標の説明 → 講座と活動 → 評価と改善一覧。"
+      },
+      "R": {
+        "focus": "受け手・内容のテンポ・到達効果。結論は作品と公開時期に紐づける。",
+        "method": "先に受け手とテーマを定め、後に構成とテンポ。到達データで検証する。",
+        "template": "成果の構成：受け手とテーマの説明 → 内容とテンポ → 公開と効果一覧。"
+      }
+    },
+    "industryMethodNone": "業種が未選択のため、アシスタントへの追記はありません。",
     "needTag": "タグを1つ以上選んでください",
     "nickname": "Nickname",
     "portraitHint": "Saved by the first-run guide. Read-only.",
@@ -1273,6 +1394,7 @@
     },
     "shuffle": "タグを変える",
     "skill": {},
+    "skillsConfirmed": "初回設定で確認した能力：",
     "skillsHint": "These six capability sets ship with the app. Describe what you need in chat and the team will use them.",
     "subtitle": "Your portrait, work identity, AI team, core skills and preferences — all in one place. Saving writes them into every assistant's memory.",
     "tag": {
@@ -1307,6 +1429,17 @@
       }
     },
     "title": "Personalization Center"
+  },
+  "imagegen": {
+    "blockInvalid": "画像のリクエストが不完全か、仕様が未対応です。修正して再試行してください。",
+    "failedTitle": "画像生成の状況",
+    "generationFailed": "画像の生成に失敗しました。説明を修正してください。",
+    "imageInvalid": "画像を完全に開けないか、サイズが一致しないため、成果物は登録されていません。",
+    "requestUnconfirmed": "画像の結果は未確認です。再生成せず、元の操作IDで復旧してください。",
+    "resultUnconfirmed": "画像の結果または精算が未確認のため、成果物は登録されていません。元の操作IDで復旧してください。",
+    "saveFailed": "画像は保存されていません。元の操作IDで復旧してください。",
+    "unavailable": "画像生成は現在利用できません。新しい生成リクエストは送信していません。",
+    "workspaceChanged": "ワークスペースまたはアカウントが変更されたため、画像の保存を停止しました。"
   },
   "kb": {
     "addDone": "{{count}} 件の資料を追加しました",
@@ -1359,6 +1492,17 @@
     "title": "ナレッジベース"
   },
   "leftNav": {
+    "taskGroups": {
+      "header": "タスク",
+      "today": "今日",
+      "yesterday": "昨日",
+      "week": "今週",
+      "earlier": "それ以前",
+      "all": "すべてのタスク",
+      "empty": "タスクはまだありません",
+      "running": "実行中",
+      "untitled": "無題のタスク"
+    },
     "addAssistant": "アシスタントを追加",
     "appSettings": "アプリ設定",
     "archivedChats": "アーカイブ済みチャット",
@@ -1376,17 +1520,21 @@
       "search": "タスク検索",
       "skills": "スキルマーケット",
       "square": "広場",
-      "teams": "チーム"
+      "teams": "チーム",
+      "more": "その他",
+      "agentsSimple": "エージェント"
     },
     "recentTasks": "最近のタスク",
     "searchTasks": "タスクを検索…",
     "updateAvailable": "アップデートがあります",
-    "usageOverview": "AI 利用状況"
+    "usageOverview": "AI 利用状況",
+    "profile": "プロフィール",
+    "usageAndCredits": "使用量とクレジット"
   },
   "login": {
     "agreement": "{0}と{1}を読み、同意します",
     "authenticatedForActivation": "ログイン済みです。このアカウントの利用資格を確認します。",
-    "betaPhoneNotice": "電話番号は本ベータ版のアカウント登録とご連絡にのみ使用します。テスト終了後 30 日以内に削除し、その他の目的には使用しません。",
+    "betaPhoneNotice": "電話番号はアカウント作成・ログイン・必要なサービス通知にのみ使用し、その他の目的には使用しません。",
     "brandSubline": "ログイン後、やりたいことを伝えるだけで始められます。",
     "changeAccount": "アカウントを変更",
     "changePhone": "番号を変更",
@@ -1422,7 +1570,6 @@
     "currentAssistant": "現在のアシスタント",
     "messageLayoutCentered": "メッセージを中央寄せに戻す",
     "messageLayoutWide": "メッセージ幅を広げる",
-    "refreshUsage": "使用量を更新",
     "scrollToBottom": "最下部へスクロール",
     "toggleContextPanel": "コンテキストパネルの切替",
     "welcomeSubtitle": "タスクを入力すると、Rongying Cube が適切なアシスタントとモデルを選びます。",
@@ -1635,7 +1782,6 @@
       },
       "industry": "Your main industry",
       "introduction": "A brief introduction (optional)",
-      "model": "Actual model",
       "nicknameFallback": "My work profile",
       "personaSourceDefault": "Character source: default artwork",
       "personaSourceRule": "Character source: saved approved rule",
@@ -1752,9 +1898,7 @@
           "name": "Virtuoso"
         },
         "partial": "Some questions were skipped — this result is for reference only."
-      },
-      "usagePending": "Usage: pending verification",
-      "usageSettled": "Usage: settled against the actual receipt"
+      }
     },
     "goalAnalysisHint": "仕事の目標を保存します。AI は自動で呼び出しません。ワークスペースでアシスタントを選び、タスクを開始できます。",
     "multipleHint": "Choose more than one",
@@ -1979,6 +2123,60 @@
     "contextReset": "セッションコンテキストがリセットされました"
   },
   "settings": {
+    "connectors": {
+      "nav": "コネクター",
+      "title": "コネクター",
+      "subtitle": "スマートフォンの Feishu をこのパソコンに接続すると、外出先からタスクを依頼できます。チャネルはローカルゲートウェイ内で動作し、ポートをインターネットに公開しません。",
+      "refresh": "状態を更新",
+      "feishu": {
+        "stateClosed": "チャネル停止中",
+        "boundAgent": "飛書メッセージを受け取るアシスタント",
+        "bindNone": "バインドしない",
+        "bindUnset": "未バインド",
+        "unboundWarning": "アシスタントが未バインドのため、飛書のメッセージは処理されません。アシスタントを選択してください。",
+        "unbind": "バインド解除",
+        "disableChannel": "チャネルをオフ",
+        "enableChannel": "チャネルをオン",
+        "bindChanged": "バインド先を変更しました",
+        "bindCleared": "バインドを解除しました",
+        "actionFailed": "操作に失敗しました。もう一度お試しください。",
+        "channelEnabled": "チャネルをオンにしました",
+        "channelDisabled": "チャネルをオフにしました（認証情報は保持され、いつでも再開できます）",
+        "dialogTitle": "QR コードで飛書に接続",
+        "dialogDescription": "スマートフォンの飛書で下の QR コードを読み取り、確認してください。",
+        "userCode": "認証コード：{{code}}",
+        "scanWaiting": "スマートフォンでの確認を待っています…",
+        "scanSuccess": "読み取り成功。飛書に接続しました",
+        "scanDenied": "読み取りが拒否されました。もう一度お試しください。",
+        "scanExpired": "QR コードの有効期限が切れました。再取得してください。",
+        "scanFailed": "接続に失敗しました。もう一度お試しください。",
+        "scanCancelled": "読み取りをキャンセルしました",
+        "scanUnavailable": "飛書の QR 接続は現在ご利用いただけません。しばらくしてからお試しください。",
+        "scanNetworkFailed": "ネットワークエラーです。接続を確認して再試行してください。",
+        "cancelScan": "キャンセル",
+        "retryScan": "QR コードを再取得",
+        "done": "完了",
+        "title": "Feishu",
+        "description": "スマートフォンの Feishu からボットに話しかけると、このパソコンで作業が実行されます。",
+        "stateIdle": "未接続",
+        "stateConfigured": "設定済み",
+        "stateUnavailable": "ランタイムが利用できません",
+        "appId": "接続済み · アプリ ID：{{appId}}",
+        "pluginMissing": "Feishu プラグインは同梱されています。「Feishu に接続」を押すだけです（ダウンロードも手動解凍も不要）。",
+        "runtimeMissing": "ローカルランタイムの準備ができていないため接続できません。まずアプリが正常に動作することを確認してください。",
+        "connect": "Feishu を接続",
+        "reconnect": "再スキャン",
+        "scanHint": "スキャン後、このページに戻って「状態を更新」を押してください。ここに表示されるのはローカル設定のみで、オンライン状態ではありません。",
+        "billingNote": "Feishu から依頼したタスクもこのパソコンのアカウントのポイントを消費し、課金はデスクトップ版と同じです。",
+        "gatewayUnavailable": "ローカル AI サービスがまだ準備できていないため、今は Feishu に接続できません。少し待ってからもう一度お試しください。",
+        "writeFailed": "Feishu の設定は書き込まれましたが、ローカル AI サービスに受け入れられませんでした。もう一度スキャンしてください。",
+        "invalidAgent": "選択したアシスタントは存在しません。別のアシスタントを選んで再試行してください。",
+        "pluginInstallFailed": "同梱の Feishu プラグインをインストールできませんでした。アプリを再起動してから再試行してください。",
+        "unsupportedAuth": "この Feishu アカウントはこのスキャン方法に対応していません。Feishu モバイルアプリから再試行するか、サポートに連絡してください。",
+        "unknownError": "Feishu の接続に失敗しました。再試行してください。繰り返し失敗する場合はアプリを再起動してください。",
+        "ingressUnavailable": "Feishu は接続済みですがメッセージを受信できません。プラグインの信頼済みインストール記録がありません。ここでもう一度スキャンしてください（プラグインを再インストールします）。またはアプリを再起動してお試しください。"
+      }
+    },
     "about": "Rongying Cube について",
     "aboutDesc": "バージョン、アップデート、リンク",
     "account": "アカウント",
@@ -2103,17 +2301,54 @@
     "memory": "Memory",
     "memoryAboutYou": "About you",
     "memoryAboutYouHint": "Your habits, what you care about, how you want them to work with you. Saving writes it to every assistant on this disk.",
+    "memoryAboutYouScope": "この欄はアシスタントが毎ターン読む「あなたについて」のファイルです。下の長期メモリとは別物で、長期メモリはアカウントごとに分けて保存され、別のアカウントでは表示されません。この欄の内容はこのディスク上のすべてのアシスタントに書き込まれます。",
+    "memoryAdd": "これを覚える",
+    "memoryAdded": "保存しました。次のターンからアシスタントが読み取ります。",
+    "memoryAddPlaceholder": "アシスタントに長く覚えていてほしいことを書いてください。",
+    "memoryConfirmed": "承認しました。次のターンからアシスタントが読み取ります。",
     "memoryCounter": "{{used}} / {{max}}",
+    "memoryDelete": "削除",
+    "memoryDeleted": "削除しました。アシスタントはもう読み取りません。",
+    "memoryDraftCancelEdit": "キャンセル",
+    "memoryDraftConfirm": "承認",
+    "memoryDraftCount": "確認待ち {{count}} 件",
+    "memoryDraftEdit": "編集",
+    "memoryDraftReject": "拒否",
+    "memoryDrafts": "確認待ちの提案",
+    "memoryDraftSaveEdit": "編集後に承認",
+    "memoryDraftsEmpty": "アシスタントはまだ覚えておくべき事を提案していません。",
+    "memoryDraftsHint": "アシスタントからの提案です。承認するまで記憶されません。",
+    "memoryDraftSourceAssistant": "アシスタントの提案",
     "memoryDraftTrackNotYet": "Note: this version only lets you write it yourself. The assistant cannot yet propose a draft for you to confirm.",
+    "memoryEntries": "長期メモリ",
+    "memoryEntriesEmpty": "確定済みの記憶はまだありません。",
+    "memoryEntriesHint": "確定した記憶は、アシスタントが毎ターン読むプロンプトに書き込まれます。",
+    "memoryEntryCount": "保存 {{count}} 件",
+    "memoryErrorBlockFull": "長期メモリがいっぱいです。先に一つ削除してから追加してください。",
+    "memoryErrorControlCharacters": "このテキストには保存できない文字が含まれています。",
+    "memoryErrorCountFull": "記憶の件数が上限に達しました。先に一つ削除してから追加してください。",
+    "memoryErrorDuplicate": "これはすでに保存されています。",
+    "memoryErrorEmpty": "まず何か書いてください。",
+    "memoryErrorNotFound": "その記憶はもう存在しません。",
+    "memoryErrorOverLimit": "長すぎます — 1 件の記憶は最大 {{max}} 文字までです。",
+    "memoryErrorUnavailable": "現在メモリを利用できません。",
     "memoryIntro": "The assistants on this disk read the following every turn. What you write here, they remember.",
     "memoryNoAgents": "There are no assistants on this disk yet. Create one first.",
     "memoryPlaceholder": "For example: I read the conclusion first; quote tax-inclusive prices; do not schedule work for me on weekends.",
     "memoryReadFailed": "Could not read this memory. Reopening this page may help.",
+    "memoryRejected": "拒否しました。保存されていません。",
+    "memoryRejectNote": "拒否した提案は記録され、同じ事を再び尋ねられることはありません。",
     "memorySave": "Save",
     "memorySaved": "Saved. {{count}} assistants will read this.",
     "memorySaveFailed": "Save failed. Please try again.",
     "memorySavePartial": "{{failed}} of {{total}} assistants were not saved. Please save again.",
+    "memoryStoredOnDisk": "記憶はこのディスクに保存され、アカウントごとに分けて管理されます。別のアカウントでサインインしても表示されません。",
+    "memorySyncPartial": "保存しましたが、{{failed}} 個のアシスタントが受け取れませんでした。オンラインで一度開き直すと同期されます。",
+    "memorySyncPending": "変更は記録しましたが、アシスタントにはまだ届いていません（ローカルサービスが未接続です）。オンラインでこのページを開き直すか、アプリを再起動すると同期されます。",
     "memoryTooLong": "Over the limit ({{max}} characters). The extra part will not be saved - please shorten it.",
+    "memoryUserMdTitle": "あなたについて",
+    "memoryUserMdObserved": "観察日：{{date}} ｜ ステータス：有効",
+    "memoryUserMdSampleDirective": "- 進捗は簡潔に報告する。",
     "memoryUnsaved": "Unsaved changes",
     "mobile": "モバイル",
     "mobileDesc": "スマートフォンから Rongying Cube にアクセス",
@@ -2168,6 +2403,145 @@
     "quickLaunchUpdateFailed": "クイック起動の設定を更新できませんでした",
     "readyToInstall": "再起動してアップデート",
     "remove": "削除",
+    "repair": {
+      "applySelected": "選択した項目を修復（{{count}}）",
+      "code": {
+        "apply": {
+          "already-current": "すでに最新の状態です。ファイルは何も変更していません。",
+          "already-gone": "対応は不要です（ファイルはすでに処理済みか、存在しません）。",
+          "backup-failed": "実行しませんでした。バックアップに失敗したため、元のファイルには手を付けていません。",
+          "became-live": "中止しました。このロックは直前に使用中のロックになりました。",
+          "blocked-live-instance": "実行しませんでした。この PC で Rongying Cube が起動中です。",
+          "diagnostics-failed": "診断パッケージを書き出せませんでした（ドライブに書き込めない可能性があります）。",
+          "diagnostics-written": "診断パッケージを書き出しました：{{path}}",
+          "invalid-json": "実行しませんでした。設定ファイルが正しい JSON ではありません。",
+          "not-object": "実行しませんでした。設定ファイルの形式を認識できません。",
+          "plugin-dir-missing": "実行しませんでした。現在のドライブにプラグインフォルダーを作成できません（ドライブが読み取り専用の可能性があります）。",
+          "quarantined": "隔離しました（元のファイルは名前を変えて残し、コピーをバックアップしました）。",
+          "read-failed": "実行しませんでした。設定ファイルを読み取れませんでした。",
+          "rebased": "現在のドライブに合わせてプラグインパスを再設定しました。",
+          "rename-failed": "実行しませんでした。隔離のための名前変更に失敗しました（ファイルが使用中の可能性があります）。",
+          "rewritten": "現在のバージョンで能力境界ブロックを書き直しました。",
+          "skill-migrated": "スキルのインストール記録を現在のスキルフォルダーへ移しました。",
+          "unreadable-lock": "実行しませんでした。ロックファイルは残っていますが読み取れません（ほかのプログラムが使用中の可能性があります）。",
+          "unsafe-target-link": "実行しませんでした。この場所は通常のファイルではありません（別の場所を指すリンクの可能性があります）。安全のため、そのままにします。",
+          "write-failed": "実行しませんでした。設定の書き戻しに失敗しました。"
+        },
+        "capability": {
+          "block-corrupt": "能力境界ブロックの開始・終了マーカーが対になっていません（書きかけ）。書き直しが必要です：{{path}}",
+          "block-missing": "AGENTS.md に能力境界ブロックがないため、アシスタントが古いルールに誤って従う可能性があります：{{path}}",
+          "block-newer": "能力境界ブロックは現在のプログラムより新しい（v{{version}}）ため、ダウングレードしません：{{path}}",
+          "block-stale": "能力境界ブロックが古いバージョンのままです（v{{version}} < v{{current}}）：{{path}}",
+          "no-downgrade": "ブロックのバージョンが現在のプログラムより新しいため、そのままにします（新しい内容を古いもので上書きしないため）：{{path}}",
+          "no-file": "アシスタントはまだ AGENTS.md を作成していないため、ブロックの確認を省略しました。",
+          "no-workspace": "この状態にアシスタントのワークスペースがないため、ブロックの確認を省略しました：{{path}}",
+          "none": "確認できるアシスタントのワークスペースが見つかりませんでした。",
+          "ok": "能力境界ブロックは最新バージョンです（v{{version}}）：{{path}}",
+          "rewrite-block": "現在のバージョンで能力境界ブロックを書き直す（ブロック内のみ、v{{version}} に更新）：{{path}}"
+        },
+        "diagnostics": {
+          "export": "診断パッケージを書き出す：{{path}}",
+          "failed": "診断パッケージを書き出せませんでした（ドライブに書き込めない可能性があります）。",
+          "ready": "サポートに送る診断パッケージを書き出せます（パスワード類は取り除き、{{path}} にのみ保存し、自動送信はしません）",
+          "written": "診断パッケージを書き出しました：{{path}}"
+        },
+        "env": {
+          "data-root-not-writable": "実行データフォルダーに書き込めないため、修復操作は失敗します：{{path}}",
+          "data-root-writable": "実行データフォルダーに書き込めます：{{path}}",
+          "guide-antivirus-quarantine": "ウイルス対策ソフトによって隔離された可能性が高いです。ウイルス対策ソフトの隔離エリアから復元し、除外（許可）リストに追加してから、本アプリを開き直してください。詳しくは『使用説明書』の「初回起動がウイルス対策ソフトにブロックされた場合」の項をご覧ください。",
+          "guide-never-started": "このプログラムはまだ一度も正常に起動できていない可能性があります。まず本アプリを一度普通に開いて実行環境を整えてから、修復に戻ってきてください。",
+          "guide-readonly-drive": "ドライブが読み取り専用になっている可能性があります（書き込み保護スイッチ、またはシステムによる権限変更）。USB メモリの書き込み保護スイッチを確認するか、別の USB ポートで試してください。",
+          "guide-workspace": "そのドライブにワークスペースが見つからないか、書き込めません。ドライブが書き込み保護されていないか確認するか、別の USB ポートで試してください。",
+          "mode-installed": "現在はインストール版として動作しています。実行データの場所：{{root}}",
+          "mode-portable": "現在はドライブから実行しています。実行データの場所：{{root}}",
+          "runtime-deployed": "ローカル実行環境は展開済みです：{{path}}",
+          "runtime-media-dev-skip": "現在はパッケージ版ではないため、同梱ランタイムの確認を省略しました。",
+          "runtime-media-missing": "同梱ランタイムが見つからず、ローカルサービスを起動できません。",
+          "runtime-media-present": "同梱ランタイムがあります：{{path}}",
+          "runtime-not-deployed": "ローカル実行環境はまだ展開されていません（初回起動時に自動で準備され、数分かかります）。",
+          "state-found": "状態フォルダーを {{count}} 件見つけました。例：{{path}}",
+          "state-missing": "状態フォルダーが見つかりません：{{path}}",
+          "workspace-ok": "ユーザーデータのワークスペースは使用できます：{{path}}",
+          "workspace-unusable": "ユーザーデータのワークスペースが使用できません（存在しないか書き込めません）：{{path}}"
+        },
+        "live": {
+          "gateway-lock": "使用中の Gateway ロックが見つかりました。ローカルサービスがまだ動作しています：{{path}}。Rongying Cube を完全に終了してから戻り、「もう一度全体チェック」を押してください。",
+          "instance-owner": "この PC では Rongying Cube が起動しています（プロセス PID {{pid}}）。そのため修復操作は一切実行されません。完全に終了してから戻り、「もう一度全体チェック」を押してください。",
+          "port-listener": "ローカルポートでプロセスが待ち受けています（PID {{pid}}）。ローカルサービスがまだ動作している可能性があります。Rongying Cube を完全に終了してから戻り、「もう一度全体チェック」を押してください。"
+        },
+        "lock": {
+          "corrupt": {
+            "bad-pid": "ロックファイルに使えるプロセス番号がありません：{{path}}",
+            "not-json": "ロックファイルの中身が正しい JSON ではありません（書き込み中に電源が切れた可能性が高いです）：{{path}}",
+            "not-object": "ロックファイルの中身がオブジェクトではありません：{{path}}",
+            "unreadable": "ロックファイルを読み取れません（使用中の可能性があります）：{{path}}"
+          },
+          "live": {
+            "start-time-match": "これは稼働中の Gateway が残したロックなので、そのままにします：{{path}}",
+            "unverifiable": "このロックが古いものか確認できません（プロセスの起動時刻が取得できません）。念のため、そのままにします：{{path}}"
+          },
+          "no-state": "状態フォルダーが見つからないため、ロックの確認を省略しました。",
+          "none": "ローカルの Gateway ロックファイルは正常です（状態フォルダーを {{count}} 件確認しました）。",
+          "quarantine": "この壊れたロックを名前変更して隔離する：{{path}}",
+          "stale": {
+            "pid-gone": "ロック内のプロセス（PID {{pid}}）はすでに終了しているため、このロックは古いものです：{{path}}",
+            "pid-reused": "ロック内のプロセス番号（PID {{pid}}）はシステムによって別のプログラムに再利用されており、このロックは古いものです：{{path}}"
+          }
+        },
+        "plugin": {
+          "foreign-dead-path": "設定に別のプログラムを指す無効なパスがあります。こちらで勝手に削除はしません：{{path}}",
+          "no-state": "状態フォルダーが見つからないため、プラグインパスの確認を省略しました。",
+          "none": "プラグインの読み込みパスはすべて残っています。",
+          "own-dead-path": "設定が、すでに存在しないアプリのプラグインフォルダーを指しています（多くはドライブレターの変更が原因）：{{path}}",
+          "rebase": "現在のドライブに合わせてプラグインパスを再設定する（{{path}} を変更、無効なパス {{count}} 件）"
+        },
+        "skill": {
+          "ambiguous": "複数の状態フォルダーが見つかり、どれが現在のものか判断できないため、記録は変更しませんでした。",
+          "matched": "スキルのインストール記録は現在のスキルフォルダーと一致しています。",
+          "migrate": "スキルのインストール記録を現在のスキルフォルダーへ移す（{{count}} 件、移動先：{{path}}）",
+          "no-access": "このモードではスキル記録を読み取れないため、確認を省略しました。",
+          "no-config": "設定ファイルを読み取れないため、スキル記録の確認を省略しました。",
+          "no-state": "状態フォルダーが見つからないため、スキル記録の確認を省略しました。",
+          "none": "スキルのインストール記録はまだありません。処理は不要です。",
+          "orphan": "スキルのインストール記録が、存在しないスキルフォルダー {{count}} 件を指したままです（通常はゲートウェイやドライブの変更後）。"
+        }
+      },
+      "item": {
+        "capability-block": "能力境界プロンプト",
+        "diagnostics-pack": "診断パッケージ",
+        "environment": "実行環境のセルフチェック",
+        "gateway-locks": "起動ロック（壊れたロック／書きかけのロック）",
+        "plugin-paths": "プラグイン読み込みパス",
+        "skill-records": "スキルのインストール記録"
+      },
+      "nav": "診断と修復",
+      "needsYou": "お客様の対応が必要",
+      "noChanges": "今回の実行では、どのファイルも変更していません。",
+      "notApplicable": "ここでは該当しません",
+      "nothingDesc": "全体チェックでは問題は見つかりませんでした。それでも使えない場合は、診断パッケージを書き出してサポートにお送りください。",
+      "nothingTitle": "修復が必要なものはありません",
+      "offlineNote": "この作業は一切ネットワークを使いません。修復が終わるまでサーバーに接続せず、診断パッケージも本機に保存されるだけで、送信はご自身で行います。",
+      "openBackup": "バックアップフォルダーを開く（{{path}}）",
+      "rescan": "もう一度全体チェック",
+      "restore": {
+        "blocked-live-instance": "Rongying Cube が起動中のため、復元は行いませんでした。完全に終了してからもう一度お試しください。",
+        "nothing": "ここには元に戻せるバックアップがありません。",
+        "partial": "{{total}} 件中 {{count}} 件を元に戻しました。残りは復元できませんでした。",
+        "restored": "{{count}} 個のファイルを元の場所に戻しました。"
+      },
+      "restoreBackup": "この一連の変更を元に戻す（バックアップを書き戻す）",
+      "resultTitle": "今行ったこと",
+      "scanFailed": "全体チェックが完了しませんでした：{{error}}",
+      "scannedRoots": "{{count}} か所を確認しました",
+      "scanning": "全体チェックを実行しています…",
+      "severity": {
+        "attention": "修復できます",
+        "blocked": "確認できません",
+        "broken": "要対応",
+        "ok": "正常"
+      },
+      "title": "診断と修復"
+    },
     "rightPanelShortcut": "コンテキストパネルの切替",
     "selectGateway": "ゲートウェイを選択",
     "sendCmdEnter": "{{mod}} Enter",
@@ -2263,6 +2637,11 @@
     "version": "バージョン",
     "webSearch": "Let the assistant search the web",
     "webSearchHint": "オンにすると、助手は最新情報が必要なとき自動でウェブ検索し、出典を表示します。検索1回ごとに個別課金（約6クレジット）。qwen-plus、qwen-turbo、qwen3.7-flash はモデル内蔵のウェブ検索にも対応：ページ内容が入力に算入され、費用は同程度の質問の約100倍です。保存すると接続が再適用されます。",
+    "showMascot": "小盈を表示",
+    "showMascotHint": "チャット右下のマスコット。オフにしてもここでいつでも戻せます。",
+    "desktopMascot": "デスクトップの小盈",
+    "desktopMascotHint": "ドラッグできる小盈をデスクトップに置き、ファイルの確認と整理を手伝います",
+    "desktopMascotOpen": "開く",
     "webSearchSection": "Web search",
     "workspace": "ワークスペース",
     "workspaceChange": "変更",
@@ -2303,7 +2682,6 @@
   },
   "skillMarket": {
     "actionFailed": "操作に失敗しました：{{reason}}",
-    "count": "全 {{total}} 件 · インストール済み {{installed}} 件",
     "empty": "このバージョンには同梱スキルがありません。",
     "gatewayRequired": "ゲートウェイに接続されていません。インストールには接続が必要です。接続後に更新してください。",
     "install": "インストール",
@@ -2320,11 +2698,25 @@
     "repairConfirmTitle": "「{{name}}」を修復しますか？",
     "repaired": "「{{name}}」を修復しました",
     "repairedBackup": "修復前のバックアップ：{{path}}",
-    "subtitle": "これらはアプリに同梱されているスキルです。インストールするとすべてのアシスタントが使えます。",
     "verdictBlocked": "このアシスタントはまだ使えません",
     "verdictChecking": "アシスタントが使えるか確認しています…",
     "verdictUnknown": "確認できませんでした。アシスタント側で使えるかは現時点では不明です",
-    "verdictUsable": "このアシスタントは使える状態です"
+    "verdictUsable": "このアシスタントは使える状態です",
+    "tabSkills": "スキル",
+    "tabAgents": "エージェント",
+    "tabPrompts": "プロンプト",
+    "promptsSoon": "プロンプト集は近日公開",
+    "searchPlaceholder": "スキルを検索",
+    "allInstalled": "{{n}} 個のスキル · すべて同梱",
+    "tileCount": "{{n}} 個のスキル",
+    "category": {
+      "content": "コンテンツ制作",
+      "commerce": "EC運営",
+      "research": "学習・調査",
+      "office": "業務効率",
+      "other": "その他"
+    },
+    "noMatch": "一致するスキルがありません"
   },
   "slash": {
     "argOptions": "/{{command}} のオプション"
@@ -2347,6 +2739,18 @@
     "tooltip": "コマンド"
   },
   "slidegen": {
+    "detail": {
+      "footerOverlap": "フッター #{{footer}} が本文領域 #{{body}} に重なっています。フッターの上に余白を取るか、本文領域を上にずらしてください。テキストは1文字も削除しないでください。",
+      "lowContrast": "{{who}} は実測した単色背景とのコントラストが {{ratio}}:1 しかなく、目標の {{minimum}}:1 を下回っています。文字色か背景色を変更してください。",
+      "occluded": "{{who}} の一部が {{occludedBy}} に隠れています。位置をずらすか、隠している要素を動かしてください。",
+      "outOfBounds": "{{who}} がキャンバスからはみ出しています：{{sides}}。この部分は書き出したあとスライドの外にあり、発表時に表示されません。",
+      "side": {
+        "bottom": "下に {{px}}px はみ出し",
+        "left": "左に {{px}}px はみ出し",
+        "right": "右に {{px}}px はみ出し",
+        "top": "上に {{px}}px はみ出し"
+      }
+    },
     "fail": {
       "blockEmpty": "アシスタントが送ったレイアウトが空でした。",
       "blockUnclosed": "内容が長すぎて途中で切れたため、生成できませんでした。2 回に分けて作ってもらってください。",
@@ -2364,6 +2768,12 @@
       "unparsable": "レイアウトに構文エラーがあり、読み取れませんでした。"
     },
     "failedTitle": "プレゼンテーションを生成できませんでした",
+    "kind": {
+      "block": "図形",
+      "image": "画像",
+      "text": "テキスト"
+    },
+    "listJoiner": "、",
     "unconfirmedTitle": "プレゼンテーションを自動確認できませんでした",
     "warn": {
       "footerOverlap": "ページ {{page}} のフッターが本文カードに重なっています",
@@ -2372,7 +2782,11 @@
       "occluded": "{{page}} ページ目の文字が他の要素に隠れています",
       "outOfBounds": "{{page}} ページ目にスライド外にはみ出した内容があり、発表時に表示されません"
     },
-    "warnedTitle": "プレゼンテーションは生成しましたが、調整が必要な箇所があります"
+    "warnedTitle": "プレゼンテーションは生成しましたが、調整が必要な箇所があります",
+    "who": {
+      "plain": "{{kind}}（#{{id}}）",
+      "withText": "{{kind}}「{{snippet}}」（#{{id}}）"
+    }
   },
   "startupReadiness": {
     "aiCatalogFailed": "モデル一覧を取得できませんでした",
@@ -2404,6 +2818,7 @@
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "この認証は端末数の上限に達しています。別のカードをご利用いただくか、サポートにお問い合わせください。",
     "relayActivationRequired": "この端末はまだ認証されていません。先に認証を完了してください。",
+    "relayApplyFailed": "ローカルサービスがモデル設定を受け付けませんでした。もう一度試すことはできますが、失敗が続く場合は待っても解決しません。ログを送ってください。",
     "relayEntitlementRejected": "この認証はもう使用できません。もう一度認証するか、別のカードをご利用ください。",
     "relayOrganizationMismatch": "この認証は別の組織に紐づいているため、現在のアカウントでは使用できません。",
     "relayRetryable": "商用サービスの準備がまだ整っていません。もう一度お試しいただけます。",
@@ -2474,6 +2889,8 @@
       "compass": "メインコンパス",
       "emptyHint": "チームを作成すると、ここに 5 つの役割の実際の連携状況が表示されます。",
       "latest": "直近の会議：{{question}}",
+      "participants": "実際の参加者",
+      "positions": "5 つの役割",
       "status": {
         "attention": "対応が必要",
         "disabled": "未設定",
@@ -2630,8 +3047,6 @@
     "degradeTitle": "残高がまもなくなくなります",
     "quotaTotal": "総額度",
     "quotaUsed": "使用済み",
-    "rateLimits": "レート制限",
-    "resetsAt": "{{time}} にリセット",
     "unknownDesc": "The network seems unstable, so your balance could not be read. This does not mean you are out of quota — please retry in a moment.",
     "unknownTitle": "Could not confirm your quota",
     "unlicensedDesc": "Activate a licence or redeem a code to continue.",
@@ -2640,6 +3055,7 @@
   },
   "videogen": {
     "aspectInvalid": "画面比「{{value}}」は対応していません（対応：{{allowed}}）。アシスタントに修正を伝えてください。",
+    "billingPending": "動画を生成できませんでした。料金は未確認です。タスクの記録を保存し、再生成しないでください。",
     "blockInvalid": "返信内の videogen ブロックが検証を通らなかったため、生成は開始されませんでした。スキルに書かれた形式どおり書き直すようアシスタントに伝えてください。",
     "contentRejected": "動画が内容の安全チェックでブロックされました（この種のブロックは課金されません）。別の描写で再依頼してください。",
     "createFailedNetwork": "動画サービスに接続できませんでした。この動画は生成されませんでした。後でもう一度アシスタントに依頼してください。",
@@ -2656,14 +3072,16 @@
     "saveFailed": "動画ファイルをこのパソコンに保存できませんでした。アシスタントにもう一度依頼してください。",
     "taskFailed": "動画の生成に失敗しました。アシスタントにもう一度依頼してください。",
     "timeout": "待ち時間が長すぎたため、待機を中止しました（今回は課金されません）。アシスタントにもう一度生成を依頼してください。",
-    "unsupportedField": "現在のバージョンでは「{{field}}」は対応していません（参照画像・先頭/末尾フレームは未対応）。アシスタントに削除を伝えてください。"
+    "unsupportedField": "現在のバージョンでは「{{field}}」は対応していません（参照画像・先頭/末尾フレームは未対応）。アシスタントに削除を伝えてください。",
+    "imageRequiresSeedance": "この動画は添付画像を使いますが、対応するのは高画質モードだけです。動画画質を「高画質（Seedance 2.5）」に切り替えて、もう一度依頼してください。文字だけの動画にしたい場合は画像を外してください。今回は生成も課金もされていません。"
   },
   "voiceInput": {
     "answerTooLong": "回答が6000文字を超えています。短い回答を依頼してから読み上げてください。",
+    "discardRecording": "録音の復旧を破棄",
     "introConfirm": "了解",
     "introDescription": "マイクをクリックするか Space を押しながら話してください。最長60秒です。",
     "introSkip": "後で",
-    "introStepBeta": "音声はクラウドで認識され、表示単価で課金されます。",
+    "introStepBeta": "音声はクラウドで認識され、秒単位で課金され、クレジットから差し引かれます。",
     "introStepHold": "文字起こし結果は入力欄に挿入され、自動送信されません。",
     "introStepInsert": "Space の短押しは通常のスペース入力になります。",
     "introTitle": "音声入力",
@@ -2675,19 +3093,38 @@
     "playing": "再生中…",
     "preparingSpeech": "読み上げを準備中…",
     "readAnswer": "最新の回答を読み上げる",
-    "readAnswerFee": "最新の回答を読み上げる（約 {{fee}} ポイント）",
     "recognitionFailed": "音声認識に失敗しました",
-    "serviceFeeAsr": "文字起こし：{{fee}} ポイント/分",
-    "serviceFeeTts": "読み上げ：{{fee}} ポイント/100文字",
+    "recoveryPending": "音声の結果は未確認です。再試行では元のリクエストを使用します。",
+    "retryRecognition": "音声認識を再試行",
     "stop": "音声を停止",
     "tooltip": "音声入力",
     "transcribing": "文字起こし中...",
     "unsupported": "音声入力は利用できません。テキスト入力をお使いください。",
-    "unsupportedTooltip": "このアプリでは音声入力を利用できません。"
+    "unsupportedTooltip": "音声サービスを利用できません。ログイン状態とネットワークを確認してから、もう一度お試しください。"
   },
   "workspaceNotice": {
     "dismiss": "了解",
     "openSettings": "ワークスペース設定を開く",
     "recreated": "元のワークスペースフォルダーが存在しないため（移動または削除された可能性があります）、新しい空のワークスペースを作成しました。以前のデータを復元するには、元のフォルダーを確認するかワークスペースを切り替えてください。"
+  },
+  "pet": {
+    "title": "小盈 · デスクトップ相棒",
+    "peek": "デスクトップを見る",
+    "organize": "デスクトップを片付ける",
+    "trash": "ファイルを削除",
+    "close": "小盈を隠す",
+    "desktopClean": "デスクトップはきれいです～",
+    "desktopSummary": "デスクトップに {{count}} 個のファイル：{{detail}}",
+    "peekFailed": "デスクトップを読めません（権限？）",
+    "organized": "片付け完了、{{count}} 個たいらげました～",
+    "organizeFailed": "片付けに失敗しました。もう一度？",
+    "trashed": "{{count}} 個をごみ箱へ移動しました",
+    "trashFailed": "削除に失敗、ファイルはそのままです",
+    "cancelled": "了解、そのままにします",
+    "line3": "げぷ～お腹いっぱい",
+    "line4": "なんでつつくの～",
+    "menuGreet": "あいさつ",
+    "menu": "その他",
+    "menuMove": "場所を変える"
   }
 }

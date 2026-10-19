@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { cp } from 'fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join, resolve, sep } from 'path';
@@ -10,6 +10,20 @@ export async function initWorkspace(workspacePath: string): Promise<void> {
     mkdirSync(workspacePath, { recursive: true });
   }
   writeWorkspaceMarker(workspacePath);
+}
+
+/**
+ * 把**损坏**的工作区标记改名保留（`<marker>.corrupt-<时间戳>`），返回备份路径。
+ *
+ * ⚠️ 与 `portable-state-migration.ts` 的 `quarantineUnusableLocks` 同一条纪律：
+ *    "不可读"永远是**改名**（保留原始字节供排查），绝不是删除、也不是原地覆盖。
+ * ⚠️ 改名失败就**抛** —— 上层 catch 会放弃这次写入，坏文件原样留在盘上（fail-closed）。
+ *    宁可这次没身份，也不许把唯一的一份现场毁掉。
+ */
+function quarantineCorruptMarker(markerPath: string): string {
+  const target = `${markerPath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  renameSync(markerPath, target);
+  return target;
 }
 
 /**
@@ -26,6 +40,14 @@ export async function initWorkspace(workspacePath: string): Promise<void> {
  *
  * ⚠️ **尽力而为、绝不抛**：写不进去（只读盘、权限）只是失去一条认盘线索，
  *    不该把「设置工作区」整个弄失败。
+ *
+ * ⚠️ **标记损坏要修，不是放弃**（2026-10-16 Owner C / T15「标记损坏」）：
+ *    文件存在但读不出（坏 JSON / 半截写 / 非对象）时，旧实现直接 `return` ——
+ *    于是 `readWorkspaceId()` 永远 null、这个工作区**永久没有身份**，而且用户确认后
+ *    `startup.ts` 会把 null 身份写回配置 ⇒ 配置里记的身份被静默清掉，跨盘符自愈
+ *    退化到最弱判据、且每次启动重复一遍。修法：坏文件**改名保留**（证据不丢，与
+ *    `quarantineUnusableLocks` 同一条纪律），再写一份带新 `workspaceId` 的标记。
+ *    绝不原地覆盖、绝不直接删除。
  */
 function writeWorkspaceMarker(workspacePath: string): void {
   const markerPath = join(workspacePath, WORKSPACE_MARKER_FILE);
@@ -33,9 +55,13 @@ function writeWorkspaceMarker(workspacePath: string): void {
     if (existsSync(markerPath)) {
       // 补铸：老标记只有 formatVersion/app/createdAt ⇒ 原样补一个 workspaceId。
       const existing = readMarkerJson(markerPath);
-      if (!existing || (typeof existing.workspaceId === 'string' && existing.workspaceId.trim())) return;
-      writeFileSync(markerPath, `${JSON.stringify({ ...existing, workspaceId: randomUUID() }, null, 2)}\n`, 'utf-8');
-      return;
+      if (existing) {
+        if (typeof existing.workspaceId === 'string' && existing.workspaceId.trim()) return;
+        writeFileSync(markerPath, `${JSON.stringify({ ...existing, workspaceId: randomUUID() }, null, 2)}\n`, 'utf-8');
+        return;
+      }
+      // 损坏（读不出/不是对象）：改名保留现场，落下去当作"没有标记"重新写一份。
+      quarantineCorruptMarker(markerPath);
     }
     writeFileSync(
       markerPath,

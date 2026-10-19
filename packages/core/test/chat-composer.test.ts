@@ -457,6 +457,30 @@ describe('chat-composer', () => {
     }
   });
 
+  /**
+   * 🔴 2026-10-15（E1/C63 复核）：斜杠 `/compact` 从前**先自己发一次** `sessions.compact`
+   *    （只为拿 `ok` 当闸门），再交给统一出口 —— 而统一出口**又发一次**。
+   *    第二次的结论会**盖掉第一次真的结论**：第一次 `compacted:true`（真压了）、
+   *    第二次只是 `{ok:true}`（没有 `compacted` 字段）⇒ 兜底判"没压成"、不通报。
+   *    结果：用户点了一次 `/compact`，压缩**真的发生了**，却什么都没看到。
+   *
+   * ⚠️ 这条用例必须让两次调用返回**不同**的结果才抓得住 —— 两次都写 `compacted:true`
+   *    （或用 `mockResolvedValue` 而不是 `mockResolvedValueOnce`）时，重复调用会被悄悄掩盖。
+   */
+  it('⭐ 斜杠 /compact 只发**一次** RPC，且那句真实结论必须交给统一出口', async () => {
+    const { composer, compactSession } = setup();
+    compactSession.mockResolvedValueOnce({ ok: true, result: { compacted: true } }).mockResolvedValue({ ok: true });
+    vi.useFakeTimers();
+
+    const result = await composer.applySlashCommand(TASK_ID, 'compact');
+
+    expect(result.ok, '命令本身仍然成功').toBe(true);
+    expect(compactSession, '一次手动压缩只发一次 RPC').toHaveBeenCalledTimes(1);
+    // 兜底定时器真的在等 = 那句 `compacted:true` 到了统一出口（没被第二次调用的结论盖掉）。
+    expect(vi.getTimerCount(), '真压了就要安排那次兜底等待').toBe(1);
+    vi.useRealTimers();
+  });
+
   it('does not create or persist a deferred user message when gateway dispatch fails', async () => {
     const { composer, addMessage, sendMessage, persistMessage, removeMessage } = setup();
     sendMessage.mockResolvedValueOnce({ ok: false, error: 'offline' });
@@ -1260,21 +1284,7 @@ describe('首轮产物索引：只进网关，不进气泡', () => {
   });
 });
 
-/**
- * ⛔ R8-04（2026-10-15 独立终审 P1「图片 @ 岗位绕过最终接收模型门禁」）。
- *
- * 病灶：mention 分支（`if (!isMentionSend)` 才钉 `presetModel`）不把主任务过完
- * 视觉门禁的模型钉给各岗位会话，图片由各岗位**自己的模型**直接接收 ——
- * 主会话能力**不证明**接收岗位能力（岗位会话可能是纯文本/未知模型）。
- * 逐目标能力校验本批不可靠（composer 内拿不到各会话的最终模型），故按终审许可的
- * 临时口径**整体拒绝**：只要这一轮 attachments 里有 `image/*`，且 mention 目标
- * 真能解析出来（room 存在 + mentions/mentionAll），就在真实派发边界上 fail-closed
- * ——零 `sendMessage`、不钉（不覆盖）任何模型。
- *
- * 审阅方探针（复本与 RED→GREEN 原始日志在 `D:/claude/mofang/reviews/r8-rework-vision/`）：
- * 修前 `ok:true` + 图片字节派发到 worker 会话；修后 `ok:false` + 零派发。
- */
-describe('chat-composer —— R8-04：带图片的 @ 分发整体拒绝（真实派发边界）', () => {
+describe('image mentions without recipient capability dependency fail closed', () => {
   const IMAGE = { mimeType: 'image/png', fileName: 'shot.png', content: 'cG5n' };
 
   it('⭐ 反例：@worker + 图片 ⇒ ok:false、零派发（连 conductor 通知也不发）、回滚 pending 用户消息、不钉任何模型', async () => {
@@ -1407,4 +1417,71 @@ describe('chat-composer —— R8-04：带图片的 @ 分发整体拒绝（真�
     h.composer.notifyResponse(SESSION_KEY);
     h.composer.dispose();
   });
+});
+
+describe('R8 image recipient model verification', () => {
+  const image = { mimeType: 'image/png', fileName: 'sample.png', content: 'AP8BEA==' };
+  const worker = `${SESSION_KEY}:worker`;
+  const conductor = `${SESSION_KEY}:conductor`;
+  const models = [
+    { sessionKey: conductor, model: 'clawrouter/vision-a' },
+    { sessionKey: worker, model: 'clawrouter/vision-b' },
+  ];
+
+  it.each([false, true])('dispatches original bytes only after every recipient is pinned: all=%s', async (all) => {
+    const h = setup({ ensemble: true });
+    h.deps.resolveImageRecipientModels = vi.fn(async (_gatewayId, targets) =>
+      models.filter((row) => targets.includes(row.sessionKey)),
+    );
+    h.sendMessage.mockImplementation(async () => {
+      expect(h.patchSession).toHaveBeenCalledTimes(all ? 2 : 1);
+      return { ok: true };
+    });
+    const result = await h.composer.send(TASK_ID, {
+      content: 'image',
+      attachments: [image],
+      presetModel: 'main-model',
+      ...(all ? { mentionAll: true } : { mentions: ['worker'] }),
+    });
+    expect(result.ok).toBe(true);
+    const imageCalls = h.sendMessage.mock.calls.filter((call) => call[3]?.length);
+    expect(imageCalls.map((call) => call[1])).toEqual(all ? [conductor, worker] : [worker]);
+    for (const call of imageCalls) expect(call[3]).toEqual([image]);
+    expect(h.patchSession).toHaveBeenCalledWith('gw-1', worker, { model: 'clawrouter/vision-b' });
+    expect(h.patchSession).not.toHaveBeenCalledWith('gw-1', worker, { model: 'main-model' });
+    h.composer.dispose();
+  });
+
+  it.each(['unknown', 'missing-target', 'wrong-target', 'read-failure', 'pin-failure', 'cancelled'] as const)(
+    'sends nothing when recipient verification fails: %s',
+    async (failure) => {
+      const h = setup({ ensemble: true });
+      const abort = new AbortController();
+      h.deps.resolveImageRecipientModels = vi.fn(async () => {
+        if (failure === 'read-failure') throw new Error('unavailable');
+        if (failure === 'unknown') return null;
+        if (failure === 'missing-target') return models.slice(0, 1);
+        if (failure === 'wrong-target') return models.map((row) => ({ ...row, sessionKey: 'other-session' }));
+        if (failure === 'cancelled') abort.abort();
+        return models;
+      });
+      if (failure === 'pin-failure')
+        h.patchSession.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false });
+      const result = await h.composer.send(TASK_ID, {
+        content: 'image',
+        attachments: [image],
+        mentionAll: true,
+        deferUserMessageUntilSent: true,
+        signal: abort.signal,
+      });
+      expect(result.ok).toBe(false);
+      expect(h.sendMessage).not.toHaveBeenCalled();
+      expect(h.persistMessage).not.toHaveBeenCalled();
+      expect(h.removeMessage).toHaveBeenCalledWith(TASK_ID, 'm1');
+      expect(h.processingBySession.size).toBe(0);
+      if (failure === 'pin-failure') expect(h.patchSession).toHaveBeenCalledTimes(2);
+      else expect(h.patchSession).not.toHaveBeenCalled();
+      h.composer.dispose();
+    },
+  );
 });

@@ -5,6 +5,8 @@
  * 同一种做法（那边也是"id → i18n key"的映射表 + 纯函数）。
  */
 
+import { INDUSTRY_BRIEFING_PREFIXES } from './industry-method';
+
 /** 「人群画像标签组合」的五个标签。顺序 = 界面上从左到右。 */
 export const IDENTITY_PERSONA_TAGS = ['goalOriented', 'efficiency', 'logical', 'reporting', 'timeManagement'] as const;
 
@@ -32,6 +34,28 @@ export function nextTagSelection(current: readonly IdentityTagId[]): IdentityTag
 /* ────────────────────────── 写进助手记忆（2026-09-26 身份中心 v2） ────────────────────────── */
 
 /**
+ * ## ⚠️ `USER.md` 身份块**不是第二套档案真源**（2026-10-16，T28 残留）
+ *
+ * 每个助手的 `USER.md` 里那份身份块**看着像**一份档案副本（客群 / 介绍 / 标签 /
+ * 行业方法），而且会在**每个**助手的 `USER.md` 里各存一份 —— 所以必须把它的角色钉死，
+ * 否则很容易被当成"另一份档案"来读、来写。逐字段说清：
+ *
+ * - **客群 / 行业方法 / 介绍** = `userProfile` 的**投影**。唯一真源是 `localStorage` 的
+ *   `rongying-cube:onboarding:v3:<userId>`（`lib/user-onboarding.ts`；
+ *   `PRODUCT_ARCHITECTURE.md` §2「userProfile」）。这份块**只是**把这些字段
+ *   投影成助手每轮读的提示词。
+ * - **偏好标签**（`IDENTITY_PERSONA_TAGS`）**不是** `userProfile` 的字段（档案里根本没有它）——
+ *   它的持久内容落在本块里（助手每轮读的就是它）。末尾那个
+ *   `IDENTITY_TAGS_STORAGE_PREFIX` 缓存**不是源**，只是"上次保存时界面上选了几个"的回读缓存。
+ * - **任何代码不得把这份块读回来当权威档案**（唯一的读回者是 `stripIdentityBlock`，
+ *   而它是**重写辅助** —— 只负责在再次保存时把旧块摘干净，不让它堆积/污染）。
+ * - **禁止**为"身份/档案"另起**第二套 store**（`PRODUCT_ARCHITECTURE.md` §2 的硬规则）：
+ *   要加字段就加在 `userProfile` 上，本块只在保存时**投影**出来。
+ *
+ * ⇒ 三条链各自的角色：**真源**（档案）→ `buildIdentityBlock` **投影** → 各助手 `USER.md`
+ *   （提示词）。缺档案 / 缺值时写如实的「未配置」（`common.notConfigured`），**不臆造**。
+ */
+/**
  * 身份块的标记。**必须是注释**：`USER.md` 是运行时**每轮全文注入**的提示词，
  * 标记要在模型看到的正文里不可见（与 `stampPresetPrompt` 同一个理由）。
  */
@@ -47,23 +71,47 @@ export const USER_MD_MAX_CHARS = 4000;
 /**
  * 身份块的正文（含标记）。`tagLabels` 为空时也要说清"未选"，不留一个空冒号。
  *
+ * ⚠️ **投影，不是真源** —— 唯一真源是 `userProfile`（`rongying-cube:onboarding:v3:<userId>`，
+ *    `PRODUCT_ARCHITECTURE.md` §2）。本函数只把档案**投影**成助手每轮读的提示词，
+ *    产出的块**不许**被读回来当权威档案（见文件头 `USER.md 身份块不是第二套档案真源`）。
+ *
  * `groupLabel` = **用户自己的行业/岗位**（首跑档案里的值），不是当前助手的名字 ——
  * 这一块会写进**每个**助手的 `USER.md`，写"客群：内容助手"等于告诉每个助手
  * "你服务的是内容助手"（2026-10-07 体检抓到的原话）。缺档案时由调用方给
  * 「未配置」这类如实值（`common.notConfigured`），这里不做臆造兜底。
  *
  * `introduction` = 首跑「一句话介绍」（可选，2026-10-07 补：只写不读的那个字段）。
+ *
+ * `industryLines` = **行业方法那三行**（2026-10-16，全量总单第 23 行，可选）。
+ * 由 `lib/industry-method.ts` 的 `buildIndustryBriefing` 产出，落点是"用户选了这个行业
+ * ⇒ 每个助手都按这个行业的方法与交付结构干活"。这是行业真正影响产出的那一条链：
+ * 首跑档案 → 个性化中心 → 本函数 → 各助手 `USER.md` → **每轮全文注入的提示词**。
+ * 不给 / 空数组 ⇒ 与旧行为**逐字相同**（既有调用方一个字都不用改）。
  */
 export function buildIdentityBlock(input: {
   groupLabel: string;
   tagLabels: readonly string[];
   introduction?: string;
+  industryLines?: readonly string[];
 }): string {
   const tags = input.tagLabels.length > 0 ? input.tagLabels.join('、') : '（未选）';
   const introduction = input.introduction?.trim();
   const lines = [IDENTITY_BLOCK_START, '## 我的身份', `- 客群：${input.groupLabel}`];
   if (introduction) lines.push(`- 介绍：${introduction}`);
-  lines.push(`- 标签：${tags}`, IDENTITY_BLOCK_END);
+  lines.push(`- 标签：${tags}`);
+  /**
+   * ⚠️ **只收"剥离器认得出的行"**：必须以登记的前缀开头、且不含换行。
+   *
+   * 理由只有一个：身份块是**按前缀剥离再重写**的。放进一行剥离器不认的东西，
+   * 下次保存时它不会被摘掉 ⇒ 越写越多 ⇒ 撑爆 4000 字上限 ⇒ **用户自己写的记忆
+   * 整份写不进去**（不可逆）。这里宁可丢掉一行，也不能让 USER.md 被写坏。
+   */
+  for (const line of input.industryLines ?? []) {
+    if (line.includes('\n')) continue;
+    if (!INDUSTRY_BRIEFING_PREFIXES.some((prefix) => line.startsWith(prefix))) continue;
+    lines.push(line);
+  }
+  lines.push(IDENTITY_BLOCK_END);
   return lines.join('\n');
 }
 
@@ -85,13 +133,19 @@ function stripIdentityBlock(existing: string): string {
    * 再往下的人话（包括用户自己的列表项）原样保留。
    */
   const lines = existing.slice(start + IDENTITY_BLOCK_START.length).split('\n');
+  /**
+   * ⚠️ 这个判据必须与 `buildIdentityBlock` **写得出来的行**一一对应。
+   *    少认一个前缀 ⇒ 那行永远摘不掉 ⇒ 每次保存就多一份（2026-10-16 加行业块时
+   *    同步补了 `INDUSTRY_BRIEFING_PREFIXES` 那三个）。
+   */
   const isBlockLine = (line: string): boolean => {
     const trimmed = line.trim();
     return (
       trimmed === '## 我的身份' ||
       trimmed.startsWith('- 客群：') ||
       trimmed.startsWith('- 介绍：') ||
-      trimmed.startsWith('- 标签：')
+      trimmed.startsWith('- 标签：') ||
+      INDUSTRY_BRIEFING_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
     );
   };
   let consumed = 0;

@@ -67,6 +67,26 @@ export default function TeamCollabBar({ taskId }: { taskId: string }) {
     [records, team?.id],
   );
 
+  /**
+   * 归属**只认真实 `turn.agentId`**（下面 `members` 就是按它匹配的）。
+   * 但真跑过的轮次里若有谁的 `agentId` 不在当前花名册上（成员被改过、老记录、目录还没拉回来），
+   * 那一轮就归不到任何一行 —— 那是**归属缺口**，必须留日志，绝不能悄悄丢掉当"没人跑过"。
+   */
+  const orphanTurns = useMemo(() => {
+    if (!latest || !team) return [];
+    const roster = new Set(team.agents.map((member) => member.agentId));
+    return latest.turns
+      .filter((turn) => !roster.has(turn.agentId))
+      .map((turn) => ({ turnId: turn.id, agentId: turn.agentId, agentName: turn.agentName, stage: turn.stage }));
+  }, [latest, team]);
+
+  const orphanKey = latest ? `${latest.id}:${latest.revision}:${orphanTurns.length}` : '';
+  useEffect(() => {
+    if (!orphanKey || orphanTurns.length === 0) return;
+    console.warn(`[teams:collab-bar] ${orphanTurns.length} 轮的真实 agentId 不在当前花名册上，无法归属：`, orphanTurns);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在记录换了一版时记一次
+  }, [orphanKey]);
+
   // ⚠️ 2026-10-07（质检 P3-1）：**"还没开会"不是"未启用"**。没入团队才是「未启用」；
   //    在团队里但一次会都没开过 ⇒ 如实说「待命」（`meeting.collabNoMeeting` 在展开区解释）。
   const overall: BarStatus = !team ? 'disabled' : !latest ? 'idle' : recordPhase(latest);

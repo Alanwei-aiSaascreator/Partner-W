@@ -12,6 +12,11 @@ import { useUiStore } from '@/stores/uiStore';
  * - **只认文件类产物**（`type === 'file'`）：docgen / htmlgen / PPT（slidegen）/ 另存为
  *   走的都是这一档；而 `auto-extract` 会给每条带代码块或图片的回复都存 `code` / `image`，
  *   若也展开，正常聊天过程中面板会反复弹出来抢走正文宽度。
+ *
+ * ⚠️ **BUG-120（2026-10-17）**：视频有了专属类型 `'video'`。它**同样是"文件落地"这件事**
+ *    （改型前就是 `'file'`），必须一起放行 —— 漏了这一处，视频会**静默失去**面板自动展开，
+ *   而本文件其它用例（都是 `'file'`）全绿，抓不到这个回归。
+ *   `'code'` / `'image'` 的"不抢宽度"取舍**不变**。
  * - **已经开着就什么都不做**：`setRightPanelOpen(true)` 幂等，但省掉一次无谓的 store 写入 +
  *   订阅者重渲（生成过程中 `artifact:saved` 是连发的）。
  * - **只置状态，不拽人**：设置页 / 非聊天视图下右面板本来就不渲染（见 `App.tsx` 的显示条件）。
@@ -22,7 +27,8 @@ import { useUiStore } from '@/stores/uiStore';
 export function useArtifactPanelReveal(): void {
   useEffect(() => {
     return window.clawwork.onArtifactSaved((artifact) => {
-      if (artifact.type !== 'file') return;
+      // BUG-120：视频（`'video'`）与文件类（`'file'`）同一档 —— 都是"文件落地了"。
+      if (artifact.type !== 'file' && artifact.type !== 'video') return;
       const ui = useUiStore.getState();
       if (!ui.rightPanelOpen) ui.setRightPanelOpen(true);
     });

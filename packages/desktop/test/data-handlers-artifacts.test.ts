@@ -17,6 +17,7 @@ const reconcileTaskArtifactsMock = vi.fn();
 const getGatewayClientMock = vi.fn();
 const getWorkspacePathMock = vi.fn(() => 'C:\\trusted-workspace');
 const generateHtmlPagesFromMessageMock = vi.fn();
+const startImagegenJobsMock = vi.fn();
 const webContentsSendMock = vi.fn();
 const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 const conflictRunMock = vi.fn();
@@ -66,6 +67,8 @@ vi.mock('../src/main/artifact/reconcile.js', () => ({
 vi.mock('../src/main/htmlgen/generate.js', () => ({
   generateHtmlPagesFromMessage: generateHtmlPagesFromMessageMock,
 }));
+
+vi.mock('../src/main/imagegen/start.js', () => ({ startImagegenJobs: startImagegenJobsMock }));
 
 async function flushJobs(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -594,6 +597,7 @@ describe('assistant artifact reconciliation boundary', () => {
     });
     getGatewayClientMock.mockReset().mockReturnValue(undefined);
     generateHtmlPagesFromMessageMock.mockReset().mockResolvedValue({ saved: [], failed: [] });
+    startImagegenJobsMock.mockReset();
     webContentsSendMock.mockReset();
     conflictRunMock.mockReset();
     valuesMock.mockClear();
@@ -2389,6 +2393,109 @@ describe('assistant artifact reconciliation boundary', () => {
           ]);
       },
     );
+
+    it.each(['cancel', 'license-switch'])(
+      'does not start paid media after %s during a preceding await',
+      async (change) => {
+        let release!: (value: { saved: []; failed: [] }) => void;
+        generateHtmlPagesFromMessageMock.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              release = resolve;
+            }),
+        );
+        const content =
+          '```imagegen\n' +
+          JSON.stringify({ operationId: 'picture-one', model: 'qwen-image-plus', prompt: 'A cat', size: '1328*1328' }) +
+          '\n```';
+        await persistAssistant(content);
+        expect(generateHtmlPagesFromMessageMock).toHaveBeenCalledTimes(1);
+        if (change === 'cancel')
+          (await import('../src/main/ipc/data-handlers.js')).cancelArtifactRunsForSession('session-task-1');
+        else (await import('../src/main/commercial/license-generation.js')).advanceLicenseGeneration();
+        release({ saved: [], failed: [] });
+        await flushJobs();
+        expect(startImagegenJobsMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('retains cancellation ownership for background media without blocking the next chat turn', async () => {
+      let sourceCurrent: (() => boolean) | undefined;
+      let release: (() => void) | undefined;
+      startImagegenJobsMock.mockImplementationOnce(
+        (input: { sourceCurrent: () => boolean; retainSource?: () => () => void }) => {
+          sourceCurrent = input.sourceCurrent;
+          release = input.retainSource?.();
+        },
+      );
+      await persistAssistant('```imagegen\n{"operationId":"picture-one"}\n```');
+      expect(release).toBeTypeOf('function');
+      expect(sourceCurrent?.()).toBe(true);
+      const api = await import('../src/main/ipc/data-handlers.js');
+      expect(api.isArtifactTurnInFlight('task-1', 'session-task-1')).toBe(false);
+      api.cancelArtifactRunsForSession('session-task-1');
+      expect(sourceCurrent?.()).toBe(false);
+      release?.();
+      release?.();
+      expect(api.isArtifactTurnInFlight('task-1', 'session-task-1')).toBe(false);
+    });
+
+    it('starts image generation through message finalization with the exact task scope', async () => {
+      const content =
+        '```imagegen\n{"operationId":"picture-one","model":"qwen-image-plus","prompt":"A cat","size":"1328*1328"}\n```';
+      await persistAssistant(content);
+      expect(startImagegenJobsMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspacePath: 'C:\\trusted-workspace',
+          taskId: 'task-1',
+          sessionKey: 'session-task-1',
+          messageId: 'assistant-cut',
+          content,
+        }),
+      );
+    });
+
+    it('does not start an image request from a truncated reply when full content is unavailable', async () => {
+      await persistAssistant('```imagegen\n{"operationId":"picture-one"\n...(truncated)...');
+      expect(startImagegenJobsMock).not.toHaveBeenCalled();
+      expect(webContentsSendMock).toHaveBeenCalledWith('imagegen:failed', [{ code: 'imagegen-block-invalid' }]);
+    });
+
+    it('recovers image request content by the current run before starting it', async () => {
+      const content =
+        '```imagegen\n{"operationId":"picture-one","model":"qwen-image-plus","prompt":"A cat","size":"1328*1328"}\n```';
+      const getChatHistory = vi.fn().mockResolvedValue({
+        messages: [
+          {
+            role: 'assistant',
+            content,
+            __openclaw: { runId: 'image-run' },
+          },
+        ],
+      });
+      getGatewayClientMock.mockReturnValue({ getChatHistory });
+      const { beginArtifactRun, bindArtifactRun, registerDataHandlers } =
+        await import('../src/main/ipc/data-handlers.js');
+      registerDataHandlers();
+      const token = beginArtifactRun('C:\\trusted-workspace', 'task-1', 'session-task-1');
+      bindArtifactRun('task-1', 'session-task-1', token, 'image-run');
+      selectGetMock.mockReturnValueOnce({ id: 'assistant-image' }).mockReturnValueOnce({ gid: 'gateway-1' });
+      handleMap.get('data:create-message')!(
+        {},
+        {
+          id: 'assistant-image',
+          taskId: 'task-1',
+          role: 'assistant',
+          sessionKey: 'session-task-1',
+          runId: 'image-run',
+          timestamp: '2026-10-15T00:00:00Z',
+          content: '```imagegen\n{"operationId":"picture-one"\n...(truncated)...',
+        },
+      );
+      await flushJobs();
+      expect(getChatHistory).toHaveBeenCalledWith('session-task-1', 7, 500000);
+      expect(startImagegenJobsMock).toHaveBeenCalledWith(expect.objectContaining({ content, runId: 'image-run' }));
+    });
 
     it('does not fetch history for truncated ordinary chat without an artifact request', async () => {
       const getChatHistory = vi.fn();

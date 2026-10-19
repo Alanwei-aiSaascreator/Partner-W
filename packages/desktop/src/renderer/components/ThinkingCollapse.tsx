@@ -1,7 +1,10 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+
+/** live 态正文的渲染上限（字符）。见组件内 `body` 的注释。 */
+const LIVE_TAIL_LIMIT = 8000;
 
 export interface ThinkingCollapseProps {
   /** 推理正文（流式累积或定稿 thinkingContent）。空串 ⇒ 不渲染。 */
@@ -38,6 +41,24 @@ function ThinkingCollapse({ text, phase, segment = 0, paused = false }: Thinking
   const prevSegment = useRef(segment);
   /** 用户手动开合（按段记录；段变化/相变即作废）。null = 跟随相位默认。 */
   const [override, setOverride] = useState<{ segment: number; open: boolean } | null>(null);
+
+  /**
+   * 长思考只渲染尾部（2026-10-18 同事批次移植）。
+   *
+   * 现场：一次「做官网」的任务吐了 **58,036 字**思考 / **2,638 个增量帧** —— live 态
+   * 每帧把整段重贴一遍 DOM，渲染进程吃满一个核、CDP 求值 150 秒不返回（界面等于卡死）。
+   * 规则：**live 时只渲染最后 8,000 字**（用户看的是滚动尾部），定稿（done）渲染全文；
+   * 短思考（绝大多数）完全不受影响。
+   *
+   * ⚠️ 如实说：live 且被截断时，DOM 里只有尾部 —— 此刻全选/复制拿到的是**尾部**，
+   *    不是全文（定稿后再复制才是全文）。所以上方给了一条明确的省略提示。
+   */
+  const deferredText = useDeferredValue(text);
+  const truncated = phase === 'live' && deferredText.length > LIVE_TAIL_LIMIT;
+  const tail = truncated ? deferredText.slice(-LIVE_TAIL_LIMIT) : deferredText;
+  // UTF-16 `slice` 会把代理对切成半个 emoji（渲染成乱码）—— 落在低代理项上就再让一位。
+  const firstCode = tail.charCodeAt(0);
+  const body = truncated && firstCode >= 0xdc00 && firstCode <= 0xdfff ? tail.slice(1) : tail;
   /** 惰性挂载：一旦挂过就保持（live→done 的收起动画需要正文还在）。 */
   const [mounted, setMounted] = useState(phase === 'live');
 
@@ -104,8 +125,13 @@ function ThinkingCollapse({ text, phase, segment = 0, paused = false }: Thinking
       </button>
       {(mounted || expanded) && (
         <div className="thinking-collapse__content">
+          {truncated ? (
+            <div data-testid="thinking-tail-hint" className="type-meta mb-1 text-[var(--text-muted)]">
+              {t('chatMessage.thinking.liveTailHint')}
+            </div>
+          ) : null}
           <div ref={bodyRef} className="thinking-collapse__body">
-            {text}
+            {body}
           </div>
         </div>
       )}

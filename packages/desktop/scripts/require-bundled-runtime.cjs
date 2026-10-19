@@ -58,9 +58,17 @@ const KB_MODEL_REQUIRED = ['manifest.json', 'config.json', 'tokenizer.json', 'on
   (file) => `${KB_MODEL_ID}/${file}`,
 );
 
+/**
+ * 飞书可信安装所需的随包 npm 负载（BUG-171）。
+ *
+ * 缺少它时应用仍能启动，但飞书**只能发、不能收**（内核要求 npm 安装记录才能开
+ * channel ingress），所以必须在构建期硬失败，而不是发到用户手里才发现。
+ */
+const FEISHU_NPM_REQUIRED = ['node/npm.cmd', 'node/node_modules/npm/bin/npm-cli.js', 'node/npm-cache/_cacache'];
+
 /** 每个 `to:` 目标各自"必须存在"的路径；没有条目的目标只查目录本身。 */
 const REQUIRED_UNDER = {
-  [BUNDLED_TO]: [MARKER],
+  [BUNDLED_TO]: [MARKER, ...FEISHU_NPM_REQUIRED],
   [KB_MODEL_TO]: KB_MODEL_REQUIRED,
 };
 
@@ -119,9 +127,13 @@ function collectProblems(config, projectDir, exists = fs.existsSync) {
     if (!required) continue;
     for (const file of required) {
       if (exists(path.join(s.abs, file))) continue;
+      const isFeishuNpm = file.startsWith('node/npm');
       problems.push(
         s.to === BUNDLED_TO
-          ? `源在但**不是一份运行时**：${s.abs} 里没有 ${file}（半成品/拷错了目录都会被判为"这不是运行时"）`
+          ? isFeishuNpm
+            ? `源里缺飞书 npm 负载：${s.abs} 里没有 ${file}` +
+              `（缺了飞书只能发、不能收；在仓库根跑 node packages/desktop/scripts/prepare-feishu-npm.mjs 重新产出）`
+            : `源在但**不是一份运行时**：${s.abs} 里没有 ${file}（半成品/拷错了目录都会被判为"这不是运行时"）`
           : `源在但**不完整**：${s.abs} 里没有 ${file}` +
               `（模型齐不齐决定的是"资料库能不能建索引"—— 缺了不报错，只是静默退化成纯关键词检索）`,
       );

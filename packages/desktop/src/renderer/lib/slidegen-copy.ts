@@ -1,4 +1,4 @@
-import type { SlidegenFailure } from '@clawwork/shared';
+import type { SlidegenFailure, SlidegenWarningData } from '@clawwork/shared';
 
 /**
  * 幻灯片没生成出来 / 版式有毛病时，给用户看的那句话。
@@ -93,4 +93,57 @@ export function slidegenFailureToastTitle(failures: readonly SlidegenFailure[], 
       ? 'slidegen.unconfirmedTitle'
       : 'slidegen.failedTitle',
   );
+}
+
+/** 版式警告里那份**语言无关**的载荷 —— 类型定义在 shared，主进程与这里共用一份。 */
+export type LayoutWarningData = SlidegenWarningData;
+
+/**
+ * 一条版式警告的「细说」→ 一句本地化的话。
+ *
+ * ⚠️ **2026-10-16 集成人真机截图发现的漏网之鱼**：`main/slidegen/validate.ts` 里
+ *    4 条 warning 的 `detail` 有 **2 条是英文硬编码**（`layout-footer-overlap` /
+ *    `layout-text-low-contrast`），而界面是 `#${element}: ${detail}` 原样拼上去的
+ *    ⇒ **中文界面里整段英文上屏**（截图里那一串 `Text #33 has 2.13:1 contrast…`）。
+ *    这与本文件 2026-10-06（图12）已判过的「内部诊断码 + 英文解析器原文裸奔」是同一类，
+ *    当时只修了失败文案那条路，**警告这条漏了**。
+ *
+ * ⚠️ 所以这里**按 code + data 走 i18n**，**绝不正则解析 `detail`** ——
+ *    解析等于把"文案"当"协议"：改个标点就崩，而且永远本地化不了。
+ *    `data` 缺失（老数据 / 未来新码没补载荷）⇒ **回落原文**，至少不清空。
+ */
+export function layoutWarningDetail(
+  warning: { code: string; element: number; detail: string; data?: LayoutWarningData },
+  t: Translate,
+): string {
+  const d = warning.data;
+  const who = d?.kind
+    ? t(d.snippet ? 'slidegen.who.withText' : 'slidegen.who.plain', {
+        kind: t(`slidegen.kind.${d.kind}`),
+        snippet: d.snippet ?? '',
+        id: warning.element,
+      })
+    : null;
+
+  switch (warning.code) {
+    case 'layout-out-of-bounds': {
+      if (!who || !d?.overflow?.length) break;
+      const joiner = t('slidegen.listJoiner');
+      const sides = d.overflow.map((item) => t(`slidegen.detail.side.${item.side}`, { px: item.px })).join(joiner);
+      return t('slidegen.detail.outOfBounds', { who, sides });
+    }
+    case 'layout-text-occluded': {
+      if (!who || !d?.occludedBy) break;
+      return t('slidegen.detail.occluded', { who, occludedBy: d.occludedBy });
+    }
+    case 'layout-footer-overlap': {
+      if (d?.footer === undefined || d?.body === undefined) break;
+      return t('slidegen.detail.footerOverlap', { footer: d.footer, body: d.body });
+    }
+    case 'layout-text-low-contrast': {
+      if (!who || d?.ratio === undefined || d?.minimum === undefined) break;
+      return t('slidegen.detail.lowContrast', { who, ratio: d.ratio, minimum: d.minimum });
+    }
+  }
+  return warning.detail;
 }

@@ -24,6 +24,7 @@ const phases = new Set([
   'generating-document',
   'generating-html',
   'generating-video',
+  'generating-image',
   'saving-artifacts',
   'reconciling-artifacts',
 ]);
@@ -83,6 +84,7 @@ function terminal(value: unknown): value is ArtifactDeliveryActivity & { endedAt
     value.endedAt < value.startedAt ||
     !statuses.has(String(value.status)) ||
     !phases.has(String(value.phase)) ||
+    (value.artifactId !== undefined && (!nonempty(value.artifactId) || value.status !== 'succeeded')) ||
     (value.runId !== undefined && !nonempty(value.runId)) ||
     (value.pageProgress !== undefined && !isArtifactDeliveryPageProgress(value.pageProgress)) ||
     (value.historyTruncated !== undefined && typeof value.historyTruncated !== 'boolean')
@@ -135,9 +137,11 @@ export function artifactDirectoryFor(
 function artifactReferences(database: Database.Database, event: ArtifactDeliveryActivity): unknown[] {
   const artifacts = database
     .prepare(
-      'SELECT id,root,local_path,file_path,source_key,size FROM artifacts WHERE task_id=? AND message_id=? ORDER BY id LIMIT 64',
+      event.artifactId
+        ? 'SELECT id,root,local_path,file_path,source_key,size FROM artifacts WHERE task_id=? AND id=? ORDER BY id LIMIT 1'
+        : 'SELECT id,root,local_path,file_path,source_key,size FROM artifacts WHERE task_id=? AND message_id=? ORDER BY id LIMIT 64',
     )
-    .all(event.taskId, event.messageId) as Array<{
+    .all(event.taskId, event.artifactId ?? event.messageId) as Array<{
     id: string;
     root: string;
     local_path: string;

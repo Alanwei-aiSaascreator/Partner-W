@@ -3,10 +3,39 @@ import type { CommercialAccountOverview } from '@clawwork/shared';
 
 export type PanelStatus = 'idle' | 'loading' | 'ready' | 'offline';
 
+/**
+ * 最近一轮对话的消耗（**本轮**）。
+ *
+ * 口径：服务端 `licenses.token_used_micros` 在一轮对话前后的**差额**
+ * （1 积分 = 1,000,000 微积分）。差额由 `useQuotaRefreshOnTurnEnd` 在读到
+ * 结算后的新值时算出 —— 它是**唯一**同时看见"结算前"和"结算后"的地方。
+ *
+ * ⚠️ 这是**本机这一轮**的差额，多设备同时消费时会把别的设备同一窗口的用量
+ *    也算进来。宁可显示"本轮"而不是"这次请求"，因为它确实覆盖了这一轮的所有调用
+ *    （含工具循环里的多次模型调用）。
+ */
+export interface TurnSpend {
+  /** 产生这笔消耗的会话；切到别的会话时不显示这条。 */
+  readonly sessionKeys: readonly string[];
+  /** 本轮消耗（微积分）。 */
+  readonly micros: number;
+  readonly at: number;
+}
+
 interface CommercialState {
   status: PanelStatus;
   overview: CommercialAccountOverview | null;
   errorMessage: string;
+  /** 最近一轮结算出来的消耗。**只存内存、不落盘**：它只对"刚刚结束的那一轮"有意义。 */
+  turnSpend: TurnSpend | null;
+  recordTurnSpend: (sessionKeys: readonly string[], micros: number) => void;
+  /**
+   * 当前任务的累计消耗（微积分）。由 MainArea 的额度观察器写入，
+   * 供**等待行**在生成过程中显示"已经花了多少"（2026-10-17 用户要求：
+   * 像主流智能体那样边干活边显示消耗与趣味进度）。
+   */
+  liveTaskMicros: number;
+  setLiveTaskMicros: (micros: number) => void;
   /**
    * 拉取账号概览。
    *
@@ -86,6 +115,19 @@ export const useCommercialStore = create<CommercialState>((set, get) => ({
   status: 'idle',
   overview: readCache(),
   errorMessage: '',
+  turnSpend: null,
+  liveTaskMicros: 0,
+
+  setLiveTaskMicros: (micros) => {
+    if (!Number.isFinite(micros) || micros < 0) return;
+    set({ liveTaskMicros: Math.round(micros) });
+  },
+
+  recordTurnSpend: (sessionKeys, micros) => {
+    // 只记**真花掉**的量。0/负值（读不到、退款调整）不写，免得屏幕上跳出"本轮消耗 0"。
+    if (!Number.isFinite(micros) || micros <= 0) return;
+    set({ turnSpend: { sessionKeys: [...sessionKeys], micros: Math.round(micros), at: Date.now() } });
+  },
 
   load: async (isCurrent?: () => boolean) => {
     const epoch = accountEpoch;
@@ -119,7 +161,8 @@ export const useCommercialStore = create<CommercialState>((set, get) => ({
     } catch {
       // localStorage 不可用也要继续清内存里的那份
     }
-    set({ overview: null, status: 'idle', errorMessage: '' });
+    // `turnSpend` 也清：它是上一个账号那轮的消耗，切号后显示出来就是错的归属。
+    set({ overview: null, status: 'idle', errorMessage: '', turnSpend: null });
   },
 
   refresh: () => {

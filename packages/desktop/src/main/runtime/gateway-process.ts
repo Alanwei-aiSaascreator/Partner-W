@@ -380,6 +380,49 @@ export async function waitForGatewayReady(opts: {
   }
 }
 
+/**
+ * 就绪**超时之后**的收尾：先给一小段宽限，再决定"复用"还是"收掉"。
+ *
+ * 为什么需要（2026-10-18 实机 BUG-153）：一次真实启动里网关到 180 秒才差一点点，
+ * 超时后约 4 秒就自己 ready 了。而 `bootstrapWithRetry` 的自动重试会**再 spawn
+ * 一个网关** —— 第二个跟第一个抢同一份锁/端口，秒退；那个"子进程提前退出"又被
+ * 归成终态失败，界面于是报「服务在启动过程中退出了」，可第一个其实已经好了。
+ *
+ * 两条出路都收在这一次尝试里：
+ *   · 宽限期内 ready ⇒ 直接算成功（ownership 仍是 spawned，退出时照常收尾）；
+ *   · 宽限期也失败 ⇒ **先停掉自己起的子进程**，再抛原超时错误 —— 保证
+ *     "一次尝试至多留下一个网关"，让下一次重试有干净的环境。
+ *
+ * @returns true = 宽限期内真的就绪（调用方按成功返回）
+ */
+export async function settleAfterReadyTimeout(opts: {
+  probe: () => Promise<StartupzProbe>;
+  authenticate: () => Promise<boolean>;
+  sleep: (ms: number) => Promise<void>;
+  hasExited: () => boolean;
+  stop: () => Promise<void> | void;
+  graceMs?: number;
+}): Promise<boolean> {
+  const graceMs = opts.graceMs ?? 15_000;
+  try {
+    await waitForGatewayReady({
+      probe: opts.probe,
+      authenticate: opts.authenticate,
+      sleep: opts.sleep,
+      hasExited: opts.hasExited,
+      timeoutMs: graceMs,
+    });
+    return true;
+  } catch {
+    try {
+      await opts.stop();
+    } catch {
+      /* 收尾失败不掩盖原始超时 */
+    }
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------- 进程
 
 export interface GatewayChildProcess {
@@ -472,6 +515,14 @@ export interface EnsureGatewayRunningOptions {
   authenticate?: (opts: { port: number; token: string }) => Promise<boolean | GatewayAuthOutcome>;
   spawn?: GatewaySpawnFn;
   waitReady?: (child: GatewayChildProcess) => Promise<void>;
+  /**
+   * BUG-153：就绪超时之后的宽限窗口（默认 15s）。
+   *
+   * 超时那一刻网关往往只差几秒（实测 180s 判超时、约 4s 后自己 ready）。
+   * 宽限期内 ready ⇒ 直接复用；否则**先停掉本次 spawn 的子进程**再抛超时，
+   * 保证自动重试不会和还在启动的第一个网关抢锁/抢端口。`0` = 立即收尾（测试用）。
+   */
+  readyTimeoutGraceMs?: number;
   /** BUG-040 R1：认证"探不动"时的有界多探预算。 */
   authProbe?: { attempts?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> };
   /** BUG-040 R4：占用者退场的有界等待预算。 */
@@ -809,14 +860,40 @@ export async function ensureGatewayRunning(opts: EnsureGatewayRunningOptions): P
   const env = buildGatewayEnvironment(process.env, opts.stateDir, opts.nodeExe, opts.deployedRoot);
 
   const child = spawn({ nodeExe: opts.nodeExe, args, cwd: opts.deployedRoot, env, secrets: [token] });
-  await (
-    opts.waitReady ??
-    defaultWaitReady(
-      child,
-      () => probe(port),
-      async () => normalizeAuthOutcome(await authenticate({ port, token })) === 'authenticated',
-    )
-  )(child);
+
+  const probeOnce = () => probe(port);
+  const authenticateOnce = async () =>
+    normalizeAuthOutcome(await authenticate({ port, token })) === 'authenticated';
+
+  if (opts.waitReady) {
+    // 测试/特殊调用方自带的等待函数：形状保持原样，宽限逻辑不介入。
+    await opts.waitReady(child);
+    return { ownership: 'spawned', pid: child.pid, child, decision };
+  }
+
+  const waiter = defaultWaitReady(child, probeOnce, authenticateOnce);
+  try {
+    await waiter.wait();
+  } catch (error) {
+    // ⭐ BUG-153：只有**就绪超时**才值得宽限（子进程早退/端口被别人占都不该再等）。
+    if (!(error instanceof GatewayReadyTimeoutError) || waiter.hasExited()) throw error;
+    const recovered = await settleAfterReadyTimeout({
+      probe: probeOnce,
+      authenticate: authenticateOnce,
+      sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      hasExited: waiter.hasExited,
+      graceMs: opts.readyTimeoutGraceMs,
+      stop: () =>
+        stopGateway({
+          nodeExe: opts.nodeExe,
+          cliPath: opts.cliPath,
+          deployedRoot: opts.deployedRoot,
+          stateDir: opts.stateDir,
+          child,
+        }),
+    });
+    if (!recovered) throw error;
+  }
 
   return { ownership: 'spawned', pid: child.pid, child, decision };
 }
@@ -832,18 +909,21 @@ function defaultWaitReady(
   child: GatewayChildProcess,
   probeOnce: () => Promise<StartupzProbe>,
   authenticateOnce: () => Promise<boolean>,
-): (c: GatewayChildProcess) => Promise<void> {
+): { wait: () => Promise<void>; hasExited: () => boolean } {
   let exited = false;
   child.onExit(() => {
     exited = true;
   });
-  return () =>
-    waitForGatewayReady({
-      probe: probeOnce,
-      authenticate: authenticateOnce,
-      sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-      hasExited: () => exited,
-    }).then(() => undefined);
+  return {
+    wait: () =>
+      waitForGatewayReady({
+        probe: probeOnce,
+        authenticate: authenticateOnce,
+        sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+        hasExited: () => exited,
+      }).then(() => undefined),
+    hasExited: () => exited,
+  };
 }
 
 // ---------------------------------------------------------------- 收尾

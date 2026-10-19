@@ -14,8 +14,10 @@ import {
   WIRED_APPROVAL_EVENTS,
   type GatewayDispatcherDeps,
 } from '../src/services/gateway-dispatcher.js';
+import type { IpcResult } from '@clawwork/shared';
 import type { GatewayEvent, GatewayStatusEvent, RuntimeStatusEvent } from '../src/ports/gateway-transport.js';
 import type { ChatEventPayload } from '../src/protocol/types.js';
+import { COMPACTION_FALLBACK_MS, runManualCompaction } from '../src/services/compaction-announce.js';
 
 type EventListener = (data: GatewayEvent) => void;
 
@@ -48,6 +50,9 @@ function createHarness() {
     upsertToolCall: vi.fn(),
     appendStreamDelta: vi.fn(),
     appendThinkingDelta: vi.fn(),
+    // 2026-10-18：`thinking.text` 是累计快照 ⇒ 原位替换（不许追加成平方膨胀）。
+    replaceThinkingText: vi.fn(),
+    appendThinkingText: vi.fn(),
     finalizeStream: vi.fn(),
     clearActiveTurn: vi.fn(),
     setProcessing: vi.fn(),
@@ -2309,29 +2314,35 @@ describe('thinking —— 模型的推理输出要显示，不能当未知丢掉
     h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'thinking', data });
   }
 
-  it('{text,delta} 喂给 appendThinkingDelta', () => {
+  it('{text,delta} 的快照走 replaceThinkingText（原位替换当前段）', () => {
     const h = createHarness();
     emitThinking(h, { text: '先看 A', delta: '先看 A' });
-    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledWith(TASK.sessionKey, '先看 A');
+    expect(h.messageStore.replaceThinkingText).toHaveBeenCalledWith(TASK.sessionKey, '先看 A');
+    expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
   });
 
-  it('喂的是累计的 text 而不是 delta —— 快照对 store 的 merge 是幂等的，重复投递不会把推理拼接两遍', () => {
+  it('⭐ 喂的是累计的 text，且是**替换**不是追加（改写前面的话也不留旧副本）', () => {
     const h = createHarness();
     emitThinking(h, { text: '先看 A', delta: '先看 A' });
     emitThinking(h, { text: '先看 A，再看 B', delta: '，再看 B' });
-    expect(h.messageStore.appendThinkingDelta).toHaveBeenLastCalledWith(TASK.sessionKey, '先看 A，再看 B');
+    expect(h.messageStore.replaceThinkingText).toHaveBeenLastCalledWith(TASK.sessionKey, '先看 A，再看 B');
+    expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
   });
 
-  it('text 缺失时退回 delta（不能整条丢）', () => {
+  it('⭐ text 缺失时才是真增量 ⇒ appendThinkingText（追加，不能整条丢）', () => {
     const h = createHarness();
     emitThinking(h, { delta: '只有增量' });
-    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledWith(TASK.sessionKey, '只有增量');
+    expect(h.messageStore.appendThinkingText).toHaveBeenCalledWith(TASK.sessionKey, '只有增量');
+    expect(h.messageStore.replaceThinkingText).not.toHaveBeenCalled();
+    expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
   });
 
   it('只有 progressTokens 的心跳不产出文本（那是进度计数，不是内容）', () => {
     const h = createHarness();
     emitThinking(h, { progressTokens: 120 });
     expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
+    expect(h.messageStore.appendThinkingText).not.toHaveBeenCalled();
+    expect(h.messageStore.replaceThinkingText).not.toHaveBeenCalled();
   });
 
   it('空事件不写 store（免得堆噪音状态）', () => {
@@ -2339,6 +2350,8 @@ describe('thinking —— 模型的推理输出要显示，不能当未知丢掉
     emitThinking(h, { text: '', delta: '' });
     emitThinking(h, {});
     expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
+    expect(h.messageStore.appendThinkingText).not.toHaveBeenCalled();
+    expect(h.messageStore.replaceThinkingText).not.toHaveBeenCalled();
   });
 
   it('修好之后不再上报为未知事件', () => {
@@ -2357,8 +2370,11 @@ describe('thinking —— 模型的推理输出要显示，不能当未知丢掉
       message: { role: 'assistant', content: [{ type: 'text', text: '最终全文' }] },
     });
     h.messageStore.appendThinkingDelta.mockClear();
+    h.messageStore.appendThinkingText.mockClear();
+    h.messageStore.replaceThinkingText.mockClear();
     emitThinking(h, { text: '收尾之后的推理', delta: '收尾之后的推理' });
     expect(h.messageStore.appendThinkingDelta).not.toHaveBeenCalled();
+    expect(h.messageStore.replaceThinkingText).not.toHaveBeenCalled();
     expect(h.deps.reportDebugEvent).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'renderer.chat.dropped_after_final' }),
     );
@@ -2374,7 +2390,7 @@ describe('thinking —— 模型的推理输出要显示，不能当未知丢掉
     h.emit('agent', { sessionKey: TASK.sessionKey, stream: 'lifecycle', data: { phase: 'start' } });
     h.messageStore.appendThinkingDelta.mockClear();
     emitThinking(h, { text: '下一轮', delta: '下一轮' });
-    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledWith(TASK.sessionKey, '下一轮');
+    expect(h.messageStore.replaceThinkingText).toHaveBeenCalledWith(TASK.sessionKey, '下一轮');
   });
 });
 
@@ -3081,6 +3097,42 @@ describe('临时会话（多模型对比的一列）：只有那一列看得到�
     expect(h.systemMessages).toHaveLength(1);
     expect(h.systemMessages[0].content).toBe('errors.serverAborted');
     expect(h.systemMessages[0].taskId).toBe('task-1');
+  });
+
+  /**
+   * 2026-10-17 用户反馈：「终止/暂停任务不用英文反馈，而是汉字提示」。
+   *
+   * 现场形状：点「停止」后上游回一帧 `error`（`Request was aborted…` 之类），
+   * 走通用错误出口 ⇒ 英文错误气泡 + 红色 toast —— 可这一轮**是用户自己停的**，不是失败。
+   * 判据：用户主动停止 + 错误帧措辞像"中断" ⇒ 静默吞掉错误，只给一次中文提示。
+   * 负对照：同样是用户停止，但错误是别的原因（额度/网络）⇒ 照旧如实报。
+   */
+  it('用户自己停止后的"中止"错误帧：不落英文错误气泡，只给一次中文提示', () => {
+    const h = createHarness();
+    h.dispatcher.markAbortedByUser('task-1');
+    emitChatError(h, { errorMessage: 'Request was aborted by user' });
+
+    expect(h.systemMessages).toHaveLength(0);
+    expect(h.toasts).toContainEqual(expect.objectContaining({ type: 'info', title: 'errors.userStopped' }));
+  });
+
+  it('停止后同时收到 aborted 帧与中止错误：中文提示只出一条（不刷屏）', () => {
+    const h = createHarness();
+    h.dispatcher.markAbortedByUser('task-1');
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'aborted' });
+    emitChatError(h, { errorMessage: 'canceled' });
+
+    const info = h.toasts.filter((toast: { type: string; title: string }) => toast.type === 'info');
+    expect(info).toHaveLength(1);
+    expect(h.systemMessages).toHaveLength(0);
+  });
+
+  it('负对照：用户停止后报的是别的失败（额度）⇒ 照旧如实报错', () => {
+    const h = createHarness();
+    h.dispatcher.markAbortedByUser('task-1');
+    emitChatError(h, { errorMessage: 'insufficient quota' });
+
+    expect(h.systemMessages).toHaveLength(1);
   });
 
   it('工具调用照旧记（列里要显示），但不标未读、不发通知', () => {
@@ -4198,6 +4250,40 @@ describe('压缩：两条来源统一出口', () => {
       expect.objectContaining({ event: 'renderer.agent.compaction' }),
     );
   });
+
+  /**
+   * 🔴 2026-10-15（E1 复核）：「正在压缩」**只有** `compaction end` 一条路能收掉
+   *    （见 `setSessionCompacting` 的两处调用点）—— 而中断的回合**不会**再给 `end`：
+   *    用户点「停止」时这一轮以 `aborted` 收尾，压缩那条流就断在半路了。
+   *
+   *    后果不是"少收一个转圈"：那个 `compacting` 会**留着**，下一轮跑起来时
+   *    `useTurnActivity` 的主行判据里 `compacting` 排在 `runPhase` / 模型自述之前
+   *    ⇒ 界面会对着一个**没有在压缩**的回合说「正在压缩上下文…」（一句假话）。
+   *
+   *    ⇒ 回合结束（final / error / aborted）就不该再有任何"正在压缩"。
+   */
+  it('⭐ 回合被中断（aborted，没有 compaction end）⇒ "正在压缩"必须收掉', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    expect(h.messageStore.setSessionCompacting).toHaveBeenLastCalledWith(TASK.sessionKey, true);
+
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'aborted' });
+
+    expect(h.messageStore.setSessionCompacting, '中断后不许再挂着"正在压缩"').toHaveBeenLastCalledWith(
+      TASK.sessionKey,
+      false,
+    );
+  });
+
+  it('⭐ 回合正常收尾（final）也不留"正在压缩"（end 帧万一没送到）', () => {
+    const h = createHarness();
+
+    emitCompaction(h, { phase: 'start' });
+    h.emit('chat', { sessionKey: TASK.sessionKey, state: 'final' });
+
+    expect(h.messageStore.setSessionCompacting).toHaveBeenLastCalledWith(TASK.sessionKey, false);
+  });
 });
 
 /**
@@ -4644,7 +4730,12 @@ describe('最新活动元数据 —— 旧 run 迟到帧闸门', () => {
       data: { text: 'A', delta: 'A' },
       runId: 'run-1',
     });
-    expect(h.messageStore.appendThinkingDelta).toHaveBeenCalledTimes(1);
+    // 快照帧走 replaceThinkingText（2026-10-18 契约）；两种写入方法都要被闸门挡住。
+    expect(h.messageStore.replaceThinkingText).toHaveBeenCalledTimes(1);
+    const writes = () =>
+      h.messageStore.appendThinkingDelta.mock.calls.length +
+      h.messageStore.appendThinkingText.mock.calls.length +
+      h.messageStore.replaceThinkingText.mock.calls.length;
 
     h.emit('agent', {
       sessionKey: TASK.sessionKey,
@@ -4652,13 +4743,66 @@ describe('最新活动元数据 —— 旧 run 迟到帧闸门', () => {
       data: { phase: 'start' },
       runId: 'run-2',
     });
-    const before = h.messageStore.appendThinkingDelta.mock.calls.length;
+    const before = writes();
     h.emit('agent', {
       sessionKey: TASK.sessionKey,
       stream: 'thinking',
       data: { text: 'A+迟到', delta: '迟到' },
       runId: 'run-1',
     });
-    expect(h.messageStore.appendThinkingDelta.mock.calls.length, '旧 run 的迟到帧不得写入新 run').toBe(before);
+    expect(writes(), '旧 run 的迟到帧不得写入新 run').toBe(before);
+  });
+});
+
+describe('manual compaction gateway ownership', () => {
+  it.each([
+    ['gw-other', TASK.sessionKey],
+    ['gw-1', 'agent:other:clawwork:task:task-1'],
+    ['gw-1', 'agent:main:clawwork:task:missing'],
+  ])('ignores foreign compact events from %s / %s', (gatewayId, sessionKey) => {
+    const h = createHarness();
+    h.emit('sessions.changed', { sessionKey, reason: 'compact', compacted: true }, gatewayId);
+    expect(h.systemMessages).toEqual([]);
+    expect(h.messageStore.ensureCompactionEpisode).not.toHaveBeenCalled();
+    h.emit('sessions.changed', { sessionKey: TASK.sessionKey, reason: 'compact', compacted: true });
+    expect(h.systemMessages).toHaveLength(1);
+    h.dispatcher.reset();
+  });
+
+  /**
+   * 🔴 BUG-097 的**集成**侧：走**真实**的 `handleSessionChangedEvent`（事件那条腿）
+   *    与**真实**的共享入口 `runManualCompaction`（回包那条腿），中间只有 RPC 传输是桩。
+   *
+   * 网关侧 `sessions.compact` 的回包与 `sessions.changed` 事件走同一条 ws 连接；
+   * 合法的同批 FIFO 收包下，渲染器**可能先处理事件、后恢复 `invoke` 的 await**
+   * （可达性已由真实 ws Receiver + Electron IPC 夹具证明）。
+   * 身份若等到回包才开，事件那条已经自己开了第 1 轮并播报，回包再开第 2 轮
+   * ⇒ 兜底算在新身份上、**再播一次**（一次压缩看到两条）。
+   */
+  it('⭐ 事件早于 RPC 返回（同批时序）⇒ 一次手动压缩只报一条（BUG-097）', async () => {
+    const h = createHarness();
+    let release: (value: IpcResult) => void = () => {};
+    vi.useFakeTimers();
+
+    const pending = runManualCompaction(
+      {
+        getStore: () => h.messageStore,
+        translate: (key: string) => key,
+        compactSession: () => new Promise<IpcResult>((resolve) => (release = resolve)),
+      },
+      { gatewayId: 'gw-1', sessionKey: TASK.sessionKey, taskId: TASK.id },
+    );
+
+    // RPC 还在途 ⇒ 网关的事件先到（这就是同批 FIFO 下的真实顺序）
+    h.emit('sessions.changed', { sessionKey: TASK.sessionKey, reason: 'compact', compacted: true });
+    expect(h.systemMessages, '事件那条先报了一次').toHaveLength(1);
+
+    release({ ok: true, result: { compacted: true } });
+    await pending;
+    await vi.advanceTimersByTimeAsync(COMPACTION_FALLBACK_MS * 2);
+    expect(h.systemMessages, '同一次压缩只能有一条（兜底必须被幂等挡掉）').toHaveLength(1);
+
+    vi.useRealTimers();
+    h.dispatcher.reset();
   });
 });

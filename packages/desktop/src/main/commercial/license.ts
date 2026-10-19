@@ -6,17 +6,20 @@ import { ensureDeviceId, readConfig, updateConfig } from '../workspace/config.js
 import { getAllGatewayClients } from '../ws/index.js';
 import { getDebugLogger } from '../debug/index.js';
 import {
+  activeRelayBaseUrl,
   applyRelayConfig,
   fetchFirstRelayModel,
   fetchRelayCatalogModelEntries,
   fetchRelayMediaCapabilities,
+  normalizeBaseUrl,
 } from './relay-config.js';
 import { COMMERCIAL_REQUEST_TIMEOUT_MS } from './request-timeout.js';
 import { LOCAL_GATEWAY_ID } from '../runtime/state-config.js';
 import { getActiveLocalGatewayStateDir } from '../runtime/index.js';
 import { hasInstalledSearchProvider } from '../runtime/bundled-search.js';
 import { advanceLicenseGeneration, getLicenseGeneration } from './license-generation.js';
-import { setActiveRelayKey } from './relay-key.js';
+import { getActiveRelayKey, setActiveRelayKey } from './relay-key.js';
+import { resyncMemoryOnAccountBoundary } from '../memory/account-switch.js';
 
 export interface LicenseStatus {
   configured: boolean;
@@ -29,6 +32,25 @@ export interface LicenseStatus {
   maxActivations: number;
   tokenQuotaMicros: number;
   tokenUsedMicros: number;
+  /**
+   * 在途预占（媒体冻结）微积分（BUG-082 续，2026-10-16）。
+   *
+   * 来源是 relay 的 `/v1/usage`（见 `readRelayHeldMicros`）—— 它是**唯一**算得出
+   * 预占的地方（三张媒体表预留之和）。**只有真读到读数才有这个字段**；读不到
+   * （没有活体 key / relay 不可达 / 形状坏 / 老后端不返回）时**不写**它，并由
+   * `heldComplete: false` 表示"不可判定" —— 不能把"读不到"当成"预占为 0"。
+   */
+  tokenHeldMicros?: number;
+  /**
+   * 预占口径是否可判定（BUG-082 续，2026-10-16；r14 返工收窄语义）。
+   *
+   * `false` ⇒ **可用额度不可判定**：后端明确说"读不全 hold 源"，或这次**根本没读到**
+   * （relay 不可达 / 形状坏 / 没有活体 key）。UI 必须显示"暂不可用"而不是照常显示
+   * `quota − used` 的余额 —— 那个数字可能偏高。
+   * `true` ⇒ 上面的 `tokenHeldMicros` 是可信的确定值（可以是 0）。
+   * `undefined` ⇒ 这条读取通道没跑（例如仅供展示的构造结果）。
+   */
+  heldComplete?: boolean;
   activated: boolean;
   deviceFingerprint: string;
   /**
@@ -107,7 +129,30 @@ function fail<T = unknown>(error: unknown, errorCode: string): IpcResult<T> {
   return { ok: false, error: message, errorCode };
 }
 
+/**
+ * 设备指纹 **v2**（2026-10-17）：**一块 U 盘 = 一个设备**。
+ *
+ * 旧算法把 `hostname() | platform() | arch()` 掺进哈希 ⇒ 同一块盘换台电脑就被算成
+ * 一台新设备，名额（曾经只有 3）烧完后用户"卡里还有积分却进不去"。
+ *
+ * v2 只认 `ensureDeviceId()` —— 它存在**随盘**的运行数据里（便携版落在
+ * `<卷根>\荣盈魔方-运行数据`），所以换电脑、换盘符、换 Windows 用户都不会变。
+ */
 export function deviceFingerprint(): string {
+  const stableId = ensureDeviceId();
+  return createHash('sha256').update(`${stableId}|v2`).digest('hex');
+}
+
+/**
+ * **旧算法**指纹（v1）—— 只为过渡期存在。
+ *
+ * 激活时随 v2 一起上报（`p_legacy_fingerprint`）：服务端若发现 v2 还没登记、而 v1
+ * 已经登记过，就把那条登记**原地改名**成 v2 —— **不新增设备、不消耗名额**。
+ * 老用户因此不需要重新买名额，也不会被当成"新设备"再占一格。
+ *
+ * ⚠️ 不要拿它做任何长期判断（比如"是不是同一台机器"）：它按电脑算，正是要淘汰的口径。
+ */
+export function legacyDeviceFingerprint(): string {
   const stableId = ensureDeviceId();
   const material = [stableId, hostname(), platform(), arch()].join('|');
   return createHash('sha256').update(material).digest('hex');
@@ -175,11 +220,117 @@ function persistLicenseBinding(userId: string, license: LicenseRow, generation: 
   updateConfig({ commercial: { ...current, licenseKey, licenseBinding: { userId, orgId, licenseId } } });
 }
 
-function clearPersistedLicenseBinding(generation: number): void {
-  if (!isCurrentLicenseGeneration(generation)) return;
+/**
+ * 抹掉本地落盘的许可归属。返回**是否真的清掉了一份既有绑定**（没有可清的 ⇒ `false`）。
+ *
+ * ⚠️ 返回值有两个用途：① 让调用方只在**真实转变**（有绑定 → 匿名）时动作；
+ * ② `!license` 分支据此触发一次记忆重投影 —— 见 `readLicenseStatusUnlocked`。
+ */
+function clearPersistedLicenseBinding(generation: number): boolean {
+  if (!isCurrentLicenseGeneration(generation)) return false;
   const current = readConfig()?.commercial;
-  if (!current?.licenseKey && !current?.licenseBinding) return;
+  if (!current?.licenseKey && !current?.licenseBinding) return false;
   updateConfig({ commercial: { ...current, licenseKey: undefined, licenseBinding: undefined } });
+  return true;
+}
+
+/**
+ * relay `/v1/usage` 的在途预占读取（BUG-082 全链路的后端一段，2026-10-16）。
+ *
+ * ## 为什么只能问后端
+ *
+ * 预占 = 三张媒体表（voice / seedance / imagegen）里 `pending/accepted/unknown`
+ * 状态的 `reserved_micros` 之和（`services/relay/src/held.ts` 的 `HOLD_SOURCES`）。
+ * 客户端**看不到那些行**，也绝不许按模型价目表本地推算 —— 推算出来的"预计扣费"
+ * 是在编造账目。所以这里只是把后端已经算好的三个字段搬过来，不做任何本地估算。
+ *
+ * ## 契约（只增字段）
+ *
+ * `/v1/usage` 的响应体新增：
+ *   · `heldMicros: number`   —— 三源预留之和（微积分）；
+ *   · `availableMicros: number` —— quota − used − held（本函数不消费，客户端自算）；
+ *   · `heldComplete: boolean` —— false ⇒ 冻结口径**不可判定**。
+ * 老客户端忽略未知字段；老后端不返回 ⇒ 这里的 `undefined`（= "后端没说"）。
+ *
+ * ## 三态（**不许合并**，r14 返工）
+ *
+ *   ① **确实读到**（`heldMicros` 是有限非负数 + `heldComplete` 是布尔）
+ *        ⇒ `tokenHeldMicros` 有值，`heldComplete` 原样带出。`heldComplete: true`
+ *          才允许 UI 说"可用 = 额度 − 已用 − 预占"。
+ *   ② **后端明确说不可判定**（`heldComplete === false`）⇒ 原样带出，读数**不可信**。
+ *   ③ **根本没读到**（没有活体 key / 非 2xx / 形状坏 / 超时 / 网络失败）
+ *        ⇒ `tokenHeldMicros` **不写**，但 `heldComplete` **写 false**。
+ *
+ * ⚠️ 第 ③ 态**必须**落成 `heldComplete: false`，不能再像旧版那样"字段缺省、UI 沿用
+ *    `quota − used` 旧口径" —— 那等于把"读不到"伪装成"确定没有预占"。实测反例
+ *    （r14 独审）：relay 返 503 时旧实现让界面显示确定的 1,000.40。**读不到 ≠ 没有**。
+ *    老后端的形状（不返回这两个字段）与"读取失败"在客户端**无法区分**，因此同样归入
+ *    第 ③ 态 —— 宁可显示"暂不可用"，也不显示一个可能偏高的余额。
+ *
+ * 授权结果本身不受影响：预占是附加信息，问不到不该把"能不能用这张卡"也一起判死。
+ */
+const RELAY_HELD_TIMEOUT_MS = 2_000;
+
+/**
+ * 活体 relay key → 它的 `/v1/usage` 读数**属于哪张卡**（`licenses.id`）。
+ *
+ * 为什么需要它（r14 返工 / BUG-082 二阶）：`/v1/usage` 是拿**一把 relay key** 去问的，
+ * 回答只描述那把 key 对应的那张卡。key 是全局单例（`relay-key.ts`，同一时刻只有一把），
+ * 而"展示中的卡"是每次读取现算出来的 —— 两者可能不是同一张卡（切卡 / 切账号 / 激活新卡
+ * 的那段窗口）。旧实现把两个来源**直接合并**，于是 A 卡的在途预占会被算到 B 卡头上。
+ *
+ * 纪律：
+ *   · 一把 key **先认一次主**（第一次成功读到读数的那张卡），之后**只认**那张卡；
+ *     拿同一把 key 去问另一张卡 ⇒ 一律当"读不到"（未知），绝不合并。
+ *   · 认主只发生在**真读到读数**时；失败不认领，免得把一次抖动钉成"这张卡的"。
+ *   · relay key 对一张卡是**生成一次固定不变**的（见 `relay-startup.ts`），所以
+ *     key 变了就是卡变了 —— 新 key 会被重新认主。
+ *   · 账户边界（`clearLicense`）清空 —— 登出后不留上一张卡的归属。
+ */
+const relayKeyHeldOwner = new Map<string, string>();
+
+interface HeldRead {
+  /** 真读到读数才有值；`null` = 根本没读到（第 ③ 态）。 */
+  heldMicros: number | null;
+  /** `false` ⇒ 预占口径不可判定（后端明说，或这次压根没读到）。 */
+  heldComplete: boolean;
+}
+
+/** 第 ③ 态：读不到 ⇒ 没有读数，且口径不可判定。 */
+const HELD_UNREAD: HeldRead = { heldMicros: null, heldComplete: false };
+
+async function readRelayHeldMicros(target: { licenseId: string }): Promise<HeldRead> {
+  // 没有活体 relay key ⇒ 连不上中转（未激活 / 未 bootstrap）⇒ 如实返回"问不到"。
+  const key = getActiveRelayKey();
+  if (!key) return HELD_UNREAD;
+
+  // 卡身份核对：这把 key 已经认过主，且认的不是展示中的这张卡 ⇒ 它的读数**不属于**这张卡。
+  const owner = relayKeyHeldOwner.get(key);
+  if (owner !== undefined && owner !== target.licenseId) return HELD_UNREAD;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RELAY_HELD_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${normalizeBaseUrl(activeRelayBaseUrl())}/v1/usage`, {
+      headers: { authorization: `Bearer ${key}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) return HELD_UNREAD;
+    const body = (await res.json()) as { heldMicros?: unknown; heldComplete?: unknown };
+    const held = body.heldMicros;
+    const complete = body.heldComplete;
+    // 坏形状（缺字段 / 非数 / 负数 / 非布尔）一律当"没读到"，不当 0。
+    if (typeof held !== 'number' || !Number.isFinite(held) || held < 0) return HELD_UNREAD;
+    if (typeof complete !== 'boolean') return HELD_UNREAD;
+    // 真读到读数 ⇒ 把归属记下来（幂等：只认第一次）。
+    if (!relayKeyHeldOwner.has(key)) relayKeyHeldOwner.set(key, target.licenseId);
+    return { heldMicros: held, heldComplete: complete };
+  } catch {
+    // 网络失败 / 超时 / JSON 坏 —— 预占读不到不是授权失败，但要如实说"不可判定"。
+    return HELD_UNREAD;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<LicenseStatus>> {
@@ -260,7 +411,13 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
       // The signed-in account cannot legally activate the cached key. Keeping it
       // would let relay bootstrap call activate_license with a previous/member
       // account's card even though the entitlement check rejected it.
-      clearPersistedLicenseBinding(generation);
+      // ⭐ 2026-10-17 统一审核 §T33①：这条清绑定**不在**那 6 处账户边界上（例如"消费中
+      //    每几秒一次"的 `readQuotaSnapshot` 轮询也会走到这里）—— 归属刚被抹成匿名，
+      //    必须顺手把 `MEMORY.md` 重投影一次，否则上一个账号的已确认记忆会随共享文件
+      //    留到下一轮提示词，直到下次启动 / 边界才清。**只在真正清掉绑定时**触发
+      //    （`clearPersistedLicenseBinding` 返回 true），不是每次读取都投。
+      //    fire-and-forget：账户边界绝不能因为记忆没投影上而失败（同 `account-switch` 纪律）。
+      if (clearPersistedLicenseBinding(generation)) void resyncMemoryOnAccountBoundary();
       return { ok: true, result: { ...base, licenseKey: null } };
     }
     if (!isCurrentLicenseGeneration(generation)) {
@@ -268,11 +425,22 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
     }
     persistLicenseBinding(userId, license, generation);
 
+    // 在途预占（BUG-082）：只增的附加信息，**读不到不算"没有预占"**（见 readRelayHeldMicros
+    // 的三态说明）。读数只属于**这把 relay key 的那张卡** —— 用展示中的这张卡的 id 认领。
+    const selectedLicenseId = String(license.id ?? '');
+    const held = await readRelayHeldMicros({ licenseId: selectedLicenseId });
+
+    // ⚠️ 读数在途期间授权代次可能已经变了（切卡 / 切账号 / 登出）：这时这份 held 连同
+    //    整条授权结论都已经过期，必须丢弃 —— 否则旧卡的在途冻结会落到新身份的界面里。
+    if (!isCurrentLicenseGeneration(generation)) {
+      return { ok: true, result: { ...base, licenseKey: null } };
+    }
+
     return {
       ok: true,
       result: {
         configured: true,
-        licenseId: String(license.id ?? '') || null,
+        licenseId: selectedLicenseId || null,
         orgId: String(license.org_id ?? '') || null,
         licenseKey: (license.license_key as string) ?? null,
         sku: (license.sku as string) ?? null,
@@ -281,6 +449,9 @@ async function readLicenseStatusUnlocked(generation: number): Promise<IpcResult<
         maxActivations: Number(license.max_activations ?? 0),
         tokenQuotaMicros: Number(license.token_quota_micros ?? 0),
         tokenUsedMicros: Number(license.token_used_micros ?? 0),
+        // 只有**真读到**读数才写 tokenHeldMicros；heldComplete 一律写（false = 不可判定）。
+        ...(held.heldMicros !== null ? { tokenHeldMicros: held.heldMicros } : {}),
+        heldComplete: held.heldComplete,
         // Ownership, not device registration. See the comment above.
         activated: true,
         deviceFingerprint: fingerprint,
@@ -456,6 +627,8 @@ async function activateLicenseUnlocked(licenseKey: string, generation: number): 
       supabase.rpc('activate_license', {
         p_license_key: trimmed,
         p_device_fingerprint: fingerprint,
+        // 过渡期：让服务端把这台机器**旧的**（按电脑算的）登记原地升级成 v2，不占新名额。
+        p_legacy_fingerprint: legacyDeviceFingerprint(),
       }),
       'activate_license',
       ACTIVATION_RESPONSE_TIMEOUT_MS,
@@ -597,6 +770,9 @@ async function configureRelay(relayKey: string | null): Promise<boolean> {
 export function clearLicense(): IpcResult {
   nextLicenseGeneration();
   setActiveRelayKey(null);
+  // 账户边界：上一张卡的 relay key 归属也一并作废（key 本身已经清了，留着归属没有意义，
+  // 且会让"新账号的 key 恰好等于旧 key"这种不可能的分支带着旧卡身份跑）。
+  relayKeyHeldOwner.clear();
   const current = readConfig()?.commercial;
   if (current) {
     updateConfig({ commercial: { ...current, licenseKey: undefined, licenseBinding: undefined } });

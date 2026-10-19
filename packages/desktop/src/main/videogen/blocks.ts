@@ -24,7 +24,20 @@ export interface VideogenExtraction {
   failures: { failure: VideogenFailure; detail: string }[];
 }
 
-export function extractVideogenBlocks(content: string): VideogenExtraction {
+export interface VideogenBlockOptions {
+  /**
+   * 「高质量档」由**用户界面**选择（2026-10-17 用户要求：Seedance 2.5 要有可见档位）。
+   * 只在助手**没写** `model` 时生效 —— 明确写在围栏里的模型永远优先（用户已经在对话里指定）。
+   */
+  forceModel?: 'seedance-2.5';
+  /**
+   * 图生视频：本轮用户附了一张图 ⇒ 首帧用这张图。
+   * 同样只在围栏**没写** `firstFrame` 时补；路径必须已由调用方授权（见 reference-image.ts）。
+   */
+  firstFramePath?: string;
+}
+
+export function extractVideogenBlocks(content: string, options: VideogenBlockOptions = {}): VideogenExtraction {
   const requests: VideogenRequest[] = [];
   const failures: { failure: VideogenFailure; detail: string }[] = [];
   if (!content) return { requests, failures };
@@ -44,6 +57,27 @@ export function extractVideogenBlocks(content: string): VideogenExtraction {
         detail: `invalid JSON in videogen block: ${(error as Error).message}`,
       });
       continue;
+    }
+    // ⭐ 用户界面选择优先于"默认档"，但**不覆盖**助手在围栏里明确写的值：
+    //   · 高质量档（Seedance 2.5）：只在没有 `model` 时补；
+    //   · 图生视频：只在 Seedance 分支、且没有 `firstFrame` 时补。
+    if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+      const record = raw as Record<string, unknown>;
+      if (options.forceModel === 'seedance-2.5' && record.model === undefined) record.model = 'seedance-2.5';
+      if (options.firstFramePath) {
+        if (record.model === 'seedance-2.5') {
+          if (record.firstFrame === undefined) record.firstFrame = options.firstFramePath;
+        } else {
+          // 🔴 默认档（H3）没有首帧能力。此前这里**静默跳过**注入 ⇒ 图被丢掉、
+          //    仍按普通文生视频真实扣费，用户拿到与图无关的视频。明确失败、零扣费，
+          //    让用户切到高质量档后重发（不自动升级：没经用户同意不能多花钱）。
+          failures.push({
+            failure: { code: 'videogen-image-requires-seedance' },
+            detail: `session image attached but resolved model is ${String(record.model ?? 'h3-default')}`,
+          });
+          continue;
+        }
+      }
     }
     const parsed = parseVideogenRequest(raw);
     if (!parsed.ok) {

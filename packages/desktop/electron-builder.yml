@@ -83,6 +83,13 @@ extraResources:
   #    删掉占位文件会让构建直接红，且报错文案会误导成"随包运行时缺源"。
   - from: resources/media
     to: media
+  # 「连接器 · 飞书」自带安装（2026-10-17 用户要求）：把官方插件 tgz **随包**发出去，
+  # 客户盘第一次接入时 `plugins install <本机 tgz>`，**不需要联网下载**。
+  # 该 tgz 的 bundleDependencies 覆盖全部 6 个依赖 ⇒ 安装过程不访问 npm registry。
+  # ⚠️ `to:` 必须与 `src/main/connectors/feishu.ts` 的 `FEISHU_PLUGIN_DIR_NAME` 一字不差，
+  #    靠 `test/feishu-connector-packaging-gate.test.ts` 钉住。
+  - from: resources/connectors
+    to: connectors
 # ⚠️ electron-builder 只接受**一个** beforePack ⇒ 这里是组合钩子，
 #    两道门禁（随包运行时 / 内嵌更新公钥）各自的判定在各自那个文件里。
 beforePack: ./scripts/before-pack.cjs

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic } from '../util/json-file.js';
+import { rebaseConfigPaths, rebasePathValue } from './config-rebase.js';
 import {
   probePidLiveness,
   processStartTimeMatches,
@@ -101,7 +102,20 @@ function inventory(root: string): Entry[] {
       const normalized = relative.replaceAll('\\', '/');
       if (
         !/^plugin-skills\/[^/]+$/u.test(normalized) &&
-        !/^npm\/projects\/[^/]+\/node_modules\/openclaw$/u.test(normalized)
+        !/^npm\/projects\/[^/]+\/node_modules\/openclaw$/u.test(normalized) &&
+        // ⭐ 2026-10-19（用户实测「登不进去」）：官方 install 生成的 npm 项目里，
+        //    **包自己**的 node_modules 下还有一条 peer 链（npm 为满足
+        //    `peerDependencies.openclaw` 建的），形状：
+        //    `npm/projects/<项目>/node_modules/@openclaw/feishu/node_modules/openclaw`
+        //    旧白名单只认项目顶层那条 ⇒ 迁移判 blocked ⇒ 网关永远起不来。
+        //    仍然收得很窄：只允许"一个包目录（可带 scope）+ node_modules/openclaw"。
+        !/^npm\/projects\/[^/]+\/node_modules\/(?:@[^/]+\/)?[^/]+\/node_modules\/openclaw$/u.test(normalized) &&
+        // ⭐ 2026-10-19（现场盘）：`openclaw plugins install` 装出来的插件会在
+        //    `<state>\extensions\<插件>\node_modules\openclaw` 建一条指向随包运行时的
+        //    junction。它和上面那条 npm 链是同一类东西（插件拿宿主内核），只是落点不同。
+        //    不认识它 ⇒ 换盘符后整个迁移被判 blocked，网关直接不启动（表现就是准备页卡住）。
+        //    仍然收得很窄：只认"插件目录下一层 + node_modules/openclaw"。
+        !/^extensions\/[^/]+\/node_modules\/openclaw$/u.test(normalized)
       ) {
         throw new Error('State contains an unsupported link; migration requires review');
       }
@@ -328,55 +342,20 @@ function previousGatewayRunning(file: string, relative: string, pid: number): Er
   );
 }
 
-function rebasePath(value: unknown, previous: Location, next: Location): unknown {
-  if (typeof value !== 'string') return value;
-  const flavor = /^[A-Za-z]:[\\/]/u.test(value) ? path.win32 : path;
-  if (!flavor.isAbsolute(value)) return value;
-  for (const key of ['workspacePath', 'stateDir'] as const) {
-    if (!previous[key]) continue;
-    if (
-      key === 'workspacePath' &&
-      path.win32.normalize(previous[key]).slice(2).toLowerCase() !==
-        path.win32.normalize(next[key]).slice(2).toLowerCase()
-    )
-      continue;
-    const relative = flavor.relative(previous[key], value);
-    if (
-      relative === '' ||
-      (!relative.startsWith(`..${flavor.sep}`) && relative !== '..' && !flavor.isAbsolute(relative))
-    ) {
-      return flavor.join(next[key], relative);
-    }
-  }
-  return value;
-}
-
+/**
+ * 换盘重写（C2 深度重写）：**按键名**重写配置树里的路径字段，而不是逐字段列举。
+ *
+ * 判据与遍历在 `config-rebase.ts`（只依赖 `node:path`，可脱离 Electron 单测）；
+ * 这里只保留一个稳定出口。事故记录（`plugins.load.paths` 换盘后不重写 ⇒ 三个
+ * 承重插件静默失效）与两层判据见该文件顶部注释 —— **改动必须同时改
+ * `test/portable-config-rebase.test.ts`**。
+ */
 export function rebasePortableConfig(
   config: Record<string, unknown>,
   previous: Location,
   next: Location,
 ): Record<string, unknown> {
-  const result = structuredClone(config);
-  const agents = record(result.agents) ? result.agents : null;
-  if (agents) {
-    const configs = [
-      agents.defaults,
-      ...(record(agents.entries) ? Object.values(agents.entries) : []),
-      ...(Array.isArray(agents.list) ? agents.list : []),
-    ];
-    for (const agent of configs) {
-      if (!record(agent)) continue;
-      for (const key of ['workspace', 'agentDir'])
-        if (key in agent) agent[key] = rebasePath(agent[key], previous, next);
-    }
-  }
-  if (record(result.session) && 'store' in result.session)
-    result.session.store = rebasePath(result.session.store, previous, next);
-  if (record(result.cron) && 'store' in result.cron) result.cron.store = rebasePath(result.cron.store, previous, next);
-  if (record(result.skills) && record(result.skills.load) && Array.isArray(result.skills.load.extraDirs)) {
-    result.skills.load.extraDirs = result.skills.load.extraDirs.map((value) => rebasePath(value, previous, next));
-  }
-  return result;
+  return rebaseConfigPaths(config, previous, next).config;
 }
 
 function sourceLocation(root: string, fallbackWorkspace: string): Location {
@@ -420,7 +399,7 @@ function rebaseFiles(root: string, entries: Entry[], previous: Location, next: L
     if (sessionIndex)
       for (const entryValue of Object.values(value)) {
         if (record(entryValue) && 'sessionFile' in entryValue)
-          entryValue.sessionFile = rebasePath(entryValue.sessionFile, previous, next);
+          entryValue.sessionFile = rebasePathValue(entryValue.sessionFile, previous, next);
       }
     if (JSON.stringify(value) !== JSON.stringify(original))
       changes.set(file, Buffer.from(JSON.stringify(value, null, 2)));

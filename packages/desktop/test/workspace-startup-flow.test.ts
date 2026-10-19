@@ -68,6 +68,8 @@ import {
 } from '../src/main/workspace/startup.js';
 // 只取这一个常量：工作区自身的标记文件名（真 `initWorkspace()` 会往工作区里写它）。
 import { WORKSPACE_MARKER_FILE } from '../src/main/workspace/portable.js';
+// 真盘/临时目录上的身份仍读真文件；**虚拟盘**只读 `virtualIds`（见 `makeHarness`）。
+import { readWorkspaceId } from '../src/main/workspace/init.js';
 
 const MANIFEST = 'openclaw-runtime-manifest.json';
 const WS_NAME = '荣盈魔方工作区';
@@ -79,6 +81,8 @@ let realRoot = '';
 
 interface Harness {
   virtual: Set<string>;
+  /** 虚拟盘上的工作区标记身份（真文件系统里等价于 `.clawwork-workspace.json` 的 `workspaceId`）。 */
+  virtualIds: Map<string, string>;
   exists: (p: string) => boolean;
   dialogs: {
     askForMissingWorkspace: ReturnType<typeof vi.fn>;
@@ -97,9 +101,19 @@ interface Harness {
 
 function makeHarness(overrides: Partial<Parameters<typeof prepareWorkspaceAtStartup>[0]> = {}): Harness {
   const virtual = new Set<string>();
+  const virtualIds = new Map<string, string>();
   const exists = (p: string): boolean => {
     if (virtual.has(fold(p))) return true;
     return p.toLowerCase().startsWith(realRoot.toLowerCase()) && existsSync(p);
+  };
+  /**
+   * 身份读口也必须注入：`readWorkspaceId` 默认走**真实文件系统**，而虚拟盘
+   * （`E:\`/`F:\`）在本机可能恰好真有同名目录 —— 一旦读到真盘上的残留标记，
+   * 同一份用例的结果就取决于这台机器上碰巧有什么。虚拟盘只认 `virtualIds`。
+   */
+  const readId = (p: string): string | null => {
+    if (virtual.has(fold(p))) return virtualIds.get(fold(p)) ?? null;
+    return readWorkspaceId(p);
   };
   const events: Harness['events'] = [];
   const workspaceInit = vi.fn((p: string) => {
@@ -124,6 +138,7 @@ function makeHarness(overrides: Partial<Parameters<typeof prepareWorkspaceAtStar
       database,
       removableDrives: [],
       exists,
+      readWorkspaceId: readId,
       workspaceInit,
       quit,
       onEvent: (event, data) => events.push({ event, data }),
@@ -131,11 +146,17 @@ function makeHarness(overrides: Partial<Parameters<typeof prepareWorkspaceAtStar
       ...extra,
     });
 
-  return { virtual, exists, dialogs, database, initWorkspace: workspaceInit, quit, events, run };
+  return { virtual, virtualIds, exists, dialogs, database, initWorkspace: workspaceInit, quit, events, run };
 }
 
 function seedVirtual(h: Harness, ...items: string[]): void {
   for (const item of items) h.virtual.add(fold(item));
+}
+
+/** 给虚拟盘上的工作区放一个"标记身份"（对应真盘 `.clawwork-workspace.json` 里的 workspaceId）。 */
+function seedVirtualId(h: Harness, workspacePath: string, id: string): void {
+  seedVirtual(h, workspacePath);
+  h.virtualIds.set(fold(workspacePath), id);
 }
 
 type SeedConfig = Omit<AppConfig, 'gateways'> & { gateways?: AppConfig['gateways'] };
@@ -281,14 +302,20 @@ describe('交付形态（DriveType=3 的 U 盘）：同事那份交付包', () =
   });
 
   it('⭐ 换个 USB 口（E: → F:）⇒ 静默找回盘上那份，不弹框、不退出', async () => {
+    const WS_ID = 'ws-heal-0001';
     const first = makeHarness(deliveryOn('E:\\'));
     seedVirtual(first, bundledManifestOn('E:\\'));
+    // 真实盘上 `initWorkspace()` 会写带 workspaceId 的标记；这里给虚拟盘同样的身份，
+    // 让"换盘符后按身份认回同一份工作区"这条真的被走到（而不是靠配置里没 id 蒙过去）。
+    seedVirtualId(first, win32.join('E:\\', WS_NAME), WS_ID);
     const firstRun = await first.run();
     expect(firstRun.kind).toBe('ready');
     if (firstRun.kind !== 'ready') throw new Error('unreachable');
     expect(firstRun.decision.kind).toBe('auto-portable');
     const legacyConfig = readConfig();
     if (!legacyConfig) throw new Error('首启没有写配置');
+    // 首启就把"工作区身份"记进配置 —— 换盘符时靠它严格相等认回同一份。
+    expect(legacyConfig.workspaceId).toBe(WS_ID);
     writeConfig({ ...legacyConfig, portableSetupPending: true }); // 模拟 0.0.25 已写下的旧标记
 
     // 同一个包换到 F: 上。⚠️ 用**另一块虚拟盘**（不是往旧 harness 里加路径）：
@@ -300,6 +327,7 @@ describe('交付形态（DriveType=3 的 U 盘）：同事那份交付包', () =
       win32.join('F:\\', WS_NAME),
       win32.join('F:\\', WS_NAME, WORKSPACE_MARKER_FILE), // 真 initWorkspace() 写的那份标记
     );
+    seedVirtualId(second, win32.join('F:\\', WS_NAME), WS_ID); // 同一份工作区的身份
 
     const result = await second.run();
 
@@ -984,7 +1012,7 @@ describe('P-A：同盘工作区的保存/恢复（换盘符硬合同）', () => 
   });
 
   it('⚠️ R8-02 流级反例：配置有 workspaceId 而候选目录身份读不出 ⇒ 必须问人（不许补铸覆盖原关联）', async () => {
-    // 流级 readWorkspaceId 走真实 fs（F:\ 是虚拟盘）⇒ 候选标记读不到 id —— 正是
+    // 候选目录在虚拟盘上且没给身份 ⇒ 身份读口返回 null —— 正是
     // "缺 id/坏 JSON/不可读" 的形状：配置 id=ws-A 必须原样保留，不许 mint 覆盖。
     seedConfig({
       workspacePath: win32.join('E:\\', PICKED),

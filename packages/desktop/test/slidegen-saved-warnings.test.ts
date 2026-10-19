@@ -96,7 +96,10 @@ async function persistBuffer(
 }
 
 function warning(artifactName: string, page: number, code = 'layout-text-occluded') {
-  return { code, page, element: 1, detail: expect.any(String), artifactName };
+  // `data` 是 2026-10-16 新增的**语言无关载荷**（细节走 i18n，不许把主进程的
+  // `detail` 原样上屏）。四条 warning 现在**都会**带上它，所以这里必须跟着加 ——
+  // 这些断言用 `toEqual` 深比对，形状变了就该红（当时确实是 7 条一起红）。
+  return { code, page, element: 1, detail: expect.any(String), data: expect.any(Object), artifactName };
 }
 
 function savedEvents() {

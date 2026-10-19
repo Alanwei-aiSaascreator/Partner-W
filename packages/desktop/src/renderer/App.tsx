@@ -25,6 +25,7 @@ import { useGatewayBootstrap } from './hooks/useGatewayBootstrap';
 import { useWorkspaceRefresh } from './hooks/useWorkspaceRefresh';
 import { useQuotaRefreshOnTurnEnd } from './hooks/useQuotaRefreshOnTurnEnd';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
+import UpdateDialog from './components/UpdateDialog';
 import { useTraySync } from './hooks/useTraySync';
 import { useModuleOpenTracking } from './hooks/useModuleOpenTracking';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -32,6 +33,7 @@ import { useSettingsBootstrap } from './hooks/useSettingsBootstrap';
 import { useStartupReadiness } from './hooks/useStartupReadiness';
 import { useDocgenFailureToast } from './hooks/useDocgenFailureToast';
 import { useHtmlgenFailureToast } from './hooks/useHtmlgenFailureToast';
+import { useImagegenFailureToast } from './hooks/useImagegenFailureToast';
 import { useVideogenFailureToast } from './hooks/useVideogenFailureToast';
 import { useSlidegenToast } from './hooks/useSlidegenToast';
 import { useArtifactPanelReveal } from './hooks/useArtifactPanelReveal';
@@ -248,12 +250,15 @@ export default function App() {
   // ⚠️ 挂 App 不挂 MainArea：打开设置会卸载 MainArea，而"留在账户页盯后台消费"
   //    正是要覆盖的场景之一（余额面板此时只剩设置页那一处）。
   useQuotaRefreshOnTurnEnd();
-  useUpdateCheck();
+  // ⚠️ `useUpdateCheck` **不在这里**：它的提示落点（设置→关于）只在工作区里挂载，
+  //    挂在登录页会弹一条"点了没反应"的通知，还会把去重键提前吃掉（2026-10-19 实测）。
+  //    见 `entryScreen` 之后的调用。
   // 挂 App 而不是 MainArea：打开设置会卸载 MainArea，那期间文件生成失败就会被漏掉，
   // 而"漏掉一条失败提示"的表现恰好和"什么都没发生"一模一样。
   useDocgenFailureToast();
   useHtmlgenFailureToast();
   useVideogenFailureToast();
+  useImagegenFailureToast();
   useSlidegenToast();
   // 产物一落盘就把右侧「产物」面板展开 —— 用户反馈 #2：以前要手动点「切换上下文面板」才看得到。
   useArtifactPanelReveal();
@@ -631,6 +636,11 @@ export default function App() {
     preparationRequired: commercialEntry && preparedScope !== preparationScope,
   });
 
+  // 所有界面都检查更新（2026-10-19 用户反馈：登录页看不到更新、也没法下载）。
+  // 提示的落点已从「设置 → 关于」改为 App 级 `UpdateDialog`（下面每个 return 都挂着），
+  // 所以登录页/准备页点提示能打开同一套下载与安装界面，不再需要"进了工作区才提示"。
+  useUpdateCheck();
+
   if (entryScreen === 'loading') return null;
 
   if (entryScreen === 'login') {
@@ -645,6 +655,8 @@ export default function App() {
           onSignInStarted={handleSignInStarted}
         />
         <AppToaster themeMode={themeMode} />
+        {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
+        <UpdateDialog />
       </TooltipProvider>
     );
   }
@@ -664,6 +676,8 @@ export default function App() {
           }}
         />
         <AppToaster themeMode={themeMode} />
+        {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
+        <UpdateDialog />
       </TooltipProvider>
     );
   if (entryScreen === 'onboarding' && onboardingAccount) {
@@ -676,6 +690,8 @@ export default function App() {
           onComplete={handleOnboardingComplete}
         />
         <AppToaster themeMode={themeMode} />
+        {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
+        <UpdateDialog />
       </TooltipProvider>
     );
   }
@@ -693,6 +709,8 @@ export default function App() {
           onCancel={() => setEditingOnboardingProfile(false)}
         />
         <AppToaster themeMode={themeMode} />
+        {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
+        <UpdateDialog />
       </TooltipProvider>
     );
   }
@@ -707,6 +725,8 @@ export default function App() {
           }}
         />
         <AppToaster themeMode={themeMode} />
+        {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
+        <UpdateDialog />
       </TooltipProvider>
     );
   }
@@ -850,6 +870,8 @@ export default function App() {
             ))}
         </AnimatePresence>
         <AppToaster themeMode={themeMode} />
+        {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
+        <UpdateDialog />
         <ApprovalDialog />
       </div>
     </TooltipProvider>

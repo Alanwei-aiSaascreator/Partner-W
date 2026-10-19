@@ -394,6 +394,71 @@ describe('portable state migration', () => {
     expect(fs.readFileSync(path.join(target, 'state', 'history.sqlite'), 'utf8')).toBe('newest');
   });
 
+  // 2026-10-19 现场盘：`openclaw plugins install` 装的插件会在
+  // `<state>\extensions\<插件>\node_modules\openclaw` 建一条指向随包运行时的 junction。
+  // 旧白名单不认这个形状 ⇒ 换盘符后整个迁移被判 blocked、网关不启动（准备页卡住）。
+  it('accepts the host link an npm-installed plugin creates under extensions/', async () => {
+    const pluginLink = path.join(source, 'extensions', 'feishu', 'node_modules', 'openclaw');
+    fs.mkdirSync(path.dirname(pluginLink), { recursive: true });
+    fs.symlinkSync(path.join(root, 'runtime', 'deployed', 'KEY', 'node_modules', 'openclaw'), pluginLink, 'junction');
+
+    await migrate();
+
+    expect(fs.existsSync(target)).toBe(true);
+    expect(fs.lstatSync(path.join(target, 'extensions', 'feishu', 'node_modules', 'openclaw')).isSymbolicLink()).toBe(
+      true,
+    );
+  });
+
+  // 2026-10-19 用户实测「登不进去」：同一个 npm 项目里，**包自己**的 node_modules 下
+  // 还有一条 peer 链（`node_modules/@openclaw/feishu/node_modules/openclaw`）。
+  // 旧白名单只认项目顶层那条 ⇒ 迁移直接判 blocked，网关永远起不来（登录后停在准备页）。
+  it('accepts the nested peer host link inside an npm-installed plugin package', async () => {
+    const peer = path.join(
+      source,
+      'npm',
+      'projects',
+      'openclaw-feishu-dc69f44688',
+      'node_modules',
+      '@openclaw',
+      'feishu',
+      'node_modules',
+      'openclaw',
+    );
+    fs.mkdirSync(path.dirname(peer), { recursive: true });
+    fs.symlinkSync(path.join(root, 'runtime', 'deployed', 'KEY', 'node_modules', 'openclaw'), peer, 'junction');
+
+    await migrate();
+
+    expect(fs.existsSync(target)).toBe(true);
+    expect(fs.lstatSync(path.join(target, 'npm', 'projects', 'openclaw-feishu-dc69f44688', 'node_modules', '@openclaw', 'feishu', 'node_modules', 'openclaw')).isSymbolicLink()).toBe(true);
+  });
+
+  // 负对照：嵌套层里**不是** openclaw 的链接照旧拒绝（白名单只放宽这一种形状）。
+  it('still refuses a nested link that is not the openclaw host link', async () => {
+    const stray = path.join(
+      source,
+      'npm',
+      'projects',
+      'p',
+      'node_modules',
+      '@openclaw',
+      'feishu',
+      'node_modules',
+      'other',
+    );
+    fs.mkdirSync(path.dirname(stray), { recursive: true });
+    fs.symlinkSync(path.join(root, 'elsewhere'), stray, 'junction');
+    await expect(migrate()).rejects.toThrow('unsupported link');
+  });
+
+  it('still refuses a link that is not a known host link', async () => {
+    const stray = path.join(source, 'extensions', 'feishu', 'node_modules', 'other');
+    fs.mkdirSync(path.dirname(stray), { recursive: true });
+    fs.symlinkSync(path.join(root, 'elsewhere'), stray, 'junction');
+    await expect(migrate()).rejects.toThrow('unsupported link');
+  });
+
   it('refuses another token identity and unsupported links without following them', async () => {
     await expect(migrate({ token: 'another-account' })).rejects.toThrow('does not match');
     const external = path.join(root, 'external');

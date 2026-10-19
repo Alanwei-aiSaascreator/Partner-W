@@ -1,34 +1,9 @@
 import { voiceRequestIdFromDigest } from '@clawwork/shared';
 
-/**
- * 朗读（TTS）请求身份派生（R8-05 / VV-1，2026-10-15 终审返工）。
- *
- * 缺陷背景：`main/voice/relay-client.ts` 以前在每次请求里 `randomUUID()` 现生成身份。
- * "供应商已成功 → settle COMMIT → ACK 丢失 → relay 返回 voice-settlement-pending" 之后，
- * 用户从失败状态再点一次朗读，会拿到**新身份** ⇒ 绕开 relay 的结果缓存（120s）与
- * `relay_voice_requests(license_id, request_id)` 幂等主键 ⇒ 供应商被再调用一次、再扣一次费。
- *
- * 现在的口径（终审给定）：
- *  - 身份绑"该次播放目标"：**账号 key + 任务 id + 会话 key + 音色 Cherry + 回答内容修订
- *    （整条回答的 sha256）+ 分句序号 + 该分句文本**；
- *  - 跨"失败重试"稳定（同一逻辑操作沿用同一身份）；
- *  - 显式换目标 / 换账号 / 文本变更 ⇒ 身份必变（旧账号、旧消息的结果绝不复用）；
- *  - **不能只按文本去重**：账号/任务/会话/音色都在绑定串里，文本只是其中一项。
- *
- * 为什么身份里带完整回答的 sha256（而不是只有分句文本）：消息内容修订是绑定字段之一，
- * 回答任意一段被改写都算"换了一条回答"；分句序号 + 分句文本再保证逐句唯一。
- *
- * 为什么身份**不**含消息行 id / turn id：投递期它们并不稳定（网关历史消息在同步时
- * 重新随机分配 id、turn 提升成消息时 id 换源）。用了它们，"失败后重试沿用同一身份"
- * 反而会在同步/重开时被破坏 —— 目标语义由 任务 + 会话 + 内容修订 表达即可。
- *
- * `completedPlaybacks`：该目标**完整播完**的次数。失败/中断不计数（下一次点击 = 结果未知的
- * 恢复，沿用同一身份）；完整播完后再点朗读 = 用户明确发起的新合成，计数前进一代 ⇒ 新身份。
- */
-
 export interface VoicePlaybackIdentity {
   /** 商业账号 key（commercial overview.account.userId）：换账号 ⇒ 换身份。 */
   accountKey: string;
+  messageKey?: string;
   /** 任务 id。 */
   taskId: string;
   /** 任务主会话 key（消息与 turn 共同的会话身份）。 */
@@ -59,6 +34,7 @@ export function voicePlaybackTargetString(target: VoicePlaybackIdentity, answerD
     `session=${target.sessionKey}`,
     `voice=${VOICE_NAME}`,
     `answer=${answerDigest}`,
+    ...(target.messageKey ? [`message=${target.messageKey}`] : []),
   ].join('\u0000');
 }
 
@@ -84,4 +60,33 @@ export async function deriveVoiceSentenceRequestId(identity: VoiceSentenceIdenti
 export async function answerRevisionDigest(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function voicePlaybackStorageKey(target: VoicePlaybackIdentity, digest: string): Promise<string> {
+  return `rongying.voice.playback.v1.${await answerRevisionDigest(voicePlaybackTargetString(target, digest))}`;
+}
+
+export function loadPlaybackGeneration(key: string): number {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const generation = raw === null ? 0 : Number(raw);
+    if (!Number.isSafeInteger(generation) || generation < 0 || (raw !== null && String(generation) !== raw)) {
+      throw new Error('voice-recovery-unavailable');
+    }
+    window.localStorage.setItem(key, String(generation));
+    return generation;
+  } catch {
+    throw new Error('voice-recovery-unavailable');
+  }
+}
+
+export function completePlaybackGeneration(key: string, generation: number): void {
+  if (loadPlaybackGeneration(key) !== generation || !Number.isSafeInteger(generation + 1)) {
+    throw new Error('voice-recovery-unavailable');
+  }
+  try {
+    window.localStorage.setItem(key, String(generation + 1));
+  } catch {
+    throw new Error('voice-recovery-unavailable');
+  }
 }

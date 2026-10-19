@@ -127,6 +127,33 @@ describe('registerDataHandlers', () => {
     );
   });
 
+  it('⭐ 整轮用时：定稿写入 duration_ms，后续中途 upsert 不覆盖已结算的值', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    const base = {
+      id: 'msg-dur-1',
+      taskId: 'task-1',
+      role: 'assistant',
+      content: '答案',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, { ...base, durationMs: 286_000 })).toEqual({ ok: true });
+    expect(valuesMock).toHaveBeenLastCalledWith(expect.objectContaining({ durationMs: 286_000 }));
+
+    // 同一逻辑消息的**中途** upsert（工具快照）拿不到用时 ⇒ set 里不许出现该键，
+    // 否则会把定稿那一刻结算的值按 `?? null` 抹掉。
+    expect(createMessage?.({}, { ...base, id: 'msg-dur-2' })).toEqual({ ok: true });
+    const lastSet = onConflictDoUpdateMock.mock.calls.at(-1)?.[0]?.set as Record<string, unknown>;
+    expect(lastSet).not.toHaveProperty('durationMs');
+    // 插入本身没有值 ⇒ 显式 NULL（老行/缺起算点），不是 undefined（drizzle 会忽略）。
+    expect(valuesMock).toHaveBeenLastCalledWith(expect.objectContaining({ durationMs: null }));
+  });
+
   it('auto-extracts assistant image attachments even when content is empty', async () => {
     const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
 

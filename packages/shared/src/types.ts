@@ -6,7 +6,17 @@ export type TaskStatus = 'active' | 'completed' | 'archived';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
-export type ArtifactType = 'file' | 'code' | 'image' | 'link' | 'structured_data';
+/**
+ * 产物类型。
+ *
+ * ⚠️ `'video'`（2026-10-17 BUG-120）：视频此前一直记 `'file'`（与 docx/pptx/html 同档），
+ *    卡片/面板只能**按文件名 `endsWith('.mp4')`** 反推"这是不是片子" —— 判据散落在展示层、
+ *    且与登记值语义打架。现在给它专属类型，登记侧（videogen / auto-extract / reconcile）
+ *    与展示侧（缩略图 / 提及选择器 / 面板揭示 / 标签）统一按类型认。
+ *    **筛选档不变**：`'video'` 仍归「文件」档（见 `renderer/lib/artifact-labels.ts`），
+ *    老用户不会因为改型而在文件列表里找不到自己的视频。
+ */
+export type ArtifactType = 'file' | 'code' | 'image' | 'link' | 'structured_data' | 'video';
 /**
  * 产物的**展示层**可用性。
  *
@@ -329,6 +339,14 @@ export interface Message {
   deliverySucceeded?: boolean;
   /** This system note existed at a trusted first success; immutable across replay/reopen. */
   deliveryFailureClosed?: boolean;
+  /**
+   * **整轮用时**（用户发出 → 本轮定稿），毫秒。
+   *
+   * ⚠️ 不是网关的 `message.durationMs`（那是单条消息生成时间，会把 4 分钟的一轮报成
+   * 0.4 秒）。本地量、随消息落库（`messages.duration_ms`），重开仍可显示。
+   * 老行/老调用方没有它 ⇒ `undefined`，界面**不显示**，不拿 0 充数。
+   */
+  durationMs?: number;
 }
 
 /**
@@ -493,6 +511,29 @@ export interface CommercialLicenseSummary {
   expiresAt: string | null;
   tokenQuotaMicros: number;
   tokenUsedMicros: number;
+  /**
+   * **在途预占**（媒体冻结）的微积分（BUG-082 续，2026-10-16）。
+   *
+   * 它只算得在服务端：三张媒体表里 `pending/accepted/unknown` 的 `reserved_micros`
+   * 之和（`services/relay/src/held.ts` 的 `HOLD_SOURCES`）。客户端不持有那些行，
+   * 也**不许**按模型价目表本地推算"预计扣费" —— 那是编造账目。
+   *
+   * ⚠️ **可选**：只有**真读到读数**才有它。读不到（relay 不可达 / 网络失败 / 形状坏 /
+   *    老后端不报）时**不写**这个字段，并由 `heldComplete: false` 表示"不可判定"。
+   *    `undefined` 与 `0`（后端明确说了没有预占）语义不同，UI 侧不能把两者当一回事。
+   *    可用额度口径：`tokenQuotaMicros − tokenUsedMicros − tokenHeldMicros`。
+   */
+  tokenHeldMicros?: number;
+  /**
+   * 预占口径**是否可判定**（BUG-082 续，2026-10-16；r14 返工收窄语义）。
+   *
+   * `false` ⇒ **可用额度不可判定**：后端明确报告"读不全 hold 源"，或这次**根本没读到**
+   * （relay 不可达 / 形状坏 / 没有活体 key）。UI 必须显示"暂不可用"，绝不许把未知当 0
+   * 后照常显示 `quota − used` 的余额 —— 那个数字可能偏高。
+   * `true` ⇒ 上面的 `tokenHeldMicros` 是可信的确定值（可以是 0）。
+   * `undefined` ⇒ 这条读取通道没跑（仅供展示的构造结果）。
+   */
+  heldComplete?: boolean;
 }
 
 export interface ChatAttachment {

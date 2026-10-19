@@ -25,7 +25,8 @@ import {
   stopGatewayIfOwned,
   type EnsureGatewayRunningResult,
   type GatewayChildProcess,
-} from './gateway-process.js';
+ } from './gateway-process.js';
+import { createGatewaySupervisor, type GatewaySupervisor } from './gateway-supervisor.js';
 import {
   deployedNodePathFor,
   loadNodeVersionContract,
@@ -336,7 +337,26 @@ export async function bootstrapLocalGatewayRuntime(opts: {
    */
   onDeployProgress?: (p: DeployProgress) => void;
   deps?: Partial<RuntimeBootstrapDeps>;
+  /**
+   * 网关退出后是否由桌面端监督重启。**默认 false（显式开启）**：
+   * 单测会直接触发子进程退出，若不显式开启就不会留下跨用例的定时器。
+   * 生产接线（`main/index.ts`）显式传 `true`。
+   */
+  superviseGateway?: boolean;
+  /**
+   * 监督重启**成功**后回调（2026-10-18）：让 WS 客户端立刻重连，
+   * 不必等它自己那档最长 96s 的退避。生产接线 = `reconnectGateway(LOCAL_GATEWAY_ID)`。
+   */
+  onGatewayRestarted?: () => void;
 }): Promise<RuntimeBootstrapResult> {
+  // 记住这一次的参数：换卡后的「清冷却 + 重启网关」要复用同一套目录与回调语义。
+  lastBootstrapOpts = {
+    userDataDir: opts.userDataDir,
+    ...(opts.runtimeCacheUserDataDir !== undefined ? { runtimeCacheUserDataDir: opts.runtimeCacheUserDataDir } : {}),
+    ...(opts.stateCacheUserDataDir !== undefined ? { stateCacheUserDataDir: opts.stateCacheUserDataDir } : {}),
+    ...(opts.portableWorkspacePath !== undefined ? { portableWorkspacePath: opts.portableWorkspacePath } : {}),
+    ...(opts.legacyStateUserDataDir !== undefined ? { legacyStateUserDataDir: opts.legacyStateUserDataDir } : {}),
+  };
   const deps: RuntimeBootstrapDeps = { ...makeDefaultDeps(), ...opts.deps };
   const { userDataDir } = opts;
   const runtimeCacheUserDataDir = opts.runtimeCacheUserDataDir ?? userDataDir;
@@ -510,6 +530,10 @@ export async function bootstrapLocalGatewayRuntime(opts: {
       throw Object.assign(new Error(crashLoopBreakerGuidance(breaker)), { code: GATEWAY_CRASH_LOOP_BREAKER });
     };
 
+    // 监督重启时用**本次**的接线（userDataDir/stateDir 等）重跑一遍 bootstrap。
+    supervisorBootstrap = () => bootstrapLocalGatewayRuntime({ ...opts, onDeployProgress: undefined });
+    supervisorRestarted = opts.onGatewayRestarted ?? null;
+
     // ⑥ 三态判定后 spawn / 复用（判成 foreign 会抛 port-occupied，由下面接住）
     const gatewayStartedAt = deps.now();
     deps.log('runtime.gateway.start', {});
@@ -545,6 +569,11 @@ export async function bootstrapLocalGatewayRuntime(opts: {
     if (gateway.ownership === 'spawned') {
       gateway.child?.onExit(() => {
         if (activeGateway === nextActive) activeGateway = null;
+        if (shuttingDownLocalGateway) return;
+        deps.log('runtime.gateway-exited', { supervised: opts.superviseGateway === true });
+        // 内核 external 模式的「重启」= 自己退出等外部拉起（飞书接入就会触发）。
+        // 不监督重启 ⇒ WS 客户端在死端口上按退避无限重连。
+        if (opts.superviseGateway === true) ensureGatewaySupervisor().onGatewayExit();
       });
     }
 
@@ -609,6 +638,69 @@ let activeGateway: {
   stateDir: string;
 } | null = null;
 
+/**
+ * 网关监督者（2026-10-18「接飞书后网关永久断」）：内核 external 模式的重启 =
+ * 自己退出、等外部拉起；此前我们只清引用不重启 ⇒ 死端口上无限重连。
+ */
+let shuttingDownLocalGateway = false;
+let gatewaySupervisor: GatewaySupervisor | null = null;
+let supervisorBootstrap: (() => Promise<RuntimeBootstrapResult>) | null = null;
+let supervisorRestarted: (() => void) | null = null;
+
+/**
+ * 最近一次成功传入的 bootstrap 参数（不含 `deps`/回调）。
+ *
+ * 用途只有一个：**换卡后重启本机网关**（BUG-161）。内核的计费冷却缓存在 worker 里，
+ * 只在网关重新拉起时才重新读盘 —— 因此"清数据库 + 重启网关"才能立刻恢复。
+ */
+let lastBootstrapOpts: {
+  userDataDir: string;
+  runtimeCacheUserDataDir?: string;
+  stateCacheUserDataDir?: string;
+  portableWorkspacePath?: string;
+  legacyStateUserDataDir?: string;
+} | null = null;
+
+function ensureGatewaySupervisor(): GatewaySupervisor {
+  if (!gatewaySupervisor) {
+    gatewaySupervisor = createGatewaySupervisor({
+      bootstrap: async () => {
+        const run = supervisorBootstrap;
+        if (!run) return { ok: false, code: 'supervisor-unavailable' };
+        const res = await run();
+        // 重启成功 ⇒ 立刻让 WS 重连（否则最长要等客户端自己的 96s 退避）。
+        if (res.ok) supervisorRestarted?.();
+        return { ok: res.ok, ...(res.ok ? {} : { code: res.code }) };
+      },
+      schedule: (fn, ms) => setTimeout(fn, ms),
+      cancel: (handle) => clearTimeout(handle as NodeJS.Timeout),
+      onRespawn: (attempt, delayMs) => {
+        void import('../debug/index.js')
+          .then((m) =>
+            m.getDebugLogger().info({
+              domain: 'gateway',
+              event: 'runtime.gateway-supervisor-respawn',
+              data: { attempt, delayMs },
+            }),
+          )
+          .catch(() => {});
+      },
+      onGiveUp: (reason) => {
+        void import('../debug/index.js')
+          .then((m) =>
+            m.getDebugLogger().warn({
+              domain: 'gateway',
+              event: 'runtime.gateway-supervisor-gave-up',
+              data: { reason },
+            }),
+          )
+          .catch(() => {});
+      },
+    });
+  }
+  return gatewaySupervisor;
+}
+
 export function getActiveLocalGatewayDeploymentRoot(): string | null {
   return activeGateway?.ownership === 'spawned' && activeGateway.child ? activeGateway.deployedRoot : null;
 }
@@ -639,7 +731,41 @@ const SHUTDOWN_TIMEOUT_MS = 5000;
  * ⚠️ **只有 `spawned` 才停**。判断本身在 `stopGatewayIfOwned` 里（有单测钉住），
  * 这里只负责取回状态、加超时 —— 逻辑不在编排层。
  */
+/**
+ * **维护性停机**（不是退出）：停网关后立刻清掉"正在退出"哨兵，让随后的
+ * `restartLocalGatewayRuntime()` 能把它拉起来。
+ *
+ * 场景：安装飞书插件前需要独占 state 库；`shutdownLocalGatewayRuntime()` 会置位
+ * `shuttingDownLocalGateway`，而 `restartLocalGatewayRuntime()` 见到该哨兵会直接返回 null
+ * ⇒ 网关会一直停着。这个入口专门负责"停完还能起"。
+ */
+/** 诊断/测试：当前是否处于"正在退出"哨兵状态（restart 会因此拒绝拉起）。 */
+export function isLocalGatewayShuttingDown(): boolean {
+  return shuttingDownLocalGateway;
+}
+
+export async function stopLocalGatewayForMaintenance(): Promise<boolean> {
+  const stopped = await shutdownLocalGatewayRuntime();
+  shuttingDownLocalGateway = false;
+  /**
+   * ⚠️ 2026-10-19 现场（r52，飞书装机）：**这里绝不能 reset 监督者**。
+   *
+   * `shutdownLocalGatewayRuntime()` 已把监督者 `stop()`（退出语义）。维护停机的
+   * 本意是"在我装插件期间网关别回来"；如果立刻 `reset()`，正在退出的网关一旦
+   * 触发退出事件，监督者就会按 2s 退避把它重新拉起 —— 实测日志：
+   * `runtime.gateway-supervisor-respawn {attempt:1, delayMs:2000}`，
+   * 随后装机 CLI 报 `config changed since last load` 直接失败。
+   *
+   * 重新启用由**真正要拉起网关**的那条路负责：`restartLocalGatewayRuntime()`
+   * 在 bootstrap 之前调用 `reset()`（BUG-167 的同一处）。停 → 装 → 起 期间，
+   * 监督者必须一直保持停用。
+   */
+  return stopped;
+}
+
 export async function shutdownLocalGatewayRuntime(): Promise<boolean> {
+  shuttingDownLocalGateway = true;
+  gatewaySupervisor?.stop();
   const active = activeGateway;
   activeGateway = null;
   if (!active) return false;
@@ -663,6 +789,39 @@ export async function shutdownLocalGatewayRuntime(): Promise<boolean> {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * 重启本机网关（BUG-161：换卡后清掉内核的计费冷却）。
+ *
+ * 内核把 `usageStats["inline-api-key:clawrouter"]` 缓存进 worker，只有网关重新拉起
+ * 才会重新读盘。调用方应当**先**清数据库、**再**调这里。
+ *
+ * 返回 `null` = 还没跑过 bootstrap，无从重启（调用方自行决定提示）。
+ * 不抛：这是收尾动作，网关重启失败也不该把换卡流程搞成异常。
+ */
+export async function restartLocalGatewayRuntime(): Promise<RuntimeBootstrapResult | null> {
+  const opts = lastBootstrapOpts;
+  if (!opts) return null;
+  // 应用正在退出（before-quit 已把哨兵立起来）⇒ 绝不在这里把网关又拉起来。
+  if (shuttingDownLocalGateway) return null;
+  try {
+    await shutdownLocalGatewayRuntime();
+  } catch {
+    // 停不下来就照常继续尝试重新拉起：`ensureGatewayRunning` 会做端口/复用的三态判定。
+  }
+  // shutdown 会置位"正在退出"，broker 会把随后的子进程退出当成收尾；这里必须复位，
+  // 否则新网关一退出就不会被监督者拉起（且 `runtime.ready` 路径也可能提前放弃）。
+  shuttingDownLocalGateway = false;
+  // ⚠️ shutdown 里 `gatewaySupervisor?.stop()` 会把监督者**永久停用**（退出语义）。
+  //    主动重启必须先 reset，否则本次会话之后网关再退出（例如再接一次飞书）就没人拉起，
+  //    BUG-157 原样复现。这条与上面那行是同一个"退出哨兵"的两半，缺一不可。
+  gatewaySupervisor?.reset();
+  return bootstrapLocalGatewayRuntime({
+    ...opts,
+    superviseGateway: true,
+    ...(supervisorRestarted ? { onGatewayRestarted: supervisorRestarted } : {}),
+  });
 }
 
 export { GATEWAY_PORT_OCCUPIED, CLAWROUTER_ENTRY };

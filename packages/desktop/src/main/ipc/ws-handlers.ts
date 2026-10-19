@@ -23,6 +23,7 @@ import type {
   SkillUpdateParams,
 } from '@clawwork/shared';
 import { getDebugLogger } from '../debug/index.js';
+import { rememberSessionImage } from '../videogen/session-image.js';
 import { trackChatSent } from '../analytics/reporter.js';
 import type { GatewayClient } from '../ws/gateway-client.js';
 import { hasBundledWorkflowTool, isSystemWorkflowAgent } from '../runtime/workflow-tools.js';
@@ -38,6 +39,7 @@ import {
   currentGatewayRunIdForSession,
 } from './data-handlers.js';
 import { noteGatewayTurnStop, noteGatewayTurnStopRejected } from '../artifact/turn-lifecycle.js';
+import { recallMemoriesForTurn } from '../memory/recall-turn.js';
 
 async function gatewayRpc(
   gatewayId: string,
@@ -216,6 +218,8 @@ export function registerWsHandlers(): void {
       },
     ) => {
       const taskId = parseTaskIdFromSessionKey(payload.sessionKey) ?? undefined;
+      // 图生视频：把**本轮**的图记住（没有图就清掉上一轮的，避免串图）。
+      rememberSessionImage(payload.sessionKey, payload.attachments);
       getDebugLogger().info({
         domain: 'ipc',
         event: 'ipc.ws.send-message.requested',
@@ -250,6 +254,26 @@ export function registerWsHandlers(): void {
           taskId,
         });
         return { ok: false, error: '上一项仍在处理，请完成后再发送。', errorCode: 'TURN_IN_FLIGHT' };
+      }
+      // ⭐ T27（2026-10-16）：**每轮按这句提问检索长期记忆**。
+      //    条目没超过注入预算时这一跳是零成本的（连网关往返都不发，见 recall-turn.ts）。
+      //    ⚠️ 记忆是**增强**不是发送的前置条件 ⇒ 任何失败都只记日志，绝不拦住这条消息。
+      try {
+        await recallMemoriesForTurn({
+          gateway: gw,
+          agentId: parseAgentIdFromSessionKey(payload.sessionKey),
+          query:
+            typeof payload.dispatchContext?.userContent === 'string' && payload.dispatchContext.userContent.trim()
+              ? payload.dispatchContext.userContent
+              : payload.content,
+        });
+      } catch (error) {
+        getDebugLogger().warn({
+          domain: 'memory',
+          event: 'memory.recall-turn.threw',
+          sessionKey: payload.sessionKey,
+          data: { reason: error instanceof Error ? error.message : 'unknown' },
+        });
       }
       const controlledNative = process.env.ROYIN_NATIVE_PPT_VALIDATION === '1';
       let artifactRunToken: string | null = null;

@@ -68,7 +68,13 @@ const overviewMock = vi.fn();
 
 const CREDITS = 1_000_000;
 
-/** 总额 2000 积分；remaining 由 `remainingCredits` 反推。 */
+/**
+ * 总额 2000 积分；remaining 由 `remainingCredits` 反推。
+ *
+ * ⚠️ r14 返工：默认带上一次**成功读到的预占读数**（明确"没有预占"= 0）。
+ *    读数缺省不再等于"确定没有预占"（那会让"读不到"伪装成确定余额），
+ *    所以"要断言确定余额"的夹具必须显式给出读数。
+ */
 function overviewWithRemaining(remainingCredits: number, fetchedAt = '2026-10-15T10:00:00.000Z') {
   return {
     account: { userId: 'u1', phone: '8618338607148', nickname: '测试用户', avatar: null, email: null },
@@ -83,6 +89,8 @@ function overviewWithRemaining(remainingCredits: number, fetchedAt = '2026-10-15
       expiresAt: null,
       tokenQuotaMicros: 2000 * CREDITS,
       tokenUsedMicros: (2000 - remainingCredits) * CREDITS,
+      tokenHeldMicros: 0,
+      heldComplete: true,
     },
     device: { fingerprint: 'fp', shortFingerprint: 'DEV-1234' },
     fetchedAt,

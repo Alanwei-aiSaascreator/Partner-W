@@ -56,6 +56,7 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
               (source.startsWith('../artifact/') ||
                 source.startsWith('../docgen/') ||
                 source.startsWith('../htmlgen/') ||
+                source.startsWith('../imagegen/') ||
                 source.startsWith('../slidegen/') ||
                 source === '../workspace/config.js' ||
                 source === '../ws/index.js' ||
@@ -81,6 +82,7 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 export const generateDocumentsFromMessage = async () => [];
                 export const resolvePptxTemplatesRoot = () => undefined;
                 export const generateHtmlPagesFromMessage = async () => [];
+            export const startImagegenJobs = () => undefined;
                 export const generateSlidesFromMessage = async () => [];
                 export const captureDeckFileBaseline = async () => new Map();
                 export const changedDeckFiles = () => [];
@@ -91,12 +93,28 @@ describe('production message IPC with Drizzle and Electron SQLite', () => {
                 // 2026-10-08 集成：BUG-042-c 的新导出（data-handlers 同批 import 它）——
                 // 桩必须跟着长，否则整个 probe 构建 RollupError（同下方"在途子系统"纪律）。
                 export const claimedFilesRejectedByIntegrity = () => [];
+                // 2026-10-17：claim 链新增"同格式误报降级"（artifact/claim-guard）—— 桩必须跟着长。
+                export const classifyMissingClaims = (missing, produced) => {
+                  if (!missing.length) return { blocked: [], informational: [] };
+                  if (!produced.length) return { blocked: [...missing], informational: [] };
+                  const ext = (name) => { const i = name.lastIndexOf('.'); return i >= 0 ? name.slice(i).toLowerCase() : ''; };
+                  const producedExts = new Set(produced.map(ext).filter(Boolean));
+                  const blocked = []; const informational = [];
+                  for (const name of missing) {
+                    const e = ext(name);
+                    if (e && producedExts.has(e)) informational.push(name); else blocked.push(name);
+                  }
+                  return { blocked, informational };
+                };
                 export const expectedArtifactKindsFromRequest = () => [];
                 export const missingExpectedArtifactKinds = () => [];
                 // native PPT 在途子系统（codex 在途，data-handlers 新 import）——桩必须跟着长，
                 // 缺一个 export 整个 probe 构建就 RollupError（同"桩必须跟着长"的纪律）。
                 export const nativeTaskControl = () => ({ get: () => undefined, cancel: () => undefined });
                 export const nativeInputFromCompletedWrites = () => [];
+                // 2026-10-16（T23 源端身份）：data-handlers 多 import 了 nativeExecOrderFromTools
+                // —— 桩必须跟着长，否则收集期 RollupError、整档 20 条用例全部跳过。
+                export const nativeExecOrderFromTools = () => [];
                 export const renderNativePptFile = async () => undefined;
                 export const readSlideGenerationReceipt = () => undefined;
                 export const readWorkspaceBytes = () => Buffer.from('');

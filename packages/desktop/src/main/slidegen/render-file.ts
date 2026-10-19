@@ -7,6 +7,7 @@ import { extractSlidegenBlocks } from './blocks.js';
 import { evaluateSlide } from './evaluate.js';
 import { renderSlideDeck } from './render-deck.js';
 import { contained, readSlideSourceFile, readWorkspaceBytes } from './source-file.js';
+import { openRenderSegmentCheckpoint, type RenderSegmentCheckpoint } from './render-segments.js';
 import { documentFileStem } from '../util/document-file-name.js';
 import { imageNames } from './resources.js';
 import { writeSlideGenerationReceipt } from './receipt.js';
@@ -19,6 +20,16 @@ export async function renderSlideSourceFile(
   let rendering = false;
   let snapshot: { root: string; path: string; identity: fs.Stats } | undefined;
   let sourceSha256: string | undefined;
+  /**
+   * ⭐ staged/chunked（P20）：分段账本的生命周期（"谁在什么时候留、什么时候清"）。
+   *
+   * - **硬中断**（关窗 / 强杀 / 断电）：这里一行代码都不会跑 ⇒ 账本与已完成的段**留在盘上**
+   *   ⇒ 下一次跑同一份源从断点接上。这正是这一层存在的理由。
+   * - **优雅失败**（本函数正常返回 `render-failed`）：源多半是坏的，模型改完源就换了
+   *   sha256 ⇒ 旧账本对新源**本来就作废**；留着只是垃圾。所以在这里清掉，
+   *   **既有契约"失败后工作区不留临时数据"一个字都不改**（`renderSlideDeck` 成功时也自清）。
+   */
+  let checkpoint: RenderSegmentCheckpoint | null = null;
   try {
     const root = fs.realpathSync(workspace);
     const owner = fs.statSync(root);
@@ -62,6 +73,17 @@ export async function renderSlideSourceFile(
       pages,
       workspacePath: snapshotPath,
       assetsRoot: snapshotPath,
+      /**
+       * ⭐ staged/chunked（P20）：逐页排版 + 量框是这条链上唯一"长且可中断"的一段，
+       * 每做完一页就把形状落进**真实工作区**（不是这个临时快照目录 —— 它在 finally 里
+       * 会被整个删掉，放进去等于没存）。账本键 = 源文件 sha256：源一变整份账本作废，
+       * 绝不把上一份源的页形状套到新源上。出片成功后 `renderSlideDeck` 自己清账本。
+       */
+      segments: (checkpoint = openRenderSegmentCheckpoint({
+        workspace: root,
+        planDigest: preflight.sourceSha256,
+        total: pages.length,
+      })),
       onPage: (completed, total) => {
         if (readSlideSourceFile(root, file) !== source) throw new Error('source-changed-during-render');
         options.onPage?.({
@@ -162,6 +184,13 @@ export async function renderSlideSourceFile(
       ...receipt,
     };
   } catch (error) {
+    // 优雅失败：源多半要重写（换了 sha256 旧账本就作废），留着只污染工作区 ⇒ 清掉。
+    // ⚠️ 硬中断走不到这里（没有代码会跑）——那正是账本要活下来的场景。
+    try {
+      checkpoint?.clear();
+    } catch {
+      /* best-effort：清账本失败不能顶掉真正的失败原因 */
+    }
     const detail = error instanceof Error ? error.message : '';
     const code = /^(?:source-|resource-|workspace-|output-|slidegen-file-too-large$)/.test(detail)
       ? detail

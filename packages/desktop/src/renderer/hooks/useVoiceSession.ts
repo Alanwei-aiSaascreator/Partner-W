@@ -1,3 +1,4 @@
+import { isVoiceRecoveryError } from '@/lib/voice/types';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CreateVoiceSessionHandlers,
@@ -18,6 +19,7 @@ interface UseVoiceSessionOptions {
 interface UseVoiceSessionResult {
   isListening: boolean;
   isTranscribing: boolean;
+  canRetry: boolean;
   interimTranscript: string;
   errorCode: VoiceErrorCode | null;
   beginListening: (requiresActivePress: boolean) => Promise<void>;
@@ -41,6 +43,9 @@ export function useVoiceSession({
   const [errorCode, setErrorCode] = useState<VoiceErrorCode | null>(null);
 
   const sessionRef = useRef<VoiceSession | null>(null);
+  const recoverable = useRef(false);
+  const transcribing = useRef(false);
+  const [canRetry, setCanRetry] = useState(false);
   const isListeningRef = useRef(false);
   const startRequestIdRef = useRef(0);
 
@@ -73,17 +78,28 @@ export function useVoiceSession({
     const wasListening = isListeningRef.current;
     if (!wasListening) return;
     clearListeningState();
+    transcribing.current = true;
     setIsTranscribing(true);
     sessionRef.current?.stop();
   }, [clearListeningState]);
 
   const beginListening = useCallback(
     async (requiresActivePress: boolean) => {
+      if (transcribing.current) return;
       if (!isSupported) {
         reportUnsupported();
         return;
       }
 
+      if (recoverable.current && sessionRef.current?.retry) {
+        recoverable.current = false;
+        setCanRetry(false);
+        setErrorCode(null);
+        setIsTranscribing(true);
+        transcribing.current = true;
+        sessionRef.current.retry();
+        return;
+      }
       releaseSession(false);
       setIsTranscribing(false);
       setErrorCode(null);
@@ -114,26 +130,34 @@ export function useVoiceSession({
         },
         onFinalResult: (text) => {
           if (startRequestIdRef.current !== requestId) return;
+          recoverable.current = false;
+          setCanRetry(false);
           setInterimTranscript('');
+          transcribing.current = false;
           setIsTranscribing(false);
           onFinalTranscript(text);
         },
         onError: (code) => {
           if (startRequestIdRef.current !== requestId) return;
+          recoverable.current = isVoiceRecoveryError(code) && Boolean(sessionRef.current?.retry);
+          setCanRetry(recoverable.current);
           setErrorCode(code);
+          transcribing.current = false;
           setIsTranscribing(false);
-          releaseSession(false);
+          if (!recoverable.current) releaseSession(false);
           clearListeningState();
         },
         onTranscribing: () => {
           if (startRequestIdRef.current !== requestId) return;
           clearListeningState();
+          transcribing.current = true;
           setIsTranscribing(true);
         },
         onEnd: () => {
           if (startRequestIdRef.current !== requestId) return;
+          transcribing.current = false;
           setIsTranscribing(false);
-          releaseSession(false);
+          if (!recoverable.current) releaseSession(false);
           clearListeningState();
         },
       });
@@ -166,6 +190,10 @@ export function useVoiceSession({
 
   const cleanup = useCallback(() => {
     startRequestIdRef.current += 1;
+    recoverable.current = false;
+    transcribing.current = false;
+    setCanRetry(false);
+    setErrorCode(null);
     releaseSession(false);
     clearListeningState();
     setIsTranscribing(false);
@@ -176,6 +204,7 @@ export function useVoiceSession({
   return {
     isListening,
     isTranscribing,
+    canRetry,
     interimTranscript,
     errorCode,
     beginListening,

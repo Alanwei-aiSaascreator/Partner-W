@@ -72,8 +72,12 @@ export type DebugDomain =
   | 'avatar'
   /** 资料库：索引流水线、嵌入引擎、检索（T6）。 */
   | 'kb'
+  /** 连接器（飞书等）：插件安装/可信记录自愈/通道健康（2026-10-19）。 */
+  | 'connector'
   /** 画像持久化刷新（BUG-034 / M3）：保存成功后 / 退出前的 DOMStorage 落盘请求。 */
-  | 'profile-storage';
+  | 'profile-storage'
+  /** 长期记忆（2026-10-16）：草案入口、确认/删除、向 `MEMORY.md` 的投影与回读。 */
+  | 'memory';
 
 export interface DebugError {
   name?: string;

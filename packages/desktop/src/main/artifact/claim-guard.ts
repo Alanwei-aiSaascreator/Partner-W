@@ -162,11 +162,201 @@ export interface ClaimedFile {
  * - **`、，。；：！？` 等标点必须在排除集里**。否则 `a.pptx、b.docx、c.xlsx`
  *   会被贪婪地吃成**一个**名字（`a.pptx、b.docx、c.xlsx`），既漏了两个，
  *   又会拿这个假名字去查存在性 ⇒ 凭空报"缺失"。
- * - `(?<![\\/])` 挡住路径里的文件名（`C:\...\a.pptx`）—— 模型说的是文件名，不是路径。
+ * - lookbehind 挡住路径里的文件名（`C:\...\a.pptx`）—— 模型说的是文件名，不是路径。
  * - 排除 Windows 非法文件名字符（`<>|*?"`），免得把 markdown 标记吃进来。
+ *
+ * ⭐ 文件名/链接不被当成真实文件名（2026-10-15 F owner）：旧口径把 **markdown 链接**
+ *    `[报告.pptx](relative/报告.pptx)` 抠成假名并据此报"缺失" ⇒ 整轮 delivery-failed
+ *    （冤枉模型的代价见模块开头那条纪律）。两处成因、两处修：
+ *    ① **链接语法**：`[文字](地址)` 里的方括号是 markdown 结构，不是文件名的一部分。
+ *       在抽取**之前**先把链接改写成它的文字（见 `claimScanText`），地址整段丢弃 ——
+ *       这样链接文字照常当名字、地址里的路径不再掺进来，而**真名带方括号**的
+ *       （`[Q3]报告.docx`，产品按标题出片时确实会出现）也不被误伤。
+ *    ② **半截名**：旧 lookbehind 只有 `(?<![\\/])`，在 `sub/report.pptx` 里 `/` 挡住
+ *       `report` 后引擎会**回退**到 `eport.pptx`（从句中切出半截名）。现在改成
+ *       "**不许紧跟在一个名字字符或路径分隔符之后**"：既保留"挡住 `C:\...\a.pptx` 这类
+ *       路径中的文件名"，又堵住半截名（`sub/report.pptx` / `relative/季度汇报.pptx`
+ *       里一个都不抠）。
+ *
+ * ⭐ BUG-132（2026-10-17 第二位独立审核）：**括号**（半角 `()` / 全角 `（）`）双向都要正确。
+ *
+ *   复现：`已生成（报告.pptx）` 旧口径把括号当普通名字字符贪婪左吃 ⇒ 抠出**半截假名**
+ *   `已生成（报告.pptx` ⇒ 盘上真有 `报告.pptx` 也判 missing ⇒ 弹「说好的文件不在」
+ *   （冤枉模型）。半角 `(报告.pptx)` 同病。
+ *
+ *   ⚠️ 但**不能**简单把括号塞进名字体的排除集：`文件名（含括号）.docx` / `报告(2024).pptx`
+ *      这类**括号长在名字内部**的真名会被从中间切断（整名抠不出来）—— 那是"半截名"的
+ *      对称面，同样冤枉模型。两者**不可兼得**时只能二选一，实测见 `claim-guard.test.ts`。
+ *      留在这里的口径是**括号只以"成对的组"身份进入名字体**：
+ *      `文件名（含括号）.docx` 的 `（含括号）` 是成对组 ⇒ 整名保留；而 `已生成（报告.pptx）`
+ *      里 `（报告.pptx` 那截的 `（` **没有配对的 `）` 落在名字内**（`）` 在扩展名之后）
+ *      ⇒ 不构成组 ⇒ 名字体从 `（` 处断开，只抠出 `报告.pptx`。半角/全角/混用（`（…）` /
+ *      `(…)`）一视同仁：lookbehind 与名字体基类都把四种括号当边界，成对组按**同型**配对。
  */
 const CLAIMED_NAME_RE =
-  /(?<![\\/])([^\s`"'<>|*?\\/\n、，。；：！？,;:!?「」『』“”‘’]{1,200}\.(?:pptx|docx|xlsx|pdf|html|slidegen))\b/gi;
+  /(?<![^\s`"'<>|*?\n、，。；：！？（）(),;:!?「」『』“”‘’])((?:[^\s`"'<>|*?\\/\n、，。；：！？（）(),;:!?「」『』“”‘’]|\([^()（）\n]*\)|（[^()（）\n]*）){1,200}\.(?:pptx|docx|xlsx|pdf|html|slidegen))\b/gi;
+
+/**
+ * 「这个碎片自己就是交付文件名吗」的**词法**判据（不带前后文判据）。
+ *
+ * 只用于链接碎片（链接文字 / 链接目标的 basename）这类**先被隔离出来**的局部判断；
+ * 正文抽取仍由 `CLAIMED_NAME_RE` 独占 —— 两者的扩展名表必须同步改。
+ */
+const FILE_NAME_EXTENSIONS_RE = /\.(?:pptx|docx|xlsx|pdf|html|slidegen)$/i;
+/** 串里**含**一个文件名（用于"链接文字本身是不是文件名"）。 */
+const FILE_NAME_IN_TEXT_RE = /[^\s/\\:*?"<>|]{1,200}\.(?:pptx|docx|xlsx|pdf|html|slidegen)\b/i;
+/**
+ * Windows 非法字符 + 控制字符（方括号/圆括号是**合法**的：`[Q3](final).docx` 就是真名）。
+ *
+ * ⚠️ 这里的控制字符是**判据本身**（把它们当非法名），不是误写 ⇒ 关掉 `no-control-regex`。
+ *    刻意用 `\u0000-\u001f` 精确覆盖 C0，**不**换 `\p{Cc}`（后者连带 DEL 与 C1，会扩大拒绝面）。
+ */
+// eslint-disable-next-line no-control-regex
+const ILLEGAL_FILE_NAME_CHARS_RE = /[\\/:*?"<>|\u0000-\u001f]/;
+
+/**
+ * 链接**目标**里那个「本地文件名」；不是本地文件就回 `null`。
+ *
+ * ⭐ D2-a（2026-10-16 审计反例）：`已生成 [下载报告](report.docx)，请查收` —— 文件名
+ *   **只写在地址里**。旧改写把地址整段丢掉 ⇒ 这条回复里一个文件名都不剩 ⇒ 空工作区、
+ *   空登记也照样判"交付成功"。链接目标是**下载目标**，它里面的文件名必须能作为交付声明
+ *   参与存在性核对，不能只依赖显示文字。
+ *
+ * ⚠️ 只认**本地**目标：带 scheme 的远端地址、站点绝对路径（`/…`）、协议相对地址（`//…`）
+ *    都不是"这份回复产出了本地文件"的证据 —— 否则 `[官网](https://x/guide.html)` 会凭空
+ *    报一条「说好的文件不在」，而"冤枉模型"正是这个守卫明确要避免的方向（见模块开头）。
+ * ⚠️ 地址可能带 markdown 的 `"标题"` 与 `?query` / `#fragment`，先摘掉再取 basename。
+ * ⚠️ **允许空格**：产品自己的成品名就带空格（`荣盈魔方 · AI桌面工作台-12ddb119.pptx`），
+ *    所以这里把 basename 原样送回扫描文本（抽取正则只抠到最后一个 token，带空格的全名由
+ *    既有的候选拼写回扫 `buildClaimVariants` 还原 —— 与散文里那条路完全同一套）。
+ */
+function localLinkTargetFileName(target: string): string | null {
+  const withoutTitle = target.replace(/\s+"[^"]*"\s*$/, '').trim();
+  const path = withoutTitle.split(/[?#]/)[0].trim();
+  if (!path) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//') || path.startsWith('/')) return null;
+  const rawBase = (path.split(/[\\/]/).at(-1) ?? '').trim();
+  // ⭐ BUG-089 残余（2026-10-16 r14 独立终审）：**链接目标是 URL，先按百分号解码**。
+  //    `[下载报告](%E6%8A%A5%E5%91%8A.docx)` 指的就是盘上的 `报告.docx`；不解码就拿
+  //    编码串去查存在性 ⇒ 明明在，判 missing（误名/误缺失）。
+  //    ⚠️ 解码后不合用（非法字符 / 不带受检扩展名）就回退到字面串 —— 旧行为一个字不变，
+  //       不发明结论。
+  const decoded = decodePercentEscapes(rawBase);
+  const base = isLocalLinkFileName(decoded) ? decoded : rawBase;
+  if (!isLocalLinkFileName(base)) return null;
+  return base;
+}
+
+/** 「这一截自己就够格当本地文件名」：非空、不过长、无非法字符、带受检扩展名。 */
+function isLocalLinkFileName(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 200 &&
+    !ILLEGAL_FILE_NAME_CHARS_RE.test(value) &&
+    FILE_NAME_EXTENSIONS_RE.test(value)
+  );
+}
+
+/**
+ * 百分号解码。**解不开就原样返回**（非法序列 `100%报告.docx` 是"读不懂"，不是"没有名字"）。
+ *
+ * ⚠️ `decodeURIComponent` 不把 `+` 当空格（那是 form-urlencoded 的规矩），正是我们要的：
+ *    文件名里的 `+` 就是 `+`。
+ */
+function decodePercentEscapes(value: string): string {
+  if (!value.includes('%')) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * markdown 行内链接 `[文字](地址 "可选标题")` ⇒ 只留**文字** + 目标里的本地文件名。
+ *
+ * ⚠️ 只认**行内链接**这一种写法（`](`）：`[文字][引用]` / `[文字]` 不在这里处理 ——
+ *    它们要么罕见（引用式链接），要么就可能是真名带方括号（`[Q3]报告.docx`），
+ *    不能一刀切。
+ * ⚠️ `[...]` 与 `(...)` 内都**不许跨行**（否则会把两行拼成一条，行级判据全乱）。
+ * ⭐ 第二个捕获组是**链接目标**：D2-a 起，只写在地址里的文件名也要算交付声明 ——
+ *    判据本体在 `localLinkTargetFileName`。
+ * ⭐ BUG-089 残余（2026-10-16 r14 独立终审）：目标里**允许一层配对的圆括号**。
+ *    旧正则 `[^)\n]*` 在**第一个** `)` 就截断 ⇒ `[下载报告](report(final).docx)`
+ *    的目标被认成 `report(final`（不带扩展名 ⇒ 整段丢弃）⇒ 真正缺失的
+ *    `report(final).docx` 反而变成"已生成 下载报告.docx"（误名，且真名被抹掉）。
+ *    圆括号是**合法**文件名（见 `ILLEGAL_FILE_NAME_CHARS_RE`），CommonMark 的目标本来
+ *    就允许配对括号。
+ */
+const MARKDOWN_LINK_RE = /\[([^\]\n]*)\]\(((?:[^()\n]|\([^()\n]*\))*)\)/g;
+
+/**
+ * ⭐ BUG-089 残余（2026-10-16 r14 独立终审）：**`)` 后面紧跟一个受检扩展名 ⇒ 这一段是字面文件名**。
+ *
+ * 反例：真文件名 `[report.docx](final).docx` 被反引号包裹时，`MARKDOWN_LINK_RE` 只吃掉
+ * `[report.docx](final)`（目标 `final` 不是文件名），拼回去就成了 `report.docx` + `.docx`
+ * ⇒ 抠出 `report.docx.docx` ⇒ 真件在盘上却判 missing ⇒ 整轮假失败（误名 / 误缺失）。
+ *
+ * 判据刻意**只认这一种形状**（紧跟一个受检扩展名）：真正的 markdown 链接后面
+ * 不会直接跟 `.docx` 这种后缀 —— 句末的 `.` 后面是空白或换行，不构成扩展名。
+ * 收窄到这一步是为了**不削弱链接保护本身**：漏改写会切出半截名 ⇒ 反过来冤枉模型。
+ */
+const TRAILING_FILE_EXTENSION_RE = /^\.(?:pptx|docx|xlsx|pdf|html|slidegen)\b/i;
+
+/**
+ * ⭐ D2-b（2026-10-16 审计反例）：**代码区域**里的方括号/圆括号是**字面文件名**的一部分，
+ * 不是 markdown 链接。实际文件名 `[Q3](final).docx` 被回复用反引号包裹时，全串改写会把它
+ * 改成 `Q3.docx` ⇒ 真件在盘上却判 missing ⇒ 整轮假失败（HEAD 为 succeeded）。
+ *
+ * 判据：改写**跳过**代码区域（默认一个字符都不动）；唯一的例外是"模型在反引号里演示
+ * markdown 链接"这个形状 —— 那时方括号里的文字或链接目标**自己就是一个文件名**
+ * （`[报告.docx](sub/报告.docx)`），只可能是链接。见 `rewriteLinks`。
+ *
+ * ⚠️ 行内代码不许跨行（`` ` `` 里的换行会把两行拼成一条）；围栏按成对匹配。
+ */
+const CODE_REGION_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
+
+/**
+ * 抽取用的**扫描文本**：markdown 链接改写成「文字 + 目标里的本地文件名」，代码区域原样。
+ *
+ * 为什么返回新串而不是就地改：`extractClaimedFileNames` 之后的行级判据（是否在声称 /
+ * 是否在说"没有了"）与变体回扫都按**同一份文本**的偏移工作 —— 三者必须同源，
+ * 否则偏移与文本错位会得出自相矛盾的结论。
+ *
+ * ⚠️ 代码区域**逐段原样拼回**（不改写），散文区才走链接改写 —— 见 `CODE_REGION_RE`。
+ */
+function claimScanText(content: string): string {
+  let scan = '';
+  let cursor = 0;
+  for (const region of content.matchAll(CODE_REGION_RE)) {
+    const index = region.index ?? 0;
+    scan += rewriteLinks(content.slice(cursor, index), false);
+    scan += rewriteLinks(region[0], true);
+    cursor = index + region[0].length;
+  }
+  return scan + rewriteLinks(content.slice(cursor), false);
+}
+
+/**
+ * 片段里的行内链接改写：散文区一律按链接处理（`[文字](地址)` ⇒ 文字 + 目标里的本地文件名）。
+ *
+ * ⚠️ 代码区域（`insideCodeRegion`）**只有**方括号文字或目标本身就是一个文件名时才当链接
+ *    （模型在反引号里演示 markdown）；否则整段是字面文件名（`[Q3](final).docx`），一个字都不许改。
+ * ⚠️ 但**两种区域**都要先过那一关"这一段是不是被扩展名继续粘住"——
+ *    见 `TRAILING_FILE_EXTENSION_RE`，那是 r14 反例 `[report.docx](final).docx` 的判据。
+ */
+function rewriteLinks(segment: string, insideCodeRegion: boolean): string {
+  return segment.replace(
+    MARKDOWN_LINK_RE,
+    (match: string, text: string, target: string, offset: number) => {
+      // ⭐ 紧接着的字符还在同一个文件名的扩展名里 ⇒ 这是**字面文件名**，不是链接。
+      if (TRAILING_FILE_EXTENSION_RE.test(segment.slice(offset + match.length))) return match;
+      const targetName = localLinkTargetFileName(target);
+      if (insideCodeRegion && !targetName && !FILE_NAME_IN_TEXT_RE.test(text)) return match;
+      return targetName ? `${text} ${targetName}` : text;
+    },
+  );
+}
 
 /**
  * 「这一句在**声称做出了文件**」的措辞。
@@ -223,21 +413,25 @@ const CLAIM_MARKERS = [
 
 /** 回复里提到的产物文件名（去重、按出现顺序）。 */
 export function extractClaimedFileNames(content: string): ClaimedFile[] {
+  // ⭐ markdown 链接先改写成其文字（地址丢弃）—— 见 `claimScanText`。
+  //    下面的 `matchAll` / 行级判据 / 变体回扫**全部**只用这份扫描文本，
+  //    三者同源，偏移才不会与文本错位（返回的 offset 也按扫描文本计）。
+  const scan = claimScanText(content);
   const found: ClaimedFile[] = [];
   const seen = new Set<string>();
-  for (const match of content.matchAll(CLAIMED_NAME_RE)) {
+  for (const match of scan.matchAll(CLAIMED_NAME_RE)) {
     const name = match[1];
     const offset = match.index ?? 0;
     // ⭐ 先过"这一句是不是在声称"，再看去重 —— 顺序反了会把
     //    先出现的那次"列举"占掉名额，后面真正的声称反而被去重掉。
-    if (!lineClaimsFile(content, offset)) continue;
+    if (!lineClaimsFile(scan, offset)) continue;
     // ⭐ 再排除"在说它没有了"的句子（2026-10-04 真机误报，见函数注释）。
-    if (lineExplainsAbsence(content, offset, name)) continue;
+    if (lineExplainsAbsence(scan, offset, name)) continue;
     // ⭐ BUG-047：动词短语粘着扩展名（"然后重新渲染生成.pptx"）⇒ 动作描述不是文件名。
-    if (isBareVerbPhrase(content, offset, name)) continue;
+    if (isBareVerbPhrase(scan, offset, name)) continue;
     if (seen.has(name)) continue;
     seen.add(name);
-    const variants = buildClaimVariants(content, offset, name);
+    const variants = buildClaimVariants(scan, offset, name);
     found.push(variants.length > 0 ? { name, offset, variants } : { name, offset });
   }
   return found;
@@ -474,6 +668,43 @@ export interface ClaimCheckResult {
   registered?: ClaimedFile[];
 }
 
+/**
+ * 「有真交付时，顺带提到的文件名不算交付失败」（2026-10-17 用户反馈）。
+ *
+ * 现场：模型生成了 pptx 并**成功登记**进成果列表，回复正文里却顺带写了一个不存在的名字
+ * （`edits.PPTX`），于是聊天里多出一条红色便签「回复里提到了 edits.PPTX，工作区里没有这些文件」
+ * —— 用户看到的是"我的 PPT 出问题了"，而那一轮交付其实是完整的。
+ *
+ * 判据（刻意收窄 —— 既有负对照钉住"守卫强度不许松"）：
+ *   · 本轮**没有任何**真实产出 ⇒ 声称缺失照旧是失败（P0 守卫的原意就是"说做好了却什么都没有"）；
+ *   · 本轮有真实产出、且该名字**与产出的扩展名相同**（如都 .pptx）⇒ 降级为信息项（只写日志）；
+ *   · 扩展名不同（产出了 .html、却声称 .docx）⇒ **照旧是失败** —— 那是真的少了一件东西。
+ *
+ * ⚠️ 这不是放松守卫：被降级的名字仍完整保留在返回值里（日志可见），
+ *    "声称成功却零产物"与"跨格式少件"两支一字未动。
+ */
+export function classifyMissingClaims(
+  missing: readonly string[],
+  produced: readonly string[],
+): { blocked: string[]; informational: string[] } {
+  if (missing.length === 0) return { blocked: [], informational: [] };
+  if (produced.length === 0) return { blocked: [...missing], informational: [] };
+  const producedExts = new Set(produced.map(fileExtension).filter(Boolean));
+  const blocked: string[] = [];
+  const informational: string[] = [];
+  for (const name of missing) {
+    const extension = fileExtension(name);
+    if (extension && producedExts.has(extension)) informational.push(name);
+    else blocked.push(name);
+  }
+  return { blocked, informational };
+}
+
+function fileExtension(name: string): string {
+  const index = name.lastIndexOf('.');
+  return index >= 0 ? name.slice(index).toLowerCase() : '';
+}
+
 /** 查存在性的选项。 */
 export interface ClaimCheckOptions {
   /**
@@ -566,6 +797,22 @@ function findFileInRoots(fileName: string, roots: readonly string[], sinceMs: nu
 }
 
 /**
+ * ⭐ T22（2026-10-16 本地全量执行 · Owner D）：文件名比较的**平台口径**。
+ *
+ * Windows / macOS 的默认文件系统**不区分大小写**：盘上的 `报告.PPTX` 与回复里的
+ * `报告.pptx` **是同一个文件**。旧实现用 `entry.name !== fileName` 精确比较 ⇒ 判它
+ * "不在" ⇒ 界面弹「说好的文件不在」，正是本模块开头明确要避免的方向（冤枉模型）。
+ *
+ * ⚠️ 只改**整名比较**的大小写口径 —— 不做前缀/相似/扩展名族匹配（负对照钉住它）。
+ */
+const FS_CASE_INSENSITIVE = process.platform === 'win32' || process.platform === 'darwin';
+
+/** 两个文件名在**本平台**上是不是同一个文件（仅大小写口径不同）。 */
+function sameFileName(left: string, right: string): boolean {
+  return FS_CASE_INSENSITIVE ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+/**
  * 递归查找，限制深度 3 层（工作区 → taskId → 子目录）。
  *
  * 命中同名文件后**不立刻返回**：还得看它够不够新。
@@ -579,7 +826,8 @@ function findFileRecursive(dir: string, fileName: string, sinceMs: number | unde
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isFile()) {
-      if (entry.name !== fileName) continue;
+      // ⭐ T22：同文件大小写/别名（Windows/macOS 不区分大小写）不许被当成"缺失"。
+      if (!sameFileName(entry.name, fileName)) continue;
       if (isFreshEnough(entry.mtimeMs, sinceMs)) return full;
       continue;
     }

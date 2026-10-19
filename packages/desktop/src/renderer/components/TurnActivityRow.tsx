@@ -1,8 +1,10 @@
 import { Clock } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import ActivityBars from './ActivityBars';
-import { cn } from '@/lib/utils';
+import { cn, formatCredits } from '@/lib/utils';
 import { formatElapsed } from '@/lib/waiting-copy';
 import { useTurnActivity } from '@/hooks/useTurnActivity';
+import { useCommercialStore } from '@/stores/commercialStore';
 
 /**
  * 会话内（正文流里）的**运行行** —— 回复就位的那一格在"什么都没到"时，
@@ -29,6 +31,32 @@ import { useTurnActivity } from '@/hooks/useTurnActivity';
  *   只由主行文案说清在等什么。**视觉静止 = 语义静止**，不靠用户去猜。
  *   样式在 `theme.css`（`.turn-activity-row*`），组件只挂类名。
  */
+/**
+ * 干活过程中的**趣味进度语**（2026-10-17 用户要求：像主流智能体那样，
+ * 一边显示"已消耗多少积分"，一边轮着说点人话）。
+ *
+ * 轮换口径：**按已等待时长**每 8 秒换一句，起始偏移由 sessionKey 的哈希决定
+ * （同一轮不跳来跳去，不同会话开场不同）。不是随机数 —— 重渲染不该改变文案。
+ */
+// 六个键**字面量列出**：i18n 扫描器只认字面量（模板拼接会被判成 unused）。
+const WORKING_COPY_KEYS = [
+  'chatInput.workingLines.0',
+  'chatInput.workingLines.1',
+  'chatInput.workingLines.2',
+  'chatInput.workingLines.3',
+  'chatInput.workingLines.4',
+  'chatInput.workingLines.5',
+] as const;
+const WORKING_COPY_INTERVAL_MS = 8000;
+
+export function workingCopyKey(sessionKey: string, elapsedMs: number): string {
+  let hash = 0;
+  for (let i = 0; i < sessionKey.length; i += 1) hash = (hash * 31 + sessionKey.charCodeAt(i)) >>> 0;
+  const index =
+    (Math.floor(elapsedMs / WORKING_COPY_INTERVAL_MS) + (hash % WORKING_COPY_KEYS.length)) % WORKING_COPY_KEYS.length;
+  return WORKING_COPY_KEYS[index] ?? WORKING_COPY_KEYS[0];
+}
+
 export default function TurnActivityRow({
   sessionKey,
   showWhenAwaiting = false,
@@ -36,6 +64,8 @@ export default function TurnActivityRow({
   sessionKey: string;
   showWhenAwaiting?: boolean;
 }) {
+  const { t } = useTranslation();
+  const liveTaskMicros = useCommercialStore((s) => s.liveTaskMicros);
   const { active, elapsedMs, headline, awaitingApproval, awaitingAnswer } = useTurnActivity(sessionKey);
   if (!active && !(showWhenAwaiting && (awaitingApproval || awaitingAnswer))) return null;
   // 两类"等人"共用同一套静止视觉（理由见头注释）；`awaiting-approval` 在 `data-status`
@@ -63,9 +93,22 @@ export default function TurnActivityRow({
       >
         {headline}
       </span>
+      {!awaiting && liveTaskMicros > 0 ? (
+        <span data-testid="turn-activity-row-cost" className="type-mono-data shrink-0 text-[var(--text-muted)]">
+          {t('chatMessage.liveTaskCost', { credits: formatCredits(liveTaskMicros) })}
+        </span>
+      ) : null}
       <span data-testid="turn-activity-row-elapsed" className="type-mono-data shrink-0 text-[var(--text-muted)]">
         {formatElapsed(elapsedMs)}
       </span>
+      {!awaiting ? (
+        <span
+          data-testid="turn-activity-row-cheer"
+          className="turn-activity-row__cheer type-support truncate text-[var(--text-muted)]"
+        >
+          {t(workingCopyKey(sessionKey, elapsedMs))}
+        </span>
+      ) : null}
     </div>
   );
 }

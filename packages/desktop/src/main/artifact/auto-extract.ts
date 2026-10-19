@@ -44,6 +44,18 @@ function sourceKey(kind: string, value: string): string {
   return `${kind}:${hashText(value)}`;
 }
 
+/**
+ * "老行去重"用的类型家族（BUG-120，2026-10-17）。
+ *
+ * 视频在 2026-10-17 之前登记成 `'file'` —— 库里可能躺着这类旧行。若直接拿
+ * `artifact.type !== input.artifactType` 比，改型后新来的 `'video'` 与旧行的 `'file'`
+ * 对不上 ⇒ 同一份片子被**重复登记**，用户成果列表里冒出两条。
+ * 二者本就是同一个存储家族（都是"文件类"），判据跨它们成立。
+ */
+function dedupeType(type: string): 'file' | 'image' | 'code' {
+  return type === 'video' ? 'file' : (type as 'file' | 'image' | 'code');
+}
+
 function canonicalSavedName(name: string): string {
   return name.replace(/-[0-9a-f]{8}(\.[^.]+)$/i, '$1');
 }
@@ -119,7 +131,7 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
   async function saveExtracted(input: {
     fileName: string;
     buffer: Buffer;
-    artifactType: 'image' | 'code' | 'file';
+    artifactType: 'image' | 'code' | 'file' | 'video';
     sourceKey: string;
     contentText?: string;
   }): Promise<void> {
@@ -128,7 +140,7 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
 
     const canonicalName = canonicalSavedName(input.fileName);
     const legacyDuplicate = existing.some((artifact) => {
-      if (artifact.sourceKey || artifact.type !== input.artifactType) return false;
+      if (artifact.sourceKey || dedupeType(artifact.type) !== dedupeType(input.artifactType)) return false;
       if (canonicalSavedName(artifact.name) !== canonicalName || artifact.size !== input.buffer.length) return false;
       if (input.artifactType === 'code') return artifact.contentText === input.contentText;
       return true;
@@ -224,7 +236,8 @@ async function doAutoExtractArtifacts(params: AutoExtractParams): Promise<AutoEx
       await saveExtracted({
         fileName,
         buffer,
-        artifactType: isVideo ? 'file' : 'image',
+        // BUG-120（2026-10-17）：视频附件记 `'video'`，不再借 `'file'`（此前与 docx/pptx 同档）。
+        artifactType: isVideo ? 'video' : 'image',
         sourceKey: key,
       });
       if (isVideo && saved.length > previousSaved) savedMediaSourceKeys.push(key);

@@ -105,4 +105,77 @@ describe('cloud recorder lifetime', () => {
     expect(typeof requestId).toBe('string');
     expect(requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
+  it('确定性的终态失败（空转写）重试必须换新的 requestId —— 服务端那行已 failed，同 id 只会 409', async () => {
+    const s = setup();
+    const bridge = vi.fn(async () => ({ ok: false, error: 'voice-transcription-empty' }));
+    window.clawwork.transcribeAudio = bridge;
+    s.session.start();
+    await Promise.resolve();
+    s.feed();
+    s.session.stop();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(s.handlers.onError).toHaveBeenCalledWith('voice-transcription-empty');
+    const retryable = s.session as typeof s.session & { retry?: () => void };
+    retryable.retry?.();
+    await Promise.resolve();
+    expect(bridge).toHaveBeenCalledTimes(2);
+    // 音频必须逐字相同（不了重新录音），但身份必须换新 —— 否则永远 409。
+    expect((bridge.mock.calls[1] as unknown[])[0]).toBe((bridge.mock.calls[0] as unknown[])[0]);
+    expect((bridge.mock.calls[1] as unknown[])[1]).not.toBe((bridge.mock.calls[0] as unknown[])[1]);
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+  });
+  it('retries a failed captured recording with identical WAV and request ID without reopening the microphone', async () => {
+    const s = setup();
+    const bridge = vi.fn(async () => ({ ok: false, error: 'voice-settlement-pending' }));
+    window.clawwork.transcribeAudio = bridge;
+    s.session.start();
+    await Promise.resolve();
+    s.feed();
+    s.session.stop();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(s.handlers.onError).toHaveBeenCalledWith('voice-settlement-pending');
+    const retryable = s.session as typeof s.session & { retry?: () => void };
+    retryable.retry?.();
+    await Promise.resolve();
+    expect(bridge).toHaveBeenCalledTimes(2);
+    expect(bridge.mock.calls[1]).toEqual(bridge.mock.calls[0]);
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(1);
+    s.session.destroy?.();
+    retryable.retry?.();
+    expect(bridge).toHaveBeenCalledTimes(2);
+  });
+  it('录音中按增量分段回填实时预览，松手后仍发整段权威转写', async () => {
+    // 2026-10-17「语音输入实时逐字」：relay 只有批式 ASR ⇒ 客户端每攒够 2.5s 新语音发一段，
+    // 结果拼成预览（onInterimResult）；松手后必须再发一次整段音频（onFinalResult 的唯一来源）。
+    const s = setup();
+    s.session.start();
+    await Promise.resolve();
+    for (let i = 0; i < 25; i++) s.feed(); // 25 × 4800 @48k = 2.5s
+    expect(s.transcribe).toHaveBeenCalledTimes(1);
+    s.finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(s.handlers.onInterimResult).toHaveBeenCalledWith('late');
+    expect(s.handlers.onFinalResult).not.toHaveBeenCalled();
+
+    s.session.stop();
+    expect(s.transcribe).toHaveBeenCalledTimes(2);
+  });
+
+  it('松手时在飞的分段结果被丢弃（不覆盖权威转写）', async () => {
+    const s = setup();
+    s.session.start();
+    await Promise.resolve();
+    for (let i = 0; i < 25; i++) s.feed();
+    expect(s.transcribe).toHaveBeenCalledTimes(1);
+    s.session.stop(); // 分段未回 ⇒ 停止
+    s.finish(); // 迟到的分段结果
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(s.handlers.onInterimResult).not.toHaveBeenCalled();
+  });
 });

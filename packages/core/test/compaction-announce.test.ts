@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { IpcResult } from '@clawwork/shared';
 import { createMessageStore } from '../src/stores/message-store';
 import {
   COMPACTION_FALLBACK_MS,
@@ -173,5 +174,106 @@ describe('手动压缩共享入口：只认 compacted === true', () => {
     await runManualCompaction(deps, { gatewayId: 'gw-9', sessionKey: SK, taskId: TID });
     expect(compactSession).toHaveBeenCalledWith('gw-9', SK);
     vi.advanceTimersByTime(COMPACTION_FALLBACK_MS);
+  });
+
+  /**
+   * 🔴 2026-10-16（BUG-097 / E1 复核）：**事件先于 RPC 返回**。
+   *
+   * 网关侧 `sessions.compact` 的 `sessions.changed` 与 RPC 回包走**同一条 ws 连接**，
+   * 合法的同批 FIFO 收包下，渲染器**可能先处理事件、后恢复 `invoke` 的 await**
+   *（可达性已由真实 ws Receiver / Electron IPC 夹具证明）。
+   *
+   * 从前的时序：事件那条 `currentCompactionEpisode` 现开**第 1 轮**并播报；
+   * RPC 返回后 `noteManualCompactionResult` 又开**第 2 轮** ⇒ 兜底再播一次，
+   * **一次压缩用户看到两条**。
+   *
+   * 修法：这次压缩的**身份在发 RPC 之前**就定下来，事件与回包都归到它上面。
+   */
+  it('🔴 事件早于 RPC 返回（同批时序）⇒ 同一次压缩只报一条', async () => {
+    const store = createMessageStore({ persistMessage: vi.fn().mockResolvedValue({ ok: true }) });
+    const deps = { getStore: () => store.getState(), translate: (key: string) => key };
+    let release: (value: IpcResult) => void = () => {};
+    const compactSession = vi.fn((): Promise<IpcResult> => new Promise((resolve) => (release = resolve)));
+    const systemContents = (): string[] =>
+      (store.getState().messagesByTask[TID] ?? []).filter((m) => m.role === 'system').map((m) => m.content);
+    vi.useFakeTimers();
+
+    const pending = runManualCompaction(
+      { ...deps, compactSession },
+      { gatewayId: 'gw-1', sessionKey: SK, taskId: TID },
+    );
+    // RPC 还在途 ⇒ 网关的事件先到（这正是同批 FIFO 下的真实顺序）
+    announceCompaction(deps, { taskId: TID, sessionKey: SK, episode: currentCompactionEpisode(deps, SK) });
+    expect(systemContents(), '事件那条先报了一次').toEqual([NOTICE]);
+
+    release({ ok: true, result: { compacted: true } });
+    await pending;
+    vi.advanceTimersByTime(COMPACTION_FALLBACK_MS * 2);
+    expect(systemContents(), '同一次压缩只能有一条（兜底那次必须被幂等挡掉）').toEqual([NOTICE]);
+  });
+
+  it('🔴 事件早于 RPC 返回时，事件与回包落在**同一个身份**上（不是各开一轮）', async () => {
+    const store = createMessageStore({ persistMessage: vi.fn().mockResolvedValue({ ok: true }) });
+    const deps = { getStore: () => store.getState(), translate: (key: string) => key };
+    let release: (value: IpcResult) => void = () => {};
+    const compactSession = vi.fn((): Promise<IpcResult> => new Promise((resolve) => (release = resolve)));
+    vi.useFakeTimers();
+
+    const pending = runManualCompaction(
+      { ...deps, compactSession },
+      { gatewayId: 'gw-1', sessionKey: SK, taskId: TID },
+    );
+    // 发 RPC 之前身份就该定下来 ⇒ 事件读到的是它，而不是事件自己现开的一轮
+    const beforeReply = currentCompactionEpisode(deps, SK);
+    release({ ok: true, result: { compacted: true } });
+    await pending;
+    expect(store.getState().compactionEpisodeBySession[SK], '回包不许再开新一轮（否则兜底会算到新身份上）').toBe(
+      beforeReply,
+    );
+    vi.advanceTimersByTime(COMPACTION_FALLBACK_MS * 2);
+  });
+
+  it('🔴 跨会话不串归属：两个会话各自压缩一次，各报一条', async () => {
+    const store = createMessageStore({ persistMessage: vi.fn().mockResolvedValue({ ok: true }) });
+    const deps = { getStore: () => store.getState(), translate: (key: string) => key };
+    const OTHER = 'agent:main:clawwork:task:t2';
+    const contents = (sk: string): string[] =>
+      (store.getState().messagesByTask[TID] ?? [])
+        .filter((m) => m.role === 'system' && m.sessionKey === sk)
+        .map((m) => m.content);
+    vi.useFakeTimers();
+
+    await runManualCompaction(
+      { ...deps, compactSession: vi.fn().mockResolvedValue({ ok: true, result: { compacted: true } }) },
+      { gatewayId: 'gw-1', sessionKey: SK, taskId: TID },
+    );
+    await runManualCompaction(
+      { ...deps, compactSession: vi.fn().mockResolvedValue({ ok: true, result: { compacted: true } }) },
+      { gatewayId: 'gw-1', sessionKey: OTHER, taskId: TID },
+    );
+    vi.advanceTimersByTime(COMPACTION_FALLBACK_MS);
+
+    expect(contents(SK), 'SK 一条').toEqual([NOTICE]);
+    expect(contents(OTHER), '另一个会话也要有自己的那一条').toEqual([NOTICE]);
+  });
+
+  it('🔴 RPC 失败（未开成一个身份）后，迟到的事件仍只报一条', async () => {
+    const store = createMessageStore({ persistMessage: vi.fn().mockResolvedValue({ ok: true }) });
+    const deps = { getStore: () => store.getState(), translate: (key: string) => key };
+    const systemContents = (): string[] =>
+      (store.getState().messagesByTask[TID] ?? []).filter((m) => m.role === 'system').map((m) => m.content);
+    vi.useFakeTimers();
+
+    await runManualCompaction(
+      { ...deps, compactSession: vi.fn().mockResolvedValue({ ok: false, error: 'gateway busy' }) },
+      { gatewayId: 'gw-1', sessionKey: SK, taskId: TID },
+    );
+    vi.advanceTimersByTime(COMPACTION_FALLBACK_MS * 2);
+    expect(systemContents(), 'RPC 失败本身不报').toHaveLength(0);
+
+    // 网关其实压了，事件后来到 ⇒ 报一次（不能因为回包失败就漏报，也不能报两次）
+    announceCompaction(deps, { taskId: TID, sessionKey: SK, episode: currentCompactionEpisode(deps, SK) });
+    vi.advanceTimersByTime(COMPACTION_FALLBACK_MS * 2);
+    expect(systemContents()).toEqual([NOTICE]);
   });
 });

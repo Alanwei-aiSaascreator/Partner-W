@@ -322,3 +322,60 @@ export type {
   UnsupportedRequestHit,
   UnsupportedRequestReason,
 } from './capability/capability-boundary.js';
+
+export {
+  MEMORY_BLOCK_MAX_CHARS,
+  MEMORY_DRAFT_MAX_PER_MESSAGE,
+  MEMORY_ENTRY_MAX_CHARS,
+  MEMORY_MAX_CONFIRMED_ENTRIES,
+  checkMemoryBudget,
+  checkMemoryText,
+  confirmedBlockChars,
+  isPresentableDraft,
+  memoryDedupeKey,
+  normalizeMemoryText,
+} from './memory/memory-entry.js';
+export type {
+  MemoryBudgetCheck,
+  MemoryEntry,
+  MemoryEntrySource,
+  MemoryEntryStatus,
+  MemoryTextCheck,
+  MemoryTextRejection,
+} from './memory/memory-entry.js';
+
+export {
+  MEMORY_BLOCK_MARKER_PREFIX,
+  MEMORY_BLOCK_VERSION,
+  memoryBlockEntryLines,
+  mergeMemoryBlock,
+  readMemoryBlock,
+  renderMemoryBlock,
+} from './memory/memory-block.js';
+
+export {
+  MEMORY_CONTRACT_MARKER_PREFIX,
+  MEMORY_CONTRACT_VERSION,
+  MEMORY_DRAFT_FENCE,
+  memoryContractBulletLines,
+  mergeMemoryContractBlock,
+  renderMemoryContractPrompt,
+  scanMemoryDraftFences,
+} from './memory/memory-contract.js';
+export type { MemoryDraftProposal, MemoryDraftScan } from './memory/memory-contract.js';
+
+export {
+  markedBlockBulletLines,
+  markedBlockEndMarker,
+  markedBlockStartMarker,
+  mergeMarkedBlock,
+  readMarkedBlock,
+} from './memory/marked-block.js';
+export type { MarkedBlockMerge } from './memory/marked-block.js';
+
+export {
+  MEMORY_RECALL_TOP_N,
+  memoryQueryTokens,
+  scoreMemoryEntry,
+  selectMemoriesForQuery,
+} from './memory/recall.js';

@@ -1128,6 +1128,11 @@ export class GatewayClient {
     return this.sendReq('agents.list', {});
   }
 
+  /** 网关健康（含 `channels.<id>` 的真实运行状态）。连接器用它判断 ingress 是否可用。 */
+  async getHealth(): Promise<Record<string, unknown>> {
+    return this.sendReq('health', {});
+  }
+
   async createAgent(
     params: {
       name: string;

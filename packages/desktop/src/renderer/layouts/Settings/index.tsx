@@ -15,6 +15,8 @@ import SkillsSection from './sections/SkillsSection';
 import ComputerAccessSection from './sections/ComputerAccessSection';
 import PrivacySection from './sections/PrivacySection';
 import MemorySection from './sections/MemorySection';
+import RepairSection from './sections/RepairSection';
+import ConnectorsSection from './sections/ConnectorsSection';
 import AboutSection from './sections/AboutSection';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 
@@ -29,6 +31,8 @@ const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
   memory: MemorySection,
   computerAccess: ComputerAccessSection,
   privacy: PrivacySection,
+  connectors: ConnectorsSection,
+  repair: RepairSection,
   about: AboutSection,
 };
 

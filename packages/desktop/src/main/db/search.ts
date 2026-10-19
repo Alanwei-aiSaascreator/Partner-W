@@ -124,12 +124,18 @@ interface ArtifactSearchOptions {
   kind?: ArtifactSearchKind;
 }
 
+/**
+ * ⚠️ BUG-120（2026-10-17）：`'video'` 不在筛选项里 —— 它在 UI 上仍归「文件」档
+ *    （见 `renderer/lib/artifact-labels.ts` 的 `getArtifactKindFilter`）。
+ *    所以 `kind='file'` 必须**同时**放行 `type='video'`，`kind='other'` 必须排除它；
+ *    只改登记侧不改这里，视频会从「文件」筛选里消失、并冒到「其他」档。
+ */
 function artifactKindClause(kind: ArtifactSearchKind | undefined): string | null {
   if (!kind || kind === 'all') return null;
   if (kind === 'image') return "(a.type = 'image' OR a.mime_type LIKE 'image/%')";
   if (kind === 'code') return "a.type = 'code'";
-  if (kind === 'file') return "a.type = 'file'";
-  return "(a.type NOT IN ('image', 'code', 'file') AND a.mime_type NOT LIKE 'image/%')";
+  if (kind === 'file') return "(a.type = 'file' OR a.type = 'video')";
+  return "(a.type NOT IN ('image', 'code', 'file', 'video') AND a.mime_type NOT LIKE 'image/%')";
 }
 
 export function searchArtifacts(

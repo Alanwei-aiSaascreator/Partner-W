@@ -96,6 +96,14 @@ export function relayFailureText(failure: StartupRelayFailure, t: (key: string) 
   if (failure.kind === 'organization-mismatch') return t('startupReadiness.relayOrganizationMismatch');
   if (failure.kind === 'entitlement-rejected') return t('startupReadiness.relayEntitlementRejected');
   if (failure.kind === 'activation-limit-reached') return t('startupReadiness.relayActivationLimitReached');
+  // ⚠️ `relay_apply_failed` 是**唯一一个"到了界面其实已经确定"的重试码**（见 `main/commercial/
+  //    relay-startup.ts` 的 `case 'failed'`）：它对应主进程刻意返回的 `retryable:false`
+  //    确定性失败（换端点/换卡后旧配置的清理被网关拒、或写入后回读校验没过），而不是
+  //    "换个时间点就会好"。DTO 的闭集里没有"确定的非-entitlement 失败"这个相位，它只能
+  //    借 `retryable-error` 这条通道出来 —— 但**出口不同**：其余三档是"等一等真会好"，
+  //    这一档是"再点也一样，得看日志排查"。所以不能复用那一句（那句在请用户做无用功）。
+  //    保留"可以再试一次"，但把话说成**需要排查**而不是**等待**。
+  if (failure.errorCode === 'relay_apply_failed') return t('startupReadiness.relayApplyFailed');
   return t('startupReadiness.relayRetryable');
 }
 
@@ -182,10 +190,14 @@ export function relayModelStatusCopy(failure: StartupRelayFailure, t: (key: stri
             ? t('chatInput.relayEntitlementRejectedDetail')
             : failure.kind === 'activation-limit-reached'
               ? t('chatInput.relayActivationLimitReachedDetail')
-              : // ⚠️ 可重试这一档**不许承诺成功**：`relay_apply_failed` 也可能是确定性的
-                //    清理被拒（见 `main/commercial/relay-startup.ts` 的说明），
-                //    "再试一次"可以，"马上就好"不行。
-                t('chatInput.relayRetryableDetail'),
+              : // ⚠️ 可重试这一档**不许承诺成功**：`relay_apply_failed` 其实是确定性的
+                //    （清理被拒 / 回读校验没过，见 `main/commercial/relay-startup.ts`），
+                //    "再试一次"可以，"马上就好"不行。所以它走**自己那一句**：
+                //    把出口说成"需要排查（把日志发给我们）"，而不是"等一等"。
+                //    其余三档（auth_unavailable / transport / runtime_not_ready）照旧。
+                failure.errorCode === 'relay_apply_failed'
+                ? t('chatInput.relayApplyFailedDetail')
+                : t('chatInput.relayRetryableDetail'),
     preparing: false,
   };
 }

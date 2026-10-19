@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { probeStartupz, waitForGatewayReady } from '../src/main/runtime/gateway-process.js';
+import { probeStartupz, settleAfterReadyTimeout, waitForGatewayReady } from '../src/main/runtime/gateway-process.js';
 import type { StartupzProbe } from '../src/main/runtime/gateway-process.js';
 import { BOOTSTRAP_PROCESS_EXITED, BOOTSTRAP_READY_TIMEOUT } from '../src/main/runtime/bootstrap-retry.js';
 
@@ -287,5 +287,76 @@ describe('等就绪的两类失败按码分开（策略的白名单依赖它）'
     ).rejects.toMatchObject({ code: 'runtime.gateway-ready-timeout' });
 
     expect(BOOTSTRAP_READY_TIMEOUT).toBe('runtime.gateway-ready-timeout');
+  });
+});
+
+
+/**
+ * BUG-153（2026-10-18 实机）：就绪**超时之后**的宽限。
+ *
+ * 现场：网关 180 秒判超时，约 4 秒后自己 ready；自动重试又起一个网关去抢锁/端口，
+ * 第二个秒退被当成终态失败。宽限窗口把这两件事都收在本次尝试里。
+ */
+describe('settleAfterReadyTimeout', () => {
+  const fakeClock = (startMs = 0) => {
+    let nowMs = startMs;
+    return {
+      now: () => nowMs,
+      sleep: async (ms: number) => {
+        nowMs += ms;
+      },
+    };
+  };
+
+  it('⭐ 宽限期内就绪 ⇒ true，且**不**收掉那个网关', async () => {
+    let probes = 0;
+    const stop = vi.fn(async () => {});
+    const clock = fakeClock();
+    const recovered = await settleAfterReadyTimeout({
+      probe: async () => {
+        probes += 1;
+        return probes >= 3 ? { reachable: true, status: 'started' } : { reachable: true, status: 'starting' };
+      },
+      authenticate: async () => true,
+      sleep: async (ms) => {
+        clock.sleep(ms);
+      },
+      hasExited: () => false,
+      stop,
+      graceMs: 5_000,
+    });
+
+    expect(recovered).toBe(true);
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 宽限期也没就绪 ⇒ false，并且**先停掉子进程**（不给下一次重试留竞争者）', async () => {
+    const stop = vi.fn(async () => {});
+    const recovered = await settleAfterReadyTimeout({
+      probe: async () => ({ reachable: false }),
+      authenticate: async () => false,
+      sleep: async () => {},
+      hasExited: () => false,
+      stop,
+      graceMs: 0,
+    });
+
+    expect(recovered).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('宽限期内子进程退出 ⇒ false，同样收尾（收尾本身幂等）', async () => {
+    const stop = vi.fn(async () => {});
+    const recovered = await settleAfterReadyTimeout({
+      probe: async () => ({ reachable: false }),
+      authenticate: async () => false,
+      sleep: async () => {},
+      hasExited: () => true,
+      stop,
+      graceMs: 5_000,
+    });
+
+    expect(recovered).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });

@@ -11,7 +11,10 @@ function normalizedName(artifact: Pick<Artifact, 'name'>): string {
 export function getArtifactKindFilter(artifact: Pick<Artifact, 'type' | 'mimeType' | 'name'>): ArtifactKindFilter {
   if (artifact.type === 'image' || artifact.mimeType.startsWith('image/')) return 'image';
   if (artifact.type === 'code') return 'code';
-  if (artifact.type === 'file') return 'file';
+  // ⚠️ BUG-120（2026-10-17）：视频有了专属类型 `'video'`，但**筛选档不许跟着分家** ——
+  //    改型前视频就是 `'file'`，用户是在「文件」里找它的；分出去会让老用户的视频"消失"
+  //    （`FileBrowser` 的客户端筛选与主进程 SQL 的 `kind='file'` 都读这一口径）。
+  if (artifact.type === 'file' || artifact.type === 'video') return 'file';
   return 'other';
 }
 
@@ -21,6 +24,8 @@ function getArtifactLabelKey(artifact: Pick<Artifact, 'type' | 'mimeType' | 'nam
   if (artifact.type === 'code') return 'artifactKinds.code';
   if (artifact.type === 'link') return 'artifactKinds.link';
   if (artifact.type === 'structured_data') return 'artifactKinds.data';
+  // BUG-120：类型标签要跟着类型说实话（改型前这一档落进 `artifactKinds.file`，写着「文件」）。
+  if (artifact.type === 'video') return 'artifactKinds.video';
   if (artifact.mimeType === 'text/markdown' || name.endsWith('.md')) return 'artifactKinds.markdown';
   // ⚠️ **必须排在下面那条 `text/` 泛匹配之前**：`text/html` 也以 `text/` 开头，
   //    排在它后面就永远轮不到 —— 这正是"列表里显示成「文本文件」"的根因。

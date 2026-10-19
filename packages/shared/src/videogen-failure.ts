@@ -42,6 +42,14 @@ export type VideogenFailure =
    *    静默忽略会让用户以为图被用上了——明确拒收 + 逐字回显字段名才对得上账。
    */
   | { code: 'videogen-unsupported-field'; field: string }
+  /**
+   * 附了图（图生视频），但解析到的档位是默认档（H3）——H3 没有首帧能力。
+   *
+   * ⭐ 必须**明确失败**：客户端先前只给 Seedance 注入首帧，默认档下会把图静默丢掉、
+   *    按普通文生视频真实扣费 —— 用户以为"用这张图做的"，拿到的却是无关视频。
+   *    文案要让用户切到高质量档后重发（不自动升级，避免用户没同意就多花钱）。
+   */
+  | { code: 'videogen-image-requires-seedance' }
   /** 中转未配置（未激活/拿不到 relay key）——不是内容问题，是环境问题。 */
   | { code: 'videogen-not-configured' }
   /** 创建任务被拒（HTTP 非 2xx）。 */
@@ -50,6 +58,7 @@ export type VideogenFailure =
   | { code: 'videogen-content-rejected' }
   /** 任务终态失败（非内容安全）。`upstreamCode` 是端脑 ErrCode（可能没有）。 */
   | { code: 'videogen-task-failed'; upstreamCode: number | null }
+  | { code: 'videogen-billing-pending' }
   /** 等超时（`waitedMs` 已等时长）。文件可能稍后才好——如实说没等到，不猜。 */
   | { code: 'videogen-timeout'; waitedMs: number }
   /** 文件下载失败（网络/上游文件已过期）。 */

@@ -15,7 +15,8 @@ import { mbtiCardArtworkFor } from '@/lib/mbti-artwork';
 import { portraitArtworkFor } from '@/lib/portrait-artwork';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
 import { resolveRequestedAgentForAction } from '@/lib/requested-agent';
-import { PRESET_AGENT_DEFINITIONS, resolveAssistantWorkspace } from '@/lib/preset-agents';
+import { PRESET_AGENT_DEFINITIONS, STARTER_AGENT_BY_ID, resolveAssistantWorkspace } from '@/lib/preset-agents';
+import type { StarterId } from '@/lib/user-onboarding';
 import {
   IDENTITY_DEFAULT_TAGS,
   IDENTITY_PERSONA_TAGS,
@@ -28,6 +29,7 @@ import {
   userMdContentFromReadResult,
   type IdentityTagId,
 } from '@/lib/identity-persona';
+import { buildIndustryBriefing, buildIndustryBriefingDisplay, resolveIndustryMethod } from '@/lib/industry-method';
 
 /**
  * 个性化中心（v3，2026-10-06；原名「身份中心」）。
@@ -119,6 +121,37 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
     : '—';
   const introduction = profile?.introduction?.trim() ?? '';
   /**
+   * ⭐ N2（2026-10-16）**「用户确认过的团队」的真实消费者在这里**。
+   *
+   * `selectedAssistantIds` 是首跑「团队确认」那一步用户勾选并落盘的名单（`StarterId`）。
+   * 在此之前它只写不读：这一页把六个能力组静态列全，用户看不到自己确认过谁。
+   *
+   * 语义边界（`PRODUCT_ARCHITECTURE.md` §1）：它属于 **Skill 能力层**（六个能力组），
+   * **不是** 执行结构（主罗盘 + 五岗位）。所以：
+   *   - §③「我的 AI 团队」用它只**提一句**（清楚标明是能力），岗位名单一个字不动；
+   *   - §④「我的常用技能」用它把对应的能力组标出来（名单真正的归属层）。
+   * 没有档案 / 没确认过 ⇒ 两个地方都不渲染、不编默认值。
+   */
+  const confirmedSkillIds: StarterId[] = (profile?.selectedAssistantIds ?? []).filter((id): id is StarterId =>
+    Boolean(STARTER_AGENT_BY_ID[id]),
+  );
+  /** starter → 六能力组的 preset id（§④ 的 `data-skill-group` 用的是 preset id 映射后的 workspaceKey）。 */
+  const confirmedPresetIds = new Set(confirmedSkillIds.map((id) => STARTER_AGENT_BY_ID[id]));
+  /**
+   * 行业方法那三行（2026-10-16，全量总单第 23 行）。
+   *
+   * ⚠️ **不缓存、不另存一份**：每次都从首跑档案的行业现算，档案改了它跟着改。
+   *    这就是"选行业真的影响了产出"的那条链：`profile.industry` → 这三行 →
+   *    每个助手的 `USER.md` → 每轮全文注入的提示词。
+   * `null`（没选行业 / 选的是「暂不确定」）⇒ 空数组 ⇒ 身份块一个字都不加。
+   */
+  const industryLines = buildIndustryBriefing(resolveIndustryMethod(profile?.industry), t) ?? [];
+  /**
+   * 界面上那三行的**本地化标签 + 正文**（2026-10-16，T32）。正文与上面 `industryLines`
+   * 写的**逐字相同**（同一份算法），只有标签按当前语言走 —— 修掉"英文界面上屏中文前缀"。
+   */
+  const industryDisplay = buildIndustryBriefingDisplay(resolveIndustryMethod(profile?.industry), t) ?? [];
+  /**
    * 身份块里的「客群」= **用户自己的行业 · 岗位**（首跑档案），不是当前助手的名字。
    * 2026-10-07 体检问题 10：旧值 `t(workspace.titleKey)` 把"客群：内容助手"写进了
    * **每个**助手的 `USER.md`（六份提示词都在说"你服务的是内容助手"）。
@@ -190,7 +223,7 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
       toast.error(t('identity.applyFailed'));
       return;
     }
-    const block = buildIdentityBlock({ groupLabel, tagLabels, introduction });
+    const block = buildIdentityBlock({ groupLabel, tagLabels, introduction, industryLines });
 
     void (async () => {
       let entry = catalogEntry;
@@ -249,7 +282,7 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
       if (!applied) return;
       toast.success(t('settings.memorySaved', { count: agents.length }));
     })();
-  }, [selected, tagLabels, groupLabel, introduction, gatewayId, catalogEntry, applyPersona, t, userId]);
+  }, [selected, tagLabels, groupLabel, introduction, industryLines, gatewayId, catalogEntry, applyPersona, t, userId]);
 
   const portrait = profile?.portrait ?? null;
   /**
@@ -383,6 +416,26 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
                   {introduction || '—'}
                 </p>
               </div>
+              {/* ⭐ 2026-10-16（第 23 行）：把「行业到底影响了什么」摆在台面上。
+                  ⚠️ 这里显示的正文**就是**「保存并应用」写进每个助手 `USER.md` 的那三行
+                     （同一个算法 `buildIndustryBriefingDisplay`，不是另写一份说明）——
+                     否则用户看到的和助手读到的会是两套话。标签按当前语言出（T32：修掉
+                     "英文界面上屏中文前缀"）。没选行业时如实说明"不写入"，不留空白。 */}
+              <div data-field="industry-method" className="sm:col-span-3">
+                <p className="type-support text-[var(--text-muted)]">{t('identity.industryMethod')}</p>
+                {industryDisplay.length > 0 ? (
+                  <ul className="mt-1 space-y-0.5">
+                    {industryDisplay.map(({ label, text }) => (
+                      <li key={label} className="type-label break-words text-[var(--text-primary)]">
+                        {label}
+                        {text}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="type-label mt-1 text-[var(--text-muted)]">{t('identity.industryMethodNone')}</p>
+                )}
+              </div>
             </div>
           </SectionCard>
 
@@ -416,6 +469,25 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
                   </div>
                 </div>
               ))}
+              {/* N2：用户**确认过**的能力在这里如实提一句。它们不是岗位（不能混进上面的名单），
+                  所以只作为一条独立说明列在末尾；没确认过就一个字都不加。 */}
+              {confirmedSkillIds.length > 0 && (
+                <div
+                  data-confirmed-skills
+                  className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 border-t border-[var(--border-subtle)] pt-2.5"
+                >
+                  <span className="type-support text-[var(--text-muted)]">{t('identity.skillsConfirmed')}</span>
+                  {confirmedSkillIds.map((id) => (
+                    <span
+                      key={id}
+                      data-confirmed-skill={id}
+                      className="type-badge inline-flex items-center rounded-md bg-[var(--accent-dim)] px-2 py-0.5 text-[var(--accent)]"
+                    >
+                      {t(`onboarding.firstRun.result.capabilities.${id}`)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </SectionCard>
 
@@ -425,17 +497,26 @@ export default function IdentityCenter({ profile = null, onEditProfile }: Identi
               {PRESET_AGENT_DEFINITIONS.map((preset) => {
                 const presetWorkspace = resolveAssistantWorkspace(preset.id);
                 if (!presetWorkspace) return null;
+                // N2：首跑里用户确认过的能力组在这里标出来（**名单的真实归属层**）。
+                const confirmed = confirmedPresetIds.has(preset.id);
                 return (
                   <div
                     key={preset.id}
                     data-skill-group={preset.workspaceKey}
-                    className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3"
+                    data-confirmed={confirmed ? 'true' : 'false'}
+                    className={
+                      'rounded-lg border bg-[var(--bg-secondary)] p-3 ' +
+                      (confirmed ? 'border-[var(--accent)]' : 'border-[var(--border-subtle)]')
+                    }
                   >
                     <p className="type-label text-[var(--text-primary)]">
                       <span aria-hidden="true" className="mr-1.5">
                         {presetWorkspace.emoji}
                       </span>
                       {t(presetWorkspace.titleKey)}
+                      {confirmed && (
+                        <Check aria-hidden="true" className="ml-1.5 inline size-3.5 text-[var(--accent)]" />
+                      )}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {presetWorkspace.starters.map((starter) => (

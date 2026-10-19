@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   PORTABLE_PROGRAM_DIRECTORY_NAME,
@@ -8,6 +8,7 @@ import {
   PortableUpdateStateError,
   PortableUpdateStateStore,
   assertPortableTransactionPaths,
+  rebasePortableTransaction,
   recoverPortablePrepare,
   recoverPortablePrepareAtStartup,
   resolvePortableTransactionPaths,
@@ -411,5 +412,92 @@ describe('recoverPortablePrepareAtStartup', () => {
 
     expect(result).toMatchObject({ kind: 'failed' });
     expect((result as { reason: string }).reason).toContain('EBUSY');
+  });
+});
+
+/**
+ * 2026-10-19（BUG-173 的应用侧另一半）：事务记录是绝对路径，U 盘今天 E:、明天 F:
+ * 是产品的正常用法。"换了盘符"不是"记录坏了"——读的时候要按当前根重写，
+ * 而不是当成损坏隔离掉（隔离会让正在进行的更新凭空消失）。
+ */
+describe('rebasePortableTransaction —— 换盘符读记录', () => {
+  function rehomedTo(transaction: PortableUpdateTransactionV1, volume: string): PortableUpdateTransactionV1 {
+    const rehome = (value: string): string => join(volume, value.slice(value.indexOf(':') + 1));
+    return {
+      ...transaction,
+      updateRoot: rehome(transaction.updateRoot),
+      archivePath: rehome(transaction.archivePath),
+      stagedProgramPath: rehome(transaction.stagedProgramPath),
+      currentProgramPath: rehome(transaction.currentProgramPath),
+      backupProgramPath: rehome(transaction.backupProgramPath),
+      manifestPath: rehome(transaction.manifestPath),
+      fileManifestPath: rehome(transaction.fileManifestPath),
+      healthPath: rehome(transaction.healthPath),
+    };
+  }
+
+  it('把另一个盘符下的记录整体搬到当前根（程序目录、暂存、备份、健康回执都跟着走）', async () => {
+    const root = await makeRoot();
+    const transaction = makeTransaction(root);
+    const foreign = rehomedTo(transaction, 'Z:\\');
+
+    const rebased = rebasePortableTransaction(foreign, root);
+
+    expect(rebased).not.toBeNull();
+    expect(rebased?.updateRoot).toBe(transaction.updateRoot);
+    expect(rebased?.currentProgramPath).toBe(transaction.currentProgramPath);
+    expect(rebased?.stagedProgramPath).toBe(transaction.stagedProgramPath);
+    expect(rebased?.healthPath).toBe(transaction.healthPath);
+    // 输入不被就地改写
+    expect(foreign.updateRoot.startsWith('Z:')).toBe(true);
+  });
+
+  it('同盘记录原样返回', async () => {
+    const root = await makeRoot();
+    const transaction = makeTransaction(root);
+    expect(rebasePortableTransaction(transaction, root)).toBe(transaction);
+  });
+
+  it('越出旧根的路径 ⇒ 整体拒绝（不做半截改写）', async () => {
+    const root = await makeRoot();
+    const foreign = rehomedTo(makeTransaction(root), 'Z:\\');
+    foreign.archivePath = 'C:\\elsewhere\\package.zip';
+    expect(rebasePortableTransaction(foreign, root)).toBeNull();
+  });
+
+  // 2026-10-19 自审：`resolve()` 之后再判 isAbsolute 恒为真（死守卫）。相对 updateRoot
+  // 会被解析到进程 cwd，等于把 cwd 当成"这块盘"——必须按**原始值**拒绝。
+  it('⭐ updateRoot 是相对路径 ⇒ 拒绝（不拿 cwd 当盘根）', async () => {
+    const root = await makeRoot();
+    const relativeRoot = 'relative-update-root';
+    const resolved = resolve(relativeRoot);
+    const relative: PortableUpdateTransactionV1 = {
+      ...makeTransaction(root),
+      updateRoot: relativeRoot,
+      archivePath: join(resolved, 'download', 'txn-1', 'package.zip'),
+      stagedProgramPath: join(resolved, 'staged', 'txn-1', 'program'),
+      currentProgramPath: join(dirname(resolved), PORTABLE_PROGRAM_DIRECTORY_NAME),
+      backupProgramPath: join(resolved, 'backup', 'txn-1'),
+      manifestPath: join(resolved, 'staged', 'txn-1', 'manifest.json'),
+      fileManifestPath: join(resolved, 'staged', 'txn-1', 'portable-files.json'),
+      healthPath: join(resolved, 'health', 'txn-1.json'),
+    };
+
+    expect(rebasePortableTransaction(relative, root)).toBeNull();
+  });
+
+  it('store.read() 读到别的盘符的记录 ⇒ 重写后返回，而不是隔离成 .corrupt', async () => {
+    const root = await makeRoot();
+    const stateFilePath = join(root, PORTABLE_UPDATE_DIRECTORY_NAME, 'update-state.json');
+    await mkdir(dirname(stateFilePath), { recursive: true });
+    const foreign = rehomedTo(makeTransaction(root), 'Z:\\');
+    await writeFile(stateFilePath, JSON.stringify(foreign), 'utf8');
+
+    const store = new PortableUpdateStateStore({ stateFilePath });
+    const read = await store.read();
+
+    expect(read?.updateRoot).toBe(join(root, PORTABLE_UPDATE_DIRECTORY_NAME));
+    expect(read?.currentProgramPath).toBe(join(root, PORTABLE_PROGRAM_DIRECTORY_NAME));
+    await expect(readdir(dirname(stateFilePath))).resolves.not.toContain('update-state.json.corrupt');
   });
 });

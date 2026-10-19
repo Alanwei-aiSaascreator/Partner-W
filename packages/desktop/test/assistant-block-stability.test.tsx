@@ -358,3 +358,32 @@ describe('AssistantBlock：状态切换时块与头像不能被卸载重建', ()
     expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).toBeNull();
   });
 });
+
+/**
+ * 整轮用时（2026-10-18 同事批次移植）。
+ *
+ * 网关的 `message.durationMs` 是**单条消息**生成时间（4 分 46 秒的一轮只报 0.4 秒），
+ * 所以界面用的是 core 本地量的整轮时长（`Message.durationMs`）。
+ * 老数据没有这个字段 ⇒ **不显示**，不拿 0 或估算值充数。
+ */
+describe('助手消息的整轮用时', () => {
+  it('⭐ 有 durationMs ⇒ 显示「用时 4 分 46 秒」', () => {
+    const message = buildMessage({ content: '答案', durationMs: 4 * 60_000 + 46_000 });
+    const view = render(<AssistantBlock state="finalized" message={message} identity={identity} />);
+    const el = view.container.querySelector('[data-testid="assistant-turn-duration"]');
+    expect(el?.textContent).toBe(i18n.t('chatMessage.turnDurationMinutesSeconds', { minutes: 4, seconds: 46 }));
+  });
+
+  it('⭐ 不足一分钟只报秒（不出现「0 分」）', () => {
+    const message = buildMessage({ content: '答案', durationMs: 8_400 });
+    const view = render(<AssistantBlock state="finalized" message={message} identity={identity} />);
+    const el = view.container.querySelector('[data-testid="assistant-turn-duration"]');
+    expect(el?.textContent).toBe(i18n.t('chatMessage.turnDurationSeconds', { seconds: 8 }));
+  });
+
+  it('没有 durationMs（历史行 / 老数据）⇒ 不渲染，不拿 0 充数', () => {
+    const message = buildMessage({ content: '答案' });
+    const view = render(<AssistantBlock state="finalized" message={message} identity={identity} />);
+    expect(view.container.querySelector('[data-testid="assistant-turn-duration"]')).toBeNull();
+  });
+});

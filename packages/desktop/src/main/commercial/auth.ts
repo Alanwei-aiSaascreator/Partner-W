@@ -460,6 +460,11 @@ function licenseSummaryFrom(status: LicenseStatus | null | undefined): Commercia
     expiresAt: status.expiresAt,
     tokenQuotaMicros: status.tokenQuotaMicros,
     tokenUsedMicros: status.tokenUsedMicros,
+    // 在途预占（BUG-082 续）：**原样透传**，不做任何本地推算或补 0 ——
+    // `undefined`（后端没报）与 `0`（后端报没有预占）必须一路分得清，
+    // 否则 UI 会把"未知"显示成"确定没有预占"，正是本次要修的缺陷。
+    ...(status.tokenHeldMicros !== undefined ? { tokenHeldMicros: status.tokenHeldMicros } : {}),
+    ...(status.heldComplete !== undefined ? { heldComplete: status.heldComplete } : {}),
   };
 }
 

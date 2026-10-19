@@ -172,6 +172,34 @@ describe('TeamCollabBar 聊天页团队协作条', () => {
     view.unmount();
   });
 
+  /**
+   * ⭐ 2026-10-16（T30）：归属**只认真实 `turn.agentId`**。
+   * 真实轮次里若有谁的 agentId 不在花名册上（成员被改过/老记录），那一轮归不到任何一行 ——
+   * 必须**留归因日志**，不许悄悄丢掉当"没人跑过"。
+   */
+  it('⭐ 真实轮次的 agentId 不在花名册上 ⇒ 留归因日志，且不把它编到别人头上', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mocks.task = { id: 'task-1', gatewayId: 'gw-1', teamId: 'team-1', title: 't' } as Task;
+    mocks.teams = { 'team-1': team };
+    mocks.records = [
+      record({ turns: [turn('ghost', 'running'), turn('lead', 'completed')], updatedAt: '2026-10-06T03:00:00.000Z' }),
+    ];
+    const view = render(<TeamCollabBar taskId="task-1" />);
+    act(() => (view.container.querySelector('button[aria-expanded]') as HTMLButtonElement).click());
+    const rows = [...view.container.querySelectorAll('li')];
+    // 花名册上的两位按真实 agentId 各归各位：lead 已完成；reviewer 这次没上场 ⇒ 待命
+    expect(rows[0].textContent).toContain('队长');
+    expect(rows[0].textContent).toContain('teams.roundtable.status.done');
+    expect(rows[1].textContent).toContain('审稿人');
+    expect(rows[1].textContent).toContain('teams.roundtable.status.idle');
+    // 归因缺口留了日志，带上真实 agentId
+    const gapCall = warn.mock.calls.find((call) => String(call[0]).includes('teams:collab-bar'));
+    expect(gapCall).toBeTruthy();
+    expect(JSON.stringify(gapCall?.[1])).toContain('ghost');
+    warn.mockRestore();
+    view.unmount();
+  });
+
   it('团队存在但从未开过会：整条「待命」（不是「未启用」），成员全部「待命」——不编进度', () => {
     // ⚠️ 2026-10-07（质检 P3-1）：没入团队才是「未启用」；在团队里只是还没开会 ⇒「待命」。
     mocks.task = { id: 'task-1', gatewayId: 'gw-1', teamId: 'team-1', title: 't' } as Task;

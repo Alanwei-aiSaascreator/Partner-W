@@ -160,6 +160,8 @@ function getDispatcher(): GatewayDispatcher {
         if (type === 'error') toast.error(title, opts);
         else if (type === 'warning') toast.warning(title, opts);
         else if (type === 'success') toast.success(title);
+        // 2026-10-17：用户主动停止 ⇒ 中文轻提示（不是错误，不摆红框）。
+        else if (type === 'info') toast.info(title);
       },
       translate: (key, opts) => i18n.t(key, opts),
       isWindowFocused: () => document.hasFocus(),

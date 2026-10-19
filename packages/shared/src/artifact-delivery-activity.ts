@@ -33,6 +33,7 @@ export type ArtifactDeliveryPhase =
   | 'generating-html'
   /** 视频生成（2026-10-12 视频接入）：远端异步任务创建 → 轮询 → 下载，耗时以分钟计。 */
   | 'generating-video'
+  | 'generating-image'
   | 'saving-artifacts'
   | 'reconciling-artifacts';
 export type ArtifactDeliveryTerminalStatus = 'succeeded' | 'needs-review' | 'failed' | 'canceled';
@@ -57,6 +58,8 @@ export interface ArtifactDeliveryActivity {
   /** Bounded, actually observed phase transitions; absent on older senders. */
   observedPhases?: ArtifactDeliveryPhaseObservation[];
   historyTruncated?: boolean;
+  /** Verified existing artifact; may originate in an earlier message of the same task. */
+  artifactId?: string;
   endedAt?: number;
 }
 

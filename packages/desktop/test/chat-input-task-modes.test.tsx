@@ -544,6 +544,23 @@ describe('任务模式 chip（输入框）', () => {
       unmount();
     });
 
+    it('能力探测失败（relay 抖动 / 未登录）⇒ 按钮仍在但置灰，Tooltip 说明原因', async () => {
+      // 与上一条的**区别**：上一条是"relay 明确说没有 ASR"（部署关闸）⇒ 按 BUG-044 整块隐藏；
+      // 这一条是"根本没问出来"（网络/登录态问题）⇒ 不能假装功能不存在，要给可理解的出口。
+      mocks.voiceSupported = false;
+      window.clawwork.voiceCapabilities = vi.fn(async () => ({ ok: false, error: 'voice-unavailable' }));
+      const { container, unmount } = renderChatInput();
+
+      await flushVoiceCapabilities();
+
+      const button = micButton(container);
+      expect(button, '探测失败 ≠ 能力不存在 —— 按钮要留着并解释').not.toBeNull();
+      expect(button?.disabled).toBe(true);
+      expect(button?.getAttribute('aria-label')).toBe('voiceInput.unsupportedTooltip');
+
+      unmount();
+    });
+
     it('relay 有 ASR 能力 ⇒ 按钮出现且可用，Tooltip 是正常态文案', async () => {
       mocks.voiceSupported = true;
       window.clawwork.voiceCapabilities = voiceCaps(true, true);
@@ -558,6 +575,70 @@ describe('任务模式 chip（输入框）', () => {
 
       unmount();
       mocks.voiceSupported = false;
+    });
+
+    it('⭐ 探测失败 ⇒ 播报按钮也保留（置灰），不再凭空消失（2026-10-18 用户实机）', async () => {
+      mocks.voiceSupported = false;
+      window.clawwork.voiceCapabilities = vi.fn(async () => ({ ok: false, error: 'voice-unavailable' }));
+      const { container, unmount } = renderChatInput();
+
+      await flushVoiceCapabilities();
+
+      // 麦克风 + 播报两个按钮都应存在、都置灰、都给出同一原因。
+      const disabledVoiceButtons = [...container.querySelectorAll('button[aria-label="voiceInput.unsupportedTooltip"]')];
+      expect(disabledVoiceButtons).toHaveLength(2);
+      for (const button of disabledVoiceButtons) expect((button as HTMLButtonElement).disabled).toBe(true);
+
+      unmount();
+    });
+
+    it('只有 TTS 时（asr:false / tts:true）⇒ 麦克风隐藏，播报按钮在', async () => {
+      mocks.voiceSupported = true;
+      window.clawwork.voiceCapabilities = voiceCaps(false, true);
+      const { container, unmount } = renderChatInput();
+
+      await flushVoiceCapabilities();
+
+      // ⚠️ 不能用 `micButton()` 断言：它按 aria-label 前缀匹配，会把播报按钮也算进来。
+      expect(container.querySelector('button[aria-label="voiceInput.tooltip"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="voiceInput.unsupportedTooltip"]')).toBeNull();
+      const speaker = container.querySelector('button[aria-label="voiceInput.readAnswer"]');
+      expect(speaker, 'tts 可用 ⇒ 播报按钮必须在').not.toBeNull();
+
+      unmount();
+      mocks.voiceSupported = false;
+    });
+
+    it('⭐ 探测失败后按退避自动重试（不必切页面），探到成功即恢复可用', async () => {
+      vi.useFakeTimers();
+      try {
+        mocks.voiceSupported = true;
+        let calls = 0;
+        window.clawwork.voiceCapabilities = vi.fn(async () => {
+          calls += 1;
+          return calls === 1
+            ? { ok: false as const, error: 'voice-unavailable' }
+            : { ok: true as const, result: { asr: true, tts: true, maxRecordingSeconds: 60, maxSpeechCharacters: 600 } };
+        });
+        const { container, unmount } = renderChatInput();
+
+        await flushVoiceCapabilities();
+        expect(container.querySelector('button[aria-label="voiceInput.unsupportedTooltip"]')).not.toBeNull();
+
+        await act(async () => {
+          vi.advanceTimersByTime(2100);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+
+        expect(calls).toBeGreaterThanOrEqual(2);
+        expect(container.querySelector('button[aria-label="voiceInput.tooltip"]')).not.toBeNull();
+
+        unmount();
+        mocks.voiceSupported = false;
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

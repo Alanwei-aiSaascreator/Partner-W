@@ -78,6 +78,11 @@ export interface ChatComposerDeps {
   compactSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
   resetSession: (gatewayId: string, sessionKey: string, mode: string) => Promise<IpcResult>;
 
+  resolveImageRecipientModels?: (
+    gatewayId: string,
+    sessionKeys: string[],
+  ) => Promise<Array<{ sessionKey: string; model: string }> | null>;
+
   getModelProvider?: (gatewayId: string, modelId: string) => string | undefined;
 
   /**
@@ -405,39 +410,56 @@ export function createChatComposer(deps: ChatComposerDeps) {
       const room = task.ensemble && !task.teamId ? deps.getRoomState?.(task.id) : undefined;
       const mentionTargets = resolveMentionTargets(room, options.mentions, options.mentionAll);
       const isMentionSend = mentionTargets.length > 0;
-      /*
-       * ⛔ R8-04（2026-10-15 独立终审 P1「图片 @ 岗位绕过最终接收模型门禁」）：
-       *    **带图片的 mention 分发整体拒绝** —— 在真实派发边界上 fail-closed。
-       *
-       *    为什么不能放行：mention 分支不钉 `presetModel`（`if (!isMentionSend)` 那一支
-       *    才钉），图片由各岗位**自己的模型**直接接收 —— 主任务过完视觉门禁只证明
-       *    主会话能力，**不证明接收岗位能力**（岗位会话可能是纯文本/未知模型，
-       *    runtime 会静默丢图，用户还以为发上去了）。
-       *
-       *    为什么不做逐目标校验：本批 composer 内拿不到各会话的最终模型（每会话模型
-       *    解析不可靠），硬造判据比诚实拒绝更糟 —— 故按终审许可的临时口径整体拒绝。
-       *    **撤销条件**：composer 能逐目标解析最终模型能力后，改为逐目标校验
-       *    （终审修法 A），本守卫随之删除。
-       *
-       *    纵深：渲染层（`useChatSend`）已先一步用产品文案拦下同一条件，这里是
-       *    PWA/其它宿主的兜底 —— 走到这里说明宿主没接那一层。
-       *
-       *    阻断点在 processing 置位 / watch 注册 / 任何 `sendTracked` **之前** ⇒
-       *    除那条 pending 用户消息外没有任何本地状态需要回滚（processing 一次都没被
-       *    置位，故无需清零）。文案：渲染层负责转产品文案；这里是内部英文常量。
-       */
       if (isMentionSend && hasImageAttachment(options.attachments)) {
-        rollbackPendingUserMessage();
-        emitError(
-          task.id,
-          'local',
-          'send',
-          'Image attachments cannot be dispatched to mentioned team roles (recipient model capability is not verified).',
-          undefined,
-          undefined,
-          task.sessionKey,
-        );
-        return { ok: false, taskId: task.id };
+        const rejectImages = () => {
+          rollbackPendingUserMessage();
+          emitError(
+            task.id,
+            'local',
+            'send',
+            deps.translate('chatInput.visionUnavailable'),
+            undefined,
+            undefined,
+            task.sessionKey,
+          );
+          return { ok: false, taskId: task.id };
+        };
+        try {
+          const recipients = await deps.resolveImageRecipientModels?.(task.gatewayId, mentionTargets);
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (
+            !recipients ||
+            recipients.length !== mentionTargets.length ||
+            mentionTargets.some(
+              (key) => recipients.filter((row) => row.sessionKey === key && row.model.trim()).length !== 1,
+            )
+          ) {
+            return rejectImages();
+          }
+          for (const recipient of recipients) {
+            const pinned = await deps.gateway.patchSession(task.gatewayId, recipient.sessionKey, {
+              model: recipient.model,
+            });
+            if (options.signal?.aborted) return cancelBeforeSubmission();
+            if (!pinned.ok) return rejectImages();
+          }
+          const confirmed = await deps.resolveImageRecipientModels?.(task.gatewayId, mentionTargets);
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (
+            !confirmed ||
+            confirmed.length !== recipients.length ||
+            recipients.some(
+              (recipient) =>
+                confirmed.filter((row) => row.sessionKey === recipient.sessionKey && row.model === recipient.model)
+                  .length !== 1,
+            )
+          ) {
+            return rejectImages();
+          }
+        } catch {
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          return rejectImages();
+        }
       }
       processingSessionKeys = isMentionSend ? mentionTargets : [task.sessionKey];
       for (const sessionKey of processingSessionKeys) {
@@ -770,18 +792,23 @@ export function createChatComposer(deps: ChatComposerDeps) {
 
     switch (command) {
       case 'compact': {
-        const res = await deps.compactSession(task.gatewayId, task.sessionKey);
-        if (!res.ok) return { ok: false };
-
         // ⭐ **不再在这里插消息了**（B8）：从前"RPC 被接受"就被当成了"压缩完成"。
         //    现在只把网关的结论交给统一出口 —— **只认 `compacted === true`**；
         //    若网关的 `sessions.changed` 先到，兜底那次会被幂等挡掉
         //    （见 compaction-announce.ts 的三条硬规矩）。
-        await runManualCompaction(
+        //
+        // ⚠️ 2026-10-15（E1/C63 复核）：那次 RPC **由统一出口自己发**，它的返回值就是
+        //    "命令成功与否"（= RPC 的 `ok`，见 `runManualCompaction` 的契约）。
+        //    从前这里**另发了一次**只为拿 `ok` 当闸门，于是：
+        //      ① 一次手动压缩对网关发**两次** `sessions.compact`；
+        //      ② 统一出口拿到的是**第二次**的结论 —— 第一次真的 `compacted:true` 会被
+        //         第二次的 `{ok:true}`（没有 `compacted` 字段）盖掉 ⇒ 真压了也不通报，
+        //         用户点了一次 `/compact` 什么都看不到。
+        const ok = await runManualCompaction(
           { ...compactionDeps, compactSession: (gw, sk) => deps.compactSession(gw, sk) },
           { gatewayId: task.gatewayId, sessionKey: task.sessionKey, taskId },
         );
-        return { ok: true };
+        return { ok };
       }
       case 'reset': {
         const res = await deps.resetSession(task.gatewayId, task.sessionKey, 'reset');

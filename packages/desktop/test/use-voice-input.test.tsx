@@ -9,6 +9,7 @@ interface FakeSession {
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   destroy: ReturnType<typeof vi.fn>;
+  retry: ReturnType<typeof vi.fn>;
   emitInterim: (text: string) => void;
   emitFinal: (text: string) => void;
   emitError: (code: string) => void;
@@ -32,6 +33,7 @@ function createFakeSessionFactory(): {
         start: vi.fn(),
         stop: vi.fn(),
         destroy: vi.fn(),
+        retry: vi.fn(),
         emitInterim: (text: string) => handlers.onInterimResult(text),
         emitFinal: (text: string) => handlers.onFinalResult(text),
         emitError: (code: string) => handlers.onError(code),
@@ -532,4 +534,30 @@ describe('useVoiceInput', () => {
 
     unmount();
   });
+});
+
+it('retains uncertain transcription for retry and discards it on account or task change', async () => {
+  const factory = createFakeSessionFactory();
+  const view = render(<Harness createSession={factory.createSession} activeTaskKey="account-a:task-a" />);
+  await flushAsync();
+  const clickStart = () =>
+    act(() => view.container.querySelector<HTMLButtonElement>('[data-testid="start-trigger"]')!.click());
+  clickStart();
+  await flushAsync();
+  const original = factory.getLastSession()!;
+  act(() => {
+    original.emitError('voice-settlement-pending');
+    original.emitEnd();
+  });
+  expect(original.destroy).not.toHaveBeenCalled();
+  clickStart();
+  clickStart();
+  await flushAsync();
+  expect(original.retry).toHaveBeenCalledTimes(1);
+  expect(factory.createSession).toHaveBeenCalledTimes(1);
+  view.rerender(<Harness createSession={factory.createSession} activeTaskKey="account-b:task-a" />);
+  expect(original.destroy).toHaveBeenCalledTimes(1);
+  act(() => original.emitFinal('stale account result'));
+  expect(view.container.querySelector('textarea')?.value).toBe('');
+  view.unmount();
 });

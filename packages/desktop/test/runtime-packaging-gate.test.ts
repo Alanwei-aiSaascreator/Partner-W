@@ -85,10 +85,32 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
       gate.checkBundledRuntime(
         config,
         PROJECT_DIR,
-        // 目录本身要存在（electron-builder 也是这样 stat 的），marker 也要在
-        only(path.resolve(PROJECT_DIR, 'build/icon.png'), RUNTIME_OUT, path.join(RUNTIME_OUT, RUNTIME_MANIFEST_FILE)),
+        // 目录本身要存在（electron-builder 也是这样 stat 的），marker + 飞书 npm 负载也要在
+        only(
+          path.resolve(PROJECT_DIR, 'build/icon.png'),
+          RUNTIME_OUT,
+          path.join(RUNTIME_OUT, RUNTIME_MANIFEST_FILE),
+          path.join(RUNTIME_OUT, 'node', 'npm.cmd'),
+          path.join(RUNTIME_OUT, 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+          path.join(RUNTIME_OUT, 'node', 'npm-cache', '_cacache'),
+        ),
       ),
     ).toBeNull();
+  });
+
+  it('⭐ 缺飞书 npm 负载 ⇒ 构建失败（否则飞书只能发不能收）', () => {
+    const message = gate.checkBundledRuntime(
+      config,
+      PROJECT_DIR,
+      only(
+        path.resolve(PROJECT_DIR, 'build/icon.png'),
+        RUNTIME_OUT,
+        path.join(RUNTIME_OUT, RUNTIME_MANIFEST_FILE),
+        // 故意不给 npm.cmd / npm-cli / cache
+      ),
+    );
+    expect(message).not.toBeNull();
+    expect(message as string).toContain('npm.cmd');
   });
 
   it('⭐ 配置里没有 `to: runtime` 那条 ⇒ 失败（改成别的目录名 = 客户端永远找不到，静默）', () => {
@@ -125,6 +147,11 @@ describe('打包门禁：随包运行时（beforePack 钩子）', () => {
       };
       const manifestPath = path.join(projectDir, 'runtime-out', RUNTIME_MANIFEST_FILE);
       fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+      // 飞书可信安装所需的 npm 负载（BUG-171）
+      fs.mkdirSync(path.join(projectDir, 'runtime-out', 'node', 'node_modules', 'npm', 'bin'), { recursive: true });
+      fs.mkdirSync(path.join(projectDir, 'runtime-out', 'node', 'npm-cache', '_cacache'), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, 'runtime-out', 'node', 'npm.cmd'), '@ECHO off\r\n');
+      fs.writeFileSync(path.join(projectDir, 'runtime-out', 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js'), '');
 
       const sameShape = {
         extraResources: [

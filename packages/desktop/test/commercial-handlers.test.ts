@@ -89,6 +89,14 @@ vi.mock('../src/main/commercial/relay-startup.js', () => ({
   retryCommercialRelayBootstrap: () => mocks.retryCommercialRelayBootstrap(),
 }));
 
+// BUG-133：登录 / 登出 / 激活成功后 handler 会重投影 `MEMORY.md`（走 `memory/account-switch`
+// → `getGatewayClient`）。这里把网关层钉成"没有网关" ⇒ 重投影静默跳过；
+// 记忆投影本身的行为在 `memory-account-boundary.test.ts` 里用真链条钉。
+vi.mock('../src/main/ws/index.js', () => ({
+  getGatewayClient: () => null,
+  getAllGatewayClients: () => new Map(),
+}));
+
 vi.mock('../src/main/commercial/license.js', () => ({
   activateLicense: (...a: unknown[]) => mocks.activateLicense(...a),
   recoverLicenseActivation: (...a: unknown[]) => mocks.recoverLicenseActivation(...a),

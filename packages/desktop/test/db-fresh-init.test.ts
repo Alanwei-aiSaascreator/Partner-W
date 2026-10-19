@@ -54,4 +54,22 @@ describe('全新工作区：initDatabase 必须一次建齐', () => {
     const columns = sqlite!.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain('mode');
   });
+
+  it('⭐ messages.duration_ms：全新库建齐，老库补上（整轮用时落库，2026-10-18）', () => {
+    expect(() => initDatabase(dir)).not.toThrow();
+    const sqlite = getSqlite()!;
+    const columns = () =>
+      (sqlite.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>).map((c) => c.name);
+    expect(columns()).toContain('duration_ms');
+
+    // 老库（升级前装过的）没有这一列：模拟成"删掉再用同一份工作区 init 一次"。
+    sqlite.prepare('ALTER TABLE messages DROP COLUMN duration_ms').run();
+    expect(columns()).not.toContain('duration_ms');
+
+    closeDatabase();
+    expect(() => initDatabase(dir)).not.toThrow();
+    expect(
+      (getSqlite()!.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>).map((c) => c.name),
+    ).toContain('duration_ms');
+  });
 });

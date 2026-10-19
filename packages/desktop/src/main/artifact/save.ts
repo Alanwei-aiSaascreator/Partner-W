@@ -177,6 +177,30 @@ function rowForReplay(sqlite: RawSqlite, messageId: string, sourceKey: string): 
 }
 
 /**
+ * ⭐ T20（2026-10-16 本地全量执行 · Owner D）：**同 task + 同 source_key** 的既有行 ——
+ * **跨 assistant 消息**的同源去重（登记的第三条口径）。
+ *
+ * 为什么必须补这一条：现场 `finish_reason` 续写会创建**新的 assistant 消息（新 messageId）**，
+ * 同一套牌可能在两条消息里各出现一次。此时登记层的**两条唯一约束都不触发**：
+ *   · `artifacts_source_dedup(message_id, source_key)` —— message_id 不同；
+ *   · `artifacts_task_local_path(task_id, root, local_path)` —— `uniqueFileNameIn` **只看磁盘**，
+ *     第一份文件还在 ⇒ 第二份退到 `<名>-<rand>.pptx` ⇒ local_path 不同。
+ * ⇒ 同一套牌被登记两次、落两份文件（用户成果列表出现两份重复）。
+ *
+ * 语义边界：`source_key` 是**内容**键（docgen/slidegen 用「标题 + 版面源码哈希」算它），
+ * 所以"同 task 同 source_key" == "同一份产物"；**改稿**产物源码不同 ⇒ source_key 不同 ⇒
+ * 照常产新版，不受本口径影响（见 `artifact-cross-message-dedup.test.ts` 的保护面用例）。
+ */
+function rowForSourceInTask(sqlite: RawSqlite, taskId: string, sourceKey: string): ArtifactRow | undefined {
+  return rawRow(
+    sqlite,
+    'SELECT * FROM artifacts WHERE task_id = ? AND source_key = ? ORDER BY created_at, rowid LIMIT 1',
+    taskId,
+    sourceKey,
+  );
+}
+
+/**
  * ⭐ BUG-058②（2026-10-13）：保存路径的**只读**重放探测，必须在**读源字节之前**跑。
  *
  * 现场（slidegen-cli 落位路）：同 message + 同 sourceKey 的重放里，**源文件已被清理**，
@@ -191,16 +215,10 @@ function rowForReplay(sqlite: RawSqlite, messageId: string, sourceKey: string): 
  */
 function verifiedReplayArtifact(
   sqlite: RawSqlite,
-  input: { taskId: string; messageId: string; sourceKey?: string; destPath: string },
+  input: { taskId: string; sourceKey?: string; destPath: string },
 ): Artifact | null {
   if (!input.sourceKey) return null;
-  const row = rawRow(
-    sqlite,
-    'SELECT * FROM artifacts WHERE task_id = ? AND message_id = ? AND source_key = ? LIMIT 1',
-    input.taskId,
-    input.messageId,
-    input.sourceKey,
-  );
+  const row = rowForSourceInTask(sqlite, input.taskId, input.sourceKey);
   if (!row) return null;
   return rowTargetIsIntact(row, input.destPath) ? artifactFromRow(row) : null;
 }
@@ -267,12 +285,13 @@ function deleteRowById(sqlite: RawSqlite, row: ArtifactRow): void {
  */
 function settleExistingRows(
   sqlite: RawSqlite,
-  input: { taskId: string; messageId: string; sourceKey?: string; localPath: string; destPath: string },
+  input: { taskId: string; sourceKey?: string; localPath: string; destPath: string },
 ): Artifact | null {
-  const { taskId, messageId, sourceKey, localPath, destPath } = input;
+  const { taskId, sourceKey, localPath, destPath } = input;
 
   if (sourceKey) {
-    const replay = rowForReplay(sqlite, messageId, sourceKey);
+    // ⭐ T20：跨 assistant 消息的同源去重（同 task + 同 source_key）—— 见 `rowForSourceInTask`。
+    const replay = rowForSourceInTask(sqlite, taskId, sourceKey);
     if (replay) {
       if (rowTargetIsIntact(replay, destPath)) return artifactFromRow(replay);
       deleteRowById(sqlite, replay);
@@ -291,11 +310,12 @@ function settleExistingRows(
 function resolveInsertConflict(
   sqlite: RawSqlite,
   err: unknown,
-  input: { taskId: string; messageId: string; sourceKey?: string; localPath: string },
+  input: { taskId: string; sourceKey?: string; localPath: string },
 ): Artifact | null {
   if (!isUniqueArtifactError(err)) return null;
   if (input.sourceKey) {
-    const replay = rowForReplay(sqlite, input.messageId, input.sourceKey);
+    // ⭐ T20：跨消息同源冲突也按 (task, source_key) 找赢家。
+    const replay = rowForSourceInTask(sqlite, input.taskId, input.sourceKey);
     if (replay) return artifactFromRow(replay);
   }
   const occupied = rowForLocalPath(sqlite, input.taskId, input.localPath);
@@ -354,7 +374,7 @@ export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact
   //    目标本体复核）。重放的源可能已被清理（slidegen-cli 落位路）——旧顺序先读源做完整性门，
   //    等于拿"源不在了"否掉一份**已经存好并且现在仍然有效**的产物，把整轮报成 failed。
   //    ⚠️ 只探测、不结算：会删陈旧行的 `settleExistingRows` 必须留在完整性门之后。
-  const alreadySaved = verifiedReplayArtifact(sqlite, { taskId, messageId, sourceKey, destPath });
+  const alreadySaved = verifiedReplayArtifact(sqlite, { taskId, sourceKey, destPath });
   if (alreadySaved) return alreadySaved;
 
   // M1 登记前置门（2026-10-06）：坏 PPTX / DOCX **不复制、不登记**。与"DB 失败回滚"同一段时间线：
@@ -373,7 +393,7 @@ export async function saveArtifact(params: SaveArtifactParams): Promise<Artifact
   // ⚠️ 结算/取库在**写盘之前**：重放要在这里就返回（不写第二份），陈旧行也要在这里清掉
   //    （清完 `uniqueFileNameIn` 复用的那个名字才不会再撞库）。
   const db = getDb();
-  const replay = settleExistingRows(sqlite, { taskId, messageId, sourceKey, localPath, destPath });
+  const replay = settleExistingRows(sqlite, { taskId, sourceKey, localPath, destPath });
   if (replay) return replay;
 
   copyFileSync(sourcePath, destPath);
@@ -408,7 +428,8 @@ interface SaveArtifactFromBufferParams {
   messageId: string;
   fileName: string;
   buffer: Buffer;
-  artifactType: 'code' | 'image' | 'file';
+  // `'video'`（2026-10-17 BUG-120）：视频产物不再借 `'file'` 这一档。
+  artifactType: 'code' | 'image' | 'file' | 'video';
   contentText?: string;
   sourceKey?: string;
 }
@@ -429,7 +450,7 @@ export async function saveArtifactFromBuffer(params: SaveArtifactFromBufferParam
   const sqlite = getSqlite();
   if (!sqlite) throw new Error('database not ready');
   const db = getDb();
-  const replay = settleExistingRows(sqlite, { taskId, messageId, sourceKey, localPath, destPath });
+  const replay = settleExistingRows(sqlite, { taskId, sourceKey, localPath, destPath });
   if (replay) return replay;
 
   writeFileSync(destPath, buffer);

@@ -19,6 +19,7 @@
  *    「长了会被拒」那段历史）。
  */
 
+import type { SlidegenWarningData } from '@clawwork/shared';
 import type { MeasuredElement } from './measure.js';
 import { SLIDE_CANVAS } from './layout.js';
 
@@ -27,8 +28,31 @@ export interface LayoutWarning {
   code: 'layout-out-of-bounds' | 'layout-text-occluded' | 'layout-footer-overlap' | 'layout-text-low-contrast';
   /** 元素在页面里的绘制序号（= `data-sg`）。 */
   element: number;
-  /** 人能读懂的一句话。**要能直接照着改**，所以带元素类型与文字片段。 */
+  /**
+   * 人能读懂的一句话。**要能直接照着改**，所以带元素类型与文字片段。
+   *
+   * ⚠️ 这是**主进程侧的回落文本**（本文件里大多数是中文，历史上有两条是英文）。
+   *    界面**必须**优先用 `data` 走 i18n（见 `renderer/components/ChatMessage.tsx`），
+   *    否则英文/其它语言界面看到的就是这一句的原文 —— 2026-10-16 集成人在真机截图上
+   *    看到的就是这里那两条英文（`layout-footer-overlap` / `layout-text-low-contrast`）
+   *    原样上屏在中文界面里。
+   */
   detail: string;
+  /**
+   * **语言无关**的结构化载荷：渲染层据此拼本地化句子。
+   *
+   * ⚠️ 不要在渲染层从 `detail` 里正则解析 —— 那等于把"文案"当"协议"，
+   *    改个标点就崩，而且永远本地化不了。要加信息就加到这里。
+   */
+  data?: SlidegenWarningData;
+}
+
+/** 把测量元素转成结构化「是谁」—— 渲染层据此本地化，不再拼中文串。 */
+function whoData(e: MeasuredElement): NonNullable<LayoutWarning['data']> {
+  return {
+    kind: e.kind === 'text' ? 'text' : e.kind === 'image' ? 'image' : 'block',
+    snippet: e.kind === 'text' ? e.text.slice(0, 18) : undefined,
+  };
 }
 
 /** 越界容差（px）：四舍五入与亚像素会让贴边的元素差个零点几。 */
@@ -58,14 +82,28 @@ export function findOutOfBounds(elements: readonly MeasuredElement[]): LayoutWar
       overBottom > BOUNDS_TOLERANCE
     ) {
       const parts: string[] = [];
-      if (e.x < -BOUNDS_TOLERANCE) parts.push(`左边超出 ${Math.round(-e.x)}px`);
-      if (e.y < -BOUNDS_TOLERANCE) parts.push(`上边超出 ${Math.round(-e.y)}px`);
-      if (overRight > BOUNDS_TOLERANCE) parts.push(`右边超出 ${Math.round(overRight)}px`);
-      if (overBottom > BOUNDS_TOLERANCE) parts.push(`下边超出 ${Math.round(overBottom)}px`);
+      const overflow: { side: 'left' | 'top' | 'right' | 'bottom'; px: number }[] = [];
+      if (e.x < -BOUNDS_TOLERANCE) {
+        parts.push(`左边超出 ${Math.round(-e.x)}px`);
+        overflow.push({ side: 'left', px: Math.round(-e.x) });
+      }
+      if (e.y < -BOUNDS_TOLERANCE) {
+        parts.push(`上边超出 ${Math.round(-e.y)}px`);
+        overflow.push({ side: 'top', px: Math.round(-e.y) });
+      }
+      if (overRight > BOUNDS_TOLERANCE) {
+        parts.push(`右边超出 ${Math.round(overRight)}px`);
+        overflow.push({ side: 'right', px: Math.round(overRight) });
+      }
+      if (overBottom > BOUNDS_TOLERANCE) {
+        parts.push(`下边超出 ${Math.round(overBottom)}px`);
+        overflow.push({ side: 'bottom', px: Math.round(overBottom) });
+      }
       out.push({
         code: 'layout-out-of-bounds',
         element: e.id,
         detail: `${describe(e)} 冲出画布：${parts.join('、')}。这一块导出后在幻灯片外面，放映时看不到。`,
+        data: { ...whoData(e), overflow },
       });
     }
   }
@@ -90,6 +128,7 @@ export function findOccludedText(elements: readonly MeasuredElement[]): LayoutWa
       code: 'layout-text-occluded',
       element: e.id,
       detail: `${describe(e)} 有部分被 ${e.occludedBy} 盖住了。把它的位置或盖住它的那块挪开。`,
+      data: { ...whoData(e), occludedBy: e.occludedBy },
     });
   }
   return out;
@@ -152,6 +191,7 @@ function findFooterOverlap(elements: readonly MeasuredElement[]): LayoutWarning[
         code: 'layout-footer-overlap',
         element: footer.id,
         detail: `Footer #${footer.id} enters body region #${card.id}. Reserve space above the footer or move the body region; keep all text.`,
+        data: { footer: footer.id, body: card.id },
       });
   }
   return out;
@@ -253,6 +293,7 @@ function findLowContrast(elements: readonly MeasuredElement[]): LayoutWarning[] 
           code: 'layout-text-low-contrast',
           element: text.id,
           detail: `Text #${text.id} has ${ratio.toFixed(2)}:1 contrast on the measured solid background (target ${minimum}:1). Change text or background color.`,
+          data: { ...whoData(text), ratio: Number(ratio.toFixed(2)), minimum },
         });
         break;
       }

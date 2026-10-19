@@ -34,8 +34,33 @@ const SAVE_DIR_NAME = 'win-ca-pem';
 
 let windowsSystemTrustAttempted = false;
 
+/**
+ * 是否加载 Windows 系统证书库（默认**关闭**）。
+ *
+ * 2026-10-19（360 误报治理）：win-ca 的 fallback 引擎会 `execFile` 一个**未签名**的
+ * `roots.exe`。对杀软启发式来说，这是"未签名程序启动未签名程序 + 读取证书库"的典型组合
+ * —— 用户侧表现就是"装完被 360 报木马"。
+ *
+ * 我们的 relay / 更新域名都是公共 CA 签发（Let's Encrypt），**不需要**企业 MITM 根证书；
+ * 只有明确处于 TLS 解密代理后的企业环境才需要。用 `MOFANG_SYSTEM_CERT_STORE=1` 显式开启，
+ * 开启后行为与之前完全一致。
+ */
+export function systemCertStoreEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MOFANG_SYSTEM_CERT_STORE === '1';
+}
+
 export function ensureGatewayWindowsSystemTrust(userDataDir: string): void {
   if (process.platform !== 'win32' || windowsSystemTrustAttempted) {
+    return;
+  }
+
+  if (!systemCertStoreEnabled()) {
+    windowsSystemTrustAttempted = true;
+    getDebugLogger().info({
+      domain: 'gateway',
+      event: 'gateway.tls.system-trust.disabled',
+      data: { reason: 'MOFANG_SYSTEM_CERT_STORE != 1' },
+    });
     return;
   }
 

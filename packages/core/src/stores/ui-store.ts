@@ -40,6 +40,10 @@ export type MainView =
   /** 技能市场 —— **我们自己的**随包技能（T-a2）。与设置里的「技能」是两个面：
    *  设置那页列网关自带的技能（开发者向），这页只列我们挑过、写过中文说明的。 */
   | 'skills'
+  /** 专家库（2026-10-16，全量总单第 24 行）—— **我们随包发的 18 位专家**（`our-skills/octop-*`）。
+   *  与「技能市场」的分工：技能市场管"装不装"，专家库管"这些人是谁、能帮我干什么"，
+   *  并从卡片直接开任务（走既有 `requestDraft`，不新造执行通道）。 */
+  | 'experts'
   /** 创作者中心 —— 与 `market` 同一个面板、不同初始 tab。 */
   | 'creator'
   | 'growth'
@@ -92,6 +96,16 @@ export interface UiState {
 
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+
+  /**
+   * 「更新与关于」弹窗（2026-10-19，用户反馈：登录页看到有新版本却点不进去）。
+   *
+   * 为什么必须独立于 `settingsOpen`：设置页只在**工作区**挂载，登录页/准备页根本没有
+   * `Settings`，把提示的落点挂在设置上就等于"点了没反应"。这个弹窗挂在 App 层，
+   * 任何界面（含登录页）都能打开，且**不需要登录**就能下载更新包。
+   */
+  updateDialogOpen: boolean;
+  setUpdateDialogOpen: (open: boolean) => void;
 
   /**
    * 「打开设置时先落在哪一页」（`null` = 用默认页）。
@@ -323,6 +337,8 @@ export function createUiStore(deps: UiStoreDeps) {
 
     settingsOpen: false,
     setSettingsOpen: (open) => set({ settingsOpen: open }),
+    updateDialogOpen: false,
+    setUpdateDialogOpen: (open) => set({ updateDialogOpen: open }),
     settingsSection: null,
     setSettingsSection: (section) => set({ settingsSection: section }),
 

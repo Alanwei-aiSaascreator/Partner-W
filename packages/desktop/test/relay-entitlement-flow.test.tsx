@@ -762,6 +762,43 @@ describe('relayModelStatusCopy —— 输入框那一格不许再"准备"', () =
   });
 });
 
+/**
+ * T03：`relay_apply_failed` 的**出口与其余"可重试"档不同** —— 它其实是确定性失败。
+ *
+ * `relay-startup.ts` 的 `case 'failed'` 刻意把"配置写不进网关/旧配置清理被拒"
+ * 映射成 `retryable-error: relay_apply_failed`（DTO 闭集里没有"确定的非-entitlement
+ * 失败"这个相位），但主进程给的是 `retryable:false`。其余三档（auth_unavailable /
+ * transport / runtime_not_ready）是"等一等真会好"，这一档是"再点也一样，要看日志排查"。
+ *
+ * ⚠️ 不许新增相位/错误码（闭集冻结）——只在**文案与诊断口径**上把话说准：
+ *    保留"可以再试一次"，但要说成**需要排查**，而不是**等待**。
+ */
+describe('relay_apply_failed 的文案 —— 要排查，不是等着就好（T03）', () => {
+  const t = (key: string): string => key;
+  const applyFailed: StartupRelayFailure = { kind: 'retryable', errorCode: 'relay_apply_failed' };
+
+  it('⭐ 面板那句话走**独立**文案，不再复用"再试一次会好"那一句', () => {
+    // `t` 是恒等函数，所以这里比的就是 i18n 键名。
+    expect(relayFailureText(applyFailed, t)).toBe('startupReadiness.relayApplyFailed');
+    expect(relayFailureText(applyFailed, t)).not.toBe('startupReadiness.relayRetryable');
+  });
+
+  it('⭐ 输入框那一格的 detail 同样独立', () => {
+    expect(relayModelStatusCopy(applyFailed, t).detail).toBe('chatInput.relayApplyFailedDetail');
+    expect(relayModelStatusCopy(applyFailed, t).detail).not.toBe('chatInput.relayRetryableDetail');
+    // 仍然是"非准备态、不转圈"（复用上面那条不变量）。
+    expect(relayModelStatusCopy(applyFailed, t).preparing).toBe(false);
+  });
+
+  it('⭐⭐ 其余三档**照旧**走"再试一次可能好"那句 —— 别把可重试的也一起说成要排查', () => {
+    for (const code of ['auth_unavailable', 'transport', 'runtime_not_ready'] as const) {
+      const failure: StartupRelayFailure = { kind: 'retryable', errorCode: code };
+      expect(relayFailureText(failure, t), code).toBe('startupReadiness.relayRetryable');
+      expect(relayModelStatusCopy(failure, t).detail, code).toBe('chatInput.relayRetryableDetail');
+    }
+  });
+});
+
 describe('startupFailureText —— 同屏两处说的是同一句话', () => {
   const t = (key: string): string => key;
   const base: Omit<StartupReadiness, 'ai' | 'relayFailure'> = {

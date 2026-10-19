@@ -22,7 +22,9 @@ import type { MessageState } from '../stores/message-store.js';
  *    （`ok` 只代表"请求被接受"，网关自己的 `sessions.changed` 守卫也是 `result.ok && compacted`。）
  * 2. **别报两次**：两条路都可能在说同一件事 ⇒ 用**同一轮的轮次号**做幂等
  *    （`announceCompactionOnce`）。⚠️ 两条路必须落到**同一个轮次号**上：
- *    手动那条在发 RPC 时开一轮，事件那条读"当前轮次"（没有就现开）。
+ *    手动那条在**发 RPC 之前**就开一轮（`runManualCompaction`），事件那条读"当前轮次"
+ *    （没有就现开）。⚠️ 顺序是硬要求（BUG-097）：事件与回包走同一条 ws 连接，合法的
+ *    同批 FIFO 下事件可能**先**被渲染器处理 —— 等到回包才开轮次，事件就已经开过一轮了。
  *    用时间戳当标识是不行的 —— 毫秒内撞车会把**新一轮**误杀（测试抓过这个坑）。
  * 3. **自动那条的 `!willRetry` 不能少**：运行时自己就用它判"真正结束"
  *    （`if (completed && !willRetry) runBestEffortCompactionHook(ctx, "after")`），
@@ -78,8 +80,9 @@ export function currentCompactionEpisode(deps: CompactionDeps, sessionKey: strin
  * **手动**压缩那条：RPC 回来了。
  *
  * - 只认 `compacted === true`（`ok` 不算，缺字段也不算）；
- * - 先开一轮（好让随后到的网关事件落进**同一轮**），再安排兜底：
- *   `COMPACTION_FALLBACK_MS` 之后若这一轮还没被播报过，就自己报。
+ * - 身份（轮次号）由 `runManualCompaction` 在**发 RPC 之前**开好并传进来（BUG-097），
+ *   这里只**复用它**；只有直接调用、没传身份时才现开一轮。
+ *   随后安排兜底：`COMPACTION_FALLBACK_MS` 之后若**这个身份**还没被播报过，就自己报。
  *   （"事件先到 ⇒ 不报"由 `announceCompactionOnce` 的幂等保证，不需要额外的标记。）
  *
  * @returns 是否安排了兜底（便于测试与调用方判断）
@@ -98,6 +101,23 @@ export async function runManualCompaction(
   deps: CompactionDeps & { compactSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult> },
   opts: { gatewayId: string; sessionKey: string; taskId: string },
 ): Promise<boolean> {
+  // ⭐⭐ **身份必须在请求发出之前定下来**（BUG-097，勿回退）。
+  //
+  // 网关的 `sessions.changed {reason:'compact'}` 与 `sessions.compact` 的回包走**同一条
+  // ws 连接**；合法的同批 FIFO 收包下，渲染器**可能先处理事件、后恢复这个 await**
+  // （可达性已由真实 ws Receiver + Electron IPC 夹具证明）。
+  //
+  // 从前的顺序是"先 await 回包，再开轮次"：事件那条 `currentCompactionEpisode` 现开
+  // **第 1 轮**并播报，回包回来又开**第 2 轮** ⇒ 兜底那次算在新身份上、**再播一次**
+  // （一次压缩，用户看到两条）。
+  //
+  // 现在：轮次在发 RPC 前就开好 ⇒ 事件那条读到的"当前轮次"**就是它**，回包也复用它，
+  // 兜底只在"这个身份还没被播报过"时才发（幂等由 `announceCompactionOnce` 保证）。
+  //
+  // ⚠️ 轮次只是"这次压缩的编号"，开它**不代表判定"压成了"** —— 一句都不会上屏，
+  //    仍然只认回包里的 `compacted === true`。
+  const episode = deps.getStore().beginCompactionEpisode(opts.sessionKey);
+
   const res = await deps.compactSession(opts.gatewayId, opts.sessionKey);
   if (!res.ok) return false;
 
@@ -105,18 +125,29 @@ export async function runManualCompaction(
     taskId: opts.taskId,
     sessionKey: opts.sessionKey,
     compacted: (res.result as { compacted?: unknown } | null | undefined)?.compacted,
+    episode,
   });
   return true;
 }
 
 export function noteManualCompactionResult(
   deps: CompactionDeps,
-  opts: { taskId: string; sessionKey: string; compacted: unknown; delayMs?: number },
+  opts: {
+    taskId: string;
+    sessionKey: string;
+    compacted: unknown;
+    delayMs?: number;
+    /**
+     * 这次压缩的**身份**（轮次号）。`runManualCompaction` 在**发 RPC 之前**开好并传进来
+     * （BUG-097）⇒ 回包与事件落在同一个身份上。不传才现开一轮（直接调用方的兼容路径）。
+     */
+    episode?: number;
+  },
 ): boolean {
   if (opts.compacted !== true) return false;
 
-  // 手动这条也**开一轮**：这样后面来的网关事件读到的就是同一轮（去重才成立）。
-  const episode = deps.getStore().beginCompactionEpisode(opts.sessionKey);
+  // 手动这条也要有身份：传进来的就复用（与事件那条同一个），没传才现开一轮。
+  const episode = opts.episode ?? deps.getStore().beginCompactionEpisode(opts.sessionKey);
 
   setTimeout(() => {
     // ⚠️ 轮次号在**安排时**就捕获好 —— 3 秒后若已经开了新一轮，不能把话算到新一轮头上。

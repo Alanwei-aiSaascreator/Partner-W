@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { COMMERCIAL_DEFAULT_MODEL_ID } from '@clawwork/shared';
 import type { RelayMediaReadiness } from '@clawwork/shared';
 import { setActiveRelayKey } from './relay-key.js';
@@ -59,6 +60,122 @@ function activeRelayMediaBaseUrl(): string {
 }
 
 /**
+ * **已知的官方中转端点**（换端点迁移兼容用；顺序无关）。
+ *
+ * ## 为什么需要它（2026-10-15，P01「新后端商业启用前的隔离」）
+ *
+ * 客户端默认基址是 `RELAY_BASE_URL`（生产 `/relay`）。切到新命名空间
+ * （r13 的 `/relay-108`）之后，**上一次运行留在网关配置里的旧端点 provider**
+ * 会同时踩两个坑（依据 `reviews/r13-client-backend-isolation-review.md`）：
+ *
+ *   ① `relayProviderIds` 只认当前 base ⇒ 旧 provider 不再被认成"走中转的" ⇒
+ *      `usage-reporter` 会把**已经被 relay 服务端计量过一次**的用量再上报一次
+ *      （`report_usage`）= 用户被扣两次钱；
+ *   ② `ownsOpenAIImageConfig` / `ownsXaiVideoConfig` 也只比当前 base ⇒ 我们写过的
+ *      `openai`/`xai` 媒体 provider 变成"用户的" —— 既不会被接管（图片能力静默不接线），
+ *      也不会被清账（注销/换卡后残留一个指向旧端点的幽灵入口）。
+ *
+ * 所以归属判据要落在"**这是不是我们的官方端点**"，而不是"是不是**这一次**的端点"。
+ *
+ * ## 纪律
+ *
+ * - **只列官方端点**（旧 `/relay` + 新 `/relay-108`）。刻意**不做**同 origin 前缀匹配
+ *   —— `https://api.rongyinghudong.com/relay-other` 之类必须保持"不是我们的"，
+ *   否则用户自建的同 origin provider 会被接管/清理。
+ * - ⚠️ 它**不参与** `relayProviderIds`：那个函数回答的是"当前配置是不是已经指向
+ *   **这一个**端点"（`relay-bootstrap` 的幂等快路径判据）。把那里也放宽，
+ *   换端点后 bootstrap 会以为"已经配好了"而**不重写配置** ——
+ *   客户端继续打旧端点却以为自己在新端点上。
+ * - 候选端点改名前只需改这一处；`RELAY_BASE_URL` 与当前活动端点**总是**自动在册
+ *   （见 `relayOwnedBaseUrls`），所以"新→旧"与"旧→新"两个方向都被覆盖。
+ */
+export const KNOWN_RELAY_BASE_URLS: readonly string[] = [
+  'https://api.rongyinghudong.com/relay',
+  'https://api.rongyinghudong.com/relay-108',
+];
+
+/**
+ * 归属判据认的全部端点基址（normalize 后）：当前活动端点 + 默认端点 + 已知官方端点。
+ *
+ * `media` 为真时追加 `/v1`（媒体 provider 写的就是 `.../v1`，见 `activeRelayMediaBaseUrl`）。
+ */
+function relayOwnedBaseUrls(media: boolean): string[] {
+  const bases = new Set<string>([
+    normalizeBaseUrl(activeRelayBaseUrl()),
+    normalizeBaseUrl(RELAY_BASE_URL),
+    ...KNOWN_RELAY_BASE_URLS.map((base) => normalizeBaseUrl(base)),
+  ]);
+  return [...bases].map((base) => (media ? `${base}/v1` : base));
+}
+
+function parseRelayUrl(value: string): URL | null {
+  const match = /^https?:\/\/[^/@?#\\\s]+(\/[^?#\\\s]*)?$/i.exec(value);
+  if (!match) return null;
+  if ([...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) return null;
+  try {
+    const rawPath = match[1] ?? '/';
+    if (/%(?![0-9a-f]{2})|%(?:2f|5c|25|0[0-9a-f]|1[0-9a-f]|7f)/i.test(rawPath)) return null;
+    const path = rawPath.replace(/%([0-9a-f]{2})/gi, (encoded, hex: string) => {
+      const decoded = String.fromCharCode(Number.parseInt(hex, 16));
+      return /^[a-z0-9._~-]$/i.test(decoded) ? decoded : encoded;
+    });
+    if (path.includes('//') && path.split('/').some((segment) => segment === '.' || segment === '..')) return null;
+    const url = new URL(value);
+    if (url.username || url.password) return null;
+    /**
+     * 尾点主机（FQDN 根点）：`api.rongyinghudong.com.` 与 `api.rongyinghudong.com` 在 DNS 上等价，
+     * 但 WHATWG URL **保留**尾点 ⇒ origin 不等 ⇒ 归属判据会把官方端点判成"别人的"。
+     * 漏认方向 = 本该跳过的用量被 `report_usage` 再报一次（**可能双扣**）；
+     * 媒体侧则是"既不被接管也不被清理"的幽灵残留。
+     * 只剥**一个**尾点（`hostname.length > 1` 兜底，避免 `"."` 这类畸形输入被剥空）。
+     * 依据：BUG-086 第二轮独立复审残留 LOW，Lead 复现后修复（见 relay-endpoint-ownership.test.ts 同名用例）。
+     */
+    const hostname = url.hostname;
+    if (hostname.length > 1 && hostname.endsWith('.')) url.hostname = hostname.slice(0, -1);
+    url.pathname = path.replace(/\/+/g, '/');
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function matchesRelayBase(baseUrl: string, target: string, allowSubpaths: boolean): boolean {
+  const url = parseRelayUrl(baseUrl);
+  const base = parseRelayUrl(target);
+  if (!url || !base || url.origin !== base.origin) return false;
+  const path = normalizeBaseUrl(url.pathname);
+  const basePath = normalizeBaseUrl(base.pathname);
+  return path === basePath || (allowSubpaths && path.startsWith(`${basePath}/`));
+}
+
+/** 这个 baseUrl 是不是打到**我们的**中转端点（含已知官方旧/新端点，允许 `/` 子路径）。 */
+function pointsAtAnyRelayBase(baseUrl: string): boolean {
+  return relayOwnedBaseUrls(false).some((base) => matchesRelayBase(baseUrl, base, true));
+}
+
+/** 媒体 provider 的 baseUrl 是不是我们写的那个（精确等于官方端点的 `/v1`，不放宽）。 */
+function isAnyRelayMediaBase(baseUrl: unknown): boolean {
+  if (typeof baseUrl !== 'string') return false;
+  return relayOwnedBaseUrls(true).some((base) => matchesRelayBase(baseUrl, base, false));
+}
+
+/** 按任意判据筛出 provider 名。`relayProviderIds` 与 `relayOwnedProviderIds` 共用。 */
+function providerIdsWhere(configSnapshot: unknown, matches: (baseUrl: string) => boolean): Set<string> {
+  const ids = new Set<string>();
+
+  const providers = (configSnapshot as { config?: { models?: { providers?: unknown } } } | null)?.config?.models
+    ?.providers;
+  if (!providers || typeof providers !== 'object') return ids;
+
+  for (const [id, entry] of Object.entries(providers as Record<string, unknown>)) {
+    const baseUrl = (entry as { baseUrl?: unknown } | null)?.baseUrl;
+    if (typeof baseUrl !== 'string') continue;
+    if (matches(baseUrl)) ids.add(id);
+  }
+  return ids;
+}
+
+/**
  * 从网关配置快照里，找出**实际打到中转服务**的 provider 名。
  *
  * 入参是 `gateway-client.getConfig()` 的返回（`ConfigSnapshot`），
@@ -72,23 +189,82 @@ function activeRelayMediaBaseUrl(): string {
  *
  * 前缀比较那半句是为了容错：`.../relay/v1` 这种带路径的写法也算。
  * 同时它不会误伤 `.../relay-other` —— 因为要求的是 `target + '/'`。
+ *
+ * ⚠️ **只认当前端点**（`relay-bootstrap` 的"已经配好了"幂等快路径也用它）。
+ *    需要"这是不是我们的（任何官方端点）"时用 `relayOwnedProviderIds`。
  */
 export function relayProviderIds(configSnapshot: unknown): Set<string> {
-  const ids = new Set<string>();
+  return providerIdsWhere(configSnapshot, (baseUrl) => matchesRelayBase(baseUrl, activeRelayBaseUrl(), true));
+}
 
+/**
+ * 与 `relayProviderIds` 同一套"按 baseUrl 认，不按名字认"的纪律，但**跨已知官方端点**：
+ * 指向任一官方中转端点（旧 `/relay`、新 `/relay-108`、当前活动端点）的 provider 都算我们的。
+ *
+ * 两处消费，越权都会出事（所以判据必须比"当前端点"宽）：
+ *   · `usage-reporter` 的用量去重 —— 宁可少报（下一个 tick 会补），不可双扣（立刻扣钱）；
+ *   · `buildRelayRemovalPatch` 的清账 —— 换端点后旧端点残留必须能清掉。
+ *
+ * ⚠️ **不要**拿它判断"当前配置是不是已经指向本次要写的端点"（那是 `relayProviderIds` 的活，
+ *    见 `KNOWN_RELAY_BASE_URLS` 的纪律段）。
+ */
+export function relayOwnedProviderIds(configSnapshot: unknown): Set<string> {
+  return providerIdsWhere(configSnapshot, pointsAtAnyRelayBase);
+}
+
+/** 配置里的 provider→端点映射（`config.models.providers`）。读不到就是空表。 */
+function relayProviderEntries(configSnapshot: unknown): Array<[string, string]> {
   const providers = (configSnapshot as { config?: { models?: { providers?: unknown } } } | null)?.config?.models
     ?.providers;
-  if (!providers || typeof providers !== 'object') return ids;
-
-  const target = normalizeBaseUrl(activeRelayBaseUrl());
+  if (!providers || typeof providers !== 'object') return [];
+  const entries: Array<[string, string]> = [];
   for (const [id, entry] of Object.entries(providers as Record<string, unknown>)) {
     const baseUrl = (entry as { baseUrl?: unknown } | null)?.baseUrl;
     if (typeof baseUrl !== 'string') continue;
+    entries.push([id, normalizeBaseUrl(baseUrl)]);
+  }
+  return entries;
+}
 
-    const normalized = normalizeBaseUrl(baseUrl);
-    if (normalized === target || normalized.startsWith(`${target}/`)) ids.add(id);
+/**
+ * **被正面证实为外部端点**的 provider 名（BUG-087 / U2 的判据 ③）。
+ *
+ * 判据 = 「这个 provider **确实配置在这儿**，而且它的 `baseUrl` 不指向任何已知官方中转端点」。
+ *
+ * ## 为什么必须是"正面证实"而不是"不在 relay 集合里"
+ *
+ * 「不在 relay 集合里」是个**空集也能满足**的条件：网关配置被清掉（注销/换卡/换端点）
+ * 之后，历史累计量还在，而 relay 集合是空的 —— 这时按"不是我们的 ⇒ 是用户的"分类，
+ * 就会把**已经由 relay 计量过一次**的 token 再报一次（双扣）。
+ * "没有证据"和"有反证"是两件事：只有后者才能推出"这是用户的调用"。
+ *
+ * 所以这里只回答"**有没有正面反证**"；没有反证的观测由 `usage-attribution`
+ * 判成**未知并隔离**。
+ */
+export function externalProviderIds(configSnapshot: unknown): Set<string> {
+  const ids = new Set<string>();
+  for (const [id, baseUrl] of relayProviderEntries(configSnapshot)) {
+    if (!pointsAtAnyRelayBase(baseUrl)) ids.add(id);
   }
   return ids;
+}
+
+/**
+ * **配置代次**：这一轮实际使用的 provider→端点映射的稳定摘要。
+ *
+ * 它跟观测一起落盘，用来回答"这段累计量是在哪一份配置下产生的"：
+ * 同名 provider 被删/改名/改址/再改回来之后，代次变了 ⇒ 旧键保持隔离、
+ * 新键按新证据重新分类（U1 要求的"名字被复用不得永久吞掉"）。
+ *
+ * 只摘取 `id + 规范化 baseUrl`：顺序无关、大小写与尾斜杠无关，与
+ * `relayOwnedProviderIds` 用同一套 `normalizeBaseUrl`，避免两处判据漂移。
+ * **绝不把 apiKey 摘进摘要**（网关回读本来也是脱敏的）。
+ */
+export function relayConfigGeneration(configSnapshot: unknown): string {
+  const lines = relayProviderEntries(configSnapshot)
+    .map(([id, baseUrl]) => `${id}\u0000${baseUrl}`)
+    .sort((left, right) => left.localeCompare(right));
+  return createHash('sha256').update(lines.join('\n'), 'utf-8').digest('hex').slice(0, 32);
 }
 
 /** 中转服务在网关配置里的 provider 名。插件声明的 `providers` 也是这个名字。 */
@@ -173,7 +349,7 @@ export function ownsOpenAIImageConfig(configSnapshot: unknown): boolean {
 
   const providers = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
   const baseUrl = (providers?.openai as { baseUrl?: unknown } | undefined)?.baseUrl;
-  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(activeRelayMediaBaseUrl());
+  return isAnyRelayMediaBase(baseUrl);
 }
 
 /** 与图片同一条所有权纪律：模型 ref 与 relay baseUrl 两条必须同时命中。 */
@@ -187,7 +363,7 @@ export function ownsXaiVideoConfig(configSnapshot: unknown): boolean {
 
   const providers = (config.models as { providers?: Record<string, unknown> } | undefined)?.providers;
   const baseUrl = (providers?.[XAI_VIDEO_PROVIDER_ID] as { baseUrl?: unknown } | undefined)?.baseUrl;
-  return typeof baseUrl === 'string' && normalizeBaseUrl(baseUrl) === normalizeBaseUrl(activeRelayMediaBaseUrl());
+  return isAnyRelayMediaBase(baseUrl);
 }
 
 export interface RelayPatchInput {
@@ -299,6 +475,38 @@ function enableSearchModelEntries(
  */
 export function webSearchEnabled(config?: { webSearch?: boolean } | null): boolean {
   return config?.webSearch !== false;
+}
+
+/**
+ * 写补丁里**整段替换**的数组路径（网关 `config.patch` 的破坏性校验要用）。
+ *
+ * 2026-10-17 现场（r31 首启卡 33%）：目录里的模型条目只要**变了内容**
+ * （比如能力标记从 `llm.vision` 撤回），整段 replace 的 `models` 数组会让网关
+ * 认为"旧条目被删了"，直接拒整条补丁 —— `config.patch would remove entries from
+ * array path(s): models.providers.clawrouter.models`。补丁本身没有破坏性
+ * （我们写的永远是 Relay 自己的 provider 子树），所以要显式声明 replace 意图。
+ *
+ * ⚠️ 只在补丁真的带 `models` 数组时声明；目录拉不到（不写这个键）时不声明 ——
+ *    留着旧快照，别用一条窄补丁去猜。
+ */
+export function relayPatchReplacePaths(patch: RelayConfigPatch): string[] {
+  const providers = (patch.models as { providers?: unknown } | undefined)?.providers;
+  if (!providers || typeof providers !== 'object') return [];
+  const own = (providers as Record<string, unknown>)[RELAY_PROVIDER_ID];
+  if (!own || typeof own !== 'object') return [];
+  const models = (own as { models?: unknown }).models;
+  if (!Array.isArray(models)) return [];
+  const base = `models.providers.${RELAY_PROVIDER_ID}.models`;
+  const paths = new Set<string>([base]);
+  // 网关对 **id 键数组的元素**还有一层校验：元素里的数组（如 `input`）变短同样算"删条目"，
+  // 报的是 `…models[].input`。2026-10-17 第二次实机复现就是卡在这一层。
+  for (const entry of models) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    // 递归收集元素内部的**所有**数组路径（含 `compat.supportedReasoningEfforts` 这种嵌套），
+    // 与网关的 collectBaseArrayPaths 同构：遇到数组即停。
+    for (const nested of collectBaseArrayPaths(entry, `${base}[]`)) paths.add(nested);
+  }
+  return [...paths];
 }
 
 export function buildRelayPatch(input: RelayPatchInput): RelayConfigPatch | null {
@@ -531,11 +739,14 @@ function pointsAtRelay(modelRef: string, providerIds: Set<string>): boolean {
 /**
  * 「可以删」的 relay provider 名集合 —— 本文件删除判据的**唯一源**。
  *
+ * ⚠️ 用 `relayOwnedProviderIds`（跨已知官方端点）而不是 `relayProviderIds`（只认当前端点）：
+ * 换端点后旧端点残留的那一份同样是我们的凭证残留，必须能被清掉（P01）。
+ *
  * `openai` / `xai` 是运行时的公共 provider 名，不能只凭 baseUrl 删除；必须同时
  * 命中我们写入的 media model ref，避免清掉用户自己配置的同名 provider。
  */
 function removableRelayProviderIds(configSnapshot: unknown): Set<string> {
-  const providerIds = relayProviderIds(configSnapshot);
+  const providerIds = relayOwnedProviderIds(configSnapshot);
   if (providerIds.has(OPENAI_IMAGE_PROVIDER_ID) && !ownsOpenAIImageConfig(configSnapshot)) {
     providerIds.delete(OPENAI_IMAGE_PROVIDER_ID);
   }
@@ -1094,7 +1305,20 @@ function catalogPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolea
       return false;
     if (
       entry.thinkingLevelMap &&
-      !Object.entries(entry.thinkingLevelMap).every(([level, effort]) => current.thinkingLevelMap?.[level] === effort)
+      // ⚠️ 键不存在 ⇔ 键为 null（2026-10-16 r14 实机：准备页卡在 33%，`verify-failed`）。
+      //
+      // 补丁那侧刻意把 **7 个档位全写满**、不支持的写 `null`（`buildThinkingLevelMap`
+      // 的注释：与内核逐字同构）。但**网关持久化时会把值为 `null` 的键丢掉** ——
+      // 实测盘上 16 条模型里有 9 条缺档位键（`deepseek-v4-pro` 只有 5 个、
+      // `glm-5.3-flash` 只有 3 个），因为它们不支持全部档位。
+      //
+      // 于是 `current.thinkingLevelMap?.[level] === effort` 在这 9 条上恒为
+      // `undefined === null` ⇒ 假 ⇒ `catalogPatchApplied` 恒假 ⇒ **整轮准备必然失败**，
+      // 与"网关有没有应用"无关（时间线已证回读发生在写入完成之后）。
+      // 两侧都把 `undefined` 归一成 `null` 再比：语义仍是"A 档不支持 B 档"。
+      !Object.entries(entry.thinkingLevelMap).every(
+        ([level, effort]) => (current.thinkingLevelMap?.[level] ?? null) === (effort ?? null),
+      )
     )
       return false;
     return (
@@ -1102,6 +1326,32 @@ function catalogPatchApplied(snapshot: unknown, patch: RelayConfigPatch): boolea
       (entry.maxTokens === undefined || current.maxTokens === entry.maxTokens)
     );
   });
+}
+
+/** 四个回读谓词的分项结果。**只用于诊断日志**，判定仍是四者的合取。 */
+interface RelayVerifyVerdict {
+  provider: boolean;
+  catalog: boolean;
+  media: boolean;
+  search: boolean;
+}
+
+/** 目录条目形状（诊断只用 `id`；其余字段不在这里解释）。 */
+type DiagnosticCatalogEntry = { id?: unknown };
+type DiagnosticProviders = Record<string, { models?: Array<DiagnosticCatalogEntry> }>;
+
+/** 补丁里声明的模型 id 序列（诊断用）。 */
+function patchModelIds(patch: RelayConfigPatch): string[] {
+  const providers = (patch.models as { providers?: DiagnosticProviders } | undefined)?.providers;
+  const entries = providers?.[RELAY_PROVIDER_ID]?.models;
+  return Array.isArray(entries) ? entries.map((entry) => String(entry?.id ?? '?')) : [];
+}
+
+/** 回读到（网关实际应用后）的模型 id 序列（诊断用）。 */
+function appliedModelIds(snapshot: unknown): string[] {
+  const providers = (configOf(snapshot)?.models as { providers?: DiagnosticProviders } | undefined)?.providers;
+  const entries = providers?.[RELAY_PROVIDER_ID]?.models;
+  return Array.isArray(entries) ? entries.map((entry) => String(entry?.id ?? '?')) : [];
 }
 
 /**
@@ -1278,7 +1528,8 @@ export async function applyRelayConfig(
     });
 
     try {
-      await deps.patchConfig({ baseHash, raw: JSON.stringify(patch) });
+      const replacePaths = relayPatchReplacePaths(patch);
+      await deps.patchConfig({ baseHash, raw: JSON.stringify(patch), ...(replacePaths.length > 0 ? { replacePaths } : {}) });
     } catch (error) {
       const kind = classifyWriteError(error);
       log('relay.config-write-failed', { attempt, kind, message: messageOf(error) });
@@ -1293,15 +1544,23 @@ export async function applyRelayConfig(
 
     // 只信 patchConfig 的返回是不够的 —— WS 通道的失败模式比本地文件写复杂，
     // 「返回成功但网关没生效」是它独有的。所以回读一次。
+    //
+    // ⚠️ 四个谓词**分别记结果**再合取（2026-10-16）。此前只记 `verified:false`，
+    //    现场（r14 实机：准备页停在 33%、只有一句 "gateway did not apply the relay config"）
+    //    **完全无法归因** —— 而"回读与写入之间的时序竞争"与"网关真的没应用"
+    //    是两种成因、两种修法，混成一句就只能靠猜。
     let verified = false;
     let appliedSnapshot: unknown;
+    let verdict: RelayVerifyVerdict | null = null;
     try {
       appliedSnapshot = await deps.getConfig();
-      verified =
-        providerApplied(appliedSnapshot) &&
-        catalogPatchApplied(appliedSnapshot, patch) &&
-        mediaPatchApplied(appliedSnapshot, patch) &&
-        searchPatchApplied(appliedSnapshot, patch);
+      verdict = {
+        provider: providerApplied(appliedSnapshot),
+        catalog: catalogPatchApplied(appliedSnapshot, patch),
+        media: mediaPatchApplied(appliedSnapshot, patch),
+        search: searchPatchApplied(appliedSnapshot, patch),
+      };
+      verified = verdict.provider && verdict.catalog && verdict.media && verdict.search;
     } catch (error) {
       log('relay.config-verify-read-failed', { attempt, message: messageOf(error) });
     }
@@ -1309,6 +1568,14 @@ export async function applyRelayConfig(
     log('relay.config-write-done', { attempt, verified });
 
     if (!verified) {
+      // 归因一次到底：哪几个谓词挂了 + 目录条目的规模与首个对不上的 id。
+      // 只为诊断，不改变任何判定结果。
+      log('relay.config-verify-failed', {
+        attempt,
+        verdict: verdict ?? 'read-failed',
+        expectedModels: patchModelIds(patch),
+        appliedModels: appliedModelIds(appliedSnapshot),
+      });
       return {
         ok: true,
         configured: false,

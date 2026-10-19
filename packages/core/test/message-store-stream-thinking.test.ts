@@ -291,3 +291,123 @@ describe('message-store appendThinkingDelta —— 段身份必须精确（复�
     expect(turn.streamingThinking).toBe('');
   });
 });
+
+/**
+ * 快照 vs 增量（2026-10-18 同事批次移植）。
+ *
+ * agent 通道的 `thinking.text` 是**到此刻为止的全文**，`thinking.delta` 才是增量。
+ * 以前两者都走 `appendThinkingDelta` 的"快照合并"：模型中途**改写前面的话**时，
+ * 新快照与当前段既非"延伸"也非"前缀"，合并器就把旧快照归档成新段再接一段新的 ——
+ * 每改一次就多一份近似全文（同事现场实测 512 帧 / 末帧 1,312 字 ⇒ 界面 722,539 字）。
+ *
+ * 契约（本次钉住）：
+ *   - 有 `text`（快照）⇒ `replaceThinkingText`：**原位替换当前段**，不归档、不追加；
+ *   - 只有 `delta` ⇒ `appendThinkingDelta`：真增量才追加。
+ */
+describe('message-store replaceThinkingText —— 快照原位替换（不许平方膨胀）', () => {
+  it('⭐ 模型改写前面的话 ⇒ 替换当前段，不留下旧段副本', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, '我要先看 A 文件');
+    store.getState().replaceThinkingText(SK, '我先看 A 文件和水印');
+
+    const turn = store.getState().activeTurnBySession[SK]!;
+    expect(turn.streamingThinking).toBe('我先看 A 文件和水印');
+    expect(turn.thinkingCompleted).toBe('');
+  });
+
+  it('⭐ 反复改写不会累积（100 帧快照仍然只有一份文本）', () => {
+    const store = makeStore();
+    for (let i = 0; i < 100; i++) {
+      store.getState().replaceThinkingText(SK, `第 ${i} 版推理：${'x'.repeat(200)}`);
+    }
+    const turn = store.getState().activeTurnBySession[SK]!;
+    expect(turn.streamingThinking.length).toBeLessThan(400);
+  });
+
+  it('重复同一快照 / 旧快照重投 ⇒ 状态同引用（不推动 activity revision）', () => {
+    const store = makeStore();
+    store.getState().replaceThinkingText(SK, '先看 A');
+    store.getState().replaceThinkingText(SK, '先看 A，再看 B');
+    const before = store.getState().activeTurnBySession;
+
+    store.getState().replaceThinkingText(SK, '先看 A，再看 B');
+    expect(store.getState().activeTurnBySession).toBe(before);
+
+    store.getState().replaceThinkingText(SK, '先看 A');
+    expect(store.getState().activeTurnBySession).toBe(before);
+  });
+
+  it('工具边界之后的快照仍然开新段（段已由工具调用 seal）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingDelta(SK, '第一段');
+    store.getState().upsertToolCall(SK, 'task-1', {
+      id: 'tool-x',
+      name: 'read',
+      status: 'running',
+      input: {},
+      startedAt: new Date().toISOString(),
+    } as never);
+    store.getState().replaceThinkingText(SK, '第二段');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('第一段\n\n第二段');
+  });
+});
+
+/**
+ * 真增量（帧里只有 `delta`）必须**追加**（2026-10-18 独立审核）。
+ *
+ * `appendThinkingDelta` 的契约是"给一帧快照"：文本既非延伸也非前缀时它归档旧段再开新段。
+ * 对快照正确，对增量是错的（两帧增量会被拆成两段/互相覆盖）。
+ */
+describe('message-store appendThinkingText —— 真增量追加', () => {
+  it('⭐ 连续两帧增量 ⇒ 拼成一段（不归档、不覆盖）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingText(SK, '先看');
+    store.getState().appendThinkingText(SK, '目录');
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('先看目录');
+  });
+
+  it('⭐ 带段身份时：同 id 继续追加，换 id 才开新段（不丢字）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingText(SK, 'A', 'seg-1');
+    store.getState().appendThinkingText(SK, 'B', 'seg-1');
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('AB');
+
+    store.getState().appendThinkingText(SK, 'C', 'seg-2');
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('AB\n\nC');
+  });
+
+  it('工具 seal 之后继续追加落在新段（不重复归档）', () => {
+    const store = makeStore();
+    store.getState().appendThinkingText(SK, '第一段');
+    store.getState().upsertToolCall(SK, 'task-1', {
+      id: 'tool-a',
+      name: 'read',
+      status: 'running',
+      input: {},
+      startedAt: new Date().toISOString(),
+    } as never);
+    store.getState().appendThinkingText(SK, '第二段');
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('第一段\n\n第二段');
+  });
+});
+
+/** 回声守卫（2026-10-18 独立审核反例）：工具后新段已开局时，旧段快照不得覆盖它。 */
+describe('message-store replaceThinkingText —— 工具后的旧段回声', () => {
+  it('⭐ seal → 新段 → 旧段快照重投 ⇒ 新段保留', () => {
+    const store = makeStore();
+    store.getState().replaceThinkingText(SK, '第一段推理 A');
+    store.getState().upsertToolCall(SK, 'task-1', {
+      id: 'tool-echo',
+      name: 'read',
+      status: 'running',
+      input: {},
+      startedAt: new Date().toISOString(),
+    } as never);
+    store.getState().replaceThinkingText(SK, '第二段');
+
+    store.getState().replaceThinkingText(SK, '第一段推理 A');
+
+    expect(store.getState().activeTurnBySession[SK]!.streamingThinking).toBe('第一段推理 A\n\n第二段');
+  });
+});

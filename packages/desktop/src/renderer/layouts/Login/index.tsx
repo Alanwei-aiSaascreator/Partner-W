@@ -9,6 +9,7 @@ import { toast } from '@/lib/toast';
 import { activationErrorKey } from '@/lib/activation-errors';
 import { Button } from '@/components/ui/button';
 import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
+import { useUiStore } from '@/stores/uiStore';
 
 const RESEND_SECONDS = 60;
 
@@ -94,6 +95,9 @@ export default function Login({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [countdown, setCountdown] = useState(0);
+  // 1.0.11：更新检查/下载本身与登录态无关，缺的只是登录页的入口 ——
+  // 用户不登录也要能看到并安装新版本（打开的是 App 层 UpdateDialog）。
+  const setUpdateDialogOpen = useUiStore((s) => s.setUpdateDialogOpen);
   const [agreed, setAgreed] = useState(false);
   const [mascotPose, setMascotPose] = useState<GuideMascotPose>('idle');
   const codeInputRef = useRef<HTMLInputElement>(null);
@@ -546,6 +550,16 @@ export default function Login({
                 </button>
               </div>
             )}
+            {/* 1.0.11（用户原话："用户不登陆就可以更新"）：更新检查与下载走主进程 IPC，
+                与登录态无关；这里补齐登录页的可见入口，打开 App 层 UpdateDialog。 */}
+            <button
+              type="button"
+              data-testid="login-check-updates"
+              onClick={() => setUpdateDialogOpen(true)}
+              className="rounded px-2 py-1 type-support text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
+            >
+              {t('settings.checkForUpdates')}
+            </button>
           </div>
         </motion.div>
       </section>

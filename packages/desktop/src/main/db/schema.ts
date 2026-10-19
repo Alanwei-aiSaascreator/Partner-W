@@ -93,6 +93,11 @@ export const messages = sqliteTable('messages', {
   thinkingContent: text('thinking_content'),
   model: text('model'),
   /**
+   * 整轮用时（用户发出 → 本轮定稿），毫秒。
+   * ⚠️ 不是网关的 message.durationMs（单条消息生成时间）；契约见 `Message.durationMs`。
+   */
+  durationMs: integer('duration_ms'),
+  /**
    * 交付成功的最小持久化标记（r7-1 / BUG-026 跨重开残余）。
    * NULL = 老行 / 还没有可信成功结算；语义见 `@clawwork/shared` 的 `Message.deliverySucceeded`。
    */
@@ -148,6 +153,27 @@ export const teamAgents = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.teamId, table.agentId] })],
 );
+
+/**
+ * 长期记忆条目 / 草案（2026-10-16）。DDL 真源是 `main/memory/schema.ts`（与测试共用一句），
+ * 这里只是把它声明给 drizzle —— 两者字段必须逐字一致。
+ *
+ * `ownerUserId` = 归属账号（`''` = 未登录匿名）。`dedupeKey` 上的唯一索引
+ * `(owner_user_id, dedupe_key)` 是"同一件事只可能有一条"的落点。
+ */
+export const memoryEntries = sqliteTable('memory_entries', {
+  id: text('id').primaryKey(),
+  ownerUserId: text('owner_user_id').notNull().default(''),
+  text: text('text').notNull(),
+  status: text('status').notNull(),
+  source: text('source').notNull(),
+  sourceTaskId: text('source_task_id'),
+  sourceMessageId: text('source_message_id'),
+  dedupeKey: text('dedupe_key').notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+  decidedAt: text('decided_at'),
+});
 
 export const artifacts = sqliteTable(
   'artifacts',

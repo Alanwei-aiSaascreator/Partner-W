@@ -63,7 +63,7 @@ beforeEach(() => {
     }),
   } as unknown as Window['clawwork'];
 
-  useCommercialStore.setState({ overview: overview(), status: 'ready', errorMessage: '' });
+  useCommercialStore.setState({ overview: overview(), status: 'ready', errorMessage: '', turnSpend: null });
   useMessageStore.setState({ processingBySession: new Set<string>() });
 
   container = document.createElement('div');
@@ -132,6 +132,66 @@ describe('useQuotaRefreshOnTurnEnd', () => {
     setBusy(false);
     await flush(SETTLE_MS + 50);
     expect(calls).toEqual([]);
+  });
+
+  /**
+   * 用户可见语义（2026-10-17）：「每个任务结束显示消耗多少积分」。
+   *
+   * 数据来源只能是**结算前后的余额差** —— 这是唯一同时看见两端的点。
+   * 1 积分 = 1,000,000 微积分。
+   */
+  function licenseWithUsed(tokenUsedMicros: number) {
+    return {
+      activated: true,
+      licenseId: 'l1',
+      orgId: 'o1',
+      licenseKey: 'RY-1',
+      sku: 'USB-内测版',
+      status: 'active',
+      expiresAt: null,
+      tokenQuotaMicros: 2_000_000_000,
+      tokenUsedMicros,
+      tokenHeldMicros: 0,
+      heldComplete: true,
+    };
+  }
+
+  it('本轮结算的余额差 ⇒ 记成「本轮消耗」', async () => {
+    useCommercialStore.setState({
+      overview: { ...overview(), license: licenseWithUsed(1_000_000) } as unknown as CommercialAccountOverview,
+    });
+    (window.clawwork.commercialQuotaSnapshot as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: true,
+      result: { license: licenseWithUsed(3_500_000), org: overview().org, fetchedAt: overview().fetchedAt },
+    }));
+
+    act(() => root.render(<Probe />));
+    setBusy(true);
+    await flush(100);
+    setBusy(false);
+    await flush(SETTLE_MS + 50);
+
+    expect(useCommercialStore.getState().turnSpend).toMatchObject({
+      sessionKeys: ['sess-1'],
+      micros: 2_500_000, // 2.5 积分
+    });
+  });
+
+  it('余额没变就不记（绝不凭空编一个「本轮消耗 0」）', async () => {
+    useCommercialStore.setState({
+      overview: { ...overview(), license: licenseWithUsed(1_000_000) } as unknown as CommercialAccountOverview,
+    });
+    (window.clawwork.commercialQuotaSnapshot as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      ok: true,
+      result: { license: licenseWithUsed(1_000_000), org: overview().org, fetchedAt: overview().fetchedAt },
+    }));
+
+    act(() => root.render(<Probe />));
+    setBusy(true);
+    setBusy(false);
+    await flush(SETTLE_MS + 50);
+
+    expect(useCommercialStore.getState().turnSpend).toBeNull();
   });
 
   it('上报失败不阻断拉额度（服务端可能已经自己记了账）', async () => {

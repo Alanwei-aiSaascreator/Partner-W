@@ -19,12 +19,14 @@
  * 失败只记日志，绝不让装/卸本身变成失败。
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { app, ipcMain } from 'electron';
 import type { AgentListResponse, IpcResult, OurSkillsListResult } from '@clawwork/shared';
 import { resolveCatalogAgentId } from '@clawwork/core';
 import { getGatewayClient } from '../ws/index.js';
 import {
+  adoptOrphanedSkillRecords,
   applyOwnedSkillUpdate,
   decodeSkillRecord,
   encodeSkillRecord,
@@ -32,6 +34,7 @@ import {
   isBundledSkillInstalled,
   managedFileShas,
   missingBundledSkills,
+  parseOurSkillFrontmatter,
   planSkillSync,
   readBundledSkills,
   readInstalledSkillContent,
@@ -209,7 +212,7 @@ function installAndRecordSkill(input: {
     baseline: Readonly<Record<string, string | null>>;
     prepared: StagedSkillPackage;
   };
-}): SkillChangeOutcome {
+}): Exclude<SkillChangeOutcome, { kind: 'conflict' }> {
   const target = resolveInstallDir(input.managedDir, input.slug);
   if (!target) return { kind: 'failed', error: `技能标识非法：${String(input.slug)}` };
 
@@ -464,8 +467,13 @@ export function registerSkillsHandlers(): void {
         // 失败那条路的备份位置已经在 `error` 里（`restore-failed:…; 恢复备份已保留：<路径>`）——
         // 用户明确替换了自己的文件，至少要知道"出问题时去哪儿找回原来的那份"。
         if (outcome.kind === 'failed') return { ok: false, error: outcome.error };
-        if (outcome.kind === 'conflict')
-          return { ok: false, error: `技能更新冲突（${outcome.reason}）：${outcome.paths.join(', ')}` };
+        // ⚠️ 这里曾有一条 `kind === 'conflict'` 分支 —— 它是**死代码**（2026-10-16）：
+        //    `installAndRecordSkill` 的显式路径只回 installed/upgraded/repaired/failed
+        //    （`missing` 只写不删、`confirmed-repair` 是用户点过确认的整目录重写，
+        //    都不会判冲突），冲突只出现在 **ensure/计划** 那条链上（`skills:our-ensure`
+        //    自己把它 push 进 `conflicts[]`）。返回类型已收窄为
+        //    `Exclude<SkillChangeOutcome, { kind: 'conflict' }>`，所以以后谁再让这条路上
+        //    冒出 conflict，`typecheck` 会当场红 —— 不用靠人记得。
         const backupDir = 'backupDir' in outcome ? outcome.backupDir : undefined;
         return backupDir ? { ok: true, result: { backupDir } } : { ok: true };
       } catch (err) {
@@ -498,7 +506,29 @@ export function registerSkillsHandlers(): void {
 
         const root = ourSkillsRoot();
         const skills = readBundledSkills(root);
-        const records = readConfig()?.bundledSkillRecords?.[managedDir] ?? {};
+        const storedRecords = readConfig()?.bundledSkillRecords ?? {};
+        // ⭐ T31（缺口 3）：孤儿键（目录已不在盘上）的技能账先并回来 —— 否则换了网关/
+        //    换了目录之后，这一侧的账是空的，planSkillSync 会把"我们自己装的旧版"判成
+        //    `unverified-origin`，在健康盘上冒虚假冲突。
+        const orphanAdoption = adoptOrphanedSkillRecords({
+          records: storedRecords,
+          managedDir,
+          pathExists: (candidate) => fs.existsSync(candidate),
+        });
+        const records = orphanAdoption.records;
+        if (orphanAdoption.migratedFrom.length > 0) {
+          const next: Record<string, Record<string, string>> = { ...storedRecords, [managedDir]: records };
+          for (const stale of orphanAdoption.migratedFrom) delete next[stale];
+          try {
+            updateConfig({ bundledSkillRecords: next });
+          } catch (error) {
+            getDebugLogger().warn({
+              domain: 'gateway',
+              event: 'skills.record-migrate-failed',
+              message: `${orphanAdoption.migratedFrom.join(', ')}: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          }
+        }
         const missing = new Set(
           missingBundledSkills(skills, (slug) => isBundledSkillInstalled(managedDir, slug)).map((skill) => skill.slug),
         );
@@ -602,6 +632,37 @@ export function registerSkillsHandlers(): void {
               continue;
             }
             if (plan.kind === 'conflict') {
+              /**
+               * ⭐ 2026-10-17（产品决定，BUG-146）：**前账本时代**的随包技能（`records` 里
+               * 根本没有这一项）在升级时无法核验来源，旧行为是永久保留 —— 结果模型读到的是
+               * **旧版技能指令**（生图技能里还写着 `qwen-image-plus`，模型据此回答"不支持生图"）。
+               *
+               * 现在改为：**没有账、且盘上那份的 frontmatter 仍带我们这个 slug 的
+               * `metadata.openclaw.skillKey`** ⇒ 认作产品旧版本，走**与「修复随包版本」
+               * 同一条受控路径**（`confirmed-repair`：整目录备份并保留，然后写入当前包）。
+               *
+               * 反过来，形状认不出（没有 `---` frontmatter、用了块标量）或 skillKey 对不上 ⇒
+               * 可能真是用户自己写的技能，**保持原样报冲突、交用户决定**（那条保护不放松）。
+               */
+              const installedText = records[skill.slug] === undefined
+                ? readInstalledSkillContent(managedDir, skill.slug)
+                : null;
+              const installedShape = installedText ? parseOurSkillFrontmatter(installedText) : null;
+              // 只有"盘上这份确实是我们随包技能的旧副本"才自动升级；
+              // 形状认不出 / skillKey 不是这个 slug ⇒ 可能真是用户自己写的，保持保留并报冲突。
+              const looksLikeOurOlderCopy = installedShape !== null && installedShape.skillKey === skill.slug;
+              if (records[skill.slug] === undefined && looksLikeOurOlderCopy) {
+                classify(
+                  installAndRecordSkill({
+                    gatewayId: payload.gatewayId,
+                    managedDir,
+                    slug: skill.slug,
+                    packageSha: skill.packageSha,
+                    mode: 'confirmed-repair',
+                  }),
+                );
+                continue;
+              }
               conflicts.push({ slug: skill.slug, reason: plan.reason, paths: plan.paths });
               warnSkillUpdateConflict(skill.slug, plan.reason, plan.paths);
               continue;

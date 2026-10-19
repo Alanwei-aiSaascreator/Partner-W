@@ -45,7 +45,7 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'
               - 'eslint.config.mjs'
-              - 'knip.json'
+              - 'knip.jsonc'
               - 'scripts/**'
               - '.github/workflows/ci-bot.yml'
               - '.github/workflows/pr-check.yml'

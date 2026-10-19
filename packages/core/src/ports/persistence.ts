@@ -35,6 +35,8 @@ export interface PersistedMessage {
   thinkingContent?: string;
   /** 实际生成这条回复的模型 id（逐条来自网关）。老行为 `null`。 */
   model?: string | null;
+  /** 整轮用时（本地量，ms）。老行没有这一列 ⇒ `null`/`undefined`。 */
+  durationMs?: number | null;
   /** 交付成功的最小持久化标记（r7-1）。老行/老调用方没有它 ⇒ `null`/`undefined`。 */
   deliverySucceeded?: boolean | null;
   deliveryFailureClosed?: boolean | null;
@@ -98,6 +100,8 @@ export interface PersistencePort {
     toolCalls?: unknown[];
     thinkingContent?: string;
     model?: string;
+    /** 整轮用时（本地量，ms）；缺省时主进程条件覆盖，不抹掉已落库的值。 */
+    durationMs?: number;
   }) => Promise<IpcResult>;
   deleteTask: (taskId: string) => Promise<IpcResult>;
 }

@@ -23,6 +23,7 @@ import type {
 } from '@clawwork/core';
 import { sanitizeForLog } from '@clawwork/shared';
 import { toast } from '@/lib/toast';
+import { resolveVisionRecipients } from '@/lib/vision-routing';
 import { resolveTaskAgentName } from '@/lib/task-agent-name';
 import { createElectronPorts } from './electron-adapter';
 import i18n from '../i18n';
@@ -156,6 +157,19 @@ function getComposer(): ChatComposer {
       settleDispatch: (ticket, receipt, accepted) => composerBridge.settleDispatch(ticket, receipt, accepted),
       compactSession: (gwId, sk) => window.clawwork.compactSession(gwId, sk),
       resetSession: (gwId, sk, mode) => window.clawwork.resetSession(gwId, sk, mode as 'new' | 'reset'),
+      resolveImageRecipientModels: async (gatewayId, sessionKeys) => {
+        const [sessions, config] = await Promise.all([
+          window.clawwork.listSessions(gatewayId),
+          window.clawwork.getConfig(gatewayId),
+        ]);
+        if (!sessions.ok || !config.ok) return null;
+        return resolveVisionRecipients(
+          sessionKeys,
+          sessions.result,
+          config.result,
+          uiStoreApi.getState().modelCatalogByGateway[gatewayId] ?? [],
+        );
+      },
       getModelProvider: (gwId, modelId) => {
         const catalog = uiStoreApi.getState().modelCatalogByGateway[gwId];
         return catalog?.find((m) => m.id === modelId)?.provider;

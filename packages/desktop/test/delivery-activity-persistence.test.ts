@@ -85,6 +85,7 @@ beforeAll(async () => {
             (source.startsWith('../artifact/') ||
               source.startsWith('../docgen/') ||
               source.startsWith('../htmlgen/') ||
+              source.startsWith('../imagegen/') ||
               source.startsWith('../slidegen/') ||
               ['../workspace/config.js', '../ws/index.js', '../debug/index.js'].includes(source))
           )
@@ -100,6 +101,19 @@ beforeAll(async () => {
                 '../runtime/index.js',
                 '../runtime/bundled-search.js',
                 '../runtime/state-config.js',
+                // 2026-10-17 BUG-133：`license.ts` 新增了 `../memory/account-switch.js`
+                // 静态 import（`clearPersistedLicenseBinding` 真清绑定时 fire-and-forget
+                // 重投影 `MEMORY.md`）。**这条边必须留在替身里** —— account-switch 自己
+                // import `../ws/index.js`（取网关客户端），而下面那条 `importer.endsWith
+                // ('/commercial/license.ts')` 的条件只看**直接** importer：account-switch
+                // 去 import ws 时 importer 已不是 license.ts ⇒ 真 `ws/index.js` →
+                // `ws/gateway-client` → `import WebSocket from 'ws'` 被拉进图 →
+                // `ws/lib/stream.js` 的 `require('https')` 在 Vite 解析期就无法解析
+                // （`Failed to resolve entry for package "https"`）⇒ **整档收集失败、
+                // 11 条用例一条都跑不到**（与 BUG-127 同片雷区，成因是"新 import 边把
+                // 不该进图的包拉进来了"）。桩掉这条边 = 沿用本档对 license.ts 每个依赖
+                // 的既有隔离口径，不是掩盖：产品码未改，只是该档本就不需要真 WS 客户端。
+                '../memory/account-switch.js',
               ].includes(source))
           )
             return environment;
@@ -119,6 +133,7 @@ beforeAll(async () => {
             export const generateDocumentsFromMessage = async () => [];
             export const resolvePptxTemplatesRoot = () => undefined;
             export const generateHtmlPagesFromMessage = async () => [];
+            export const startImagegenJobs = () => undefined;
             export const generateSlidesFromMessage = async () => [];
             export const captureDeckFileBaseline = async () => new Map();
             export const changedDeckFiles = () => [];
@@ -130,6 +145,10 @@ beforeAll(async () => {
             export const missingExpectedArtifactKinds = () => [];
             export const nativeTaskControl = () => ({ get: () => undefined, cancel: () => undefined });
             export const nativeInputFromCompletedWrites = () => [];
+            // 2026-10-16（T23 源端身份）：data-handlers 从 native-tool-input.js 多 import 了
+            // nativeExecOrderFromTools —— 桩必须跟着长，否则收集期就是 RollupError、
+            // 整档 11 条用例全部跳过（默认空数组 = 没有运行时执行记录 = 与从前同口径）。
+            export const nativeExecOrderFromTools = () => [];
             export const renderNativePptFile = async () => undefined;
             export const readSlideGenerationReceipt = () => undefined;
             // B 包（2026-10-07）：data-handlers 收尾多了"把跨根成品复制进任务目录"这一步，
@@ -141,6 +160,20 @@ beforeAll(async () => {
             // 2026-10-08：data-handlers 的 claim 链新增了这个导出（artifact/claim-guard），
             // 桩要跟着补一个名字，否则整份 bundle 起不来（默认空 = 没有拒收）。
             export const claimedFilesRejectedByIntegrity = () => [];
+            // 2026-10-17：claim 链新增"同格式误报降级"判据（artifact/claim-guard），
+            // 桩按真实语义实现（不同格式仍拦），否则整份 bundle 收集期就 RollupError。
+            export const classifyMissingClaims = (missing, produced) => {
+              if (!missing.length) return { blocked: [], informational: [] };
+              if (!produced.length) return { blocked: [...missing], informational: [] };
+              const ext = (name) => { const i = name.lastIndexOf('.'); return i >= 0 ? name.slice(i).toLowerCase() : ''; };
+              const producedExts = new Set(produced.map(ext).filter(Boolean));
+              const blocked = []; const informational = [];
+              for (const name of missing) {
+                const e = ext(name);
+                if (e && producedExts.has(e)) informational.push(name); else blocked.push(name);
+              }
+              return { blocked, informational };
+            };
             // BUG-064（2026-10-10）：交付入口接入了"这一轮在跑"软状态（artifact/turn-lifecycle），
             // 桩跟着补三个名字（默认 no-op：不拦截、不结算）。
             // 2026-10-11（复审 B1 整改）：data-handlers 再增 run 队列探针注册。

@@ -207,6 +207,26 @@ function mergePortableAgentDefaults(
 }
 
 /**
+ * 安装版（非便携）：只把**主罗盘**的工作区指到应用工作区，别的一律不动。
+ *
+ * 为什么必须有（2026-10-17 现场）：安装版从来没有传过工作区 ⇒ 网关把 `main` 的
+ * workspace 默认成 `<stateDir>/workspace`，模型生成的 pptx 落在那儿；而产物面板与
+ * claim-guard（"说好的文件不在"）都看**应用工作区** ⇒ 文件明明存在，用户看到的是
+ * "工作区里没有这些文件"，右侧永远空。
+ *
+ * ⚠️ 不套 `skipBootstrap` / heartbeat 那些便携专属默认值 —— 安装版的既有行为不变。
+ */
+function mergeMainAgentWorkspace(
+  existing: Record<string, unknown> | null,
+  workspacePath: string,
+): Record<string, unknown> {
+  const agents = existing && isRecord(existing.agents) ? existing.agents : {};
+  const entries = isRecord(agents.entries) ? agents.entries : {};
+  const main = isRecord(entries.main) ? entries.main : {};
+  return { ...agents, entries: { ...entries, main: { ...main, workspace: workspacePath } } };
+}
+
+/**
  * 要从模型可见的工具里摘掉的两个名字。
  *
  * 为什么摘：模型每轮都可能调 `memory_search`，而在 `provider: "none"` 下
@@ -862,6 +882,8 @@ export function ensureStateConfig(
   userDataDir: string,
   stateUserDataDir = userDataDir,
   portableWorkspacePath?: string,
+  /** 安装版的应用工作区（非便携时才用）：主罗盘的 workspace 必须指向它，见 mergeMainAgentWorkspace。 */
+  agentWorkspacePath?: string,
 ): {
   token: string;
   created: boolean;
@@ -869,6 +891,7 @@ export function ensureStateConfig(
   stateDir: string;
 } {
   const splitState = stateUserDataDir !== userDataDir || Boolean(portableWorkspacePath?.trim());
+  const installedWorkspacePath = portableWorkspacePath?.trim() || agentWorkspacePath?.trim() || undefined;
   const legacyPortableConfig = readStateConfigFile(stateConfigPath(stateDirFor(userDataDir)));
   const legacyPortableToken = readStateToken(legacyPortableConfig);
 
@@ -941,7 +964,9 @@ export function ensureStateConfig(
     (!inboxGuardDir || hasInboxReadonlyGuard(existing, inboxGuardDir)) &&
     (!searchPluginDir || hasRelaySearchProvider(existing, searchPluginDir)) &&
     (!retryGuardDir || hasRetryGuardPolicy(existing, retryGuardDir)) &&
-    (!splitState || hasPortableAgentDefaults(existing, portableWorkspacePath))
+    (splitState
+      ? hasPortableAgentDefaults(existing, portableWorkspacePath)
+      : !installedWorkspacePath || readPortableMainWorkspace(existing) === installedWorkspacePath)
   ) {
     return { token: store.token, created: false, configPath, stateDir };
   }
@@ -966,7 +991,11 @@ export function ensureStateConfig(
     memory: mergeMemoryDefaults(existing),
     tools: mergeToolsDefaults(existing),
     ...(pluginsFinal ? { plugins: pluginsFinal } : {}),
-    ...(splitState ? { agents: mergePortableAgentDefaults(existing, portableWorkspacePath) } : {}),
+    ...(splitState
+      ? { agents: mergePortableAgentDefaults(existing, portableWorkspacePath) }
+      : installedWorkspacePath
+        ? { agents: mergeMainAgentWorkspace(existing, installedWorkspacePath) }
+        : {}),
   };
 
   writeJsonAtomic(configPath, merged);
@@ -1049,7 +1078,14 @@ export async function ensureClientGatewayEntry(opts: {
     });
     previousStateDir = prepared.previousStateDir;
   }
-  const { token, stateDir } = ensureStateConfig(opts.userDataDir, stateUserDataDir, portableWorkspacePath);
+  const { token, stateDir } = ensureStateConfig(
+    opts.userDataDir,
+    stateUserDataDir,
+    portableWorkspacePath,
+    // 安装版（非便携）也把主罗盘指到应用工作区 —— 否则产物落在网关 state 目录，
+    // 产物面板与 claim-guard 都看不见（2026-10-17 现场）。
+    current.workspacePath,
+  );
   const retainedGateways = current.gateways.filter((gateway) => !isLegacyEmptyLocalGateway(gateway));
   const existing = retainedGateways.find((g) => g.id === LOCAL_GATEWAY_ID);
   const configuredDefaultStillExists = retainedGateways.some((gateway) => gateway.id === current.defaultGatewayId);

@@ -6,6 +6,8 @@
     "notActivated": "미인증",
     "offline": "오프라인, 최신 데이터가 아닐 수 있습니다",
     "plan": "현재 요금제",
+    "quotaHeld": "보류",
+    "quotaHeldUnknown": "진행 중인 예약(홀드)을 확인할 수 없어 현재 사용 가능한 잔액을 계산할 수 없습니다.",
     "quotaPending": "잔액 미설정",
     "recharge": "충전",
     "rechargeCardRequired": "Bind a license card under Activation before recharging",
@@ -18,6 +20,7 @@
     "rechargeCustomInvalid": "¥{{min}} ~ ¥{{max}} 사이의 금액을 입력하세요",
     "rechargeCustomPlaceholder": "¥{{min}} ~ ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
+    "rechargeOrderFailed": "이 결제는 실패했으며 포인트가 지급되지 않았습니다",
     "rechargePaid": "결제가 완료되어 크레딧이 지급되었습니다",
     "rechargePickAmount": "Choose an amount",
     "rechargeRate": "충전 비율: 1위안 = 100크레딧",
@@ -103,7 +106,8 @@
     "image": "이미지",
     "link": "링크",
     "markdown": "Markdown 문서",
-    "text": "텍스트 파일"
+    "text": "텍스트 파일",
+    "video": "동영상"
   },
   "assistantWorkspaces": {
     "compass": {
@@ -397,7 +401,36 @@
     "tab": "현상",
     "titlePlaceholder": "할 일을 한 줄로"
   },
+  "mascot": {
+    "talk": "샤오잉에게 말 걸기",
+    "hide": "샤오잉 숨기기",
+    "line0": "여기 있어요, 언제든 말 걸어 주세요~",
+    "line1": "할 일이 많나요? 작게 나눠서 도와드릴게요.",
+    "line2": "계속하세요, 진행 상황은 제가 볼게요.",
+    "desktop": "데스크톱에 두기"
+  },
   "chatInput": {
+    "queuedWhileRunning": "작업 실행 중: 계속 입력할 수 있습니다. Enter를 누르면 대기열에 넣고 이번 턴이 끝난 뒤 전송합니다",
+    "queuedToast": "대기열에 추가했습니다. 이번 턴이 끝나면 자동으로 전송됩니다",
+    "queuedChip": "대기 중: {{text}}",
+    "queuedCancel": "이 대기 메시지 취소",
+    "workingLines": {
+      "0": "생각을 정리하는 중…",
+      "1": "거의 다 됐어요, 조금만~",
+      "2": "큰 작업을 작게 나눠서 진행 중",
+      "3": "자료를 살펴보는 중…",
+      "4": "이 단계는 꼼꼼히, 조금만 기다려 주세요",
+      "5": "거의 끝났어요, 심호흡 emm ovo"
+    },
+    "videoQuality": {
+      "title": "동영상 화질",
+      "standardShort": "표준",
+      "seedanceShort": "고화질",
+      "standard": "표준 · MiniMax H3",
+      "standardDesc": "저렴하고 빠릅니다. 이미지를 첫 프레임으로 쓸 수 없습니다. 초 단위 과금.",
+      "seedance": "고화질 · Doubao Seedance 2.5",
+      "seedanceDesc": "더 선명하고 이미지→동영상을 지원합니다. 이번 턴에 첨부한 이미지가 첫 프레임이 됩니다. 단가가 확실히 높으며 초 단위로 과금됩니다."
+    },
     "abortFailed": "생성 중지에 실패했습니다",
     "addFiles": "파일 추가",
     "addFolder": "폴더 추가",
@@ -433,6 +466,7 @@
       "downloading-media": "이미지 또는 동영상 다운로드 중…",
       "generating-document": "문서 생성 중…",
       "generating-html": "웹 페이지 생성 중…",
+      "generating-image": "이미지 생성 중…",
       "generating-presentation": "프레젠테이션 생성 중…",
       "generating-video": "동영상 생성 중 — 몇 분 걸릴 수 있습니다…",
       "reconciling-artifacts": "생성된 파일 확인 중…",
@@ -448,6 +482,7 @@
         "downloading-media": "이미지 또는 영상 다운로드",
         "generating-document": "문서 생성",
         "generating-html": "웹페이지 생성",
+        "generating-image": "이미지 생성",
         "generating-presentation": "프레젠테이션 생성",
         "generating-video": "동영상 생성",
         "reconciling-artifacts": "파일 확인",
@@ -482,6 +517,7 @@
     "materialTrimToLimit": "앞의 {{count}}개만 유지",
     "materialUnavailable": "{{fileName}} 파일이 이동되었거나 사용할 수 없습니다",
     "mode": {
+      "mediaModelsNote": "이미지·동영상 생성은 전용 모델을 어시스턴트가 자동으로 선택합니다(이 목록에는 없습니다). \"그림 그려줘\" 또는 \"영상 만들어줘\"라고 말하면 됩니다.",
       "advanced": "고급: 모델 지정",
       "deep": "심층",
       "deepDesc": "복잡한 분석과 긴 작업에 적합한 심층 추론",
@@ -506,6 +542,7 @@
     "recognizeImage": "이미지 인식",
     "relayActivationLimitReachedDetail": "이 인증은 기기 수 한도에 도달했습니다. 다른 카드를 사용하거나 고객센터에 문의해 주세요.",
     "relayActivationRequiredDetail": "설정 → Activation에서 인증을 완료해 주세요.",
+    "relayApplyFailedDetail": "모델 설정이 로컬에 적용되지 않았습니다. 다시 시도할 수 있으며, 계속 실패하면 로그를 보내 주세요.",
     "relayEntitlementRejectedDetail": "이 인증은 더 이상 사용할 수 없습니다. 설정 → Activation에서 다시 인증하거나 다른 카드를 사용해 주세요.",
     "relayOrganizationMismatchDetail": "이 인증은 다른 조직에 연결되어 있습니다. 설정 → Activation을 확인해 주세요.",
     "relayRetryableDetail": "상용 서비스가 아직 준비되지 않았습니다. 다시 시도해 주세요.",
@@ -544,7 +581,6 @@
     "unsupportedCapability": "현재 이 기능은 지원되지 않습니다. 작업 공간에서 사용할 수 있는 기능을 대신 이용해 주세요.",
     "unsupportedModel": "현재 이 모델은 지원되지 않습니다. 모델 목록에서 사용 가능한 모델을 선택해 주세요.",
     "visionFallbackSwitched": "이 이미지에는 이미지 인식이 가능한 모델을 사용했습니다: {{model}}",
-    "visionMentionBlocked": "이미지는 아직 팀 직무로 보낼 수 없습니다. 직무를 멘션하기 전에 이미지를 제거하거나, @를 지우고 이미지를 직접 보내세요.",
     "visionUnavailable": "이 모델의 이미지 지원을 확인할 수 없습니다. 이미지 지원 모델을 선택하거나 이미지를 제거한 후 전송하세요. 이미지가 포함된 PPT는 먼저 이미지를 분석하세요.",
     "waiting": {
       "awaitingAnswer": "답변을 기다리는 중",
@@ -569,9 +605,14 @@
     }
   },
   "chatMessage": {
+    "turnDurationMinutesSeconds": "소요 시간 {{minutes}}분 {{seconds}}초",
+    "turnDurationSeconds": "소요 시간 {{seconds}}초",
     "autoRetryNotice": "방금 실행이 완료되지 않았습니다. 자동으로 한 번만 다시 시도합니다(요금이 다시 부과됩니다).",
     "conductor": "코디네이터",
     "copied": "복사됨",
+    "turnCost": "이번 턴 소비: {{credits}} 크레딧",
+    "liveTaskCost": "이 작업에서 {{credits}} 포인트 사용",
+    "taskCostTotal": "이 작업의 누적 사용량은 {{credits}} 포인트입니다",
     "copyCode": "코드 복사",
     "copyMessage": "메시지 복사",
     "docgenDelivered": "문서가 생성되었습니다",
@@ -584,9 +625,15 @@
     "htmlgenGenerating": "웹페이지 생성 중…",
     "htmlgenPending": "웹페이지 내용 대기 중",
     "htmlgenUnconfirmed": "웹페이지 등록이 아직 확인되지 않았습니다 — 오른쪽 「产物」에서 최신 파일을 확인하세요",
+    "imagegenDelivered": "이미지 생성 완료",
+    "imagegenFailed": "이미지 생성 실패",
+    "imagegenGenerating": "이미지 생성 중…",
+    "imagegenPending": "이미지 처리 대기",
+    "imagegenUnconfirmed": "이미지 전달 미확인",
     "noVisibleAnswer": "도우미가 표시할 수 있는 답변을 반환하지 않았습니다. 다시 시도해 주세요.",
     "retryHint": "이전 메시지를 다시 보냅니다 (요금이 한 번 더 차감됩니다)",
     "thinking": {
+      "liveTailHint": "최신 내용만 표시합니다. 완료 후 전체 사고 과정을 볼 수 있습니다.",
       "title": "깊은 사고"
     },
     "toolCallSummary": "{{count}}개 도구 호출 실행됨",
@@ -1043,6 +1090,15 @@
     "workspace": "작업 공간 읽기 및 쓰기"
   },
   "errors": {
+    "userStopped": "이번 턴을 중지했습니다",
+    "human": {
+      "not-connected": "로컬 서비스가 아직 연결되지 않았습니다. 잠시 후 다시 시도하세요.",
+      "timeout": "요청 시간이 초과되었습니다. 다시 시도하세요.",
+      "rate-limit": "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
+      "context-length": "대화가 너무 깁니다. 새 작업을 시작하거나 컨텍스트를 정리한 뒤 다시 시도하세요.",
+      "insufficient-credits": "포인트가 부족합니다. 충전 후 다시 시도하세요.",
+      "send-failed": "전송에 실패했습니다. 다시 시도하세요."
+    },
     "agentMissing": "해당 어시스턴트는 이 컴퓨터에 없습니다. 다른 어시스턴트를 선택해 다시 보내세요.",
     "agentNotResponding": "에이전트가 응답하지 않습니다 — 서버에서 사용할 수 없거나 잘못 구성되었을 수 있습니다. 다른 에이전트를 시도해 보세요.",
     "boundaryTitle": "오류가 발생했습니다",
@@ -1070,6 +1126,27 @@
     "wrapper": {
       "providerRequestRejected": "서비스를 일시적으로 사용할 수 없습니다. 다른 모델로 바꾸거나 잠시 후 다시 시도해 주세요."
     }
+  },
+  "experts": {
+    "countLabel": "전문가 {{n}}명",
+    "domain": {
+      "all": "전체",
+      "design": "디자인",
+      "engineering": "엔지니어링",
+      "knowledge": "지식",
+      "news": "뉴스"
+    },
+    "filterLabel": "분야별 필터",
+    "installHint": "각 전문가는 함께 제공되는 스킬로 동작합니다. 아직 설치하지 않았다면 먼저 '스킬 스토어'에서 설치하세요.",
+    "launch": "작업 시작",
+    "launchPrompt": "설치된 스킬 \"{{name}}\"을 사용해 다음을 수행하세요:",
+    "subtitle": "앱에 함께 제공되는 전문가입니다. 선택하면 해당 분야에 맞는 방식으로 작업을 시작합니다.",
+    "title": "전문가 라이브러리",
+    "dialogTitle": "\"{{name}}\"에게 무엇을 시킬까요?",
+    "dialogDescription": "할 일을 한 줄로 적어 주세요. \"시작\"을 누르면 작업을 만들고 바로 전송합니다.",
+    "dialogPlaceholder": "예: 이 모듈의 아키텍처 결정 기록 작성",
+    "dialogStart": "시작",
+    "dialogCancel": "취소"
   },
   "export": {
     "exportedToFiles": "파일로 내보냈습니다"
@@ -1258,6 +1335,50 @@
       "engineer": {},
       "legal": {}
     },
+    "industryBriefLabel": {
+      "focus": "산업 핵심: ",
+      "method": "산업 방법: ",
+      "template": "산출물 구성: "
+    },
+    "industryMethod": "업종별 접근 방식",
+    "industryMethodBrief": {
+      "C": {
+        "focus": "생산능력·수율·납기·품질. 숫자는 라인과 배치에 연결합니다.",
+        "method": "먼저 사양과 합격 기준을 정하고 계획. 생산능력과 수율로 검증합니다.",
+        "template": "산출물 구성: 공정·생산능력 설명 → 방안과 일정표 → 품질·검수 목록."
+      },
+      "H": {
+        "focus": "고객 수·평판·회전율·비용. 숫자는 매장과 시간대에 연결합니다.",
+        "method": "먼저 목표 고객과 시간대를 정하고 동선과 메뉴를 설계. 회전율로 검증합니다.",
+        "template": "산출물 구성: 매장·고객 설명 → 동선과 메뉴 방안 → 서비스·비용 목록."
+      },
+      "J": {
+        "focus": "규제·리스크·수익·추적성. 모든 숫자에는 출처가 필요합니다.",
+        "method": "먼저 경계와 기준을 정하고 산출과 시나리오. 리스크 지표로 검증합니다.",
+        "template": "산출물 구성: 기준·규제 설명 → 산출과 시나리오 표 → 리스크 목록."
+      },
+      "K": {
+        "focus": "입지·분양률·비용·정책. 결론은 프로젝트와 기간에 연결합니다.",
+        "method": "먼저 범위와 정책 전제를 정하고 산출과 비교. 분양률로 검증합니다.",
+        "template": "산출물 구성: 프로젝트·입지 설명 → 산출과 비교표 → 비용·리스크 목록."
+      },
+      "L": {
+        "focus": "고객 확보·이행 품질·서비스 비용. 결론은 계약과 일정에 연결합니다.",
+        "method": "먼저 요구와 계약 제약을 확인하고 방안과 일정. 이행 지표로 검증합니다.",
+        "template": "산출물 구성: 고객·계약 설명 → 방안과 일정표 → 이행·비용 목록."
+      },
+      "P": {
+        "focus": "학습 목표·학습자 차이·효과 근거. 결론은 과정과 반에 연결합니다.",
+        "method": "먼저 목표와 출발점을 정하고 수업과 연습 설계. 평가 근거로 검증합니다.",
+        "template": "산출물 구성: 학습 현황·목표 설명 → 과정과 활동 → 평가·개선 목록."
+      },
+      "R": {
+        "focus": "수용자·콘텐츠 리듬·도달 효과. 결론은 작품과 공개 시점에 연결합니다.",
+        "method": "먼저 수용자와 주제를 정하고 구조와 리듬 구성. 도달 데이터로 검증합니다.",
+        "template": "산출물 구성: 수용자·주제 설명 → 콘텐츠와 리듬 → 공개·효과 목록."
+      }
+    },
+    "industryMethodNone": "업종을 선택하지 않아 도우미에 추가로 기록하지 않습니다.",
     "needTag": "태그를 하나 이상 선택하세요",
     "nickname": "Nickname",
     "portraitHint": "Saved by the first-run guide. Read-only.",
@@ -1273,6 +1394,7 @@
     },
     "shuffle": "태그 바꾸기",
     "skill": {},
+    "skillsConfirmed": "첫 설정에서 확인한 능력:",
     "skillsHint": "These six capability sets ship with the app. Describe what you need in chat and the team will use them.",
     "subtitle": "Your portrait, work identity, AI team, core skills and preferences — all in one place. Saving writes them into every assistant's memory.",
     "tag": {
@@ -1307,6 +1429,17 @@
       }
     },
     "title": "Personalization Center"
+  },
+  "imagegen": {
+    "blockInvalid": "이미지 요청이 불완전하거나 지원하지 않는 규격입니다. 수정 후 다시 시도하세요.",
+    "failedTitle": "이미지 생성 상태",
+    "generationFailed": "이미지 생성에 실패했습니다. 설명을 수정하세요.",
+    "imageInvalid": "이미지를 완전히 열 수 없거나 크기가 맞지 않아 결과물을 등록하지 않았습니다.",
+    "requestUnconfirmed": "이미지 결과가 확인되지 않았습니다. 다시 생성하지 말고 원래 작업 ID로 복구하세요.",
+    "resultUnconfirmed": "이미지 결과 또는 정산이 미확인 상태여서 결과물을 등록하지 않았습니다. 원래 작업 ID로 복구하세요.",
+    "saveFailed": "이미지가 저장되지 않았습니다. 원래 작업 ID로 복구하세요.",
+    "unavailable": "현재 이미지 생성을 사용할 수 없습니다. 새 생성 요청을 보내지 않았습니다.",
+    "workspaceChanged": "작업 공간이나 계정이 변경되어 이미지 저장을 중단했습니다."
   },
   "kb": {
     "addDone": "자료 {{count}}개를 추가했습니다",
@@ -1359,6 +1492,17 @@
     "title": "지식 베이스"
   },
   "leftNav": {
+    "taskGroups": {
+      "header": "작업",
+      "today": "오늘",
+      "yesterday": "어제",
+      "week": "이번 주",
+      "earlier": "이전",
+      "all": "모든 작업",
+      "empty": "아직 작업이 없습니다",
+      "running": "실행 중",
+      "untitled": "제목 없는 작업"
+    },
     "addAssistant": "어시스턴트 추가",
     "appSettings": "앱 설정",
     "archivedChats": "보관된 대화",
@@ -1376,17 +1520,21 @@
       "search": "작업 검색",
       "skills": "스킬 마켓",
       "square": "광장",
-      "teams": "팀"
+      "teams": "팀",
+      "more": "더 보기",
+      "agentsSimple": "에이전트"
     },
     "recentTasks": "최근 작업",
     "searchTasks": "작업 검색…",
     "updateAvailable": "업데이트 가능",
-    "usageOverview": "내 AI 사용 현황"
+    "usageOverview": "내 AI 사용 현황",
+    "profile": "프로필",
+    "usageAndCredits": "사용량 및 크레딧"
   },
   "login": {
     "agreement": "{0} 및 {1}을(를) 읽고 동의합니다",
     "authenticatedForActivation": "로그인되었습니다. 이 계정의 이용 권한을 확인하세요.",
-    "betaPhoneNotice": "휴대폰 번호는 이번 베타 계정 등록과 안내에만 사용합니다. 테스트 종료 후 30일 이내에 삭제하며 다른 용도로 사용하지 않습니다.",
+    "betaPhoneNotice": "휴대폰 번호는 계정 생성, 로그인 및 필수 서비스 안내에만 사용하며 다른 용도로 사용하지 않습니다.",
     "brandSubline": "로그인 후, 하고 싶은 일을 말하면 바로 시작할 수 있습니다.",
     "changeAccount": "계정 변경",
     "changePhone": "번호 변경",
@@ -1422,7 +1570,6 @@
     "currentAssistant": "현재 어시스턴트",
     "messageLayoutCentered": "메시지 가운데 정렬로 복귀",
     "messageLayoutWide": "메시지 영역 펼치기",
-    "refreshUsage": "사용량 새로고침",
     "scrollToBottom": "맨 아래로 스크롤",
     "toggleContextPanel": "컨텍스트 패널 전환",
     "welcomeSubtitle": "작업을 설명하면 Rongying Cube가 알맞은 어시스턴트와 모델을 선택해 드립니다.",
@@ -1635,7 +1782,6 @@
       },
       "industry": "Your main industry",
       "introduction": "A brief introduction (optional)",
-      "model": "Actual model",
       "nicknameFallback": "My work profile",
       "personaSourceDefault": "Character source: default artwork",
       "personaSourceRule": "Character source: saved approved rule",
@@ -1752,9 +1898,7 @@
           "name": "Virtuoso"
         },
         "partial": "Some questions were skipped — this result is for reference only."
-      },
-      "usagePending": "Usage: pending verification",
-      "usageSettled": "Usage: settled against the actual receipt"
+      }
     },
     "goalAnalysisHint": "작업 목표를 저장하며 AI를 자동 호출하지 않습니다. 작업 공간에서 도우미를 선택해 작업을 시작하세요.",
     "multipleHint": "Choose more than one",
@@ -1979,6 +2123,60 @@
     "contextReset": "세션 컨텍스트가 초기화되었습니다"
   },
   "settings": {
+    "connectors": {
+      "nav": "커넥터",
+      "title": "커넥터",
+      "subtitle": "휴대폰의 Feishu를 이 컴퓨터에 연결하면 외출 중에도 작업을 맡길 수 있습니다. 채널은 로컬 게이트웨이에서 실행되며 포트를 인터넷에 노출하지 않습니다.",
+      "refresh": "상태 새로고침",
+      "feishu": {
+        "stateClosed": "채널 꺼짐",
+        "boundAgent": "페이수 메시지를 받을 어시스턴트",
+        "bindNone": "연결 안 함",
+        "bindUnset": "아직 연결 안 됨",
+        "unboundWarning": "연결된 어시스턴트가 없어 페이수 메시지가 처리되지 않습니다. 어시스턴트를 선택하세요.",
+        "unbind": "연결 해제",
+        "disableChannel": "채널 끄기",
+        "enableChannel": "채널 켜기",
+        "bindChanged": "연결된 어시스턴트를 변경했습니다",
+        "bindCleared": "연결을 해제했습니다",
+        "actionFailed": "작업에 실패했습니다. 다시 시도하세요.",
+        "channelEnabled": "채널을 켰습니다",
+        "channelDisabled": "채널을 껐습니다 (자격 증명은 유지되며 언제든 다시 켤 수 있습니다)",
+        "dialogTitle": "QR 코드로 페이수 연결",
+        "dialogDescription": "휴대폰 페이수로 아래 QR 코드를 스캔하고 확인하세요.",
+        "userCode": "인증 코드: {{code}}",
+        "scanWaiting": "휴대폰 확인을 기다리는 중…",
+        "scanSuccess": "스캔 성공 - 페이수가 연결되었습니다",
+        "scanDenied": "스캔이 거부되었습니다. 다시 시도하세요.",
+        "scanExpired": "QR 코드가 만료되었습니다. 새로 받으세요.",
+        "scanFailed": "연결에 실패했습니다. 다시 시도하세요.",
+        "scanCancelled": "스캔을 취소했습니다",
+        "scanUnavailable": "페이수 QR 연결을 지금 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
+        "scanNetworkFailed": "네트워크 오류입니다. 연결을 확인하고 다시 시도하세요.",
+        "cancelScan": "취소",
+        "retryScan": "QR 코드 다시 받기",
+        "done": "완료",
+        "title": "Feishu",
+        "description": "휴대폰 Feishu에서 봇에게 말을 걸면 이 컴퓨터에서 작업이 실행됩니다.",
+        "stateIdle": "연결 안 됨",
+        "stateConfigured": "설정됨",
+        "stateUnavailable": "런타임 사용 불가",
+        "appId": "연결됨 · 앱 ID: {{appId}}",
+        "pluginMissing": "Feishu 플러그인은 앱에 포함되어 있습니다. \"Feishu 연결\"만 누르면 됩니다(다운로드·수동 압축 해제 불필요).",
+        "runtimeMissing": "로컬 런타임이 아직 준비되지 않아 연결할 수 없습니다. 먼저 앱이 정상 동작하는지 확인하세요.",
+        "connect": "Feishu 연결",
+        "reconnect": "다시 스캔",
+        "scanHint": "스캔 후 이 페이지로 돌아와 \"상태 새로고침\"을 누르세요. 여기에는 로컬 설정만 표시되며 온라인 상태는 아닙니다.",
+        "billingNote": "Feishu에서 시작한 작업도 이 컴퓨터 계정의 포인트를 사용하며 데스크톱 앱과 동일하게 과금됩니다.",
+        "gatewayUnavailable": "로컬 AI 서비스가 아직 준비되지 않아 지금은 Feishu를 연결할 수 없습니다. 잠시 후 다시 시도하세요.",
+        "writeFailed": "Feishu 설정이 기록되었지만 로컬 AI 서비스가 받아들이지 않았습니다. 다시 스캔하세요.",
+        "invalidAgent": "선택한 어시스턴트가 더 이상 없습니다. 다른 어시스턴트를 선택해 다시 시도하세요.",
+        "pluginInstallFailed": "번들 Feishu 플러그인을 설치하지 못했습니다. 앱을 다시 시작한 뒤 재시도하세요.",
+        "unsupportedAuth": "이 Feishu 계정은 현재 스캔 방식을 지원하지 않습니다. Feishu 모바일 앱에서 다시 시도하거나 고객 지원에 문의하세요.",
+        "unknownError": "Feishu 연결에 실패했습니다. 다시 시도하세요. 계속 실패하면 앱을 다시 시작하세요.",
+        "ingressUnavailable": "Feishu는 연결되었지만 메시지를 받을 수 없습니다. 플러그인에 신뢰할 수 있는 설치 기록이 없습니다. 여기에서 다시 스캔하세요(플러그인이 다시 설치됩니다). 또는 앱을 다시 시작한 뒤 시도하세요."
+      }
+    },
     "about": "정보",
     "aboutDesc": "버전, 업데이트, 링크",
     "account": "계정",
@@ -2049,7 +2247,7 @@
     "alreadyLatest": "최신 버전을 사용 중입니다",
     "appearance": "외관",
     "authMethod": "인증 방식",
-    "bundledSkillsConflicts": "{{count}}개의 번들 스킬이 로컬 수정 사항을 유지하여 자동 업그레이드되지 않았습니다: {{skills}}. 스킬 마켓에서 '번들 버전 복구'로 복원할 수 있습니다.",
+    "bundledSkillsConflicts": "{{count}}개의 번들 스킬이 로컬 변경 사항을 유지하여 자동 업데이트되지 않았습니다: {{skills}}. 스킬 마켓의 '번들 버전 복구'에서 복원할 수 있습니다.",
     "bundledSkillsFailed": "{{count}}개의 번들 스킬 설치/업데이트가 완료되지 않았습니다: {{skills}}. 게이트웨이에 다시 연결되거나 다음에 앱을 시작할 때 자동으로 다시 시도됩니다.",
     "bundledSkillsFix": "스킬 마켓에서 복구",
     "cancelDownload": "다운로드 취소",
@@ -2103,17 +2301,54 @@
     "memory": "Memory",
     "memoryAboutYou": "About you",
     "memoryAboutYouHint": "Your habits, what you care about, how you want them to work with you. Saving writes it to every assistant on this disk.",
+    "memoryAboutYouScope": "이 입력란은 어시스턴트가 매 턴 읽는 '당신에 대해' 파일입니다. 아래의 장기 기억과는 별개이며, 장기 기억은 계정별로 분리 저장되어 다른 계정에서는 보이지 않습니다. 이 입력란의 내용은 이 디스크의 모든 어시스턴트에게 기록됩니다.",
+    "memoryAdd": "이 내용 기억하기",
+    "memoryAdded": "저장했습니다. 다음 턴부터 어시스턴트가 읽습니다.",
+    "memoryAddPlaceholder": "어시스턴트가 오래 기억하기를 바라는 내용을 적어 주세요.",
+    "memoryConfirmed": "확인했습니다. 다음 턴부터 어시스턴트가 읽습니다.",
     "memoryCounter": "{{used}} / {{max}}",
+    "memoryDelete": "삭제",
+    "memoryDeleted": "삭제했습니다. 어시스턴트가 더 이상 읽지 않습니다.",
+    "memoryDraftCancelEdit": "취소",
+    "memoryDraftConfirm": "확인",
+    "memoryDraftCount": "{{count}}개 대기 중",
+    "memoryDraftEdit": "편집",
+    "memoryDraftReject": "거부",
+    "memoryDrafts": "확인 대기 중인 제안",
+    "memoryDraftSaveEdit": "수정한 내용으로 확인",
+    "memoryDraftsEmpty": "어시스턴트가 아직 기억할 내용을 제안하지 않았습니다.",
+    "memoryDraftsHint": "어시스턴트가 제안한 내용입니다. 확인하기 전에는 기억되지 않습니다.",
+    "memoryDraftSourceAssistant": "어시스턴트 제안",
     "memoryDraftTrackNotYet": "Note: this version only lets you write it yourself. The assistant cannot yet propose a draft for you to confirm.",
+    "memoryEntries": "장기 기억",
+    "memoryEntriesEmpty": "아직 확정된 기억이 없습니다.",
+    "memoryEntriesHint": "확정된 기억은 어시스턴트가 매 턴 읽는 프롬프트에 기록됩니다.",
+    "memoryEntryCount": "저장됨 {{count}}개",
+    "memoryErrorBlockFull": "장기 기억이 가득 찼습니다. 하나를 삭제한 뒤 추가해 주세요.",
+    "memoryErrorControlCharacters": "이 텍스트에는 저장할 수 없는 문자가 있습니다.",
+    "memoryErrorCountFull": "기억 개수가 한도에 도달했습니다. 하나를 삭제한 뒤 추가해 주세요.",
+    "memoryErrorDuplicate": "이미 저장된 내용입니다.",
+    "memoryErrorEmpty": "먼저 내용을 입력해 주세요.",
+    "memoryErrorNotFound": "해당 기억은 더 이상 존재하지 않습니다.",
+    "memoryErrorOverLimit": "너무 깁니다 — 기억 하나는 최대 {{max}}자까지입니다.",
+    "memoryErrorUnavailable": "현재 기억 기능을 사용할 수 없습니다.",
     "memoryIntro": "The assistants on this disk read the following every turn. What you write here, they remember.",
     "memoryNoAgents": "There are no assistants on this disk yet. Create one first.",
     "memoryPlaceholder": "For example: I read the conclusion first; quote tax-inclusive prices; do not schedule work for me on weekends.",
     "memoryReadFailed": "Could not read this memory. Reopening this page may help.",
+    "memoryRejected": "거부했습니다. 저장되지 않았습니다.",
+    "memoryRejectNote": "거부한 제안은 기록되어, 같은 일을 다시 묻지 않습니다.",
     "memorySave": "Save",
     "memorySaved": "Saved. {{count}} assistants will read this.",
     "memorySaveFailed": "Save failed. Please try again.",
     "memorySavePartial": "{{failed}} of {{total}} assistants were not saved. Please save again.",
+    "memoryStoredOnDisk": "기억은 이 디스크에 저장되며 계정별로 분리됩니다. 다른 계정으로 로그인하면 보이지 않습니다.",
+    "memorySyncPartial": "저장했지만 {{failed}}개 어시스턴트가 받지 못했습니다. 온라인 상태에서 한 번 더 열면 동기화됩니다.",
+    "memorySyncPending": "변경은 기록했지만 어시스턴트가 아직 받지 못했습니다(로컬 서비스 연결 끊김). 온라인 상태에서 이 페이지를 다시 열거나 앱을 재시작하면 동기화됩니다.",
     "memoryTooLong": "Over the limit ({{max}} characters). The extra part will not be saved - please shorten it.",
+    "memoryUserMdTitle": "당신에 대해",
+    "memoryUserMdObserved": "관찰일: {{date}} | 상태: 유효",
+    "memoryUserMdSampleDirective": "- 진행 상황을 간결하게 보고하세요.",
     "memoryUnsaved": "Unsaved changes",
     "mobile": "모바일",
     "mobileDesc": "휴대폰에서 Rongying Cube에 접속",
@@ -2168,6 +2403,145 @@
     "quickLaunchUpdateFailed": "빠른 실행 설정을 업데이트하지 못했습니다",
     "readyToInstall": "재시작하여 업데이트",
     "remove": "제거",
+    "repair": {
+      "applySelected": "선택 항목 복구({{count}})",
+      "code": {
+        "apply": {
+          "already-current": "이미 최신 상태입니다. 변경된 파일이 없습니다.",
+          "already-gone": "더 이상 처리할 것이 없습니다(파일이 이미 처리되었거나 존재하지 않습니다).",
+          "backup-failed": "실행하지 않았습니다. 백업에 실패해 원본 파일은 그대로 두었습니다.",
+          "became-live": "취소했습니다. 이 잠금은 방금 사용 중인 잠금으로 바뀌었습니다.",
+          "blocked-live-instance": "실행하지 않았습니다. 이 컴퓨터에서 Rongying Cube가 실행 중입니다.",
+          "diagnostics-failed": "진단 패키지를 내보내지 못했습니다(드라이브에 쓸 수 없을 수 있습니다).",
+          "diagnostics-written": "진단 패키지를 내보냈습니다: {{path}}",
+          "invalid-json": "실행하지 않았습니다. 설정 파일이 올바른 JSON이 아닙니다.",
+          "not-object": "실행하지 않았습니다. 설정 파일 형식을 알아볼 수 없습니다.",
+          "plugin-dir-missing": "실행하지 않았습니다. 현재 드라이브에 플러그인 폴더를 만들 수 없습니다(드라이브가 읽기 전용일 수 있습니다).",
+          "quarantined": "격리했습니다(원본 파일은 이름을 바꿔 남기고 사본을 백업했습니다).",
+          "read-failed": "실행하지 않았습니다. 설정 파일을 읽을 수 없습니다.",
+          "rebased": "현재 드라이브에 맞춰 플러그인 경로를 다시 지정했습니다.",
+          "rename-failed": "실행하지 않았습니다. 격리를 위한 이름 변경에 실패했습니다(파일이 사용 중일 수 있습니다).",
+          "rewritten": "현재 버전으로 기능 경계 블록을 다시 작성했습니다.",
+          "skill-migrated": "스킬 설치 기록을 현재 스킬 폴더로 옮겼습니다.",
+          "unreadable-lock": "실행하지 않았습니다. 잠금 파일은 남아 있지만 읽을 수 없습니다(다른 프로그램이 사용 중일 수 있습니다).",
+          "unsafe-target-link": "실행하지 않았습니다. 이 위치는 일반 파일이 아닙니다(다른 곳을 가리키는 링크일 수 있습니다). 안전을 위해 그대로 둡니다.",
+          "write-failed": "실행하지 않았습니다. 설정을 다시 쓰지 못했습니다."
+        },
+        "capability": {
+          "block-corrupt": "기능 경계 블록의 시작/끝 표시가 짝을 이루지 않습니다(일부만 기록됨). 다시 작성해야 합니다: {{path}}",
+          "block-missing": "AGENTS.md에 기능 경계 블록이 없어 어시스턴트가 오래된 규칙에 잘못 따를 수 있습니다: {{path}}",
+          "block-newer": "기능 경계 블록이 현재 프로그램보다 최신(v{{version}})이므로 낮추지 않습니다: {{path}}",
+          "block-stale": "기능 경계 블록이 이전 버전에 머물러 있습니다(v{{version}} < v{{current}}): {{path}}",
+          "no-downgrade": "블록 버전이 현재 프로그램보다 높아 그대로 둡니다(최신 내용을 예전 것으로 덮어쓰지 않기 위해): {{path}}",
+          "no-file": "어시스턴트가 아직 AGENTS.md를 작성하지 않아 블록 검사를 건너뛰었습니다.",
+          "no-workspace": "이 상태에 어시스턴트 작업 공간이 없어 블록 검사를 건너뛰었습니다: {{path}}",
+          "none": "검사할 수 있는 어시스턴트 작업 공간을 찾지 못했습니다.",
+          "ok": "기능 경계 블록이 최신 버전입니다(v{{version}}): {{path}}",
+          "rewrite-block": "현재 버전으로 기능 경계 블록을 다시 작성합니다(블록 안쪽만, v{{version}}으로 올림): {{path}}"
+        },
+        "diagnostics": {
+          "export": "진단 패키지를 내보냅니다: {{path}}",
+          "failed": "진단 패키지를 내보내지 못했습니다(드라이브에 쓸 수 없을 수 있습니다).",
+          "ready": "고객 지원에 보낼 진단 패키지를 내보낼 수 있습니다(비밀번호 같은 내용은 빼고 {{path}}에만 저장하며 자동 업로드하지 않습니다).",
+          "written": "진단 패키지를 내보냈습니다: {{path}}"
+        },
+        "env": {
+          "data-root-not-writable": "실행 데이터 폴더에 쓸 수 없어 복구 작업이 실패합니다: {{path}}",
+          "data-root-writable": "실행 데이터 폴더에 쓸 수 있습니다: {{path}}",
+          "guide-antivirus-quarantine": "백신 프로그램이 격리했을 가능성이 큽니다. 백신 프로그램의 격리 보관소에서 복원하고 허용 목록에 추가한 뒤 이 프로그램을 다시 열어 주세요. 자세한 내용은 『사용 설명서』의 「첫 실행이 백신에 차단된 경우」 항목을 참고하세요.",
+          "guide-never-started": "이 프로그램은 아직 한 번도 정상적으로 시작되지 않았을 수 있습니다. 먼저 이 프로그램을 한 번 정상적으로 열어 실행 환경을 준비한 뒤 복구를 다시 진행해 주세요.",
+          "guide-readonly-drive": "드라이브가 읽기 전용일 수 있습니다(쓰기 방지 스위치가 켜졌거나 시스템이 권한을 바꾼 경우). USB의 쓰기 방지 스위치를 확인하거나 다른 USB 포트에 꽂아 다시 시도해 주세요.",
+          "guide-workspace": "그 드라이브에서 작업 공간을 찾을 수 없거나 쓸 수 없습니다. 드라이브가 쓰기 방지되어 있지 않은지 확인하거나 다른 USB 포트에 꽂아 다시 시도해 주세요.",
+          "mode-installed": "현재 설치 버전으로 실행 중이며 실행 데이터 위치: {{root}}",
+          "mode-portable": "현재 드라이브에서 실행 중이며 실행 데이터 위치: {{root}}",
+          "runtime-deployed": "로컬 실행 환경이 배포되었습니다: {{path}}",
+          "runtime-media-dev-skip": "현재 패키지 버전이 아니어서 함께 제공된 런타임 검사를 건너뛰었습니다.",
+          "runtime-media-missing": "함께 제공된 런타임을 찾을 수 없어 로컬 서비스를 시작할 수 없습니다.",
+          "runtime-media-present": "함께 제공된 런타임이 있습니다: {{path}}",
+          "runtime-not-deployed": "로컬 실행 환경이 아직 배포되지 않았습니다(처음 열 때 자동으로 준비되며 몇 분 걸립니다).",
+          "state-found": "상태 폴더 {{count}}개를 찾았습니다. 예: {{path}}",
+          "state-missing": "상태 폴더를 찾지 못했습니다: {{path}}",
+          "workspace-ok": "사용자 데이터 작업 공간을 사용할 수 있습니다: {{path}}",
+          "workspace-unusable": "사용자 데이터 작업 공간을 사용할 수 없습니다(없거나 쓸 수 없음): {{path}}"
+        },
+        "live": {
+          "gateway-lock": "사용 중인 Gateway 잠금이 발견되었습니다. 로컬 서비스가 아직 실행 중이라는 뜻입니다: {{path}}. Rongying Cube를 완전히 종료한 뒤 돌아와 「전체 검사 다시 실행」을 눌러 주세요.",
+          "instance-owner": "이 컴퓨터에서 Rongying Cube가 실행 중입니다(프로세스 PID {{pid}}). 그래서 복구 작업이 전혀 실행되지 않습니다. 완전히 종료한 뒤 돌아와 「전체 검사 다시 실행」을 눌러 주세요.",
+          "port-listener": "로컬 포트에서 프로세스가 대기 중입니다(PID {{pid}}). 로컬 서비스가 아직 실행 중일 수 있습니다. Rongying Cube를 완전히 종료한 뒤 돌아와 「전체 검사 다시 실행」을 눌러 주세요."
+        },
+        "lock": {
+          "corrupt": {
+            "bad-pid": "잠금 파일에 사용할 수 있는 프로세스 번호가 없습니다: {{path}}",
+            "not-json": "잠금 파일 내용이 올바른 JSON이 아닙니다(기록 중 전원이 꺼졌을 가능성이 큽니다): {{path}}",
+            "not-object": "잠금 파일 내용이 객체가 아닙니다: {{path}}",
+            "unreadable": "잠금 파일을 읽을 수 없습니다(사용 중일 수 있습니다): {{path}}"
+          },
+          "live": {
+            "start-time-match": "실행 중인 Gateway가 남긴 잠금이므로 그대로 둡니다: {{path}}",
+            "unverifiable": "이 잠금이 남은 잠금인지 확인할 수 없습니다(프로세스 시작 시간을 가져올 수 없음). 안전을 위해 그대로 둡니다: {{path}}"
+          },
+          "no-state": "상태 폴더를 찾지 못해 잠금 검사를 건너뛰었습니다.",
+          "none": "로컬 Gateway 잠금 파일이 정상입니다(상태 폴더 {{count}}개 확인).",
+          "quarantine": "이 손상된 잠금을 이름을 바꿔 격리합니다: {{path}}",
+          "stale": {
+            "pid-gone": "잠금에 기록된 프로세스(PID {{pid}})가 이미 종료되어 남은 잠금입니다: {{path}}",
+            "pid-reused": "잠금에 기록된 프로세스 번호(PID {{pid}})가 시스템에 의해 다른 프로그램에 재사용되었습니다. 남은 잠금입니다: {{path}}"
+          }
+        },
+        "plugin": {
+          "foreign-dead-path": "설정에 다른 프로그램을 가리키는 끊긴 경로가 있습니다. 저희가 임의로 삭제하지 않습니다: {{path}}",
+          "no-state": "상태 폴더를 찾지 못해 플러그인 경로 검사를 건너뛰었습니다.",
+          "none": "플러그인 로드 경로가 모두 그대로 있습니다.",
+          "own-dead-path": "설정이 더 이상 존재하지 않는 앱 플러그인 폴더를 가리키고 있습니다(보통 드라이브 문자가 바뀐 경우): {{path}}",
+          "rebase": "현재 드라이브에 맞춰 플러그인 경로를 다시 지정합니다({{path}} 변경, 끊긴 경로 {{count}}개)"
+        },
+        "skill": {
+          "ambiguous": "여러 상태 폴더가 발견되었고 어느 것이 현재 것인지 분명하지 않아 기록을 그대로 두었습니다.",
+          "matched": "스킬 설치 기록이 현재 스킬 폴더와 일치합니다.",
+          "migrate": "스킬 설치 기록을 현재 스킬 폴더로 옮깁니다({{count}}건, 대상: {{path}})",
+          "no-access": "이 모드에서는 스킬 기록을 읽을 수 없어 검사를 건너뛰었습니다.",
+          "no-config": "설정 파일을 읽을 수 없어 스킬 기록 검사를 건너뛰었습니다.",
+          "no-state": "상태 폴더를 찾지 못해 스킬 기록 검사를 건너뛰었습니다.",
+          "none": "아직 스킬 설치 기록이 없어 처리할 것이 없습니다.",
+          "orphan": "스킬 설치 기록이 더 이상 존재하지 않는 스킬 폴더 {{count}}개를 가리키고 있습니다(보통 게이트웨이나 드라이브를 바꾼 뒤)."
+        }
+      },
+      "item": {
+        "capability-block": "기능 경계 프롬프트",
+        "diagnostics-pack": "진단 패키지",
+        "environment": "실행 환경 자가 점검",
+        "gateway-locks": "시작 잠금(손상된 잠금 / 일부만 기록된 잠금)",
+        "plugin-paths": "플러그인 로드 경로",
+        "skill-records": "스킬 설치 기록"
+      },
+      "nav": "진단 및 복구",
+      "needsYou": "직접 처리 필요",
+      "noChanges": "이번에는 변경된 파일이 없습니다.",
+      "notApplicable": "여기서는 해당 없음",
+      "nothingDesc": "전체 검사에서 문제를 찾지 못했습니다. 그래도 사용할 수 없다면 진단 패키지를 내보내 고객 지원에 보내 주세요.",
+      "nothingTitle": "고칠 것이 없습니다",
+      "offlineNote": "이 과정은 네트워크를 사용하지 않습니다. 복구가 끝날 때까지 서버에 연결하지 않으며, 진단 패키지도 이 컴퓨터에만 저장되고 직접 보내셔야 합니다.",
+      "openBackup": "백업 폴더 열기({{path}})",
+      "rescan": "전체 검사 다시 실행",
+      "restore": {
+        "blocked-live-instance": "Rongying Cube가 실행 중이라 아무것도 복원하지 않았습니다. 완전히 종료한 뒤 다시 시도하세요.",
+        "nothing": "여기에 되돌릴 백업이 없습니다.",
+        "partial": "{{total}}개 중 {{count}}개를 되돌렸습니다. 나머지는 복원하지 못했습니다.",
+        "restored": "{{count}}개 파일을 원래 위치로 되돌렸습니다."
+      },
+      "restoreBackup": "이번 작업 되돌리기(백업을 원래 위치로)",
+      "resultTitle": "방금 한 작업",
+      "scanFailed": "전체 검사를 마치지 못했습니다: {{error}}",
+      "scannedRoots": "{{count}}곳을 확인했습니다",
+      "scanning": "전체 검사 중…",
+      "severity": {
+        "attention": "복구 가능",
+        "blocked": "확인할 수 없음",
+        "broken": "처리 필요",
+        "ok": "정상"
+      },
+      "title": "진단 및 복구"
+    },
     "rightPanelShortcut": "컨텍스트 패널 전환",
     "selectGateway": "게이트웨이 선택",
     "sendCmdEnter": "{{mod}} Enter",
@@ -2263,6 +2637,11 @@
     "version": "버전",
     "webSearch": "Let the assistant search the web",
     "webSearchHint": "켜면 어시스턴트가 최신 정보가 필요할 때 자동으로 웹을 검색하고 출처를 표시합니다. 검색 1회당 별도 과금(약 6크레딧). qwen-plus, qwen-turbo, qwen3.7-flash는 모델 내장 웹 검색도 지원합니다: 페이지 내용이 입력에 포함되어 비용이 비슷한 질문의 약 100배입니다. 저장하면 연결이 다시 적용됩니다.",
+    "showMascot": "샤오잉 표시",
+    "showMascotHint": "채팅 오른쪽 아래의 마스코트입니다. 꺼도 언제든 여기서 다시 켤 수 있습니다.",
+    "desktopMascot": "데스크톱 샤오잉",
+    "desktopMascotHint": "드래그할 수 있는 샤오잉을 바탕 화면에 두고 파일을 살펴보고 정리합니다",
+    "desktopMascotOpen": "열기",
     "webSearchSection": "Web search",
     "workspace": "워크스페이스",
     "workspaceChange": "변경",
@@ -2303,7 +2682,6 @@
   },
   "skillMarket": {
     "actionFailed": "작업에 실패했습니다: {{reason}}",
-    "count": "전체 {{total}}개 · 설치됨 {{installed}}개",
     "empty": "이 버전에는 함께 제공되는 스킬이 없습니다.",
     "gatewayRequired": "아직 게이트웨이에 연결되지 않았습니다. 설치하려면 먼저 연결하세요. 연결한 뒤 새로 고침하세요.",
     "install": "설치",
@@ -2320,11 +2698,25 @@
     "repairConfirmTitle": "‘{{name}}’을(를) 복구할까요?",
     "repaired": "‘{{name}}’ 복구 완료",
     "repairedBackup": "복구 전 백업 위치: {{path}}",
-    "subtitle": "앱에 함께 제공되는 스킬입니다. 설치하면 모든 어시스턴트가 사용할 수 있습니다.",
     "verdictBlocked": "이 어시스턴트는 아직 사용할 수 없습니다",
     "verdictChecking": "어시스턴트가 사용할 수 있는지 확인 중…",
     "verdictUnknown": "확인하지 못했습니다. 어시스턴트가 사용할 수 있는지 아직 알 수 없습니다",
-    "verdictUsable": "이 어시스턴트는 지금 사용할 수 있습니다"
+    "verdictUsable": "이 어시스턴트는 지금 사용할 수 있습니다",
+    "tabSkills": "스킬",
+    "tabAgents": "에이전트",
+    "tabPrompts": "프롬프트",
+    "promptsSoon": "프롬프트 라이브러리 곧 공개",
+    "searchPlaceholder": "스킬 검색",
+    "allInstalled": "스킬 {{n}}개 · 모두 포함",
+    "tileCount": "스킬 {{n}}개",
+    "category": {
+      "content": "콘텐츠 제작",
+      "commerce": "이커머스 운영",
+      "research": "학습·연구",
+      "office": "업무 효율",
+      "other": "기타"
+    },
+    "noMatch": "일치하는 스킬이 없습니다"
   },
   "slash": {
     "argOptions": "/{{command}} 옵션"
@@ -2347,6 +2739,18 @@
     "tooltip": "명령어"
   },
   "slidegen": {
+    "detail": {
+      "footerOverlap": "바닥글 #{{footer}}이(가) 본문 영역 #{{body}}을(를) 침범했습니다. 바닥글 위에 공간을 두거나 본문 영역을 위로 올리세요. 텍스트는 하나도 삭제하지 마세요.",
+      "lowContrast": "{{who}}의 대비가 실측한 단색 배경에서 {{ratio}}:1에 불과하고, 목표 {{minimum}}:1보다 낮습니다. 글자 색이나 배경색을 바꾸세요.",
+      "occluded": "{{who}}의 일부가 {{occludedBy}}에 가려져 있습니다. 위치를 옮기거나 가리고 있는 요소를 옮기세요.",
+      "outOfBounds": "{{who}}이(가) 캔버스 밖으로 벗어났습니다: {{sides}}. 이 부분은 내보낸 뒤에도 슬라이드 밖에 있어 발표할 때 보이지 않습니다.",
+      "side": {
+        "bottom": "아래쪽으로 {{px}}px 벗어남",
+        "left": "왼쪽으로 {{px}}px 벗어남",
+        "right": "오른쪽으로 {{px}}px 벗어남",
+        "top": "위쪽으로 {{px}}px 벗어남"
+      }
+    },
     "fail": {
       "blockEmpty": "어시스턴트가 보낸 레이아웃이 비어 있습니다.",
       "blockUnclosed": "내용이 너무 길어 중간에 잘려서 생성하지 못했습니다. 두 번에 나눠서 만들어 달라고 해보세요.",
@@ -2364,6 +2768,12 @@
       "unparsable": "레이아웃에 문법 오류가 있어 읽을 수 없습니다."
     },
     "failedTitle": "프레젠테이션을 생성하지 못했습니다",
+    "kind": {
+      "block": "도형",
+      "image": "이미지",
+      "text": "텍스트"
+    },
+    "listJoiner": ", ",
     "unconfirmedTitle": "프레젠테이션 자동 확인 실패",
     "warn": {
       "footerOverlap": "{{page}}페이지의 바닥글이 본문 카드와 겹칩니다",
@@ -2372,7 +2782,11 @@
       "occluded": "{{page}}페이지의 글자가 다른 요소에 가려져 있습니다",
       "outOfBounds": "{{page}}페이지에 슬라이드 밖으로 나간 내용이 있어 발표할 때 보이지 않습니다"
     },
-    "warnedTitle": "프레젠테이션은 생성되었지만 조정할 부분이 있습니다"
+    "warnedTitle": "프레젠테이션은 생성되었지만 조정할 부분이 있습니다",
+    "who": {
+      "plain": "{{kind}} (#{{id}})",
+      "withText": "{{kind}} “{{snippet}}” (#{{id}})"
+    }
   },
   "startupReadiness": {
     "aiCatalogFailed": "모델 목록을 가져오지 못했습니다",
@@ -2404,6 +2818,7 @@
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "이 인증은 기기 수 한도에 도달했습니다. 다른 카드를 사용하거나 고객센터에 문의해 주세요.",
     "relayActivationRequired": "이 기기는 아직 인증되지 않았습니다. 먼저 인증을 완료해 주세요.",
+    "relayApplyFailed": "로컬 서비스가 모델 설정을 받아들이지 않았습니다. 다시 시도할 수 있지만 계속 실패하면 기다려도 해결되지 않습니다. 로그를 보내 주세요.",
     "relayEntitlementRejected": "이 인증은 더 이상 사용할 수 없습니다. 다시 인증하거나 다른 카드를 사용해 주세요.",
     "relayOrganizationMismatch": "이 인증은 다른 조직에 연결되어 있어 현재 계정으로는 사용할 수 없습니다.",
     "relayRetryable": "상용 서비스가 아직 준비되지 않았습니다. 다시 시도할 수 있습니다.",
@@ -2474,6 +2889,8 @@
       "compass": "메인 나침반",
       "emptyHint": "팀을 만들면 여기에 다섯 역할의 실제 협업 상태가 표시됩니다.",
       "latest": "최근 회의: {{question}}",
+      "participants": "실제 참여자",
+      "positions": "다섯 역할",
       "status": {
         "attention": "확인 필요",
         "disabled": "사용 안 함",
@@ -2630,8 +3047,6 @@
     "degradeTitle": "잔액이 거의 소진되었습니다",
     "quotaTotal": "총 할당량",
     "quotaUsed": "사용됨",
-    "rateLimits": "요청 제한",
-    "resetsAt": "{{time}}에 초기화",
     "unknownDesc": "The network seems unstable, so your balance could not be read. This does not mean you are out of quota — please retry in a moment.",
     "unknownTitle": "Could not confirm your quota",
     "unlicensedDesc": "Activate a licence or redeem a code to continue.",
@@ -2640,6 +3055,7 @@
   },
   "videogen": {
     "aspectInvalid": "화면 비율 「{{value}}」은(는) 지원하지 않습니다(사용 가능: {{allowed}}). 수정을 요청하세요.",
+    "billingPending": "동영상을 생성하지 못했습니다. 요금 상태는 아직 확인되지 않았습니다. 작업 기록을 보관하고 다시 생성하지 마세요.",
     "blockInvalid": "답변의 videogen 블록이 검증을 통과하지 못해 생성을 시작하지 않았습니다. 스킬에 적힌 형식대로 다시 출력하도록 요청하세요.",
     "contentRejected": "동영상이 콘텐츠 안전 검사에서 차단되었습니다(이런 차단은 과금되지 않습니다). 다른 설명으로 다시 요청하세요.",
     "createFailedNetwork": "동영상 서비스에 연결하지 못해 이 동영상은 생성되지 않았습니다. 잠시 후 다시 요청하세요.",
@@ -2656,14 +3072,16 @@
     "saveFailed": "동영상 파일을 이 컴퓨터에 저장하지 못했습니다. 다시 생성하도록 요청하세요.",
     "taskFailed": "동영상 생성에 실패했습니다. 다시 시도하도록 요청하세요.",
     "timeout": "너무 오래 기다려 중단했습니다(이번 건은 과금되지 않았습니다). 다시 생성하도록 요청하세요.",
-    "unsupportedField": "현재 버전에서는 「{{field}}」 필드를 지원하지 않습니다(참조 이미지·첫/끝 프레임 미지원). 삭제하도록 요청하세요."
+    "unsupportedField": "현재 버전에서는 「{{field}}」 필드를 지원하지 않습니다(참조 이미지·첫/끝 프레임 미지원). 삭제하도록 요청하세요.",
+    "imageRequiresSeedance": "이 동영상은 첨부한 이미지를 사용하며, 고품질 모드에서만 지원됩니다. 동영상 화질을 '고품질(Seedance 2.5)'로 바꾼 뒤 다시 요청하세요. 텍스트만으로 만들려면 이미지를 빼고 요청하세요. 이번에는 생성되지 않았고 과금도 없습니다."
   },
   "voiceInput": {
     "answerTooLong": "답변이 6000자를 초과합니다. 짧게 요약한 뒤 읽어 주세요.",
+    "discardRecording": "녹음 복구 취소",
     "introConfirm": "확인",
     "introDescription": "마이크를 클릭하거나 Space 키를 누른 채 말하세요. 최대 60초입니다.",
     "introSkip": "나중에",
-    "introStepBeta": "음성은 클라우드에서 인식되며 표시된 요금으로 청구됩니다.",
+    "introStepBeta": "음성은 클라우드에서 인식되며 초 단위로 청구되어 크레딧에서 차감됩니다.",
     "introStepHold": "변환된 텍스트는 입력란에 삽입되며 자동으로 전송되지 않습니다.",
     "introStepInsert": "Space를 짧게 누르면 일반 공백이 입력됩니다.",
     "introTitle": "음성 입력",
@@ -2675,19 +3093,38 @@
     "playing": "재생 중…",
     "preparingSpeech": "음성 준비 중…",
     "readAnswer": "최근 답변 읽기",
-    "readAnswerFee": "최근 답변 읽기 (약 {{fee}} 포인트)",
     "recognitionFailed": "음성 인식에 실패했습니다",
-    "serviceFeeAsr": "음성 인식: {{fee}} 포인트/분",
-    "serviceFeeTts": "읽기: {{fee}} 포인트/100자",
+    "recoveryPending": "음성 결과가 확인되지 않았습니다. 다시 시도하면 원래 요청을 사용합니다.",
+    "retryRecognition": "음성 인식 다시 시도",
     "stop": "음성 중지",
     "tooltip": "음성 입력",
     "transcribing": "변환 중...",
     "unsupported": "음성 입력을 사용할 수 없습니다. 텍스트 입력을 사용해 주세요.",
-    "unsupportedTooltip": "이 앱에서는 음성 입력을 사용할 수 없습니다."
+    "unsupportedTooltip": "음성 서비스를 사용할 수 없습니다. 로그인 상태와 네트워크를 확인한 뒤 다시 시도해 주세요."
   },
   "workspaceNotice": {
     "dismiss": "확인",
     "openSettings": "작업 공간 설정 열기",
     "recreated": "원래 작업 공간 폴더가 없어져(이동 또는 삭제됨) 새 빈 작업 공간을 만들었습니다. 이전 데이터를 복구하려면 원래 폴더를 확인하거나 작업 공간을 전환하세요."
+  },
+  "pet": {
+    "title": "샤오잉 · 데스크톱 친구",
+    "peek": "데스크톱 보기",
+    "organize": "데스크톱 정리",
+    "trash": "파일 삭제",
+    "close": "샤오잉 숨기기",
+    "desktopClean": "데스크톱이 깨끗해요~",
+    "desktopSummary": "데스크톱에 파일 {{count}}개: {{detail}}",
+    "peekFailed": "데스크톱을 읽을 수 없어요(권한?)",
+    "organized": "정리 완료! 파일 {{count}}개를 냠냠~",
+    "organizeFailed": "정리 실패, 다시 해볼까요?",
+    "trashed": "파일 {{count}}개를 휴지통으로 옮겼어요",
+    "trashFailed": "삭제 실패, 파일은 그대로예요",
+    "cancelled": "알겠어요, 그대로 둘게요",
+    "line3": "끄윽~ 배불러",
+    "line4": "왜 자꾸 찌르지~",
+    "menuGreet": "인사하기",
+    "menu": "더 보기",
+    "menuMove": "자리 옮기기"
   }
 }

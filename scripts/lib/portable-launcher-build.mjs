@@ -125,7 +125,47 @@ export async function buildPortableLauncher({
     if (readFileSync(stagedOutput).toString('ascii', 0, 2) !== 'MZ') {
       throw new PortableLauncherBuildError('the launcher output is not a Windows PE image');
     }
-    run(resourceEditor, [stagedOutput, '--set-icon', iconPath], 'resource editor');
+    /**
+     * 图标之外再写**版本资源**（2026-10-19，360 误报治理）。
+     *
+     * 为什么必须写：一把**未签名、且没有任何版本信息**的 exe，对杀软与 SmartScreen 的
+     * 信誉系统来说几乎是"可疑"的同义词（用户侧表现就是"装完被 360 报木马"）。
+     * 名字/公司/描述/版本都是公开信息，写进去不增加任何泄露风险，却能显著降低启发式命中。
+     * rcedit 在没有版本资源时会新建一份；参数顺序无所谓，失败即以非零码退出，由 run() 抛错。
+     */
+    run(
+      resourceEditor,
+      [
+        stagedOutput,
+        '--set-icon',
+        iconPath,
+        // ⚠️ rcedit 没有 `--set-company-name` 这类开关（那是 electron-builder 的包装）；
+        //    版本字符串统一走 `--set-version-string <Key> <Value>`。
+        '--set-version-string',
+        'CompanyName',
+        '荣盈互动',
+        '--set-version-string',
+        'ProductName',
+        '荣盈魔方',
+        '--set-version-string',
+        'FileDescription',
+        '荣盈魔方启动器',
+        '--set-version-string',
+        'InternalName',
+        'mofang-launcher',
+        '--set-version-string',
+        'OriginalFilename',
+        launcherOutputName,
+        '--set-version-string',
+        'LegalCopyright',
+        'Copyright © 荣盈互动',
+        '--set-file-version',
+        version,
+        '--set-product-version',
+        version,
+      ],
+      'resource editor',
+    );
     let verification;
     try {
       verification = verifyExecutableIcon(readFileSync(stagedOutput), sourceIcon);

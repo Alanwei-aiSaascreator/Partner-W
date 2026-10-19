@@ -155,7 +155,7 @@ export function beginArtifactDeliveryActivity(
 ): {
   operationId: string;
   phase: (phase: ArtifactDeliveryPhase, progress?: ArtifactDeliveryPageProgress) => void;
-  finish: (status: ArtifactDeliveryTerminalStatus) => void;
+  finish: (status: ArtifactDeliveryTerminalStatus, artifactId?: string) => void;
 } | null {
   const owner = { ...input.owner };
   const persistenceOwner = currentOwner();
@@ -184,7 +184,7 @@ export function beginArtifactDeliveryActivity(
   let pageProgress = isArtifactDeliveryPageProgress(initialProgress) ? { ...initialProgress } : undefined;
   const observedPhases: ArtifactDeliveryPhaseObservation[] = [];
   let historyTruncated = false;
-  const emit = (status: ArtifactDeliveryActivity['status']): void => {
+  const emit = (status: ArtifactDeliveryActivity['status'], artifactId?: string): void => {
     if (terminal || !ownsWorkspace() || (sequence > 0 && !active.has(operationId))) return;
     if (status !== 'active') terminal = true;
     const observedAt = Date.now();
@@ -207,6 +207,7 @@ export function beginArtifactDeliveryActivity(
       sequence: ++sequence,
       phase,
       status,
+      ...(status === 'succeeded' && artifactId ? { artifactId } : {}),
       ...(phase === 'generating-presentation' && isArtifactDeliveryPageProgress(pageProgress)
         ? { pageProgress: { ...pageProgress } }
         : {}),
@@ -240,6 +241,6 @@ export function beginArtifactDeliveryActivity(
       pageProgress = isArtifactDeliveryPageProgress(progress) ? { ...progress } : undefined;
       emit('active');
     },
-    finish: (status) => emit(status),
+    finish: (status, artifactId) => emit(status, artifactId),
   };
 }

@@ -427,7 +427,6 @@ func TestLaunchRecoversAPendingTransactionBeforeStarting(t *testing.T) {
 func TestLaunchRefusesAnUnreadableStateFile(t *testing.T) {
 	harness := newHarness(t)
 	harness.writeFile(t, filepath.Join(harness.root, update.UpdateDirectoryName, update.StateFileName), "{ not json")
-	harness.installCurrentProgram(t)
 
 	code := run(nil, harness.dependencies())
 
@@ -436,6 +435,29 @@ func TestLaunchRefusesAnUnreadableStateFile(t *testing.T) {
 	}
 	if len(harness.ops.started) != 0 {
 		t.Fatalf("an unreadable state file must not start anything")
+	}
+}
+
+// ...but an unreadable record must not cost the user the program that is
+// already on the disk: with no program to fall back to the launcher still
+// refuses, with one it starts it and leaves the record untouched. (2026-10-19:
+// a record written on E: stopped the launcher from starting an intact 1.0.9.)
+func TestLaunchStartsTheProgramDespiteAnUnreadableStateFile(t *testing.T) {
+	harness := newHarness(t)
+	harness.writeFile(t, filepath.Join(harness.root, update.UpdateDirectoryName, update.StateFileName), "{ not json")
+	harness.installCurrentProgram(t)
+
+	code := run(nil, harness.dependencies())
+
+	if code != exitOK {
+		t.Fatalf("exit code = %d, want %d; log: %s", code, exitOK, harness.logs.String())
+	}
+	if len(harness.ops.started) != 1 {
+		t.Fatalf("the program must start once, started %v", harness.ops.started)
+	}
+	// 证据保留：原记录改名停放，下一次启动不再重复报同一个错。
+	if _, err := os.Stat(filepath.Join(harness.root, update.UpdateDirectoryName, update.StateFileName)); !os.IsNotExist(err) {
+		t.Fatalf("the unusable record must be moved out of the startup path")
 	}
 }
 

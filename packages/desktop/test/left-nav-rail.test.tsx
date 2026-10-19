@@ -71,10 +71,10 @@ function renderRail(over: Partial<Parameters<typeof NavMenu>[0]> = {}) {
 describe('NavMenu 收纳态', () => {
   it('标签仍然在 DOM 里，只是被隐藏了（不是条件渲染）', () => {
     const { container, unmount } = renderRail();
-    const row = container.querySelector('[data-nav="tasks"]') as HTMLButtonElement;
+    const row = container.querySelector('[data-nav="skills"]') as HTMLButtonElement;
     const label = row.querySelector('span') as HTMLElement;
 
-    expect(label.textContent, '文案不许从 DOM 里消失').toContain('leftNav.recentTasks');
+    expect(label.textContent, '文案不许从 DOM 里消失').toContain('leftNav.pages.skills');
     expect(label.className, '要靠 CSS 隐藏').toContain('hidden');
     unmount();
   });
@@ -82,7 +82,7 @@ describe('NavMenu 收纳态', () => {
   it('每一行都有可访问名（标签隐藏后不能变成空名）', () => {
     const { container, unmount } = renderRail();
     const rows = [...container.querySelectorAll('[data-nav]')] as HTMLButtonElement[];
-    expect(rows.length).toBeGreaterThan(10);
+    expect(rows.length).toBeGreaterThanOrEqual(6);
 
     for (const row of rows) {
       const name = row.getAttribute('aria-label') ?? '';
@@ -113,7 +113,7 @@ describe('NavMenu 收纳态', () => {
       />,
     );
     expect(container.querySelector('[data-nav="teams"]')?.getAttribute('data-state')).toBeNull();
-    expect(container.textContent).toContain('leftNav.recentTasks');
+    expect(container.textContent).toContain('leftNav.pages.teams');
     unmount();
   });
 
@@ -126,16 +126,24 @@ describe('NavMenu 收纳态', () => {
     unmount();
   });
 
-  it('「设置」的更新提示在收起时也是一个角点', () => {
-    const { container, unmount } = renderRail({ hasUpdate: true });
-    const settings = container.querySelector('[data-nav="settings"]') as HTMLButtonElement;
-    expect(settings.querySelector('[data-testid="nav-badge-dot"]')).not.toBeNull();
-    unmount();
-  });
-
   it('助手槽位在收纳态照旧渲染（它不是 NavItem，别在改写 map 时漏掉）', () => {
     const { container, unmount } = renderRail();
     expect(container.querySelector('[data-testid="assistant-slot"]')).not.toBeNull();
+    unmount();
+  });
+
+  /**
+   * ⭐ 2026-10-18：顶部顺序与展开态一致 ——「智能体市场」（`agents`）在一级，
+   *    「资料库」（`kb`）已移入「更多」，收纳态也必须先展开才出现。
+   */
+  it('⭐ 收纳态顺序：agents 在一级，kb 收在「更多」里', () => {
+    const { container, unmount } = renderRail();
+    const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
+    expect(keys).toEqual(['new-task', 'teams', 'skills', 'experts', 'agents', 'more']);
+
+    act(() => (container.querySelector('[data-nav="more"]') as HTMLElement).click());
+    const expanded = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
+    expect(expanded).toContain('kb');
     unmount();
   });
 });

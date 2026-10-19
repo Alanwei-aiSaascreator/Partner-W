@@ -192,7 +192,37 @@ type SlidegenFailureReason =
  *    对标产品那份 deck 里就有一处重叠，它照样出了成品 ——
  *    "版式有点毛病"和"什么都没生成"是两种完全不同的坏。
  */
-export type SlidegenWarning = SlidegenWarningReason & { artifactName?: string };
+export type SlidegenWarning = SlidegenWarningReason & {
+  artifactName?: string;
+  /**
+   * **语言无关**的结构化载荷：界面据此拼本地化句子。
+   *
+   * ⚠️ 2026-10-16 真机截图缺陷：主进程侧的 `detail` 是**回落文本**，历史上有两条是英文
+   *    （`layout-footer-overlap` / `layout-text-low-contrast`），界面原来直接
+   *    `#${element}: ${detail}` 拼上去 ⇒ **中文界面整段英文上屏**。
+   *    现在界面优先用这里的 `data` 走 i18n；`data` 缺失才回落 `detail`。
+   *    ⇒ **不要**在渲染层从 `detail` 里正则解析（那是把文案当协议）。
+   */
+  data?: SlidegenWarningData;
+};
+
+/** 版式警告的语言无关载荷。形状与 `main/slidegen/validate.ts` 的产出**必须一致**。 */
+export interface SlidegenWarningData {
+  /** 元素种类。 */
+  kind?: 'text' | 'image' | 'block';
+  /** 文字元素的前若干字。 */
+  snippet?: string;
+  /** 冲出画布的边与像素（可能多条）。 */
+  overflow?: readonly { side: 'left' | 'top' | 'right' | 'bottom'; px: number }[];
+  /** 盖住它的那个东西（`#12` 或标签名）。 */
+  occludedBy?: string;
+  /** 页脚 / 正文区域的绘制序号。 */
+  footer?: number;
+  body?: number;
+  /** 实测对比度与目标下限。 */
+  ratio?: number;
+  minimum?: number;
+}
 
 type SlidegenWarningReason =
   /** 元素冲出画布 ⇒ 放映时那一块看不到。 */

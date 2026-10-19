@@ -124,3 +124,51 @@ describe('LeftNav 不拿默认助手冒充当前助手', () => {
     unmount();
   });
 });
+
+/**
+ * 左栏顶部（2026-10-18 用户实测）。
+ *
+ * 现场：标题栏下方先是一大块空白，再是「紫红方标 + 荣盈魔方」一行，然后才是搜索/导航。
+ * 标题栏本身已经写了品牌名 ⇒ 重复且把整列压低。
+ * 现在的契约：**品牌位不渲染**；顶部不再有 `pt-10` 的空占位；
+ * 但窗口仍能从这一列顶部拖动（第一行自己就是 `titlebar-drag`，控件们是 no-drag）。
+ */
+describe('LeftNav 顶部（去品牌位 + 收紧空白）', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    setLoadedCatalog(['main']);
+    useUiStore.setState({ selectedAgentByGateway: {}, leftNavCollapsed: false, mainView: 'chat' });
+    useTaskStore.setState({ tasks: [], activeTaskId: null, pendingNewTask: null });
+    useTeamStore.setState({ teams: {}, loadedOnce: true, loading: false });
+  });
+
+  it('⭐ 品牌位不再渲染，顶部没有 40px 空占位', () => {
+    const { container, unmount } = renderLeftNav();
+    expect(container.querySelector('.left-nav-brand__logo'), '品牌位应已删除').toBeNull();
+    expect(container.textContent, '左栏不再重复品牌名').not.toContain('common.appName');
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className, '顶部空占位（pt-10）应已收紧').not.toContain('pt-10');
+    // 第一条可见行就是搜索框所在的那一行。
+    expect(container.querySelector('input[placeholder="leftNav.searchTasks"]')).not.toBeNull();
+    unmount();
+  });
+
+  it('⭐ 窗口仍可从左栏顶部拖动（第一行是 drag，交互控件是 no-drag）', () => {
+    const { container, unmount } = renderLeftNav();
+    const drag = container.querySelector('.titlebar-drag') as HTMLElement | null;
+    expect(drag, '拖拽区不许连同品牌位一起删掉').not.toBeNull();
+    expect(drag!.querySelector('[data-action="toggle-left-nav"]'), '收起按钮要在这条拖拽行里').not.toBeNull();
+    // 交互控件自身必须 no-drag，否则点击会被窗口拖动吞掉。
+    expect(container.querySelector('[data-action="toggle-left-nav"]')!.className).toContain('titlebar-no-drag');
+    unmount();
+  });
+
+  it('对照：收纳态同样没有品牌位（收起后只剩图标条）', () => {
+    useUiStore.setState({ leftNavCollapsed: true });
+    const { container, unmount } = renderLeftNav();
+    expect(container.querySelector('.left-nav-brand__logo')).toBeNull();
+    expect(container.querySelector('[data-action="toggle-left-nav"]')).not.toBeNull();
+    unmount();
+  });
+});

@@ -184,6 +184,13 @@ interface AgentThinkingData {
   delta?: string;
   /** 只有进度计数的心跳事件，没有文本。 */
   progressTokens?: number;
+  /**
+   * **源端段身份**（BUG-075 / T26）：同一段推理的累计快照共用它，工具后新段换新值。
+   * 现役运行时不发 ⇒ 缺失时逐字回落到文本启发式（见 `mergeThinkingSnapshot`）。
+   */
+  itemId?: string;
+  /** `itemId` 的别名；两者都给时 `itemId` 优先。 */
+  segmentId?: string;
 }
 
 interface AgentEvent {
@@ -315,6 +322,8 @@ export interface GatewayDispatcherDeps {
     | 'appendStreamDelta'
     | 'bindActiveRun'
     | 'appendThinkingDelta'
+    | 'replaceThinkingText'
+    | 'appendThinkingText'
     | 'finalizeStream'
     | 'clearActiveTurn'
     | 'setProcessing'
@@ -431,7 +440,7 @@ export interface GatewayDispatcherDeps {
    */
   syncPendingQuestions?: (gatewayId: string) => void;
   notifyAgentResponse?: (sessionKey: string) => void;
-  onToast?: (type: 'error' | 'warning' | 'success', title: string, opts?: { description?: string }) => void;
+  onToast?: (type: 'error' | 'warning' | 'success' | 'info', title: string, opts?: { description?: string }) => void;
   translate: TranslateFn;
   isWindowFocused: () => boolean;
   reportDebugEvent: (event: {
@@ -449,6 +458,13 @@ export interface GatewayDispatcherDeps {
 }
 
 const DEDUP_FALLBACK_WINDOW_MS = 2000;
+
+/**
+ * "这一帧其实是中断、不是失败"的措辞判据（2026-10-17）。
+ * 上游各家的中止措辞不一样（`Request was aborted` / `canceled` / `interrupted` / `stopped`…），
+ * 只在**用户自己按了停止**的前提下才用它把错误帧降级成中文提示 —— 见 `noteUserStop`。
+ */
+const USER_ABORT_FRAME_RE = /\b(abort(?:ed|ing)?|cancel(?:l?ed|ing)?|interrupt(?:ed|ing)?|stopp?(?:ed|ing)?)\b/i;
 
 /**
  * `sessions.changed` 的 `reason` —— **没有权威词表**（这条很重要，别硬凑）。
@@ -757,6 +773,11 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     { error: string; runId?: string; timer: ReturnType<typeof setTimeout> }
   >();
   const abortedByUser = new Set<string>();
+  /**
+   * 用户主动停止的"中文提示"每条任务每轮只说一次（2026-10-17 用户反馈：
+   * 终止任务不该甩英文错误，要有汉字提示）。错误帧与 aborted 帧可能先后到达，两个入口共用这个去重。
+   */
+  const userStopNoted = new Set<string>();
   /** chat.final / lifecycle.end 之后仍涌来的 thinking/delta 要丢掉，否则白屏。 */
   const closedStreams = new Set<string>();
   const currentRuns = new Map<string, { runId: string; confirmed: boolean; retired: Set<string> }>();
@@ -1105,6 +1126,7 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
   function clearTaskErrorState(taskId: string): void {
     perTaskLastError.delete(taskId);
     abortedByUser.delete(taskId);
+    userStopNoted.delete(taskId);
     const buffered = lifecycleErrorBuffer.get(taskId);
     if (buffered) {
       clearTimeout(buffered.timer);
@@ -1199,18 +1221,22 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
           thinkingCompleted?: string;
           thinkingCurrent?: string;
           thinkingLastSealed?: string;
+          thinkingCurrentId?: string;
         }
       | undefined,
   ): void {
     const blocks = payload.message?.content ?? payload.content ?? [];
     type FrameWrite =
-      | { kind: 'thinking'; text: string; index: number }
+      | { kind: 'thinking'; text: string; index: number; id?: string }
       | { kind: 'tools'; index: number; tc: ToolCall };
     const writes: FrameWrite[] = [];
     toolCalls.forEach((tc, i) => writes.push({ kind: 'tools', index: toolIndices[i] ?? -1, tc }));
     blocks.forEach((block, index) => {
       if (block.type === 'thinking' && block.thinking) {
-        writes.push({ kind: 'thinking', text: block.thinking, index });
+        // ⭐ T26：源端段身份（给了才用；缺失 ⇒ undefined ⇒ 逐字回落文本启发式）。
+        const rawId = typeof block.itemId === 'string' ? block.itemId : block.segmentId;
+        const id = typeof rawId === 'string' && rawId !== '' ? rawId : undefined;
+        writes.push({ kind: 'thinking', text: block.thinking, index, ...(id ? { id } : {}) });
       }
     });
     const ordered = writes
@@ -1228,6 +1254,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     for (const write of ordered) {
       const before = readTurn();
       if (write.kind === 'thinking') {
+        // ⭐ T26：**带了源端段身份就不猜文本** —— 身份相同 = 同段累计快照；身份不同 = 新段。
+        //    「边界后新段与刚归档段前缀/同文」这两条 BUG-075 未决反例，只有身份能判；
+        //    文本启发式在它们上面给出的答案恰恰是反的（会把合法新段当回声吞掉）。
+        if (write.id) {
+          deps.getMessageStore().appendThinkingDelta(sessionKey, write.text, write.id);
+          if (readTurn() !== before) changed.push({ kind: write.kind, index: write.index });
+          continue;
+        }
         const isHistoricCandidate = write.index >= 0 && write.index !== lastThinkingIndex;
         if (isHistoricCandidate) {
           const completed = before?.thinkingCompleted ?? '';
@@ -1254,7 +1288,9 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
             continue; // 重发的历史块：不写当前段、不归档当前段、不算活动
           }
         }
-        deps.getMessageStore().appendThinkingDelta(sessionKey, write.text);
+        // content block 里的 thinking 同样是**到此刻为止的全文** ⇒ 原位替换
+        //（2026-10-18：与 agent 帧同口径；当增量追加会在模型改写措辞时平方膨胀）。
+        deps.getMessageStore().replaceThinkingText(sessionKey, write.text);
       } else {
         deps.getMessageStore().upsertToolCall(sessionKey, taskId, write.tc);
       }
@@ -1440,6 +1476,12 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       if (payload.runId) store.bindActiveRun?.(sessionKey, payload.runId);
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
+      // ⭐ E1（2026-10-15）：**回合结束 ⇒ 不可能还有东西在压缩**。
+      //    「正在压缩」原来只有 `compaction end` 一条路能收掉；那条帧万一没送到
+      //    （中断/异常收尾的回合不会再给），标志就留着 —— 下一轮 `useTurnActivity`
+      //    会对着一个没在压缩的回合说「正在压缩上下文…」（主行判据里 `compacting`
+      //    排在 `runPhase` / 模型自述之前，见 useTurnActivity.ts:208）。
+      store.setSessionCompacting(sessionKey, false);
       const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
       const changed: Array<{ kind: 'output' | 'thinking' | 'tools'; index: number }> = [];
       // `final` 带的同样是**完整正文** ⇒ 替换（追加等于把答案再重复一遍）
@@ -1491,6 +1533,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     } else if (state === 'error') {
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
+      // ⭐ E1（2026-10-15）：同 `final` —— 回合结束就没有"正在压缩"了（见那里的说明）。
+      store.setSessionCompacting(sessionKey, false);
       // ⭐ BUG-050：这一轮"已产出"的证据必须在 `clearActiveTurn` **之前**快照 ——
       //    清掉之后就再也读不到了，1.5s 后渲染层评估自动重试时会恒判"什么都没做"
       //    ⇒ 一个已经跑过 write/exec 的轮次被整轮重发（副作用重复，不可逆）。
@@ -1508,6 +1552,20 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         (extractText(payload) || deps.translate('errors.requestFailed'));
 
       debugEvent('renderer.chat.error', { taskId, sessionKey, rawMessage, code: errorCode, runId: payload.runId });
+
+      /*
+        2026-10-17 用户反馈：「终止暂停任务不用英文反馈，而是汉字提示」。
+        用户自己按了「停止」之后，上游常回一帧措辞像"aborted/canceled"的错误 ——
+        那一轮不是失败，拿通用错误出口去报会把「Request was aborted」甩到用户脸上
+        （红色 toast + 英文系统气泡）。这里把它按"用户停止"收尾：静默吞错误，只给一次中文提示。
+        ⚠️ 只在**用户主动停止 + 措辞像中断**时这么做；额度/网络等真实失败照旧如实报。
+      */
+      const userAbortedHere = abortedByUser.has(taskId) || deps.isSessionAbortedByUser?.(sessionKey) === true;
+      if (userAbortedHere && USER_ABORT_FRAME_RE.test(rawMessage)) {
+        debugEvent('renderer.chat.abort-error-suppressed', { taskId, sessionKey, rawMessage });
+        noteUserStop(taskId, ephemeral);
+        return;
+      }
 
       if (isSubagentSession(sessionKey) && /^\s*terminated\s*$/i.test(rawMessage)) {
         debugEvent('renderer.chat.subagent_terminated', { taskId, sessionKey });
@@ -1575,12 +1633,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     } else if (state === 'aborted') {
       store.setProcessing(sessionKey, false);
       closedStreams.add(sessionKey);
+      // ⭐ E1（2026-10-15）：**用户中断是这条标志最常见的滞留路径** ——
+      //    压缩跑一半被「停止」掐断时，`compaction end` 永远不会来，
+      //    而这一轮已经收尾 ⇒ 标志必须在这里收掉（否则它会跨轮留着说谎）。
+      store.setSessionCompacting(sessionKey, false);
       if (payload.runId) store.clearActiveTurn(sessionKey, { runId: payload.runId });
       else store.clearActiveTurn(sessionKey);
       // 用户中断可能记在两处：task 级（普通会话的「停止」）与**会话**级（对比的某一列，
       // 它的登记表在删会话那一刻就摘键了，task 级标记也已经跟不上 —— 见依赖的说明）。
       const userAborted = abortedByUser.has(taskId) || deps.isSessionAbortedByUser?.(sessionKey) === true;
       debugEvent('renderer.chat.aborted', { taskId, sessionKey, userInitiated: userAborted });
+
+      // 用户自己停的 ⇒ 给一句中文提示（不写时间线；每轮只说一次，与错误帧那条共用去重）。
+      if (userAborted) noteUserStop(taskId, ephemeral);
 
       if (!userAborted) {
         const serverAborted = deps.translate('errors.serverAborted', { defaultValue: 'Task interrupted by server' });
@@ -1700,7 +1765,14 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       }
       case 'thinking': {
         const reasoning = data as AgentThinkingData;
-        const chunk = reasoning.text || reasoning.delta || '';
+        // ⚠️ `text` 是**到此刻为止的全部推理**（累计快照），`delta` 才是本次增量。
+        //    以前两者都当快照合并：模型中途**改写前面的话**时，新快照与当前段既不"延伸"
+        //    也非"前缀" ⇒ 合并器归档旧快照再开新段 —— 每改一次多一份近似全文。
+        //    同事现场实测 512 帧 / 末帧 1,312 字 ⇒ 界面攒成 722,539 字（渲染进程被拖死）。
+        //    现在：快照 ⇒ replaceThinkingText（原位替换当前段）；只有真增量才 append。
+        const snapshot = reasoning.text || '';
+        const delta = reasoning.delta || '';
+        const chunk = snapshot || delta;
         if (!chunk) break;
         if (closedStreams.has(sessionKey)) {
           debugEvent('renderer.chat.dropped_after_final', {
@@ -1716,10 +1788,23 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
         {
           const readTurn = () => deps.getMessageStore().activeTurnBySession[sessionKey];
           const before = readTurn();
-          deps.getMessageStore().appendThinkingDelta(sessionKey, chunk);
+          // ⭐ T26：agent 通道同样透传源端段身份（给了才用；运行时未发 ⇒ 文本启发式）。
+          const rawId = typeof reasoning.itemId === 'string' ? reasoning.itemId : reasoning.segmentId;
+          const segmentId = typeof rawId === 'string' && rawId !== '' ? rawId : undefined;
+          // ⚠️ 没有身份时**只传两个参数** —— 既有调用形状（与既有断言）逐字不变。
+          if (snapshot) {
+            if (segmentId) deps.getMessageStore().replaceThinkingText(sessionKey, snapshot, segmentId);
+            else deps.getMessageStore().replaceThinkingText(sessionKey, snapshot);
+          } else if (segmentId) deps.getMessageStore().appendThinkingText(sessionKey, delta, segmentId);
+          else deps.getMessageStore().appendThinkingText(sessionKey, delta);
           if (readTurn() !== before) deps.getMessageStore().sealTurnActivity?.(sessionKey, ['thinking']);
         }
-        debugEvent('renderer.agent.thinking', { taskId, sessionKey, chars: chunk.length });
+        debugEvent('renderer.agent.thinking', {
+          taskId,
+          sessionKey,
+          chars: chunk.length,
+          replace: snapshot.length > 0,
+        });
         break;
       }
       case 'compaction': {
@@ -1814,7 +1899,8 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     //    只认 `compacted === true`：网关两处都带了这个字段，而其中一处的守卫只写了
     //    `if (result.ok)`（比"真的压了"宽）⇒ 不加这个判断会把"没压成"也报成压了。
     if (reason === 'compact' && payload.compacted === true) {
-      const taskId = resolveTaskId(sessionKey);
+      if (!taskSession) return;
+      const taskId = taskSession.id;
       if (taskId) {
         // 取"当前轮次"（手动那条在发 RPC 时已经开了一轮 ⇒ 这里读到的就是同一轮；
         // start 没收到过就现开一轮）。两条路同一个轮次号，去重才成立。
@@ -2697,6 +2783,19 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
 
   function markAbortedByUser(taskId: string): void {
     abortedByUser.add(taskId);
+  }
+
+  /**
+   * 用户主动停止 ⇒ 给一句**中文**提示（2026-10-17 用户："终止暂停任务不用英文反馈"）。
+   *
+   * 不进对话时间线（每停一次留一条永久消息太吵），走瞬时 toast；对比列不弹全局提示。
+   * 同一条任务同一轮只提示一次 —— 上游可能同时回 `aborted` 帧与中止错误帧。
+   */
+  function noteUserStop(taskId: string, ephemeral: boolean): void {
+    if (ephemeral) return;
+    if (userStopNoted.has(taskId)) return;
+    userStopNoted.add(taskId);
+    deps.onToast?.('info', deps.translate('errors.userStopped', { defaultValue: 'Stopped' }));
   }
 
   async function fetchAgentsForGateway(

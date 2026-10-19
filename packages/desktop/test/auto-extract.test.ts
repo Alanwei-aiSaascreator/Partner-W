@@ -186,7 +186,8 @@ describe('autoExtractArtifacts', () => {
       maxSize: 25 * 1024 * 1024,
     });
     expect(saveArtifactFromBufferMock).toHaveBeenCalledWith(
-      expect.objectContaining({ fileName: 'clip.mp4', artifactType: 'file' }),
+      // ⭐ BUG-120：视频附件现在登记成专属类型 `video`（改型前与 docx/pptx 一样是 'file'）。
+      expect.objectContaining({ fileName: 'clip.mp4', artifactType: 'video' }),
     );
     expect(result).toEqual({
       mediaFailures: [],
@@ -312,7 +313,7 @@ describe('autoExtractArtifacts', () => {
     };
     saveArtifactFromBufferMock.mockResolvedValue({
       id: 'video-1',
-      type: 'file',
+      type: 'video',
       name: attachment.fileName,
       mimeType: attachment.mimeType,
       size: 5,
@@ -320,8 +321,9 @@ describe('autoExtractArtifacts', () => {
     await autoExtractArtifacts(params);
     expect(readOpenClawMediaFileMock).toHaveBeenCalledWith(sourcePath);
     expect(saveArtifactFromBufferMock).toHaveBeenCalledExactlyOnceWith(
+      // ⭐ BUG-120：视频附件登记成 `video`。
       expect.objectContaining({
-        artifactType: 'file',
+        artifactType: 'video',
         fileName: `clip.${extension}`,
         sourceKey: expect.stringMatching(/^attachment:/),
       }),
@@ -437,6 +439,55 @@ describe('autoExtractArtifacts', () => {
 
     expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
     expect(webContentsSendMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⭐ BUG-120（2026-10-17）：视频改型 `file → video` 时**最容易漏掉的一处**。
+   *
+   * `saveExtracted` 的"老行去重"判据里有一条 `artifact.type !== input.artifactType` ——
+   * 库里的旧登记（sourceKey 时代之前的视频行）类型是 `file`，而新进来的附件类型变成了
+   * `video` ⇒ 类型对不上 ⇒ **同一份片子被重复登记一次**（用户成果列表里冒出两条）。
+   *
+   * ⇒ video 与 file 是同一个去重家族，判据必须跨这两者成立。
+   */
+  it('⭐ BUG-120：视频改型后，旧登记的 file 行仍算同一份（去重语义不被破坏）', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const dataUrl = 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full';
+    const bytes = Buffer.from('video-bytes');
+    safeFetchMock.mockResolvedValue(bytes);
+    // 旧行：改型前登记的 file 行（没有 sourceKey ⇒ 走"老行去重"那条判据）
+    dbAllMock.mockReturnValue([{ name: 'clip-a1b2c3d4.mp4', type: 'file', size: bytes.length, sourceKey: '' }]);
+
+    await autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'legacy-video',
+      content: '',
+      gatewayHttpBase: 'http://127.0.0.1:18789',
+      attachments: [{ fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4' }],
+    });
+
+    expect(saveArtifactFromBufferMock).not.toHaveBeenCalled();
+  });
+
+  it('对照：同一条判据对**不同**片子仍然放行（不是把整类都吞掉）', async () => {
+    const { autoExtractArtifacts } = await import('../src/main/artifact/auto-extract.js');
+    const dataUrl = 'http://127.0.0.1:18789/api/chat/media/outgoing/session/video/full';
+    const bytes = Buffer.from('video-bytes');
+    safeFetchMock.mockResolvedValue(bytes);
+    // 老行同名但**大小不同** ⇒ 不是同一份，必须照常登记
+    dbAllMock.mockReturnValue([{ name: 'clip-a1b2c3d4.mp4', type: 'file', size: bytes.length + 1, sourceKey: '' }]);
+
+    await autoExtractArtifacts({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'legacy-video-2',
+      content: '',
+      gatewayHttpBase: 'http://127.0.0.1:18789',
+      attachments: [{ fileName: 'clip.mp4', dataUrl, mimeType: 'video/mp4' }],
+    });
+
+    expect(saveArtifactFromBufferMock).toHaveBeenCalledTimes(1);
   });
 
   it('serializes concurrent extraction for the same message', async () => {

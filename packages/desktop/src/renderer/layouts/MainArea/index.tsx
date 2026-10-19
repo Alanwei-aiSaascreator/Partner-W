@@ -10,14 +10,16 @@ import {
   Search,
   MessageSquare,
   ArrowDown,
-  RefreshCw,
-  AlertTriangle,
   ArrowLeftRight,
   Wallet,
   Columns3,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey, type Message, type ToolCall } from '@clawwork/shared';
+import {
+  contextUsagePercent as computeContextUsagePercent,
+  resolveContextWindow,
+} from '@/lib/context-usage';
 import type { AssistantIdentity } from './assistant-identity';
 import { useAssistantIdentityIndex } from './useAssistantIdentityIndex';
 import {
@@ -33,9 +35,10 @@ import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
 import { useRoomStore } from '@/stores/roomStore';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { cn, formatRelativeTime, formatCreditsPrecise } from '@/lib/utils';
+import { EMPTY_TASK_SPEND, addTurnSpend } from '@/lib/task-spend';
+import { cn, formatCredits, formatRelativeTime, formatCreditsPrecise } from '@/lib/utils';
 import { anchoredScrollTop, resolveChatScrollAnchor, type ChatScrollSlot } from '@/lib/chat-scroll-anchor';
-import { deriveQuotaDisplay } from '@/lib/quota-display';
+import { deriveAvailableDisplay, readHeldView } from '@/lib/quota-display';
 import { resolveModelLabel, shouldShowModelBadge } from '@/lib/model-display';
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import { Button } from '@/components/ui/button';
@@ -63,12 +66,12 @@ import MarketPanel from '@/layouts/MarketPanel';
 import GrowthPanel from '@/layouts/GrowthPanel';
 import IdentityCenter from '@/layouts/IdentityCenter';
 import SkillMarket from '@/layouts/SkillMarket';
+import ExpertsPanel from '@/layouts/ExpertsPanel';
+import MascotPet from '@/components/MascotPet';
 import TasksPanel from '@/layouts/TasksPanel';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
-import { useUsageStore } from '@/stores/usageStore';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
 import EmptyState from '@/components/semantic/EmptyState';
-import StatusTag from '@/components/semantic/StatusTag';
 import WelcomeScreen from './WelcomeScreen';
 import FirstTaskCompletionFlow from './FirstTaskCompletionFlow';
 import type { OnboardingProfile } from '@/lib/user-onboarding';
@@ -150,12 +153,14 @@ export function createDraftPromptRequest(
   prompt: string,
   source: DraftPromptRequest['source'],
   presetId?: string,
+  autoSend?: boolean,
 ): DraftPromptRequest {
   return {
     id: `draft-request-${sequence}`,
     prompt,
     source,
     ...(presetId ? { presetId } : {}),
+    ...(autoSend ? { autoSend } : {}),
   };
 }
 
@@ -212,8 +217,12 @@ function ChatHeader({
 
   const quotaMicros = commercialOverview?.license?.tokenQuotaMicros ?? 0;
   const usedMicros = commercialOverview?.license?.tokenUsedMicros ?? 0;
-  // 剩余额度，单位微积分 → 显示成积分。
-  const quotaDisplay = deriveQuotaDisplay(quotaMicros, usedMicros);
+  // 在途预占三态（与账户页/Dashboard 共用同一判据，见 `@/lib/quota-display`）：
+  // 口径不可判定时**不许**给确定数字 —— 同一块屏上不能账户页说"未知"、顶栏照给数字。
+  const heldView = readHeldView(commercialOverview?.license);
+  // 可用额（微积分 → 显示成积分）只走那一处派生：`quota − used − held`。
+  // ⚠️ 不许退回 `quota − used`：held > 0 时那会与账户页/额度门显示成两个不同的可用额。
+  const quotaDisplay = deriveAvailableDisplay(quotaMicros, usedMicros, heldView.micros);
   // 余额用**精确保留小数**的格式化（BUG-082）：≥1000 积分时旧口径会把
   // 1000.40 → 1000.10 的已结算消耗都显示成「1,000」，看起来像没扣费。
   const remainingCredits = formatCreditsPrecise(quotaDisplay.remaining);
@@ -257,28 +266,26 @@ function ChatHeader({
     [commitTitleEdit, cancelTitleEdit],
   );
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
-  const usageStatus = useUsageStore((s) => s.status);
-  const usageLoading = useUsageStore((s) => s.loading);
-  const fetchUsage = useUsageStore((s) => s.fetchUsage);
-  const startAutoRefresh = useUsageStore((s) => s.startAutoRefresh);
-  const stopAutoRefresh = useUsageStore((s) => s.stopAutoRefresh);
-
-  const costGatewayId = activeTask?.gatewayId ?? '';
-  useEffect(() => {
-    // 只要网关级用量：会话级两条（`usage.cost` / `sessions.usage`）已撤（T-a23/T-a25），
-    // 所以这里**不再需要** sessionKey，切任务也不必重开计时器（`costGatewayId` 换了才重开）。
-    if (costGatewayId) startAutoRefresh(costGatewayId);
-    return () => stopAutoRefresh();
-  }, [costGatewayId, startAutoRefresh, stopAutoRefresh]);
-
   const contextTokens = activeTask?.contextTokens ?? null;
-  const contextUsagePercent =
-    contextTokens != null && contextTokens > 0 ? Math.round((contextTokens / 200_000) * 100) : null;
+  /*
+    2026-10-17 用户反馈：「上下文 500% 是啥意思」。
+    旧实现分母**写死 200,000**，而模型目录声明的窗口是 100 万级 ⇒ 真实占用 1M token
+    会被算成 500%。分母改成目录里的 `contextWindow`（缺失/非法才回落 200k），显示夹在 0–100。
+  */
+  const contextModelEntry = useUiStore((s) => {
+    const gatewayId = activeTask?.gatewayId;
+    const modelId = activeTask?.model;
+    if (!gatewayId || !modelId) return undefined;
+    return s.modelCatalogByGateway[gatewayId]?.find(
+      (entry) => entry.id === modelId || entry.id.endsWith(`/${modelId}`),
+    );
+  });
+  const contextWindow = resolveContextWindow(contextModelEntry);
+  const contextUsagePercent = computeContextUsagePercent(contextTokens, contextWindow);
   const hasContextSummary = contextUsagePercent != null;
   // ⚠️ 顶栏**只报上下文占用**（功能仪表），不再报 token 数与美元成本：
   //    用户账单单据只有积分（产品决定 2026-09-17），token/官方参考价/倍率/人民币
   //    属于运营口径，留在服务端账本与运营后台。回归测试见 test/dashboard-overview.test.tsx。
-  const hasUsageData = hasContextSummary;
 
   return (
     <header className="titlebar-drag flex items-center justify-between px-5 h-[var(--density-toolbar-height)] border-b border-[var(--border)] flex-shrink-0">
@@ -319,12 +326,20 @@ function ChatHeader({
             <PopoverTrigger asChild>
               <button
                 className="type-meta inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-subtle)] px-2 text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                aria-label={t('usage.balance')}
+                aria-label={heldView.unknown ? t('account.quotaHeldUnknown') : t('usage.balance')}
               >
                 <Wallet size={14} />
-                <span className={usedMicros >= quotaMicros ? 'text-[var(--danger)]' : undefined}>
-                  {remainingCredits} {t('usage.creditsUnit')}
-                </span>
+                {heldView.unknown ? (
+                  // 预占口径不可判定 ⇒ 顶栏**不给确定数字**（与账户页/Dashboard 同判据）。
+                  // 顶栏空间有限：这里用短的"暂时无法读取"，完整说明在下方浮层里。
+                  <span data-quota-held-unknown className="text-[var(--text-muted)]">
+                    {t('dashboard.unavailable')}
+                  </span>
+                ) : (
+                  <span className={usedMicros >= quotaMicros ? 'text-[var(--danger)]' : undefined}>
+                    {remainingCredits} {t('usage.creditsUnit')}
+                  </span>
+                )}
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-72">
@@ -342,19 +357,24 @@ function ChatHeader({
                     {formatCreditsPrecise(usedMicros)} {t('usage.creditsUnit')}
                   </span>
                 </div>
-                <div
-                  className="h-1.5 w-full rounded-full bg-[var(--bg-tertiary)]"
-                  role="progressbar"
-                  aria-label={t('dashboard.remainingCredits')}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(quotaDisplay.remainingPercent)}
-                >
+                {heldView.unknown ? (
+                  // 口径不可判定 ⇒ 不给进度条（那会更读成"还剩这么多"），只如实说明。
+                  <p className="type-meta text-[var(--text-muted)]">{t('account.quotaHeldUnknown')}</p>
+                ) : (
                   <div
-                    className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
-                    style={{ width: `${quotaDisplay.remainingPercent}%` }}
-                  />
-                </div>
+                    className="h-1.5 w-full rounded-full bg-[var(--bg-tertiary)]"
+                    role="progressbar"
+                    aria-label={t('dashboard.remainingCredits')}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(quotaDisplay.remainingPercent)}
+                  >
+                    <div
+                      className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
+                      style={{ width: `${quotaDisplay.remainingPercent}%` }}
+                    />
+                  </div>
+                )}
                 {/* 读不到最新额度时如实说：显示的还是**最近一次成功**的值，
                     并给出它的时间 —— 不归零、也不假装是刚刚读到的（BUG-082）。
                     ⚠️ 文案复用账户页既有的两条键（省一次九语言改动）。 */}
@@ -368,89 +388,31 @@ function ChatHeader({
             </PopoverContent>
           </Popover>
         )}
-        {hasUsageData && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="type-meta inline-flex h-8 items-center gap-0 rounded-lg border border-[var(--border-subtle)] px-1 text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer">
-                {hasContextSummary && (
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-0.5 px-1.5',
-                      contextUsagePercent >= 90
-                        ? 'text-[var(--danger)]'
-                        : contextUsagePercent >= 70
-                          ? 'text-[var(--warning)]'
-                          : 'text-[var(--accent)]',
-                    )}
-                  >
-                    <span className="text-[var(--text-secondary)]">{t('rightPanel.contextUsage')}</span>
-                    {contextUsagePercent}%
-                  </span>
-                )}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-80 max-h-screen overflow-y-auto">
-              <div className="space-y-3">
-                {usageStatus && usageStatus.providers.length > 0 && (
-                  <div className="space-y-2 border-t border-[var(--border)] pt-3">
-                    <div className="flex items-center justify-between">
-                      <span className="type-label text-[var(--text-secondary)]">{t('usage.rateLimits')}</span>
-                      <button
-                        onClick={() => fetchUsage(costGatewayId)}
-                        disabled={usageLoading}
-                        aria-label={t('mainArea.refreshUsage')}
-                        className="rounded p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] disabled:opacity-50"
-                      >
-                        <RefreshCw size={12} className={cn(usageLoading && 'animate-spin')} />
-                      </button>
-                    </div>
-                    {usageStatus.providers.map((provider) => (
-                      <div key={provider.provider} className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="type-support text-[var(--text-primary)]">{provider.displayName}</span>
-                          {provider.plan ? <StatusTag tone="accent">{provider.plan}</StatusTag> : null}
-                        </div>
-                        {provider.error && (
-                          <div className="type-meta flex items-center gap-1 text-[var(--danger)]">
-                            <AlertTriangle size={10} />
-                            {provider.error}
-                          </div>
-                        )}
-                        {provider.windows.map((w, i) => (
-                          <div key={i} className="space-y-0.5">
-                            <div className="type-meta flex items-center justify-between text-[var(--text-muted)]">
-                              <span>{w.label}</span>
-                              <span className={cn(w.usedPercent >= 90 && 'text-[var(--danger)]')}>
-                                {Math.round(w.usedPercent)}%
-                              </span>
-                            </div>
-                            <div className="h-1 rounded-full bg-[var(--bg-secondary)] overflow-hidden">
-                              <div
-                                className={cn(
-                                  'h-full rounded-full transition-all duration-300',
-                                  w.usedPercent >= 90
-                                    ? 'bg-[var(--danger)]'
-                                    : w.usedPercent >= 70
-                                      ? 'bg-[var(--warning)]'
-                                      : 'bg-[var(--accent)]',
-                                )}
-                                style={{ width: `${Math.min(100, w.usedPercent)}%` }}
-                              />
-                            </div>
-                            {w.resetAt && (
-                              <div className="type-meta text-[var(--text-muted)]">
-                                {t('usage.resetsAt', { time: new Date(w.resetAt).toLocaleTimeString() })}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </PopoverContent>
-          </Popover>
+        {/*
+          2026-10-17 用户截图：点「上下文」弹出的却是「速率限制 / ClawRouter /
+          MANAGED MONTHLY BUDGET 67%」—— 那是**我们自己的上游账号预算**，属于运营口径，
+          不该出现在客户界面（与「模式背后模型身份不上屏」同一条纪律）。
+          这里把浮层整个去掉，只留一个不可点的上下文占用指示。
+        */}
+        {hasContextSummary && (
+          <span
+            data-testid="context-usage-chip"
+            className="type-meta inline-flex h-8 items-center rounded-lg border border-[var(--border-subtle)] px-2"
+          >
+            <span
+              className={cn(
+                'inline-flex items-center gap-0.5 px-1',
+                contextUsagePercent >= 90
+                  ? 'text-[var(--danger)]'
+                  : contextUsagePercent >= 70
+                    ? 'text-[var(--warning)]'
+                    : 'text-[var(--accent)]',
+              )}
+            >
+              <span className="text-[var(--text-secondary)]">{t('rightPanel.contextUsage')}</span>
+              {contextUsagePercent}%
+            </span>
+          </span>
         )}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -895,10 +857,29 @@ export function ChatContent({
   onboardingProfile,
   startupReadiness,
   onRetryStartup,
+  pendingDraftPrompt,
+  pendingDraftAutoSend,
+  onPendingDraftConsumed,
 }: {
   onboardingProfile: OnboardingProfile;
   startupReadiness: StartupReadiness;
   onRetryStartup: StartupRetry;
+  /**
+   * **从别的页面带进来的一句话**（2026-10-16，全量总单第 24 行）。
+   *
+   * 专家库点一张卡 ⇒ `MainArea` 切到对话并把提示词放在这里 ⇒ 本组件用**既有的**
+   * `requestDraft` 把它交给输入框（与欢迎屏的任务预设、目标路由同一条路）。
+   *
+   * ⚠️ 为什么不直接在专家库里调 `requestDraft`：那个函数与 `draftRequest` 状态
+   *    都住在**本组件**里，而 `mainView !== 'chat'` 时本组件是**卸载**的 ——
+   *    所以只能由已挂载的一方来做这件事。这不是新通道：提示词走的仍是
+   *    `DraftPromptRequest` 那条既有链路。
+   */
+  pendingDraftPrompt?: string | null;
+  /** 落进输入框后立刻发送（专家启动；见 `DraftPromptRequest.autoSend`）。 */
+  pendingDraftAutoSend?: boolean;
+  /** 交给输入框之后把它清掉（否则每次回到对话页都会再填一次）。 */
+  onPendingDraftConsumed?: () => void;
 }) {
   const { t } = useTranslation();
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
@@ -933,6 +914,95 @@ export function ChatContent({
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
+  /**
+   * 本轮消耗（`useQuotaRefreshOnTurnEnd` 在结算前后余额差里算出来的）。
+   *
+   * 只挂在**最后一条助手消息所在的会话**上：切到别的会话时不显示，
+   * 免得把上一轮的花费错挂到当前对话上。
+   *
+   * ⚠️ 必须算在 **MainArea** 这一层，不能放进 `LiveTimeline`：那里是
+   *    render-prop 的**提供方**，列表 JSX 写在调用方作用域里，拿不到它内部变量。
+   */
+  const turnSpend = useCommercialStore((s) => s.turnSpend);
+  const lastAssistantSessionKey = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role === 'assistant') return message.sessionKey ?? null;
+    }
+    return null;
+  }, [messages]);
+  const showTurnSpend =
+    // `!= null` 同时挡 null 与 undefined：局部 mock 的 store 里可能根本没有这个字段。
+    turnSpend != null &&
+    turnSpend.micros > 0 &&
+    lastAssistantSessionKey !== null &&
+    turnSpend.sessionKeys.includes(lastAssistantSessionKey);
+  /**
+   * 本次任务累计消耗（2026-10-17 用户要求：任务结束末尾要看到这一项）。
+   *
+   * ⚠️ **只从下面那一个来源记账**（2026-10-18 用户：「积分使用好像对不上」）：
+   *    `turnSpend` 与 `tokenUsedMicros` 增量是**同一笔服务端消耗**的两个视角 ——
+   *    前者由 `useQuotaRefreshOnTurnEnd` 在回合结束时算 `after-before`，后者是本组件
+   *    观察许可证总量的任何增长。两边各加一次就是**双计**（0.32 会显示成 0.64）。
+   *    这里统一走 `tokenUsedMicros`（服务端唯一口径，且能覆盖异步结算的视频/图片）；
+   *    `turnSpend` 只负责"本轮消耗"那一行。
+   */
+  const [taskSpend, setTaskSpend] = useState(EMPTY_TASK_SPEND);
+  const taskTotalMicros = activeTaskId ? (taskSpend.totals[activeTaskId] ?? 0) : 0;
+  const setLiveTaskMicros = useCommercialStore((s) => s.setLiveTaskMicros);
+  useEffect(() => {
+    // 测试桩里 store 可能没有这个方法（只 mock 了用到的字段）⇒ 缺了就跳过，不炸渲染。
+    if (typeof setLiveTaskMicros === 'function') setLiveTaskMicros(taskTotalMicros);
+  }, [taskTotalMicros, setLiveTaskMicros]);
+
+  /**
+   * 异步结算的消耗（视频 / 图片等）也要进"本次任务累计"。
+   *
+   * 为什么不能只靠 `turnSpend`：它只在本轮**对话结束**时对一次账；视频是几分钟后
+   * 才在服务端结算的，那一刻对话早就结束了 —— 现场就是这样：生成了一个视频，
+   * 界面上只显示了零点几积分。
+   *
+   * 做法：盯许可证的 `tokenUsedMicros`（服务端唯一的消耗口径），**任何增长**都按
+   * "当时正在看的任务"记账；产物保存（`artifact:saved`）后主动拉一次额度，
+   * 让结算尽快反映出来。⚠️ 多设备同时消费时会把别的设备的用量算进当前任务 ——
+   * 与 `turnSpend` 同一已知口径（宁可显示"本次任务"而不是"这次请求"）。
+   */
+  // 基线**绑定卡身份**：换卡后 `tokenUsedMicros` 换成新卡读数，若沿用旧基线，
+  // 新卡消费在超过旧卡已用量前不会计入任何任务（界面"积分不动"），切回高用量卡
+  // 又会把差额一次性算进当前任务。身份变了 ⇒ 只重置基线、不入账。
+  const usedMicrosSeen = useRef<{ licenseId: string; micros: number } | null>(null);
+  const usedMicros = useCommercialStore((s) => s.overview?.license?.tokenUsedMicros ?? null);
+  const usedLicenseId = useCommercialStore((s) => s.overview?.license?.licenseId ?? null);
+  useEffect(() => {
+    if (usedMicros === null || !usedLicenseId) return;
+    const previous = usedMicrosSeen.current;
+    if (previous === null || previous.licenseId !== usedLicenseId) {
+      usedMicrosSeen.current = { licenseId: usedLicenseId, micros: usedMicros };
+      return;
+    }
+    // 只认"增长"。服务端偶发把值调小（退款/口径修正）时**不要把基线跟着降** ——
+    // 否则下一次真实消费会被从更低的基线再算一遍，等于把之前已计入的额度重复记一次。
+    if (usedMicros <= previous.micros) return;
+    usedMicrosSeen.current = { licenseId: usedLicenseId, micros: usedMicros };
+    const delta = usedMicros - previous.micros;
+    if (!activeTaskId) return;
+    setTaskSpend((prev) => addTurnSpend(prev, activeTaskId, delta, Date.now()));
+  }, [usedMicros, activeTaskId, usedLicenseId]);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = window.clawwork.onArtifactSaved?.(() => {
+      // 产物保存 ⇒ 远端结算通常紧接着发生；给服务端一点时间再拉额度。
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void useCommercialStore.getState().refresh().catch(() => {});
+      }, 1500);
+    });
+    return () => {
+      clearTimeout(timer);
+      off?.();
+    };
+  }, []);
+
   const activeTaskArtifacts = useMemo(
     () => (activeTaskId ? artifacts.filter((artifact) => artifact.taskId === activeTaskId) : []),
     [activeTaskId, artifacts],
@@ -1018,8 +1088,8 @@ export function ChatContent({
   }, [activeUserId]);
 
   const requestDraft = useCallback(
-    (prompt: string, source: DraftPromptRequest['source'], presetId?: string) => {
-      const request = createDraftPromptRequest(++draftRequestSequence.current, prompt, source, presetId);
+    (prompt: string, source: DraftPromptRequest['source'], presetId?: string, autoSend?: boolean) => {
+      const request = createDraftPromptRequest(++draftRequestSequence.current, prompt, source, presetId, autoSend);
       activeDraftRequest.current = request;
       activeDraftRequestOwner.current = { requestId: request.id, ...readDraftRequestOwner() };
       setDraftRequest(request);
@@ -1030,6 +1100,19 @@ export function ChatContent({
   const handleGenerateFile = useCallback(() => {
     requestDraft(t('taskWorkbench.generateFilePrompt'), 'result-action');
   }, [requestDraft, t]);
+
+  /**
+   * 从别的页面带进来的一句话（专家库卡片）—— 用**既有**的 `requestDraft` 落到输入框，
+   * 落完就清掉，避免用户下次回到对话页时又被填一遍（那不是他这次的意思）。
+   *
+   * ⚠️ 依赖里只放本条 effect 用到的东西；`onPendingDraftConsumed` 用可选调用，
+   *    这样单独渲染 `ChatContent` 的既有测试不传它也不会炸。
+   */
+  useEffect(() => {
+    if (!pendingDraftPrompt) return;
+    requestDraft(pendingDraftPrompt, 'expert-launch', undefined, pendingDraftAutoSend === true);
+    onPendingDraftConsumed?.();
+  }, [pendingDraftPrompt, pendingDraftAutoSend, requestDraft, onPendingDraftConsumed]);
 
   const handleViewArtifacts = useCallback(() => {
     if (!newestActiveTaskArtifact) return;
@@ -1174,7 +1257,7 @@ export function ChatContent({
           compareActive ? (
             <ComparePanel modelCatalog={modelCatalog ?? []} taskId={activeTaskId} />
           ) : scope.showWelcome ? (
-            <div className="flex-1 px-5 pt-4 pb-0 overflow-y-auto">
+            <div className="flex-1 min-h-0 px-5 pt-4 pb-4 overflow-y-auto">
               {!startupReadiness.isReady && (
                 <StartupReadinessPanel readiness={startupReadiness} onRetry={onRetryStartup} />
               )}
@@ -1338,6 +1421,24 @@ export function ChatContent({
                 现在等待态由**上面列表里那一项**渲染（同一个 key、同一个组件），这里的
                 `AnimatePresence` 也就没有需要退场的节点了。
               */}
+                  {/* 本轮消耗：挂在最后一条回复下面，让用户当场看到"这次花了几积分"。
+                      余额本身由顶栏钱包实时显示（回合结束刷新 + 消费中 5 秒节奏）。 */}
+                  {showTurnSpend && turnSpend ? (
+                    <div
+                      data-testid="turn-cost"
+                      className="type-meta mt-3 flex items-center justify-center text-[var(--text-muted)]"
+                    >
+                      {t('chatMessage.turnCost', { credits: formatCredits(turnSpend.micros) })}
+                    </div>
+                  ) : null}
+                  {taskTotalMicros > 0 ? (
+                    <div
+                      data-testid="task-cost-total"
+                      className="type-meta mt-1 flex items-center justify-center text-[var(--text-muted)]"
+                    >
+                      {t('chatMessage.taskCostTotal', { credits: formatCredits(taskTotalMicros) })}
+                    </div>
+                  ) : null}
                   <FirstTaskCompletionFlow
                     userId={onboardingProfile.userId}
                     onboardingCompletedAt={onboardingProfile.completedAt}
@@ -1541,9 +1642,40 @@ export default function MainArea({
   onEditOnboardingProfile,
 }: MainAreaProps) {
   const mainView = useUiStore((s) => s.mainView);
+  const setMainView = useUiStore((s) => s.setMainView);
   const messageLayout = useUiStore((s) => s.messageLayout);
   const toggleMessageLayout = useUiStore((s) => s.toggleMessageLayout);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
+  const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
+  const defaultGatewayId = useUiStore((s) => s.defaultGatewayId ?? '');
+  const startNewTask = useTaskStore((s) => s.startNewTask);
+
+  /**
+   * 专家库那张卡点下去之后要发的**那一句话**（2026-10-16，全量总单第 24 行）。
+   *
+   * 为什么要有这一格状态：专家库这一页渲染时 `ChatContent`（`requestDraft` 的持有者）
+   * **是卸载的**。所以由本组件先收下这句话、切到对话，再由 `ChatContent` 挂载后
+   * 用**既有的** `requestDraft` 把它交给输入框 —— 提示词自始至终走同一条
+   * `DraftPromptRequest` 链路，没有第二条执行通道。
+   */
+  const [expertDraftPrompt, setExpertDraftPrompt] = useState<string | null>(null);
+  /** 专家启动：草稿落进输入框后直接发送（用户在卡片弹窗里已经确认过"要做什么"）。 */
+  const [expertDraftAutoSend, setExpertDraftAutoSend] = useState(false);
+  const handleStartExpertTask = useCallback(
+    (prompt: string) => {
+      // 2026-10-17 用户反馈：从专家库点"用这位专家"会落进**上一个任务**的输入框，
+      // 看起来像"跳到了最近的聊天"。专家的能力是一条新任务，先开新任务再填草稿。
+      startNewTask();
+      setExpertDraftPrompt(prompt);
+      setExpertDraftAutoSend(true);
+      setMainView('chat');
+    },
+    [setMainView, startNewTask],
+  );
+  const clearExpertDraftPrompt = useCallback(() => {
+    setExpertDraftPrompt(null);
+    setExpertDraftAutoSend(false);
+  }, []);
   // 「对比」是顶栏那个开关（有任务才出现）；选择条与并排面板都读同一个 store。
   const compareMode = useCompareStore((s) => s.mode);
   const setCompareMode = useCompareStore((s) => s.setMode);
@@ -1613,6 +1745,14 @@ export default function MainArea({
         </div>
       ) : mainView === 'skills' ? (
         <SkillMarket />
+      ) : mainView === 'experts' ? (
+        // 专家库（2026-10-16，第 24 行）：卡片只回传一句话，执行通道仍是对话那条既有的。
+        <div className="flex-1 min-h-0">
+          <ExpertsPanel
+            onStartTask={handleStartExpertTask}
+            gatewayId={activeTask?.gatewayId ?? defaultGatewayId}
+          />
+        </div>
       ) : mainView === 'identity' ? (
         <div className="flex-1 min-h-0">
           <IdentityCenter profile={onboardingProfile} onEditProfile={onEditOnboardingProfile} />
@@ -1628,6 +1768,8 @@ export default function MainArea({
         //    切任务要重置的东西由 ChatContent 里监听 activeTaskId 的 effect 负责。
         //    回归测试：test/chat-send-stability.test.tsx
         <div className="relative flex flex-col flex-1 min-h-0">
+          {/* 灵宠（2026-10-17）：安静的品牌位，不参与业务；关掉后记住。 */}
+          <MascotPet />
           <ChatHeader
             onTogglePanel={onTogglePanel}
             messageLayout={messageLayout}
@@ -1644,6 +1786,9 @@ export default function MainArea({
             onboardingProfile={onboardingProfile}
             startupReadiness={startupReadiness}
             onRetryStartup={onRetryStartup}
+            pendingDraftPrompt={expertDraftPrompt}
+            pendingDraftAutoSend={expertDraftAutoSend}
+            onPendingDraftConsumed={clearExpertDraftPrompt}
           />
         </div>
       )}

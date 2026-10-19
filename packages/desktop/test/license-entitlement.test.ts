@@ -151,6 +151,13 @@ vi.mock('../src/main/debug/index.js', () => ({
 
 vi.mock('../src/main/ws/index.js', () => ({ getAllGatewayClients: () => new Map() }));
 
+// ⭐ 2026-10-17 统一审核 §T33①：`clearPersistedLicenseBinding` 真清掉绑定时，`license.ts`
+//    会 fire-and-forget 调一次账户边界重投影。这里把它钉成 spy（不打真网关/DB）。
+const accountBoundaryResync = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../src/main/memory/account-switch.js', () => ({
+  resyncMemoryOnAccountBoundary: accountBoundaryResync,
+}));
+
 const ownLicense = (overrides: Partial<LicenseRow> = {}): LicenseRow => ({
   id: 'license-own',
   org_id: 'org-own',
@@ -178,6 +185,7 @@ describe('commercial entitlement identity', () => {
     state.rpc.mockReset();
     state.beforeLicenseLookup.mockReset();
     state.beforeLicenseLookup.mockResolvedValue(undefined);
+    accountBoundaryResync.mockClear();
   });
 
   it('releases the license queue after a stalled read so a later activation can complete', async () => {
@@ -742,6 +750,27 @@ describe('commercial entitlement identity', () => {
     expect(state.config).toMatchObject({
       commercial: { licenseKey: undefined, licenseBinding: undefined },
     });
+    // ⭐ §T33①：真清掉了一份既有绑定 ⇒ 归属刚变匿名，必须顺手重投影一次（复用边界那一次）。
+    expect(accountBoundaryResync).toHaveBeenCalledTimes(1);
+  });
+
+  it('⭐ §T33① 负对照：没有既有绑定可清（本就匿名 / 无卡）⇒ 不触发记忆重投影', async () => {
+    // 已登录、owner，但本地**没有任何**落盘许可（空商业段）⇒ `!license` 但无需清绑定。
+    state.config = {};
+    state.memberships = [
+      {
+        user_id: state.currentUserId,
+        org_id: 'org-empty',
+        role: 'owner',
+        joined_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    const { readLicenseStatus } = await import('../src/main/commercial/license.js');
+    const result = await readLicenseStatus();
+
+    expect(result.result).toMatchObject({ configured: false, activated: false, licenseKey: null });
+    expect(accountBoundaryResync).not.toHaveBeenCalled();
   });
   it.each(['committed', 'missing-device', 'revoked-device', 'other-device', 'member', 'other-key'] as const)(
     'only recovers exact current activation without submitting another RPC: %s',

@@ -59,21 +59,35 @@ const clickNav = (container: HTMLElement, key: string) => {
  * ⚠️ 这条**顺序断言是刻意的** —— 顺序就是与老板设计稿的对应关系，
  *    改顺序 = 改设计稿的对齐，应当是一次有意的决定而不是手抖。
  */
-describe('LeftNav NavMenu', () => {
-  it('⭐ 按设计稿的顺序渲染，并把图标栏搬来的几项接在后面', () => {
+describe('LeftNav NavMenu（2026-10-17 晚按设计稿重排）', () => {
+  const openMore = (container: HTMLElement) => clickNav(container, 'more');
+
+  /**
+   * ⭐ 2026-10-18（用户实测）：「资料库」让位给「智能体市场」。
+   *    原来的 `kb` 从顶部挪进「更多」，`agents` 从「更多」提上来 ——
+   *    两条入口**都在**，只是层级对调。
+   */
+  it('⭐ 顶部只留这几行：新建任务 / 团队 / 技能库 / 智能体 / 智能体市场 / 更多', () => {
     const { container, unmount } = setup();
     const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
+    expect(keys).toEqual(['new-task', 'teams', 'skills', 'experts', 'agents', 'more']);
+    unmount();
+  });
 
-    // 客户发行包不带运营/内测入口；那一项只允许内部构建显式打开。
-    // ⚠️ `tasks`（最近任务）是 2026-09-20 用户点名加的：**放在「身份中心」上面**
-    //    —— 原来那栏在左列最下面、"显示也不全"，改成导航入口 + 右侧全量面板。
+  it('⭐ 「更多」展开后是全部次级入口（一个都没删，资料库已移入）', () => {
+    const { container, unmount } = setup();
+    openMore(container);
+    const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
     expect(keys).toEqual([
-      'search',
-      'tasks',
-      'identity',
+      'new-task',
       'teams',
       'skills',
+      'experts',
       'agents',
+      'more',
+      'tasks',
+      'identity',
+      'kb',
       'bounty',
       'square',
       'creator',
@@ -82,65 +96,56 @@ describe('LeftNav NavMenu', () => {
       'cron',
       'files',
       'archived',
-      'kb',
-      'settings',
     ]);
     unmount();
   });
 
-  it('⭐ 点「最近任务」落到 `tasks` 这个 mainView（它不再是左列最下面那一块）', () => {
+  it('⭐ 「资料库」入口没丢：从「更多」里仍能落到 kb 页面', () => {
     const { container, onSelectView, unmount } = setup();
+    openMore(container);
+    clickNav(container, 'kb');
+    expect(onSelectView).toHaveBeenLastCalledWith('kb');
+    unmount();
+  });
 
+  it('⭐ 点「新建任务」走 onNewTask（不再只是搜索框旁的小图标）', () => {
+    const onNewTask = vi.fn();
+    const { container, unmount } = setup({ onNewTask });
+    clickNav(container, 'new-task');
+    expect(onNewTask).toHaveBeenCalledOnce();
+    unmount();
+  });
+
+  it('⭐ 点「最近任务」落到 `tasks` 这个 mainView', () => {
+    const { container, onSelectView, unmount } = setup();
+    openMore(container);
     clickNav(container, 'tasks');
-
     expect(onSelectView).toHaveBeenLastCalledWith('tasks');
     unmount();
   });
 
-  it('⭐「最近任务」在「身份中心」上面（用户点名：原来在最下面不好）', () => {
-    const { container, unmount } = setup();
-    const keys = [...container.querySelectorAll('[data-nav]')].map((el) => el.getAttribute('data-nav'));
-
-    expect(keys.indexOf('tasks')).toBe(keys.indexOf('identity') - 1);
-    unmount();
-  });
-
-  it('⭐ 图标栏搬来的三项能落到对应页面，客户包没有运营后台入口', () => {
+  it('⭐ 图标栏搬来的三项仍能落到对应页面，客户包没有运营后台入口', () => {
     const { container, onSelectView, unmount } = setup();
-
+    openMore(container);
     clickNav(container, 'files');
     expect(onSelectView).toHaveBeenLastCalledWith('files');
+    // 点完一次「更多」会自动收起（选完就走），下一次要重新展开。
+    openMore(container);
     clickNav(container, 'archived');
     expect(onSelectView).toHaveBeenLastCalledWith('archived');
+    // 「资料库」2026-10-18 移入「更多」⇒ 也要先展开（上一条选完已自动收起）。
+    openMore(container);
     clickNav(container, 'kb');
     expect(onSelectView).toHaveBeenLastCalledWith('kb');
     expect(container.querySelector('[data-nav="betaHub"]')).toBeNull();
     unmount();
   });
 
-  it('⭐「设置」走设置面板（和技能市场一样，不是 mainView）', () => {
-    const { container, onSelectView, onOpenSettings, unmount } = setup();
-
-    clickNav(container, 'settings');
-
-    expect(onOpenSettings).toHaveBeenCalledTimes(1);
-    expect(onSelectView).not.toHaveBeenCalled();
-    unmount();
-  });
-
-  it('「设置」在有更新时带角标', () => {
-    const plain = setup({ hasUpdate: false });
-    expect(plain.container.querySelector('[data-nav="settings"]')!.textContent).not.toContain('•');
-    plain.unmount();
-
-    const upd = setup({ hasUpdate: true });
-    expect(upd.container.querySelector('[data-nav="settings"]')!.textContent).toContain('•');
-    upd.unmount();
-  });
-
   it('每一项都渲染出文案（i18n 键解析到位）', () => {
     const { container, unmount } = setup();
-    expect(container.textContent).toContain('leftNav.pages.search');
+    expect(container.textContent).toContain('leftNav.pages.more');
+    expect(container.textContent).toContain('leftNav.pages.agentsSimple');
+    openMore(container);
     expect(container.textContent).toContain('leftNav.identityCenter');
     expect(container.textContent).toContain('leftNav.pages.bounty');
     expect(container.textContent).toContain('cron.title');
@@ -149,18 +154,20 @@ describe('LeftNav NavMenu', () => {
 
   it('点有页面的项 ⇒ 落到对应的 mainView', () => {
     const { container, onSelectView, unmount } = setup();
-
+    openMore(container);
     clickNav(container, 'identity');
     expect(onSelectView).toHaveBeenLastCalledWith('identity');
-    // 2026-10-06（用户拍板）：需求悬赏置灰暂不可用——点击不再导航（改弹「敬请期待」，
-    // 见下方专门用例），这里钉住"它不会把用户带进半成品页面"。
+    openMore(container);
     clickNav(container, 'bounty');
     expect(onSelectView).toHaveBeenLastCalledWith('identity');
+    openMore(container);
     clickNav(container, 'creator');
     expect(onSelectView).toHaveBeenLastCalledWith('creator');
+    openMore(container);
     clickNav(container, 'square');
     expect(onSelectView).toHaveBeenLastCalledWith('community');
     if (!PUBLIC_MARKET_CLOSED) {
+      // 2026-10-18：`agents` 已是一级入口，不需要先展开「更多」。
       clickNav(container, 'agents');
       expect(onSelectView).toHaveBeenLastCalledWith('market');
     }
@@ -170,9 +177,8 @@ describe('LeftNav NavMenu', () => {
   it('⭐ 需求悬赏置灰可点：点击弹「敬请期待」、不导航（用户拍板 2026-10-06）', () => {
     vi.mocked(toast).mockClear();
     const { container, onSelectView, unmount } = setup();
+    openMore(container);
     const bounty = container.querySelector('[data-nav="bounty"]') as HTMLButtonElement;
-
-    // 灰态视觉但不吞点击：不用真 disabled（会吞 onClick），用 muted 样式 + 仍可点。
     expect(bounty.disabled).toBe(false);
     expect(bounty.className).toContain('opacity-60');
 
@@ -187,42 +193,33 @@ describe('LeftNav NavMenu', () => {
 
   it.runIf(PUBLIC_MARKET_CLOSED)('公开市场关闭：入口**保留可见**但置灰不可点（带说明气泡）', () => {
     const { container, onSelectView, unmount } = setup();
+    // 2026-10-18：入口已提到顶部一级清单（不依赖「更多」是否展开）。
     const agents = container.querySelector('[data-nav="agents"]');
-
     expect(agents, '入口不许直接删掉 —— 删除会让用户猜"功能没了还是藏了"').not.toBeNull();
     expect((agents as HTMLButtonElement).disabled).toBe(true);
     expect(agents?.getAttribute('aria-disabled')).toBe('true');
     expect(agents?.getAttribute('title')).toBeTruthy();
 
-    // 点了也不许导航（disabled 按钮本来就不派发 click，这里显式钉住后果）。
     clickNav(container, 'agents');
     expect(onSelectView).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('⭐ 点「技能市场」落到 `skills` 这个 mainView（T-a2 起它**不再是**设置里的一节）', () => {
-    // ⚠️ 这条**改过**：原来钉的是"走设置面板、不切 mainView"。
-    //    改的理由是用户 2026-09-20 的原话：「技能市场点击居然是设置的主页面」
-    //    —— 点"市场"落到设置页本身就是被投诉的那个现象。
-    //    现在它是个真页面，**顺带**修掉了"这一项永远没有选中态"那个已知缺口
-    //    （旧注释写着"要做对得把 settingsSection 也传下来"；变成 view 之后就不需要了）。
+  it('⭐ 点「技能市场」落到 `skills` 这个 mainView', () => {
     const { container, onSelectView, onOpenSettings, unmount } = setup();
-
     clickNav(container, 'skills');
-
     expect(onSelectView).toHaveBeenLastCalledWith('skills');
     expect(onOpenSettings).not.toHaveBeenCalled();
     unmount();
   });
 
   it('选中态只标一个，且只在设置没开时标', () => {
-    const { container, unmount } = setup({ mainView: 'growth', settingsOpen: false });
+    const { container, unmount } = setup({ mainView: 'skills', settingsOpen: false });
     const current = [...container.querySelectorAll('[aria-current="page"]')].map((el) => el.getAttribute('data-nav'));
-    expect(current).toEqual(['growth']);
+    expect(current).toEqual(['skills']);
     unmount();
 
-    // 设置面板开着时，页面导航整体不处于选中态
-    const second = setup({ mainView: 'growth', settingsOpen: true });
+    const second = setup({ mainView: 'skills', settingsOpen: true });
     expect(second.container.querySelectorAll('[aria-current="page"]')).toHaveLength(0);
     second.unmount();
   });
@@ -230,7 +227,80 @@ describe('LeftNav NavMenu', () => {
   it('「团队」带 Beta 角标，其它项不带', () => {
     const { container, unmount } = setup();
     expect(container.querySelector('[data-nav="teams"]')!.textContent).toContain('Beta');
-    expect(container.querySelector('[data-nav="identity"]')!.textContent).not.toContain('Beta');
+    expect(container.querySelector('[data-nav="skills"]')!.textContent).not.toContain('Beta');
+    unmount();
+  });
+});
+
+/**
+ * 「更多」的收起（2026-10-18 同事批次移植）。
+ *
+ * 现场：点开「更多」后切到别处（对话 / 其它页 / 任务行），它**不会收起** ——
+ * 一整列二级入口摊在左栏，把任务列表挤到看不见（用户反馈"左边栏坏了"）。
+ * 规则：① mainView 一变就复位；② 点「更多」以外的地方也收起。
+ */
+describe('「更多」的收起', () => {
+  const openMore = (container: HTMLElement) => clickNav(container, 'more');
+  const moreExpanded = (container: HTMLElement) => container.querySelector('[data-testid="left-nav-more-items"]') !== null;
+
+  it('⭐ 点「更多」以外的地方（document mousedown）⇒ 收起', () => {
+    const { container, unmount } = setup();
+    openMore(container);
+    expect(moreExpanded(container)).toBe(true);
+
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(moreExpanded(container)).toBe(false);
+    unmount();
+  });
+
+  it('⭐ 点「更多」本身不触发点外收起（开合仍是它自己的事）', () => {
+    const { container, unmount } = setup();
+    openMore(container);
+    act(() => {
+      (container.querySelector('[data-nav="more"]') as HTMLElement).dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true }),
+      );
+    });
+    expect(moreExpanded(container)).toBe(true);
+    unmount();
+  });
+
+  it('⭐ mainView 变化 ⇒ 复位', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    const onSelectView = vi.fn();
+    const renderAt = (mainView: 'chat' | 'skills') =>
+      act(() =>
+        root.render(
+          <NavMenu
+            mainView={mainView}
+            settingsOpen={false}
+            onSelectView={onSelectView}
+            onOpenSettings={vi.fn()}
+            hasUpdate={false}
+          />,
+        ),
+      );
+
+    renderAt('chat');
+    openMore(container);
+    expect(moreExpanded(container)).toBe(true);
+
+    renderAt('skills');
+    expect(moreExpanded(container)).toBe(false);
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('⭐ 点主入口导航项（新建任务 / 技能库）⇒ 收起', () => {
+    const { container, unmount } = setup();
+    openMore(container);
+    clickNav(container, 'skills');
+    expect(moreExpanded(container)).toBe(false);
     unmount();
   });
 });

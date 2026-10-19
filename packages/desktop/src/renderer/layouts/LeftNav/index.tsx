@@ -18,6 +18,8 @@ import { useGatewaySelector } from '@/hooks/useGatewaySelector';
 import { useSelectAgent } from '@/hooks/useSelectAgent';
 import { resolveRequestedAgent } from '@/lib/requested-agent';
 import NavMenu from './NavMenu';
+import TaskList from './TaskList';
+import ProfileMenu from './ProfileMenu';
 
 interface LeftNavProps {
   onOpenAssistantSettings: () => void;
@@ -44,6 +46,10 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   const { t } = useTranslation();
   const startNewTask = useTaskStore((s) => s.startNewTask);
   const setActiveTask = useTaskStore((s) => s.setActiveTask);
+  // 左侧栏任务列表（2026-10-17 按 UI 稿把任务放回左栏）。
+  const tasks = useTaskStore((s) => s.tasks);
+  const activeTaskId = useTaskStore((s) => s.activeTaskId);
+  const processingBySession = useMessageStore((s) => s.processingBySession);
   const setHighlightedMessage = useMessageStore((s) => s.setHighlightedMessage);
   const setMainView = useUiStore((s) => s.setMainView);
   const mainView = useUiStore((s) => s.mainView);
@@ -53,6 +59,7 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   const leftNavCollapsed = useUiStore((s) => s.leftNavCollapsed);
   const toggleLeftNavCollapsed = useUiStore((s) => s.toggleLeftNavCollapsed);
   const searchFocusTrigger = useUiStore((s) => s.searchFocusTrigger);
+  const focusSearch = useUiStore((s) => s.focusSearch);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -166,20 +173,28 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
   );
 
   return (
-    <div className="relative flex h-full flex-col overflow-hidden pt-10">
-      {/* 拖拽区照旧留着（窗口要能拖），只是它不再承载折叠按钮。 */}
-      <div className="titlebar-drag absolute inset-x-0 top-0 z-[51] h-10" />
-
-      <div className="flex-shrink-0 px-3 py-2">
+    <div className="relative flex h-full flex-col overflow-hidden">
+      {/*
+        顶部第一行同时充当窗口拖拽条（2026-10-18 用户实测）。
+        以前是「40px 空白标题栏占位 + 44px 品牌位（方标 + 荣盈魔方）」两层，
+        标题栏里已经有品牌名 ⇒ 这里重复且把导航整体压低。
+        ⚠️ 拖拽区**没有删**，只是从"独占一条空带"变成"这一行本身"：
+           行内交互控件都是 `titlebar-no-drag`（`ToolbarButton` 自带，搜索框单独补），
+           剩余缝隙照旧可拖窗 —— 收起态同理。
+      */}
+      <div className="titlebar-drag flex flex-shrink-0 px-3 py-1.5">
         <div
-          className={cn('titlebar-no-drag flex items-center gap-1', leftNavCollapsed && 'flex-col items-center gap-1')}
+          className={cn(
+            'flex w-full items-center gap-1',
+            leftNavCollapsed && 'flex-col items-center gap-1',
+          )}
         >
           {CollapseToggleButton}
           {/* 收纳态隐藏搜索框（体验稿 `.fold .search{display:none}`）。
               收起后那点宽度放不下输入框；搜索入口仍在（导航第一项就是「搜索任务」），
               展开即回到这里。 */}
           {!leftNavCollapsed && (
-            <div className="relative min-w-0 flex-1">
+            <div className="titlebar-no-drag relative min-w-0 flex-1">
               <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
               <input
                 ref={searchInputRef}
@@ -226,6 +241,7 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
           onSelectView={setMainView}
           onOpenSettings={onOpenSettings}
           hasUpdate={hasUpdate}
+          onNewTask={() => startNewTask({ gatewayId: selectedGwId, agentId: currentAgentId })}
           collapsed={leftNavCollapsed}
           assistantSlot={
             <>
@@ -252,6 +268,18 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
 
       {/* 全局搜索结果落在这块空区上（原来它盖在下面的任务列表上）。 */}
       <div className="relative min-h-0 flex-1">
+        <TaskList
+          tasks={tasks}
+          activeTaskId={activeTaskId}
+          runningSessionKeys={processingBySession}
+          collapsed={leftNavCollapsed}
+          onSelect={(taskId) => {
+            setActiveTask(taskId);
+            setMainView('chat');
+          }}
+          onShowAll={() => setMainView('tasks')}
+          onSearch={focusSearch}
+        />
         <AnimatePresence>
           {searchQuery.trim() && (
             <motion.div
@@ -265,6 +293,23 @@ export default function LeftNav({ onOpenAssistantSettings, onOpenSettings }: Lef
             </motion.div>
           )}
         </AnimatePresence>
+      </div>
+
+      {/* 左下角「个人资料」（2026-10-17 晚设计稿）：点开是 用量与积分 / 游戏化中心 / 应用设置。 */}
+      <div
+        className={cn(
+          'flex-shrink-0 border-t border-[var(--border-subtle)]',
+          leftNavCollapsed ? 'px-1.5 py-1.5' : 'px-2 py-1.5',
+        )}
+      >
+        <ProfileMenu
+          collapsed={leftNavCollapsed}
+          mainView={mainView}
+          settingsOpen={settingsOpen}
+          hasUpdate={hasUpdate}
+          onSelectView={setMainView}
+          onOpenSettings={onOpenSettings}
+        />
       </div>
     </div>
   );

@@ -11,6 +11,8 @@ import {
   ShieldCheck,
   Brain,
   Laptop,
+  Stethoscope,
+  Plug,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
@@ -27,6 +29,8 @@ export type SettingsSection =
   | 'memory'
   | 'computerAccess'
   | 'privacy'
+  | 'connectors'
+  | 'repair'
   | 'about';
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings2; labelKey: string }[] = [
@@ -41,6 +45,10 @@ const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings2; labelKey: strin
   // 放在「隐私与数据」**上面**：它管的是助手能碰什么，比数据导出更该被看见。
   { key: 'computerAccess', icon: Laptop, labelKey: 'settings.computerAccess' },
   { key: 'privacy', icon: ShieldCheck, labelKey: 'settings.privacy' },
+  // 连接器（飞书等外部通道）：它是「把能力接出去」，与「数据留在本机」同一层级的用户可见设置。
+  { key: 'connectors', icon: Plug, labelKey: 'settings.connectors.nav' },
+  // 放在「关于」**上面**：它是"出事了先来这里"，比版本号更需要被看见。
+  { key: 'repair', icon: Stethoscope, labelKey: 'settings.repair.nav' },
   { key: 'about', icon: Info, labelKey: 'settings.about' },
 ];
 

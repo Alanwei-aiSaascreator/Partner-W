@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, PackagePlus, RefreshCw, Sparkles, Trash2, Wrench } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowRight, Loader2, PackagePlus, RefreshCw, Search, Sparkles, Trash2, Wrench } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -16,6 +16,13 @@ import {
 } from '@/lib/ensure-bundled-skills';
 import { useSkillVerdicts } from './use-skill-verdicts';
 import SkillVerdictBadge from './SkillVerdictBadge';
+import {
+  groupSkillsByCategory,
+  skillCategoryOf,
+  SKILL_CATEGORY_ORDER,
+  type SkillCategory,
+} from '@/lib/skill-categories';
+import { cn } from '@/lib/utils';
 import type { OurSkillEntry } from '@clawwork/shared';
 
 /**
@@ -188,6 +195,24 @@ export default function SkillMarket() {
   const skills = state.kind === 'ready' ? state.skills : [];
   const canAct = state.kind === 'ready' && state.managedDirKnown && Boolean(gatewayId);
   const installedCount = skills.filter((skill) => skill.installed).length;
+  const setMainView = useUiStore((s) => s.setMainView);
+
+  // ── 2026-10-17 晚按设计稿：分类卡 + 搜索 + 分类筛选 + 卡片网格 ─────────────
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState<SkillCategory | 'all'>('all');
+  const categoryGroups = useMemo(() => groupSkillsByCategory(skills), [skills]);
+  const visibleSkills = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return skills.filter((skill) => {
+      if (category !== 'all' && skillCategoryOf(skill.slug) !== category) return false;
+      if (!needle) return true;
+      return (
+        (skill.name ?? '').toLowerCase().includes(needle) ||
+        (skill.description ?? '').toLowerCase().includes(needle) ||
+        skill.slug.toLowerCase().includes(needle)
+      );
+    });
+  }, [skills, query, category]);
 
   /**
    * ⭐ 问网关「**这个助手**现在能不能用它们」（2026-09-29）。
@@ -232,21 +257,28 @@ export default function SkillMarket() {
       />
       <ScrollArea className="flex-1 min-h-0">
         <div className="flex w-full flex-col gap-4 px-4 py-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="type-meta text-[var(--text-secondary)]">{t('skillMarket.subtitle')}</p>
-            {/* 数量装置（2026-09-29）：**已装数**比总数更有用 —— 用户想知道"我还差几个"。
-                ⚠️ 空列表时不显示（"共 0 个"是噪音）。 */}
-            {state.kind === 'ready' && skills.length > 0 ? (
-              <span
-                data-testid="our-skill-count"
-                data-field="count"
-                data-total={skills.length}
-                data-installed={installedCount}
-                className="type-support ml-auto shrink-0 text-[var(--text-muted)]"
-              >
-                {t('skillMarket.count', { total: skills.length, installed: installedCount })}
-              </span>
-            ) : null}
+          {/* 页签（2026-10-17 设计稿）：技能 / 智能体 / 提示词。
+              智能体复用真实专家库页；提示词库尚无实现 ⇒ 如实置灰，不做假入口。 */}
+          <div className="flex items-center gap-4 border-b border-[var(--border-subtle)] pb-2">
+            <span className="type-label -mb-2 inline-flex items-center gap-1.5 border-b-2 border-[var(--accent)] pb-2 text-[var(--accent)]">
+              {t('skillMarket.tabSkills')}
+              <span className="type-meta">{skills.length}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setMainView('experts')}
+              className="glow-focus type-label text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            >
+              {t('skillMarket.tabAgents')}
+            </button>
+            <button
+              type="button"
+              disabled
+              title={t('skillMarket.promptsSoon')}
+              className="type-label text-[var(--text-muted)] opacity-60"
+            >
+              {t('skillMarket.tabPrompts')}
+            </button>
           </div>
 
           {state.kind === 'ready' && !state.managedDirKnown ? (
@@ -262,94 +294,163 @@ export default function SkillMarket() {
           ) : skills.length === 0 ? (
             <EmptyState icon={<Sparkles size={18} />} title={t('skillMarket.empty')} className="py-10" />
           ) : (
-            <ul className="divide-y divide-[var(--border-subtle)]" data-testid="our-skill-list">
-              {skills.map((skill) => (
-                <li
-                  key={skill.slug}
-                  data-testid="our-skill-row"
-                  data-slug={skill.slug}
-                  data-installed={skill.installed ? 'true' : 'false'}
-                  data-verdict={verdicts[skill.slug]?.kind ?? 'none'}
-                  className="-mx-2 flex flex-col items-start gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-[var(--bg-secondary)] sm:flex-row sm:items-center"
-                >
-                  <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-tertiary)]">
-                      <span className="emoji-sm">{skill.emoji ?? '🧩'}</span>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        {/* ⚠️ 技能名与描述来自 SKILL.md 的 frontmatter，**不进 i18n** ——
-                        与市场里的官方模板同一个口径（内容自带，不随界面语言变）。 */}
-                        <span className="type-label break-words font-medium text-[var(--text-primary)]">
-                          {skill.name ?? skill.slug}
-                        </span>
-                        {skill.installed ? (
-                          <span className="type-meta shrink-0 rounded bg-[var(--accent)]/10 px-1.5 text-[var(--accent)]">
-                            {t('skillMarket.installedBadge')}
-                          </span>
-                        ) : null}
-                      </div>
-                      {/* 描述限宽 + 两行封顶（2026-10-12 排版精修）：此前全宽换行，
-                          宽屏上一条描述横跨一千多像素，行行见尾才换行 —— 扫读性最差的一处。
-                          完整文案保留在 title（悬停可见），信息不丢。 */}
-                      {skill.description ? (
-                        <p
-                          className="type-support mt-1.5 line-clamp-2 max-w-2xl break-words text-[var(--text-secondary)]"
-                          title={skill.description}
-                        >
-                          {skill.description}
-                        </p>
-                      ) : null}
-                      {/* 「已装」是磁盘的事；这一行是**网关按助手**回来的答案。两件事，两个标签。
-                      ⚠️ 只有**问得出去**的时候才画（`canAct`）：网关没连上时整页已经有一条
-                      「未连接」的提示了，再给每张卡挂一句"没问出来"是噪音 ——
-                      而且会让人以为是**这个技能**的问题，其实只是网关没连上。 */}
-                      {canAct ? <SkillVerdictBadge verdict={verdicts[skill.slug] ?? { kind: 'none' }} /> : null}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {/* ⭐ E3：已装的那一行多一个**独立**的「修复随包版本」动作（卸载按钮原样保留）。
-                        它只做"换成当前随包的那份"，且必须用户确认过才发 IPC。 */}
-                    {skill.installed ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!canAct || busySlug !== null}
-                        data-testid="our-skill-repair"
-                        onClick={() => setRepairTarget(skill)}
-                        className="shrink-0"
-                      >
-                        {busySlug === skill.slug && busyAction === 'repair' ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Wrench size={14} />
-                        )}
-                        <span className="ml-1.5">{t('skillMarket.repair')}</span>
-                      </Button>
-                    ) : null}
-                    <Button
-                      variant={skill.installed ? 'ghost' : 'default'}
-                      size="sm"
-                      disabled={!canAct || busySlug !== null}
-                      data-testid={skill.installed ? 'our-skill-remove' : 'our-skill-install'}
-                      onClick={() => void handleToggle(skill)}
-                      className="shrink-0"
-                    >
-                      {busySlug === skill.slug && busyAction === 'toggle' ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : skill.installed ? (
-                        <Trash2 size={14} />
-                      ) : (
-                        <PackagePlus size={14} />
+            <>
+              {/* 分类卡：渐变 + 数量 + 三个代表项，点一下就是筛选。 */}
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {categoryGroups.map((group) => {
+                  const active = category === group.category;
+                  return (
+                    <button
+                      key={group.category}
+                      type="button"
+                      data-testid={`skill-tile-${group.category}`}
+                      onClick={() => setCategory(active ? 'all' : group.category)}
+                      className={cn(
+                        'skill-tile flex flex-col items-start gap-1 rounded-xl px-3.5 py-3 text-left transition-colors',
+                        `skill-tile--${group.category}`,
+                        active && 'ring-2 ring-[var(--accent)]',
                       )}
-                      <span className="ml-1.5">
-                        {skill.installed ? t('skillMarket.remove') : t('skillMarket.install')}
+                    >
+                      <span className="flex w-full items-center justify-between type-label">
+                        {t(`skillMarket.category.${group.category}`)}
+                        <ArrowRight size={14} />
                       </span>
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                      <span className="type-meta opacity-80">{t('skillMarket.tileCount', { n: group.items.length })}</span>
+                      <span className="type-meta line-clamp-2 opacity-80">
+                        {group.items.slice(0, 3).map((item) => item.name ?? item.slug).join(' · ')}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 搜索 + 总数（总数是真实值；不做假的使用次数/热度排序）。 */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative w-full max-w-md">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={t('skillMarket.searchPlaceholder')}
+                    className="h-[var(--density-control-height-sm)] w-full rounded-md border border-[var(--border)] bg-[var(--bg-primary)] pl-9 pr-3 type-body text-[var(--text-primary)] placeholder:text-[var(--text-muted)] glow-focus"
+                  />
+                </div>
+                <span
+                  data-testid="our-skill-count"
+                  data-field="count"
+                  data-total={skills.length}
+                  data-installed={installedCount}
+                  className="type-support text-[var(--text-muted)]"
+                >
+                  {t('skillMarket.allInstalled', { n: skills.length })}
+                </span>
+              </div>
+
+              {/* 分类筛选 chips */}
+              <div className="flex flex-wrap gap-2">
+                <FilterChip
+                  active={category === 'all'}
+                  label={t('experts.domain.all')}
+                  count={skills.length}
+                  onClick={() => setCategory('all')}
+                />
+                {categoryGroups.map((group) => (
+                  <FilterChip
+                    key={group.category}
+                    active={category === group.category}
+                    label={t(`skillMarket.category.${group.category}`)}
+                    count={group.items.length}
+                    onClick={() => setCategory(group.category)}
+                  />
+                ))}
+              </div>
+
+              {visibleSkills.length === 0 ? (
+                <EmptyState icon={<Search size={18} />} title={t('skillMarket.noMatch')} className="py-10" />
+              ) : (
+                <div data-testid="our-skill-list" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {visibleSkills.map((skill) => (
+                    <article
+                      key={skill.slug}
+                      data-testid="our-skill-row"
+                      data-slug={skill.slug}
+                      data-installed={skill.installed ? 'true' : 'false'}
+                      data-verdict={verdicts[skill.slug]?.kind ?? 'none'}
+                      className="flex flex-col gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3.5"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-tertiary)]">
+                          <span className="emoji-sm">{skill.emoji ?? '🧩'}</span>
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="type-label truncate font-medium text-[var(--text-primary)]">
+                              {skill.name ?? skill.slug}
+                            </span>
+                            {skill.installed ? (
+                              <span className="type-meta shrink-0 rounded bg-[var(--accent)]/10 px-1.5 text-[var(--accent)]">
+                                {t('skillMarket.installedBadge')}
+                              </span>
+                            ) : null}
+                          </div>
+                          {skill.description ? (
+                            <p
+                              className="type-support mt-1 line-clamp-2 break-words text-[var(--text-secondary)]"
+                              title={skill.description}
+                            >
+                              {skill.description}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                      {canAct ? <SkillVerdictBadge verdict={verdicts[skill.slug] ?? { kind: 'none' }} /> : null}
+                      <div className="mt-auto flex items-center gap-1.5 pt-1">
+                        <span className="type-meta text-[var(--text-muted)]">
+                          {t(`skillMarket.category.${skillCategoryOf(skill.slug)}`)}
+                        </span>
+                        <div className="ml-auto flex items-center gap-1">
+                          {skill.installed ? (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              disabled={!canAct || busySlug !== null}
+                              data-testid="our-skill-repair"
+                              title={t('skillMarket.repair')}
+                              aria-label={t('skillMarket.repair')}
+                              onClick={() => setRepairTarget(skill)}
+                            >
+                              {busySlug === skill.slug && busyAction === 'repair' ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Wrench size={14} />
+                              )}
+                            </Button>
+                          ) : null}
+                          <Button
+                            variant={skill.installed ? 'ghost' : 'default'}
+                            size="icon-sm"
+                            disabled={!canAct || busySlug !== null}
+                            data-testid={skill.installed ? 'our-skill-remove' : 'our-skill-install'}
+                            title={skill.installed ? t('skillMarket.remove') : t('skillMarket.install')}
+                            aria-label={skill.installed ? t('skillMarket.remove') : t('skillMarket.install')}
+                            onClick={() => void handleToggle(skill)}
+                          >
+                            {busySlug === skill.slug && busyAction === 'toggle' ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : skill.installed ? (
+                              <Trash2 size={14} />
+                            ) : (
+                              <PackagePlus size={14} />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </ScrollArea>
@@ -366,5 +467,35 @@ export default function SkillMarket() {
         onCancel={() => setRepairTarget(null)}
       />
     </div>
+  );
+}
+
+/** 分类筛选 chip（设计稿同款；选中态用强调色）。 */
+function FilterChip({
+  active,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'glow-focus inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 type-support transition-colors',
+        active
+          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+          : 'border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-[var(--border)] hover:text-[var(--text-primary)]',
+      )}
+    >
+      <span>{label}</span>
+      <span className="type-meta opacity-70">{count}</span>
+    </button>
   );
 }

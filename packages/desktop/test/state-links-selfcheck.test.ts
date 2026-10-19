@@ -9,6 +9,8 @@ import {
   openclawPeerLinkNeeded,
   probeStateLinks,
   rewriteLinkTarget,
+  rewriteLinkVolume,
+  rewriteLinkVolumeForState,
   runStateLinksSelfCheck,
   type LinkProbeFacts,
 } from '../src/main/runtime/state-links-selfcheck.js';
@@ -133,6 +135,52 @@ describe('isUnderRoot —— 盘符大小写不敏感，但不能被"前缀恰�
   });
   it('别处/子串都不算', () => {
     expect(isUnderRoot('D:\\other\\runtime\\deployed\\KEY2\\x', 'C:\\u\\runtime\\deployed\\KEY2')).toBe(false);
+  });
+});
+
+/**
+ * 2026-10-19 现场盘：插件自带的技能链（`plugin-skills\feishu-doc` 这类）指向的是
+ * **state 目录**，里面没有 `node_modules\openclaw` 锚点 ⇒ 换根那条路按设计拒绝。
+ * 但它们与当前 state 根只差一个盘符，换过去在盘上真实存在 —— 这是映射，不是猜。
+ */
+describe('rewriteLinkVolume —— 只差盘符时按当前盘符重写', () => {
+  it('E: → F:：后缀逐字不动', () => {
+    expect(rewriteLinkVolume('E:\\荣盈魔方-运行数据\\state\\id\\extensions\\feishu\\skills\\feishu-doc', 'F:\\荣盈魔方-运行数据\\state\\id')).toBe(
+      'F:\\荣盈魔方-运行数据\\state\\id\\extensions\\feishu\\skills\\feishu-doc',
+    );
+  });
+  it('带扩展前缀 `\\\\?\\` 也能换（junction 读出来就是这个形状）', () => {
+    expect(rewriteLinkVolume('\\\\?\\E:\\a\\b', 'F:\\x')).toBe('F:\\a\\b');
+  });
+  it('同盘 ⇒ null（不需要换，也不许乱动）', () => {
+    expect(rewriteLinkVolume('E:\\a\\b', 'E:\\x')).toBeNull();
+  });
+  it('不是绝对路径 ⇒ null', () => {
+    expect(rewriteLinkVolume('a\\b', 'E:\\x')).toBeNull();
+  });
+});
+
+/**
+ * 2026-10-19 自审：只换盘符 + "目标存在"还不够 —— 换完必须仍落在**本机当前 state 根**
+ * 之下（路径里含身份哈希）。否则旧盘符被另一台同布局的电脑占用时，会把链指到别人那份数据上。
+ */
+describe('rewriteLinkVolumeForState —— 换盘符后必须仍在当前 state 根下', () => {
+  it('目标本来就在当前 state 的相对位置 ⇒ 换盘符（正常修复）', () => {
+    expect(
+      rewriteLinkVolumeForState(
+        'E:\\荣盈魔方-运行数据\\state\\id\\extensions\\feishu\\skills\\feishu-doc',
+        'F:\\荣盈魔方-运行数据\\state\\id',
+      ),
+    ).toBe('F:\\荣盈魔方-运行数据\\state\\id\\extensions\\feishu\\skills\\feishu-doc');
+  });
+
+  it('⭐ 换完不在当前 state 根下（另一台机器的 state）⇒ null，绝不猜', () => {
+    expect(
+      rewriteLinkVolumeForState(
+        'E:\\另一台电脑\\state\\other-id\\extensions\\feishu\\skills\\feishu-doc',
+        'F:\\荣盈魔方-运行数据\\state\\id',
+      ),
+    ).toBeNull();
   });
 });
 
@@ -266,6 +314,28 @@ describe('probeStateLinks + runStateLinksSelfCheck —— 真文件系统（临�
     expect(byName.get(realDir)).toBe('real-dir');
   });
 
+  // 2026-10-19 现场盘：npm 装的插件，它的技能链指向 **state 里的 npm 项目**，
+  // 不是运行时。旧判据只认运行时根 ⇒ 4 条健康的链被报成 elsewhere（假警报）。
+  it('⭐ 插件技能链指向 state 里的 npm 项目 ⇒ 算 ok，不是坏链', () => {
+    const target = join(
+      stateDir,
+      'npm',
+      'projects',
+      'openclaw-feishu-x',
+      'node_modules',
+      '@openclaw',
+      'feishu',
+      'skills',
+      'feishu-doc',
+    );
+    fs.mkdirSync(target, { recursive: true });
+    const link = join(stateDir, 'plugin-skills', 'feishu-doc');
+    fs.symlinkSync(target, link, 'junction');
+
+    const found = probeStateLinks({ stateDir, deployedRoot: curRoot });
+    expect(new Map(found.map((f) => [f.path, f.kind])).get(link)).toBe('ok');
+  });
+
   it('探：managed npm 那侧按**项目自己的 package.json** 判"该不该有"', () => {
     const projects = join(stateDir, 'npm', 'projects');
     const need = join(projects, 'p-need');
@@ -281,6 +351,46 @@ describe('probeStateLinks + runStateLinksSelfCheck —— 真文件系统（临�
     expect(byPath.get(join(need, 'node_modules', 'openclaw'))).toBe('not-created');
     // ⭐ 这条是防假警报的：没声明 openclaw 依赖的项目，本来就不该有这条链
     expect(byPath.get(join(ignore, 'node_modules', 'openclaw'))).toBe('not-needed');
+  });
+
+  // 2026-10-19 现场盘：官方插件（`openclaw plugins install`）在
+  // `<state>\extensions\<插件>\node_modules\openclaw` 建的那条链，盘符一变就悬空。
+  // 以前这一类根本不在探测范围里 ⇒ 插件加载不了，日志里什么都没有。
+  it('⭐ 官方插件的运行时链：悬空 ⇒ 探得到、修得回当前运行时', () => {
+    const pluginDir = join(stateDir, 'extensions', 'feishu', 'node_modules');
+    fs.mkdirSync(pluginDir, { recursive: true });
+    const pluginLink = join(pluginDir, 'openclaw');
+    fs.symlinkSync(join(oldRoot, 'node_modules', 'openclaw'), pluginLink, 'junction');
+
+    const found = probeStateLinks({ stateDir, deployedRoot: curRoot });
+    expect(new Map(found.map((f) => [f.path, f.kind])).get(pluginLink)).toBe('dangling');
+
+    const res = runStateLinksSelfCheck({ stateDir, deployedRoot: curRoot });
+    // 两条悬空：beforeEach 建的 plugin-skills 那条 + 这条
+    expect(res.repaired).toBe(2);
+    const now = fs.readlinkSync(pluginLink);
+    expect(isUnderRoot(now, curRoot)).toBe(true);
+    expect(fs.statSync(pluginLink).isDirectory()).toBe(true);
+  });
+
+  // 2026-10-19 用户实测「登不进去」：npm 装出来的插件项目里，**包自己的**
+  // `node_modules\openclaw` 也是一条指向运行时的链（peer link）。盘符变过它同样悬空，
+  // 旧探测看不到它 ⇒ 插件拿到的是旧盘上的内核（或直接加载失败）。
+  it('⭐ npm 项目里**包自己**的 peer 链：悬空 ⇒ 探得到、修回当前运行时', () => {
+    const pkgDir = join(stateDir, 'npm', 'projects', 'openclaw-feishu-x', 'node_modules', '@openclaw', 'feishu');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    const peerLink = join(pkgDir, 'node_modules', 'openclaw');
+    fs.mkdirSync(join(pkgDir, 'node_modules'), { recursive: true });
+    fs.symlinkSync(join(oldRoot, 'node_modules', 'openclaw'), peerLink, 'junction');
+
+    const found = probeStateLinks({ stateDir, deployedRoot: curRoot });
+    expect(new Map(found.map((f) => [f.path, f.kind])).get(peerLink)).toBe('dangling');
+
+    const res = runStateLinksSelfCheck({ stateDir, deployedRoot: curRoot });
+    // 两条悬空：beforeEach 建的 plugin-skills 那条 + 这条 peer 链
+    expect(res.repaired).toBe(2);
+    expect(fs.statSync(peerLink).isDirectory()).toBe(true);
+    expect(isUnderRoot(fs.readlinkSync(peerLink), curRoot)).toBe(true);
   });
 
   it('⭐ 修：悬空 + 换根后目标存在 ⇒ 链接指回当前运行时，且**能跟随**了', () => {

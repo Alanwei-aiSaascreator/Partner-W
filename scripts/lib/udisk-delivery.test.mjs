@@ -19,6 +19,7 @@ import {
   RUN_DATA_DIR_NAME,
   UPDATE_DIR_NAME,
   WORKSPACE_DIR_NAME,
+  walkTreeNames,
 } from './udisk-delivery.mjs';
 
 const roots = [];
@@ -39,9 +40,23 @@ const portableSource = fs.readFileSync(
   'utf-8',
 );
 const readme = fs.readFileSync(README_TEMPLATE, 'utf-8');
+// `walkNames` 必须存在：没有它 `relativeTreeEntries` 会退回只列盘根，
+// 于是"嵌套 .bat"这类用例在单测里永远看不到文件、变成假绿（真实 CLI 走的是自己的递归遍历）。
 const io = {
   exists: (target) => fs.existsSync(target),
   listNames: (target) => fs.readdirSync(target),
+  walkNames: (root) => {
+    const names = [];
+    const walk = (directory, prefix) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+        names.push(relative);
+        if (entry.isDirectory() && !entry.isSymbolicLink()) walk(path.join(directory, entry.name), relative);
+      }
+    };
+    walk(root, '');
+    return names;
+  },
   readFile: (target) => {
     try {
       return fs.readFileSync(target);
@@ -106,6 +121,84 @@ test('any batch launcher is a release-blocking error', () => {
   const finding = auditDelivery(io, root).find((entry) => entry.id === 'launcher-bat');
 
   assert.equal(finding?.level, 'error');
+});
+
+test('a vendored npm payload may carry its own .bat helpers', () => {
+  const root = makeDelivery();
+  const npmBatch = path.join(
+    root,
+    APP_DIR_NAME,
+    'resources',
+    'runtime',
+    'node',
+    'node_modules',
+    'npm',
+    'node_modules',
+    'node-gyp',
+    'gyp',
+    'gyp.bat',
+  );
+  fs.mkdirSync(path.dirname(npmBatch), { recursive: true });
+  fs.writeFileSync(npmBatch, '@echo off');
+
+  assert.deepEqual(ids(auditDelivery(io, root)).filter((id) => id === 'launcher-bat'), []);
+});
+
+test('the npm allowlist does not leak to sibling paths', () => {
+  const root = makeDelivery();
+  const sibling = path.join(
+    root,
+    APP_DIR_NAME,
+    'resources',
+    'runtime',
+    'node',
+    'node_modules',
+    'npm-evil',
+    'helper.bat',
+  );
+  fs.mkdirSync(path.dirname(sibling), { recursive: true });
+  fs.writeFileSync(sibling, '@echo off');
+
+  assert.ok(ids(auditDelivery(io, root)).includes('launcher-bat'));
+});
+
+test('the volume’s own unreadable System Volume Information is skipped', () => {
+  // 真盘上必然有盘符自带的 `System Volume Information`，普通用户读它必然 EPERM。
+  // 体检工具要能对真实 U 盘跑，不能因为一个读不了的系统目录直接崩掉。
+  const root = makeDelivery();
+  const blocked = path.join(root, 'System Volume Information');
+  fs.mkdirSync(blocked);
+  const readDir = (directory, options) => {
+    if (directory === blocked) {
+      const error = new Error('EPERM: operation not permitted');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return fs.readdirSync(directory, options);
+  };
+
+  const names = walkTreeNames(root, readDir);
+
+  assert.ok(names.includes(`${APP_DIR_NAME}/resources/app.asar`));
+  assert.ok(!names.some((name) => name.startsWith('System Volume Information/')));
+});
+
+test('any other unreadable directory fails the audit instead of being hidden', () => {
+  // 2026-10-19 自审：把**所有** EPERM 都静默跳过，等于把"读不到"当成"没问题"——
+  // 交付包某个子目录读不动时，里面有什么没人知道，不能判"通过机检"。
+  const root = makeDelivery();
+  const blocked = path.join(root, APP_DIR_NAME, 'resources', 'locked');
+  fs.mkdirSync(blocked, { recursive: true });
+  const readDir = (directory, options) => {
+    if (directory === blocked) {
+      const error = new Error('EPERM: operation not permitted');
+      error.code = 'EPERM';
+      throw error;
+    }
+    return fs.readdirSync(directory, options);
+  };
+
+  assert.throws(() => walkTreeNames(root, readDir), /无法读取目录（EPERM）/u);
 });
 
 test('delivery CLI rejects a batch file nested inside the program tree', () => {

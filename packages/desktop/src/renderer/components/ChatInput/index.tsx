@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ChevronDown,
+  Clock,
   File,
   FileCode,
   FolderOpen,
@@ -45,7 +46,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { useVoicePlayback } from '@/hooks/useVoicePlayback';
-import { speechBillingUnits } from '@/lib/voice/speech-playback';
 import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
@@ -100,6 +100,9 @@ const MODE_DESC_KEYS: Record<TaskMode, string> = {
   smart: 'chatInput.mode.smartDesc',
   deep: 'chatInput.mode.deepDesc',
 };
+
+/** 视频画质档位的本地记忆键（主进程那一份才是执行依据，这里只负责"下次打开还是上次选的"）。 */
+const VIDEO_QUALITY_STORAGE_KEY = 'rongying-cube:video-quality:v1';
 
 function SelectionTag({
   icon,
@@ -184,6 +187,8 @@ export default function ChatInput({
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const handledDraftRequestIdsRef = useRef(new Set<string>());
+  /** 专家启动用：草稿落进输入框后立刻发送（见 `DraftPromptRequest.autoSend`）。 */
+  const handleSendRef = useRef<(() => void) | null>(null);
   const [canSend, setCanSend] = useState(false);
   const [draftConflict, setDraftConflict] = useState<DraftPromptRequest | null>(null);
   /** 文件正拖在输入卡片上方（只影响描边提示；真正的导入在 onDrop）。 */
@@ -338,6 +343,14 @@ export default function ChatInput({
     owner: string;
     value: NonNullable<Awaited<ReturnType<typeof window.clawwork.voiceCapabilities>>['result']>;
   } | null>(null);
+  /**
+   * 能力探测**本身失败**（relay 抖动 / 未登录 / 请求异常）—— 与"探到了、答案是 asr:false"必须分开。
+   *
+   * BUG-044 的产品口径是"**不支持就整块隐藏**"，那条针对的是"能力真的不存在"（当年 Windows
+   * 没有 whisper）。探测失败属于"不知道"，这时隐藏按钮等于让功能凭空消失、用户无从判断
+   *（2026-10-17 审查）。所以：明确不支持 ⇒ 隐藏；没问出来 ⇒ 按钮置灰 + 说明。
+   */
+  const [voiceProbeFailed, setVoiceProbeFailed] = useState(false);
   const voiceAccountKey = useCommercialStore((state) => state.overview?.account.userId ?? '');
   const voiceCapabilities = voiceCapabilityReply?.owner === voiceAccountKey ? voiceCapabilityReply.value : null;
   const voiceScopeKey = `${voiceAccountKey}:${activeTaskId ?? ''}:${mainView}:${settingsOpen}`;
@@ -397,6 +410,8 @@ export default function ChatInput({
     quotaDegrade,
     setQuotaDegrade,
     switchToFallbackModel,
+    queuedSends,
+    cancelQueuedSend,
     handleSend,
     handleModeQuickSend,
     handleModelQuickSend,
@@ -424,26 +439,72 @@ export default function ChatInput({
     },
     onComposerCleared: () => setCanSend(false),
   });
+  // 最新一次渲染的 handleSend（草稿自动发送用；effect 里直接引用会拿到旧闭包）。
+  handleSendRef.current = handleSend;
 
   useEffect(() => {
     let current = true;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
     setVoiceCapabilityReply(null);
+    setVoiceProbeFailed(false);
     if (isOffline || typeof window.clawwork.voiceCapabilities !== 'function') return;
-    const refresh = (): void => {
+    // 未登录/账号未加载时按钮本来就不渲染；别在这段时间空转探测（登录后 effect 会重跑）。
+    if (!voiceAccountKey) return;
+
+    /**
+     * 2026-10-18 实机（用户）：「有时候语音和播报按钮没了，切一下页面才出来」。
+     *
+     * 原因：能力探测只在**挂载**与 `focus` 时跑一次。应用刚起来/网关刚重连时 relay 还没就绪，
+     * 探测失败 ⇒ 麦克风按 BUG-135 的三态置灰、**播报按钮直接不渲染**；之后没有任何重试，
+     * 只有切页面（ChatInput 重挂载）才会重新探测，于是表现为"切换页面就出来了"。
+     *
+     * 现在：探测失败按 2s/5s/10s/30s 退避重试（探到明确答案就停）；退出时清定时器。
+     * 不无限空转：探到 asr:false / tts:false 是确定答案，不再重试。
+     */
+    let inFlight = false;
+
+    function scheduleRetry(): void {
+      if (!current) return;
+      clearTimeout(retryTimer); // 只留一个待执行的定时器（focus 与重试可能同时到达）
+      const delay = [2000, 5000, 10000, 30000][Math.min(attempts, 3)] ?? 30000;
+      attempts += 1;
+      retryTimer = setTimeout(refresh, delay);
+    }
+
+    function refresh(): void {
+      // ⚠️ 卸载后不许再发 IPC：孤儿定时器（并发 refresh 覆盖句柄时产生）会走到这里。
+      if (!current) return;
+      clearTimeout(retryTimer);
+      // 并发 refresh（挂载即探 + focus 同时失败）只跑一条链，避免排两个定时器、
+      // 卸载时只清掉最后一个句柄而留下孤儿。
+      if (inFlight) return;
+      inFlight = true;
       void window.clawwork
         .voiceCapabilities()
         .then((reply) => {
-          if (current)
-            setVoiceCapabilityReply(reply.ok && reply.result ? { owner: voiceAccountKey, value: reply.result } : null);
+          inFlight = false;
+          if (!current) return;
+          const ok = reply.ok && reply.result;
+          setVoiceCapabilityReply(ok ? { owner: voiceAccountKey, value: reply.result! } : null);
+          // 探到了明确答案（asr:false）⇒ 不算失败；探不到 ⇒ 标记失败（按钮保留并解释）。
+          setVoiceProbeFailed(!ok);
+          if (!ok) scheduleRetry();
         })
         .catch(() => {
-          if (current) setVoiceCapabilityReply(null);
+          inFlight = false;
+          if (!current) return;
+          setVoiceCapabilityReply(null);
+          setVoiceProbeFailed(true);
+          scheduleRetry();
         });
-    };
+    }
+
     refresh();
     window.addEventListener('focus', refresh);
     return () => {
       current = false;
+      clearTimeout(retryTimer);
       window.removeEventListener('focus', refresh);
     };
   }, [voiceAccountKey, isOffline]);
@@ -454,7 +515,10 @@ export default function ChatInput({
     isSupported: isVoiceSupported,
     isListening: isVoiceListening,
     isTranscribing: isVoiceTranscribing,
+    canRetry: canRetryVoiceInput,
     isIntroOpen: isVoiceIntroOpen,
+    // 实时逐字（2026-10-17）：录音中逐段回填的预览文本（松手后由整段音频的权威转写替换）。
+    interimTranscript: voiceInterimTranscript,
     errorCode: voiceErrorCode,
     handleKeyDown: handleVoiceKeyDown,
     handleKeyUp: handleVoiceKeyUp,
@@ -487,13 +551,20 @@ export default function ChatInput({
     }
     return '';
   });
-  const spokenCharacterCount = speechBillingUnits(completedVoiceAnswer);
-  const speechFeeEstimate =
-    voiceCapabilities?.ttsMicrosPerCharacter !== undefined
-      ? ((spokenCharacterCount * voiceCapabilities.ttsMicrosPerCharacter) / 1_000_000).toLocaleString(undefined, {
-          maximumFractionDigits: 4,
-        })
-      : null;
+  const completedVoiceMessageKey = useMessageStore((state) => {
+    if (!activeTask || isGenerating) return '';
+    const turn = state.activeTurnBySession[activeTask.sessionKey];
+    if (turn?.finalized && turn.content.trim()) return turn.runId ? `run:${turn.runId}` : '';
+    const messages = state.messagesByTask[activeTask.id] ?? [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role === 'assistant' && message.content === completedVoiceAnswer) {
+        return message.runId ? `run:${message.runId}` : `message:${message.timestamp}`;
+      }
+    }
+    return '';
+  });
+  // 2026-10-17：输入框不再展示语音单价（用户拍板），预估计算一并移除。
   useEffect(() => {
     if (isGenerating) stopSpeech();
   }, [isGenerating, stopSpeech]);
@@ -742,6 +813,9 @@ export default function ChatInput({
     if (textarea.value.length === 0) {
       setComposerDraft(draftRequest.prompt);
       onDraftResolved?.(draftRequest, 'applied');
+      // 2026-10-17：专家「开个任务」已经问过"要做什么"，用户确认过 ⇒ 落完草稿直接开跑。
+      // ⚠️ 只在**输入框原本为空**时自动发（有草稿就走上面的冲突对话框，不替用户做决定）。
+      if (draftRequest.autoSend) void handleSendRef.current?.();
       return;
     }
     setDraftConflict(draftRequest);
@@ -792,8 +866,19 @@ export default function ChatInput({
   // ⚠️ 顺序在 `composerPlaceholderKey` 里定（纯函数 + 单测）：**预热期不许说"离线模式 — 只读"**。
   //    老写法把"还不知道"（网关状态还没有这一条）也算成离线，于是首启那 50 秒里
   //    输入框在说一件不是事实的话（2026-09-20 实机截图）。
-  const placeholder = t(composerPlaceholderKey({ phase: gatewayDisplayPhase, isOffline, readinessBlocked }));
-  const voiceTooltip = !isVoiceSupported ? t('voiceInput.unsupportedTooltip') : t('voiceInput.tooltip');
+  // 2026-10-17 用户反馈（测试.doc）：「一直显示正在调用模型，用户以为不能再发」。
+  // 任务跑着的时候输入框是**可用的**（Enter 会排队），这里把这句话直接写在占位符里，
+  // 否则用户永远不知道还能追加要求。离线/启动中的提示不覆盖（那两档说的事实更要紧）。
+  const basePlaceholderKey = composerPlaceholderKey({ phase: gatewayDisplayPhase, isOffline, readinessBlocked });
+  const placeholder =
+    isGenerating && basePlaceholderKey === 'chatInput.describeTask'
+      ? t('chatInput.queuedWhileRunning')
+      : t(basePlaceholderKey);
+  const voiceTooltip = canRetryVoiceInput
+    ? t('voiceInput.retryRecognition')
+    : !isVoiceSupported
+      ? t('voiceInput.unsupportedTooltip')
+      : t('voiceInput.tooltip');
   // 文案分档全部住在 `modelStatusCopy` 里（可单测）：哪一档转圈、哪一档说什么话，
   // 一个地方定；尤其「无需重复操作」**只许**在真加载那一档出现（2026-09-20 报障）。
   // ⚠️ 已知的中转失败**压过**目录推断：这时"正在准备模型，准备完会自动显示"是句谎
@@ -838,6 +923,32 @@ export default function ChatInput({
    * 被新渠道接管的旧渠道条目——BUG-076）；这里只做"空家族不渲染"。
    * 2026-10-14 并入同一把尺前，这里是自挡别名的第二份过滤 —— 双条目漏网即出于此。
    */
+  /**
+   * 视频画质档位（2026-10-17 用户要求：Seedance 2.5 要看得见、知道贵）。
+   *
+   * 语义：**只影响视频生成**，与这一轮用哪个对话模型无关。
+   * 主进程在消息收尾解析 `videogen` 围栏时才用它 —— 所以选择必须同步过去（IPC），
+   * 渲染层自己再用 localStorage 记住，启动时重新推一次。
+   */
+  const [videoQuality, setVideoQuality] = useState<'standard' | 'seedance'>(() => {
+    try {
+      return localStorage.getItem(VIDEO_QUALITY_STORAGE_KEY) === 'seedance' ? 'seedance' : 'standard';
+    } catch {
+      return 'standard';
+    }
+  });
+  useEffect(() => {
+    void window.clawwork.setVideoQuality?.(videoQuality).catch(() => {});
+  }, [videoQuality]);
+  const chooseVideoQuality = useCallback((quality: 'standard' | 'seedance') => {
+    setVideoQuality(quality);
+    try {
+      localStorage.setItem(VIDEO_QUALITY_STORAGE_KEY, quality);
+    } catch {
+      // 存不进 localStorage 不影响本次会话（主进程那一份才是执行依据）。
+    }
+  }, []);
+
   const advancedModelsByProvider = useMemo(() => {
     const groups: Record<string, ModelCatalogEntry[]> = {};
     for (const [family, models] of Object.entries(modelsByProvider)) {
@@ -894,8 +1005,12 @@ export default function ChatInput({
       return;
     }
     if (voiceErrorCode === 'voice-cancelled') return;
+    if (canRetryVoiceInput) {
+      toast.error(t('voiceInput.recoveryPending'));
+      return;
+    }
     toast.error(t('voiceInput.recognitionFailed'));
-  }, [voiceErrorCode, t]);
+  }, [voiceErrorCode, canRetryVoiceInput, t]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1103,6 +1218,34 @@ export default function ChatInput({
             )}
           >
             <div className="px-4 pt-3 pb-3">
+              {/*
+                运行中追加对话（2026-10-17）：这一轮还在跑时发的消息排在这里，等本轮结束
+                自动发出。让"排队"是可见、可撤销的 —— 不能收下话却什么都不说。
+              */}
+              {isGenerating && activeTask
+                ? queuedSends
+                    .filter((queued) => queued.taskId === activeTask.id)
+                    .map((queued) => (
+                      <div
+                        key={queued.id}
+                        data-testid="composer-queued-send"
+                        className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-2.5 py-1.5"
+                      >
+                        <Clock size={13} className="flex-shrink-0 text-[var(--text-muted)]" />
+                        <span className="min-w-0 flex-1 truncate type-support text-[var(--text-secondary)]">
+                          {t('chatInput.queuedChip', { text: queued.text })}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => cancelQueuedSend(queued.id)}
+                          aria-label={t('chatInput.queuedCancel')}
+                          className="glow-focus flex-shrink-0 rounded p-0.5 text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))
+                : null}
               <div className="relative">
                 {(selectedTasks.length > 0 ||
                   selectedArtifacts.length > 0 ||
@@ -1184,12 +1327,20 @@ export default function ChatInput({
                     >
                       {isVoiceListening && (
                         <>
-                          <span className="relative flex h-2.5 w-2.5">
+                          <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
                             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--accent)] opacity-60" />
                             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
                           </span>
-                          <span className="type-body text-[var(--text-secondary)]">
-                            {t('voiceInput.listeningStatus')}
+                          {/*
+                            实时逐字（2026-10-17）：边录边显示已识别的前文，未识别出字时退回"正在听"。
+                            预览只在本行显示，**不写进 textarea** —— 松手后整段音频的权威转写会一次插入，
+                            两处都写会得到双份文字。
+                          */}
+                          <span
+                            data-testid="voice-interim"
+                            className="line-clamp-2 min-w-0 flex-1 type-body text-[var(--text-secondary)]"
+                          >
+                            {voiceInterimTranscript || t('voiceInput.listeningStatus')}
                           </span>
                         </>
                       )}
@@ -1357,6 +1508,55 @@ export default function ChatInput({
                                 </DropdownMenuSub>
                               ))}
                               {/*
+                                2026-10-17（用户实机反馈 BUG-139 / BUG-143）：
+                                生图 / 视频**不在**这张表里 —— 它们不是对话模型，选进来会直接 400。
+                                由助手根据技能围栏自动选择（图→qwen-image、视频→H3/Seedance）。
+                                这句注释式的说明必须出现在**用户找它们的地方**，否则每次都会
+                                被当成"模型没更新 / 显示不全"。
+                              */}
+                              <DropdownMenuSeparator />
+                              <div className="type-support max-w-72 px-2 py-1.5 leading-relaxed text-[var(--text-muted)]">
+                                {t('chatInput.mode.mediaModelsNote')}
+                              </div>
+
+                              {/*
+                                视频画质档位（2026-10-17 用户要求）：
+                                · 标准 = MiniMax H3（便宜）；
+                                · 高质量 = 豆包 Seedance 2.5（更贵、更清晰，支持"图生视频"首帧）。
+                                只影响视频生成，不改这一轮的对话模型。
+                              */}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuSub>
+                                <DropdownMenuSubTrigger>
+                                  <span>{t('chatInput.videoQuality.title')}</span>
+                                  <span className="ml-auto pl-3 type-support text-[var(--text-muted)]">
+                                    {t(
+                                      videoQuality === 'seedance'
+                                        ? 'chatInput.videoQuality.seedanceShort'
+                                        : 'chatInput.videoQuality.standardShort',
+                                    )}
+                                  </span>
+                                </DropdownMenuSubTrigger>
+                                <DropdownMenuSubContent className="max-w-80">
+                                  <DropdownMenuItem onClick={() => chooseVideoQuality('standard')}>
+                                    <div className="flex flex-col items-start gap-0.5">
+                                      <span>{t('chatInput.videoQuality.standard')}</span>
+                                      <span className="type-support text-[var(--text-muted)]">
+                                        {t('chatInput.videoQuality.standardDesc')}
+                                      </span>
+                                    </div>
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => chooseVideoQuality('seedance')}>
+                                    <div className="flex flex-col items-start gap-0.5">
+                                      <span>{t('chatInput.videoQuality.seedance')}</span>
+                                      <span className="type-support text-[var(--text-muted)]">
+                                        {t('chatInput.videoQuality.seedanceDesc')}
+                                      </span>
+                                    </div>
+                                  </DropdownMenuItem>
+                                </DropdownMenuSubContent>
+                              </DropdownMenuSub>
+                              {/*
                                 ⚠️ 判据是"**有明细就渲染** + 不是准备态"，不是"目录恰好是 empty"。
                                 原来 gate 在 `modelAvailability === 'empty'` 上：已知中转失败时
                                 `preparing` 变 false、而目录还在取（实机观察到的形态）⇒ **整块不渲染**，
@@ -1481,7 +1681,14 @@ export default function ChatInput({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    {whisperAvailable && (
+                    {/*
+                      2026-10-17：按钮存在性分三态 ——
+                        ① 有 ASR 能力 ⇒ 正常渲染；
+                        ② 探到了、但明确 asr:false（relay 关闸）⇒ 按 BUG-044 整块隐藏（能力确实不存在）；
+                        ③ 探测**失败**（relay 抖动 / 未登录）⇒ 保留按钮并置灰 + tooltip 说明原因，
+                           不再让功能凭空消失。
+                    */}
+                    {Boolean(voiceAccountKey) && (whisperAvailable || voiceProbeFailed) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div>
@@ -1500,7 +1707,8 @@ export default function ChatInput({
                                 }
                                 void startVoiceInput();
                               }}
-                              disabled={(!voiceActive && disabled) || !isVoiceSupported}
+                              // 录音/识别中**永远可点**（点是"停止/取消"）；空闲时只有"输入框禁用"或"能力不可用"才置灰。
+                              disabled={!voiceActive && (disabled || !whisperAvailable)}
                               aria-label={voiceActive ? t('voiceInput.stop') : voiceTooltip}
                               className={cn(
                                 'rounded-xl',
@@ -1515,14 +1723,38 @@ export default function ChatInput({
                         <TooltipContent>{voiceTooltip}</TooltipContent>
                       </Tooltip>
                     )}
-                    {voiceCapabilities?.tts && (
+                    {canRetryVoiceInput && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t('voiceInput.discardRecording')}
+                        title={t('voiceInput.discardRecording')}
+                        onClick={cancelVoiceInput}
+                      >
+                        <X size={16} />
+                      </Button>
+                    )}
+                    {/*
+                      播报按钮的**存在性**与麦克风同一三态（2026-10-18 用户：语音/播报时有时无）：
+                      探测失败时保留按钮并置灰（说清原因），不再让它凭空消失。
+                    */}
+                    {Boolean(voiceAccountKey) && (voiceCapabilities?.tts === true || voiceProbeFailed) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
                             variant={speechPhase !== 'idle' ? 'soft' : 'ghost'}
                             size="icon"
-                            disabled={!speechActive && (!completedVoiceAnswer || voiceActive || disabled)}
-                            aria-label={t(speechActive ? 'voiceInput.stop' : 'voiceInput.readAnswer')}
+                            disabled={
+                              voiceCapabilities?.tts !== true ||
+                              (!speechActive && (!completedVoiceAnswer || voiceActive || disabled))
+                            }
+                            aria-label={t(
+                              voiceCapabilities?.tts !== true
+                                ? 'voiceInput.unsupportedTooltip'
+                                : speechActive
+                                  ? 'voiceInput.stop'
+                                  : 'voiceInput.readAnswer',
+                            )}
                             onClick={() => {
                               if (speechActive) {
                                 stopSpeech();
@@ -1530,42 +1762,41 @@ export default function ChatInput({
                               }
                               // 失败（failed）后再点 = 用同一请求身份重试同一回答（R8-05 幂等恢复）。
                               cancelVoiceInput();
-                              void startSpeech(completedVoiceAnswer);
+                              if (!completedVoiceMessageKey) {
+                                toast.error(t('voiceInput.playbackFailed'));
+                                return;
+                              }
+                              void startSpeech(completedVoiceAnswer, completedVoiceMessageKey);
                             }}
                           >
                             {speechActive ? <Square size={18} /> : <Volume2 size={18} />}
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          {t(speechActive ? 'voiceInput.stop' : 'voiceInput.readAnswerFee', {
-                            fee: speechFeeEstimate,
-                          })}
+                          {voiceCapabilities?.tts !== true
+                            ? t('voiceInput.unsupportedTooltip')
+                            : t(speechActive ? 'voiceInput.stop' : 'voiceInput.readAnswer')}
                         </TooltipContent>
                       </Tooltip>
                     )}
-                    {(voiceCapabilities?.asr || voiceCapabilities?.tts) && (
-                      <span className="type-meta text-[var(--text-muted)]" aria-live="polite">
-                        {speechStatusCopy ??
-                          [
-                            voiceCapabilities.asr && voiceCapabilities.asrMicrosPerSecond !== undefined
-                              ? t('voiceInput.serviceFeeAsr', {
-                                  fee: ((voiceCapabilities.asrMicrosPerSecond * 60) / 1_000_000).toLocaleString(
-                                    undefined,
-                                    { maximumFractionDigits: 4 },
-                                  ),
-                                })
-                              : '',
-                            voiceCapabilities.tts && voiceCapabilities.ttsMicrosPerCharacter !== undefined
-                              ? t('voiceInput.serviceFeeTts', {
-                                  fee: ((voiceCapabilities.ttsMicrosPerCharacter * 100) / 1_000_000).toLocaleString(
-                                    undefined,
-                                    { maximumFractionDigits: 4 },
-                                  ),
-                                })
-                              : '',
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
+                    {/*
+                      2026-10-17 用户拍板：**输入框里不显示语音单价**（用户原话"用户绝对不爱"，
+                      费率先前写在公告里）。这里只保留"正在播放/准备中"的**状态**，
+                      并在朗读进行中给一个**看得见的「停止朗读」**（此前只有图标切换，用户
+                      找不到停止入口）。
+                    */}
+                    {speechStatusCopy && (
+                      <span className="type-meta flex items-center gap-2 text-[var(--text-muted)]" aria-live="polite">
+                        {speechStatusCopy}
+                        {speechActive && (
+                          <button
+                            type="button"
+                            className="type-meta text-[var(--accent)] underline underline-offset-2"
+                            onClick={stopSpeech}
+                          >
+                            {t('voiceInput.stop')}
+                          </button>
+                        )}
                       </span>
                     )}
                     {voiceErrorCode === 'permission-denied' && (

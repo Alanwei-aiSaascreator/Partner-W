@@ -82,15 +82,16 @@ describe('goal analysis', () => {
 
 /**
  * 目标分析**提示词**（2026-10-10 Cephalon 批）——三处旧的 `deepseek-v4-flash`
- * 硬编码改为"目录现状"：优先智能档默认（glm-5.3-flash）；目录没有它时只选
- * 实际存在的首个目录项；目录未取得时**明确未取得**，不许拿格式示例当可用能力证明。
+ * 硬编码改为"目录现状"：优先智能档默认（**2026-10-17 起 = `glm-5.3-flashx`**）；
+ * 目录没有它时只选实际存在的首个目录项；目录未取得时**明确未取得**，
+ * 不许拿格式示例当可用能力证明。
  * ⚠️ 只改提示串；解析器对旧模型 ID 的兼容、用户已保存的旧推荐/选择/历史缓存一律不动。
  */
 describe('goal analysis — 提示词里的模型字段（复用目录现状，不硬编码旧 DeepSeek）', () => {
-  it('⭐ 优先使用目录里的 glm-5.3-flash；格式示例引用它而不是旧 DeepSeek', () => {
-    const prompt = buildGoalAnalysisPrompt(profile, ['deepseek-v4-flash', 'glm-5.3-flash']);
-    expect(prompt).toContain('可用模型：deepseek-v4-flash、glm-5.3-flash');
-    expect(prompt).toContain('"model":"glm-5.3-flash"');
+  it('⭐ 优先使用目录里的智能档默认（glm-5.3-flashx）；格式示例引用它而不是旧 DeepSeek', () => {
+    const prompt = buildGoalAnalysisPrompt(profile, ['deepseek-v4-flash', 'glm-5.3-flash', 'glm-5.3-flashx']);
+    expect(prompt).toContain('可用模型：deepseek-v4-flash、glm-5.3-flash、glm-5.3-flashx');
+    expect(prompt).toContain('"model":"glm-5.3-flashx"');
     expect(prompt).not.toContain('"model":"deepseek-v4-flash"');
   });
 

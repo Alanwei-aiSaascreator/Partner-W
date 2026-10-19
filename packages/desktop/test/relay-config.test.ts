@@ -7,7 +7,9 @@ import {
   buildRelayRemovalPatch,
   buildRelayRemovalShrinkPatch,
   buildRelayPatch,
+  relayPatchReplacePaths,
   removeRelayConfig,
+  relayProviderIds,
   type ApplyRelayConfigDeps,
 } from '../src/main/commercial/relay-config.js';
 import { RELAY_SEARCH_ENABLED_MODEL_IDS } from '@clawwork/core';
@@ -391,13 +393,13 @@ describe('fetchFirstRelayModel', () => {
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
-          providers: [{ id: 'bailian', models: [{ id: 'qwen3.5-27b' }, { id: 'glm-5.3-flash' }] }],
+          providers: [{ id: 'bailian', models: [{ id: 'qwen3.5-27b' }, { id: 'glm-5.3-flashx' }] }],
         }),
       })),
     );
     const { fetchFirstRelayModel } = await import('../src/main/commercial/relay-config.js');
 
-    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/glm-5.3-flash');
+    expect(await fetchFirstRelayModel('rly_abc')).toBe('clawrouter/glm-5.3-flashx');
     vi.unstubAllGlobals();
   });
 
@@ -652,6 +654,142 @@ describe('relay credential removal · size-drop 分段收缩（BUG-080）', () =
     expect(shrink(16)?.replacePaths).toEqual(['models.providers.clawrouter.models']);
   });
 
+  /**
+   * T28 / BUG-080 反例：**重现 >50% 缩小条件后登出 → 重登同进程进入业务**。
+   *
+   * 上面几条用的是脚本化的 `mockResolvedValueOnce` 串 —— 它们能证明"收缩补丁长什么样"，
+   * 却**证不了**"这两个动作在同一个网关/同一份配置上接得起来"。真正上线跑的是**一条链**：
+   *   登出 → 清账（撞 size-drop 守卫 → 分段收缩）→ 登录 → 重新写配置 → 业务可用。
+   *
+   * 所以这里用**有状态的假网关**（真做 JSON merge patch、真按 50% 阈值拒），跑完整往返。
+   */
+  describe('T28 反例：size-drop 清账 → 同进程重登进入业务（有状态假网关）', () => {
+    /** 极简 JSON merge patch：`null` = 删键；数组整体替换。 */
+    function mergePatch(target: unknown, patch: unknown): unknown {
+      if (patch === null) return undefined;
+      if (typeof patch !== 'object' || Array.isArray(patch)) return patch;
+      const base =
+        target && typeof target === 'object' && !Array.isArray(target) ? { ...(target as Record<string, unknown>) } : {};
+      for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+        const next = mergePatch((base as Record<string, unknown>)[key], value);
+        if (next === undefined) delete (base as Record<string, unknown>)[key];
+        else (base as Record<string, unknown>)[key] = next;
+      }
+      return base;
+    }
+
+    /** 假网关：真应用补丁，并**按真实阈值**（缩小到不足上次一半）拒写。 */
+    function fakeGateway(initial: Record<string, unknown>) {
+      let state = JSON.parse(JSON.stringify(initial)) as Record<string, unknown>;
+      let revision = 1;
+      const attempts: Array<{ before: number; after: number; rejected: boolean }> = [];
+      const gateway = {
+        getConfig: async () => snapshot(state, `h${revision}`),
+        patchConfig: async ({ raw }: { raw: string }) => {
+          const patched = mergePatch(state, JSON.parse(raw)) as Record<string, unknown>;
+          const before = JSON.stringify(state).length;
+          const after = JSON.stringify(patched).length;
+          const rejected = after < before * 0.5;
+          attempts.push({ before, after, rejected });
+          if (rejected) {
+            throw new Error(
+              `Config write rejected: /tmp/openclaw.json (size-drop:${before}->${after}). code=CONFIG_WRITE_REJECTED`,
+            );
+          }
+          state = patched;
+          revision += 1;
+          return { ok: true };
+        },
+        state: () => state,
+        attempts: () => attempts,
+      };
+      return gateway;
+    }
+
+    /**
+     * 一份**比例贴近真实盘**的中转配置。
+     *
+     * 真实盘上 openclaw.json 是 20901B，删掉 clawrouter 后剩 8542B（40.9% ⇒ 撞守卫）；
+     * 而**非中转内容（agents / skills / …）必须足够大**，否则"整删 → 减半 → 再整删"
+     * 这条链收敛不了：减半后配置已经很小，再删整块仍然会跌破 50%。
+     *
+     * 收敛条件（R = 中转块，P = 其余）：整删被拒 ⇔ P/(R+P) < 0.5；减半后整删被放行 ⇔
+     * P ≥ R/2。这里取 P ≈ 0.6R —— 既复现真实拒绝，又保证分段收缩真的能走完。
+     */
+    const bigRelayConfig = (apiKey: string) => {
+      const relay = {
+        models: {
+          providers: {
+            clawrouter: {
+              baseUrl: RELAY_BASE_URL,
+              apiKey,
+              models: Array.from({ length: 16 }, (_, i) => ({
+                id: `model-${i}`,
+                name: `Model number ${i}`,
+                reasoning: true,
+                input: ['text', 'image'],
+                compat: { supportsReasoningEffort: true, supportedReasoningEfforts: ['low', 'medium', 'high', 'max'] },
+                thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
+              })),
+            },
+          },
+        },
+      };
+      const padding = 'x'.repeat(Math.ceil(JSON.stringify(relay).length * 0.6));
+      return { ...relay, skills: { bundled: { blob: padding } } };
+    };
+
+    it('⭐⭐ 登出清账撞 size-drop → 分段收缩成功；**同进程重登**能把配置重新写上并进入业务', async () => {
+      const gw = fakeGateway(bigRelayConfig('rly_OLD_ACCOUNT_KEY'));
+
+      // ① 登出：清掉上一账号的中转配置（带 16 条模型的目录快照 ⇒ 必然撞 50% 守卫）。
+      const cleanup = await removeRelayConfig(gw);
+      expect(cleanup).toEqual({ ok: true, cleaned: true });
+      // 前置**实证**：这一次清账确实走过"被拒 → 分段收缩 → 成功"三段，
+      // 而不是因为夹具不够大而一路顺风（那样等于没复现这个条件）。
+      const attempts = gw.attempts();
+      expect(attempts.map((a) => a.rejected)).toEqual([true, false, false]);
+      // 原账号凭据**撤出**：provider 没了，key 也不再出现在配置里。
+      expect(JSON.stringify(gw.state())).not.toContain('rly_OLD_ACCOUNT_KEY');
+      expect(relayProviderIds(await gw.getConfig())).toEqual(new Set());
+
+      // ② 同进程重登：新账号的 key 写进来，业务重新可用。
+      const reapply = await applyRelayConfig(
+        {
+          getConfig: gw.getConfig,
+          patchConfig: gw.patchConfig,
+          resolveCatalogModels: async () =>
+            [
+              {
+                id: 'deepseek-v4-pro',
+                name: 'DeepSeek',
+                reasoning: true,
+                input: ['text'],
+                compat: { supportsReasoningEffort: true as const, supportedReasoningEfforts: ['low', 'high', 'max'] },
+                thinkingLevelMap: { low: 'low', high: 'high', max: 'max' },
+              },
+            ] as never,
+        } as never,
+        { relayKey: 'rly_NEW_ACCOUNT_KEY', deviceFingerprint: 'fp-new' },
+      );
+
+      expect(reapply.configured).toBe(true);
+      const after = gw.state();
+      expect(JSON.stringify(after)).toContain('rly_NEW_ACCOUNT_KEY');
+      expect(JSON.stringify(after)).not.toContain('rly_OLD_ACCOUNT_KEY');
+      // 目录**整体替换**：上一账号的 16 条不许残留（否则模型列表会串账号）。
+      const providers = (after.models as { providers: Record<string, { models?: Array<{ id: string }> }> }).providers;
+      expect(providers.clawrouter?.models?.map((m) => m.id)).toEqual(['deepseek-v4-pro']);
+      expect(relayProviderIds(await gw.getConfig())).toEqual(new Set([RELAY_PROVIDER_ID]));
+    });
+
+    it('⭐ 清账后**没有** pending 残留：再跑一次清账是 no-op（不会反复撞守卫）', async () => {
+      const gw = fakeGateway(bigRelayConfig('rly_OLD_ACCOUNT_KEY'));
+      expect(await removeRelayConfig(gw)).toEqual({ ok: true, cleaned: true });
+      expect(await removeRelayConfig(gw)).toEqual({ ok: true, cleaned: true });
+    });
+  });
+
   it('buildRelayRemovalShrinkPatch：不碰用户自己的 provider；无料可收时返回 null', () => {
     // 用户自己的 openai（baseUrl 不是我们的）—— 即便有 models 数组也不许动
     expect(
@@ -688,6 +826,194 @@ describe('applyRelayConfig', () => {
       ...overrides,
     } as never;
   }
+
+  it('⭐ 网关丢掉 thinkingLevelMap 的 null 键，不得被判成「没应用」（2026-10-16 r14 实机：准备页卡 33% / verify-failed）', async () => {
+    // 补丁侧刻意写满 7 档、不支持的 = null（`buildThinkingLevelMap` 与内核同构）；
+    // 而**真实网关持久化时会丢掉值为 null 的键**（实测盘上 16 条里 9 条缺键）。
+    // 校验若用 `current.map?.[level] === effort` 严格比，就会变成 `undefined === null` ⇒ 恒假。
+    const catalog = [
+      {
+        id: 'deepseek-v4-pro',
+        name: 'DeepSeek',
+        reasoning: true,
+        input: ['text'] as Array<'text' | 'image'>,
+        compat: {
+          supportsReasoningEffort: true as const,
+          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        },
+        thinkingLevelMap: {
+          off: null,
+          minimal: null,
+          low: 'low',
+          medium: 'medium',
+          high: 'high',
+          xhigh: 'xhigh',
+          max: 'max',
+        },
+      },
+    ];
+    const appliedWithoutNulls = {
+      id: 'deepseek-v4-pro',
+      name: 'DeepSeek',
+      reasoning: true,
+      input: ['text'],
+      compat: {
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      // 关键：值为 null 的键被网关丢掉，只剩受支持的档位。
+      thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    };
+    const d = deps({
+      resolveCatalogModels: async () => catalog as never,
+      getConfig: vi.fn(async () =>
+        snapshot({
+          models: {
+            providers: {
+              [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: 'rly_abc', models: [appliedWithoutNulls] },
+            },
+          },
+        }),
+      ),
+    });
+
+    expect((await applyRelayConfig(d, INPUT)).configured).toBe(true);
+  });
+
+  /**
+   * T03：思考档位回读的**四类必须可区分**（BUG-098 的对照与回归护栏）。
+   *
+   * 背景（2026-10-16 r14 实机）：补丁侧把 7 个档位写满、不支持的写 `null`（与内核同构），
+   * 但**网关持久化时会把值为 `null` 的键丢掉**。原来的严格比较
+   * `current.map?.[level] === effort` 在"缺键"上变成 `undefined === null` ⇒ 恒假 ⇒
+   * 整轮准备必失败（与网关有没有应用无关）。
+   *
+   * ⚠️ 归一化的**风险**是"把真错误也一起放过"。所以这组用例把五类摆在一起，要求：
+   *    丢 null 键 / 保留 null 键 ⇒ 成功；值不同 / 该有值却缺键 / 不支持却给了值 /
+   *    缺模型 / 能力降级 ⇒ 失败。
+   *    任何一条反过来 = 修法越界（要么仍误判，要么"错配置也判成功"）。
+   */
+  describe('思考档位回读：丢键/保键/真错/缺模型/降级 — 必须可区分（T03）', () => {
+    const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+    /** 与 `buildThinkingLevelMap` 同构：7 档写满、不支持的写 null。 */
+    const ENTRY = {
+      id: 'deepseek-v4-pro',
+      name: 'DeepSeek',
+      reasoning: true,
+      input: ['text'] as Array<'text' | 'image'>,
+      compat: { supportsReasoningEffort: true as const, supportedReasoningEfforts: [...EFFORTS] as string[] },
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: 'low',
+        medium: 'medium',
+        high: 'high',
+        xhigh: 'xhigh',
+        max: 'max',
+      } as Record<string, string | null>,
+    };
+    /** 网关原样保留完整 7 键（含 null 值）。 */
+    const keptNulls = (): Record<string, unknown> => ({ ...ENTRY, thinkingLevelMap: { ...ENTRY.thinkingLevelMap } });
+    /** 网关丢掉了值为 null 的键，只剩受支持的 5 档。 */
+    const droppedNulls = (): Record<string, unknown> => ({
+      ...ENTRY,
+      thinkingLevelMap: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    });
+
+    /** 用一份 `resolveCatalogModels` = 期望条目，跑一轮；回读固定为 `current`。 */
+    const applyWith = (current: unknown) =>
+      applyRelayConfig(
+        deps({
+          resolveCatalogModels: async () => [{ ...ENTRY, thinkingLevelMap: { ...ENTRY.thinkingLevelMap } }] as never,
+          getConfig: vi.fn(async () =>
+            snapshot({
+              models: {
+                providers: {
+                  [RELAY_PROVIDER_ID]: { baseUrl: RELAY_BASE_URL, apiKey: 'rly_abc', models: [current] },
+                },
+              },
+            }),
+          ),
+        }),
+        INPUT,
+      );
+
+    it('① 网关**丢掉了 null 键** ⇒ 配置成功（BUG-098 的正例）', async () => {
+      expect((await applyWith(droppedNulls())).configured).toBe(true);
+    });
+
+    it('② 网关**原样保留 null 键** ⇒ 同样配置成功（新/旧网关都要能过）', async () => {
+      expect((await applyWith(keptNulls())).configured).toBe(true);
+    });
+
+    it('③-1 真档位错误：受支持档位的**值不同**（max 从 `max` 变成 `high`）⇒ 不算成功', async () => {
+      const wrong = droppedNulls();
+      (wrong as { thinkingLevelMap: Record<string, string | null> }).thinkingLevelMap.max = 'high';
+      const res = await applyWith(wrong);
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('③-2 真档位错误：**该有值的键整个丢了**（max 缺失）⇒ 不算成功（不许把"缺失"一律当 null）', async () => {
+      const wrong = droppedNulls();
+      delete (wrong as { thinkingLevelMap: Record<string, string | null> }).thinkingLevelMap.max;
+      const res = await applyWith(wrong);
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('③-3 真档位错误：补丁说**不支持**（null），网关却给了个真值（off=minimal）⇒ 不算成功', async () => {
+      const wrong = keptNulls();
+      (wrong as { thinkingLevelMap: Record<string, string | null> }).thinkingLevelMap.off = 'minimal';
+      const res = await applyWith(wrong);
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('④-1 缺模型：网关那条目录**换成了别的 id** ⇒ 不算成功', async () => {
+      const res = await applyWith({ ...droppedNulls(), id: 'someone-else-model' });
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('④-2 缺模型：网关**一条目录都没有** ⇒ 不算成功', async () => {
+      const res = await applyWith(undefined);
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('⑤-1 能力降级：`supportsReasoningEffort` 从 true 掉成 false ⇒ 不算成功', async () => {
+      const degraded = droppedNulls();
+      (degraded as { compat: Record<string, unknown> }).compat = {
+        supportsReasoningEffort: false,
+        supportedReasoningEfforts: [...EFFORTS],
+      };
+      const res = await applyWith(degraded);
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('⑤-2 能力降级：`supportedReasoningEfforts` **少档**（5 → 2）⇒ 不算成功', async () => {
+      const degraded = droppedNulls();
+      (degraded as { compat: Record<string, unknown> }).compat = {
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: ['low', 'medium'],
+      };
+      const res = await applyWith(degraded);
+      expect(res.configured).toBe(false);
+      expect(res.errorCode).toBe('verify-failed');
+    });
+
+    it('⭐⭐ 五类**互相可区分**：成功/失败两组的判据不能互相塌缩', async () => {
+      const outcomes = {
+        丢null键: (await applyWith(droppedNulls())).configured,
+        保null键: (await applyWith(keptNulls())).configured,
+        值不同: (await applyWith({ ...droppedNulls(), thinkingLevelMap: { low: 'low', max: 'high' } })).configured,
+        缺模型: (await applyWith(undefined)).configured,
+      };
+      expect(outcomes).toEqual({ 丢null键: true, 保null键: true, 值不同: false, 缺模型: false });
+    });
+  });
 
   it.each([undefined, ['text']])('视觉input回读缺失/降级不能报告配置成功 (%s)', async (input) => {
     const expected = {
@@ -817,6 +1143,76 @@ describe('applyRelayConfig', () => {
 
     expect(res.configured).toBe(false);
     expect(res.errorCode).toBe('verify-failed');
+  });
+
+  /**
+   * T03 诊断口径：`verify-failed` 是**确定性失败**，现场必须能**逐项归因**。
+   *
+   * r14 实机的教训：界面与日志只有一句 `verified:false` / "gateway did not apply
+   * the relay config"，而"网关真的没写"和"写了但目录条目对不上"是**两种成因、两种修法**。
+   * 这四个谓词的分项结果 + 期望/实际模型 id 是唯一的定位线索（BUG-098 就是这么查出来的）。
+   */
+  describe('回读失败的诊断口径：四谓词分项 + 模型 id（T03）', () => {
+    const ENTRY = {
+      id: 'deepseek-v4-pro',
+      name: 'DeepSeek',
+      reasoning: true,
+      input: ['text'] as Array<'text' | 'image'>,
+      thinkingLevelMap: { low: 'low', max: 'max' } as Record<string, string | null>,
+    };
+    const captureLog = () => {
+      const events: Array<[string, Record<string, unknown>]> = [];
+      return { events, log: (event: string, data: Record<string, unknown>) => events.push([event, data]) };
+    };
+
+    it('⭐ 网关整条 provider 都没写 ⇒ 诊断点名 provider(/catalog) 假，且给出期望 vs 实际模型 id', async () => {
+      const { events, log } = captureLog();
+      const d = deps({
+        resolveCatalogModels: async () => [ENTRY] as never,
+        getConfig: vi.fn(async () => snapshot({ models: { providers: {} } })),
+        log,
+      });
+      const res = await applyRelayConfig(d, INPUT);
+
+      expect(res.configured).toBe(false);
+      const entry = events.find(([event]) => event === 'relay.config-verify-failed');
+      expect(entry, '必须有 relay.config-verify-failed 诊断事件').toBeTruthy();
+      const data = entry![1] as { verdict: Record<string, boolean>; expectedModels: string[]; appliedModels: unknown[] };
+      expect(data.verdict.provider).toBe(false);
+      expect(data.verdict.catalog).toBe(false);
+      expect(data.expectedModels).toEqual(['deepseek-v4-pro']);
+      expect(data.appliedModels).toEqual([]);
+    });
+
+    it('⭐ provider 写了、只有目录条目对不上 ⇒ 诊断能**点名 catalog**，不与"整条没写"混为一谈', async () => {
+      const { events, log } = captureLog();
+      const d = deps({
+        resolveCatalogModels: async () => [ENTRY] as never,
+        getConfig: vi.fn(async () =>
+          snapshot({
+            models: {
+              providers: {
+                [RELAY_PROVIDER_ID]: {
+                  baseUrl: RELAY_BASE_URL,
+                  apiKey: 'rly_abc',
+                  // provider 对了，但目录条目丢了 max 档 ⇒ 只有 catalog 谓词该假。
+                  models: [{ ...ENTRY, thinkingLevelMap: { low: 'low', max: 'high' } }],
+                },
+              },
+            },
+          }),
+        ),
+        log,
+      });
+      const res = await applyRelayConfig(d, INPUT);
+
+      expect(res.configured).toBe(false);
+      const entry = events.find(([event]) => event === 'relay.config-verify-failed');
+      expect(entry).toBeTruthy();
+      const verdict = (entry![1] as { verdict: Record<string, boolean> }).verdict;
+      expect(verdict.provider).toBe(true);
+      expect(verdict.catalog).toBe(false);
+    });
   });
 
   // ⭐ 这条钉的是**真实网关的形状**，不是理想形状。
@@ -1107,5 +1503,35 @@ describe('联网开关：关掉之后不再注入，缺省仍然开着', () => {
     });
 
     expect(JSON.stringify(patch)).toContain('deepseek-v4-flash');
+  });
+});
+
+
+/**
+ * 2026-10-17 现场（r31 首启卡 33%）：
+ * 目录模型条目内容一变（能力标记撤回），整段 replace 的 `models` 数组会被网关的
+ * 破坏性校验判成"删条目" ⇒ `config.patch would remove entries from array path(s)` ⇒
+ * relay bootstrap 直接失败、准备页停在 33%。写补丁必须显式声明 replace 意图。
+ */
+describe('relayPatchReplacePaths（数组替换声明）', () => {
+  const base = { relayKey: 'rly_test', deviceFingerprint: 'fp' };
+
+  it('⭐ 带 models 数组 ⇒ 声明 models.providers.clawrouter.models', () => {
+    const patch = buildRelayPatch({
+      ...base,
+      catalogModels: [{ id: 'glm-5.3-flash', name: 'GLM', reasoning: false, input: ['text'] }],
+    });
+    expect(patch).not.toBeNull();
+    expect(relayPatchReplacePaths(patch!)).toEqual([
+      'models.providers.clawrouter.models',
+      // 元素内的数组也要声明：网关第二层校验会报 `…models[].input`
+      'models.providers.clawrouter.models[].input',
+    ]);
+  });
+
+  it('不写 models（目录拉不到）⇒ 不声明', () => {
+    const patch = buildRelayPatch({ ...base });
+    expect(patch).not.toBeNull();
+    expect(relayPatchReplacePaths(patch!)).toEqual([]);
   });
 });

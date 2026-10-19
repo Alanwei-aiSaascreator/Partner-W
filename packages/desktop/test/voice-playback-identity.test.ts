@@ -51,6 +51,7 @@ describe('语音朗读请求身份派生（R8-05 / VV-1）', () => {
     const ids = await Promise.all([
       deriveVoiceSentenceRequestId(base),
       deriveVoiceSentenceRequestId({ ...base, target: { ...base.target, accountKey: 'user-2' } }),
+      deriveVoiceSentenceRequestId({ ...base, target: { ...base.target, messageKey: 'message-2' } }),
       deriveVoiceSentenceRequestId({ ...base, target: { ...base.target, taskId: 'task-2' } }),
       deriveVoiceSentenceRequestId({ ...base, target: { ...base.target, sessionKey: 'session-2' } }),
       deriveVoiceSentenceRequestId({ ...base, answerDigest: 'b'.repeat(64) }),

@@ -79,7 +79,13 @@ const ACTIVE_UPDATE_STATES: ReadonlySet<string> = new Set([
 
 interface UpdateCheckContext {
   t: (key: string) => string;
-  openAbout: () => void;
+  /**
+   * 打**应用级**「更新与关于」弹窗（2026-10-19）。
+   *
+   * ⚠️ 绝不能改成"打开设置 → 关于"：设置页只在工作区挂载，登录页/准备页点了没反应
+   *    （这正是用户报的问题）。弹窗挂在 App 层，任何界面都能落到同一个可操作界面。
+   */
+  openUpdateDialog: () => void;
   setHasUpdate: (has: boolean) => void;
   /** 卸载/销毁标记：晚到的答复不再动 store、不再弹提示。 */
   disposed: () => boolean;
@@ -153,7 +159,7 @@ async function runUpdateCheck(context: UpdateCheckContext): Promise<void> {
     toast(context.t('leftNav.updateAvailable'), {
       action: {
         label: context.t('settings.checkForUpdates'),
-        onClick: () => context.openAbout(),
+        onClick: () => context.openUpdateDialog(),
       },
     });
   } catch (err) {
@@ -182,24 +188,29 @@ function scheduleUpdateCheck(
   return run;
 }
 
-export function useUpdateCheck(): void {
+/**
+ * @param enabled 默认 `true`（**所有界面**都可以检查并提示）。
+ *
+ *   2026-10-19 用户反馈：新版本提示只在进入工作区后才出现，登录页看不到、也没法下载。
+ *   之前之所以只在工作区开，是因为提示的落点写死成"设置 → 关于"，而设置页只在工作区挂载
+ *   ⇒ 登录页点了没反应。现在落点改成 App 层的「更新与关于」弹窗（`UpdateDialog`），
+ *   任何界面都能打开、都能下载，**不需要登录**，所以这里不再按界面门控。
+ */
+export function useUpdateCheck(enabled = true): void {
   const { t } = useTranslation();
   // ⚠️ `t` 走 ref：它每个渲染都是新函数，直接进依赖数组会让 effect 重挂
   //    （语言一变就重新起 5 秒启动计时器 = 多查一轮）。文案在**用的时候**取。
   const tRef = useRef(t);
   tRef.current = t;
   const setHasUpdate = useUiStore((s) => s.setHasUpdate);
-  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
-  const setSettingsSection = useUiStore((s) => s.setSettingsSection);
+  const setUpdateDialogOpen = useUiStore((s) => s.setUpdateDialogOpen);
 
   useEffect(() => {
+    if (!enabled) return;
     let disposed = false;
     const context: UpdateCheckContext = {
       t: (key) => tRef.current(key),
-      openAbout: () => {
-        setSettingsSection('about');
-        setSettingsOpen(true);
-      },
+      openUpdateDialog: () => setUpdateDialogOpen(true),
       setHasUpdate,
       disposed: () => disposed,
     };
@@ -227,5 +238,5 @@ export function useUpdateCheck(): void {
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [setHasUpdate, setSettingsOpen, setSettingsSection]);
+  }, [enabled, setHasUpdate, setUpdateDialogOpen]);
 }

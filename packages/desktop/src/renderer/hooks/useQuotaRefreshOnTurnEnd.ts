@@ -55,6 +55,18 @@ export function useQuotaRefreshOnTurnEnd(): void {
   // 没账号（未登录/已登出）就什么都不排 —— 刷新的前提是有快照可写。
   const signedIn = useCommercialStore((s) => Boolean(s.overview?.account));
   const wasBusy = useRef(false);
+  /**
+   * 记住"刚刚在跑的会话"。
+   *
+   * `busy` 翻成 false 的那一刻集合**已经空了** —— 不留一份，"本轮消耗"就不知道该记到
+   * 哪个会话名下，切换会话后会显示成别人的。集合只在**开跑/收工**时换引用（不是每个
+   * 流式增量），所以这里的订阅不会变成 per-tick 重渲。
+   */
+  const processingBySession = useMessageStore((s) => s.processingBySession);
+  const lastBusySessions = useRef<string[]>([]);
+  useEffect(() => {
+    if (processingBySession.size > 0) lastBusySessions.current = [...processingBySession];
+  }, [processingBySession]);
 
   useEffect(() => {
     if (!signedIn) {
@@ -98,8 +110,14 @@ export function useQuotaRefreshOnTurnEnd(): void {
         if (cancelled || !visible()) return;
         await refresh();
         if (cancelled) return;
-        // 值变了 ⇒ 已结算，追读到此为止。
-        if (usedMicros() !== before) return;
+        const after = usedMicros();
+        // 值涨了 ⇒ 这一轮已入账。差额就是**本轮消耗**，交给 store 去显示。
+        // （差额是服务端口径：1 积分 = 1e6 微积分，见 lib/utils.ts 的 MICROS_PER_CREDIT。）
+        if (after !== null && before !== null && after > before) {
+          useCommercialStore.getState().recordTurnSpend(lastBusySessions.current, after - before);
+        }
+        // 值变了（含被调整变小）⇒ 已结算，追读到此为止。
+        if (after !== before) return;
         // 没变 ⇒ 账本可能还没提交：在配额内再追一次（不可见时不追，回前台会补）。
         if (followUpsLeft <= 0 || !visible()) return;
         followUpsLeft -= 1;

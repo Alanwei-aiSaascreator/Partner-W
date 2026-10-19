@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo, useState } from 'react';
-import { Bot, File, FileCode, FolderOpen, Image as ImageIcon, ListTodo, Users } from 'lucide-react';
+import { Bot, File, FileCode, FolderOpen, Image as ImageIcon, ListTodo, Users, Video as VideoIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Task, Artifact } from '@clawwork/shared';
 import type { TaskContextFile } from './ChatInput/useTaskMaterials';
@@ -47,6 +47,8 @@ interface MentionPickerProps {
 function artifactIcon(type: string, size: number) {
   if (type === 'code') return <FileCode size={size} className="text-[var(--accent)]" />;
   if (type === 'image') return <ImageIcon size={size} className="text-[var(--info)]" />;
+  // BUG-120（2026-10-17）：视频专属类型 —— 提及行给视频图标（改型前落进通用 File）。
+  if (type === 'video') return <VideoIcon size={size} className="text-[var(--info)]" />;
   return <File size={size} className="text-[var(--text-muted)]" />;
 }
 

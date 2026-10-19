@@ -52,7 +52,7 @@ async function flush() {
     await Promise.resolve();
     await Promise.resolve();
     // 身份派生走 crypto.subtle（真异步），多给一个宏任务让 speak/恢复链跑完。
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -62,6 +62,7 @@ function readButton(view: { container: HTMLElement }) {
 }
 describe('speech UI lifetime', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     node = { onended: null, start, stop, disconnect: vi.fn(), connect: vi.fn(), buffer: null };
     class Context {
@@ -235,5 +236,60 @@ describe('speech UI lifetime', () => {
     await flush();
     expect(view.container.querySelector('span')?.textContent).toBe('idle');
     view.unmount();
+  });
+  it('recovers the latest failed operation after remount instead of reverting to the first playback', async () => {
+    const synthesize = vi.mocked(window.clawwork.synthesizeSpeech);
+    const first = mount(<Harness />);
+    act(() => readButton(first).click());
+    await flush();
+    act(() => node.onended?.());
+    await flush();
+    synthesize.mockImplementation(async () => ({ ok: false, error: 'voice-settlement-pending' }));
+    act(() => readButton(first).click());
+    await flush();
+    const pendingId = synthesize.mock.calls[1]?.[1];
+    expect(pendingId).not.toBe(synthesize.mock.calls[0]?.[1]);
+    first.unmount();
+    const reopened = mount(<Harness />);
+    act(() => readButton(reopened).click());
+    await flush();
+    expect(synthesize.mock.calls[2]?.[1]).toBe(pendingId);
+    reopened.unmount();
+  });
+
+  it('fails before any request when persistent recovery state cannot be written', async () => {
+    const failure = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    const view = mount(<Harness />);
+    act(() => readButton(view).click());
+    await flush();
+    expect(window.clawwork.synthesizeSpeech).not.toHaveBeenCalled();
+    expect(view.container.querySelector('[data-testid="error"]')?.textContent).toBe('voice-recovery-unavailable');
+    view.unmount();
+    failure.mockRestore();
+  });
+  it('does not dispatch an old account request when scope changes during sentence hashing', async () => {
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    let finish: (() => void) | undefined;
+    let calls = 0;
+    const spy = vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (...args) => {
+      calls++;
+      if (calls === 3)
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      return digest(...args);
+    });
+    const view = mount(<Harness />);
+    act(() => readButton(view).click());
+    await flush();
+    expect(finish).toBeDefined();
+    view.rerender(<Harness scope="account-b" identity={{ ...baseIdentity, accountKey: 'user-2' }} />);
+    finish?.();
+    await flush();
+    expect(window.clawwork.synthesizeSpeech).not.toHaveBeenCalled();
+    view.unmount();
+    spy.mockRestore();
   });
 });

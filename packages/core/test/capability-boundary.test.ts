@@ -24,16 +24,18 @@ describe('能力边界提示词（注入给模型的能力清单）', () => {
     expect(prompt).toContain('deepseek-v4-flash');
   });
 
-  it('把"暂不支持"的规则写死：其它厂商模型 / 图片生成 / 语音（v3：视频不再列不支持）', () => {
+  it('把"暂不支持"的规则写死：其它厂商模型 / 声音克隆（v4：图片生成也已接入）', () => {
     expect(prompt).toContain('当前暂不支持该模型或能力');
     expect(prompt).toContain('GPT');
     expect(prompt).toContain('Claude');
-    expect(prompt).toContain('图片生成');
-    expect(prompt).toContain('语音');
+    expect(prompt).toContain('声音克隆');
     // v3（2026-10-12 视频接入）：视频生成已接入 —— 不得再出现在"暂不支持"一侧
     expect(prompt).not.toMatch(/图片生成、视频生成/);
     // 且必须作为可用能力行出现（防"主罗盘拒答、其它助手能生成"的指令层矛盾）
     expect(prompt).toContain('视频生成：按随包《视频生成》技能规范');
+    // ⭐ v4（2026-10-17 BUG-141）：生图已接入 —— 现场实录：旧文案让主罗盘直接拒答"画一只猫"
+    expect(prompt).toContain('图片生成：按随包《图片生成》技能规范');
+    expect(prompt, '生图不得再出现在"暂不支持"一侧').not.toContain('图片生成（本轮未接入）');
   });
 
   it('禁止底层试错（不许调用工具试出来再报失败）', () => {

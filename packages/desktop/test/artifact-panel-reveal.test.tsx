@@ -101,6 +101,19 @@ it('非文件产物（回复里自动抽取的 code / image）不弹面板：聊
   expect(useUiStore.getState().rightPanelOpen).toBe(false);
 });
 
+/**
+ * ⭐ BUG-120（2026-10-17）：视频产物改型成 `video` 之后，这一档**必须一起放行**。
+ *
+ * 改型之前视频走的是 `type === 'file'`（与 docgen/htmlgen/PPT 同一档），所以面板揭示是
+ * 白捡的；一旦给它专属类型而忘了这里，视频就会**静默失去**面板自动展开 ——
+ * 用户看不到"生成完了"，而本文件的其它用例（都是 `file`）**全绿**，抓不到这个回归。
+ */
+it('⭐ BUG-120：视频产物（type=video）保存 → 面板同样自动展开', () => {
+  act(() => artifactSaved?.(artifact({ type: 'video', name: '短片.mp4', mimeType: 'video/mp4' })));
+
+  expect(useUiStore.getState().rightPanelOpen).toBe(true);
+});
+
 it('用户收起之后又来了新产物：仍然展开（新产物是新信号）', () => {
   act(() => artifactSaved?.(artifact()));
   expect(useUiStore.getState().rightPanelOpen).toBe(true);

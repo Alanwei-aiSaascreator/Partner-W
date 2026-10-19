@@ -168,6 +168,33 @@ function readOrderNo(order: unknown): string {
   return String((order as { orderNo?: unknown })?.orderNo ?? '');
 }
 
+/**
+ * 下单 RPC 回显的订单金额（分）。**读不到就是 `null`**（老 SQL 不回显）—— 不猜。
+ */
+function readOrderAmountCents(order: unknown): number | null {
+  const raw = (order as { amountCents?: unknown })?.amountCents;
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw <= 0) return null;
+  return raw;
+}
+
+/**
+ * **金额对齐门**（T08）。客户端不参与定价，但必须保证交给用户的收银台
+ * 就是"他看到的那一笔"。三层金额必须一致：
+ *   ① 用户请求（自定义路径的入参）；② 订单回显；③ 收银台读数。
+ *
+ * 收银台读数本身还必须是**合法正整数** —— `0` / 负数 / 缺失一律拒绝，
+ * 绝不把"0 元"或"金额未知"的收银台交给用户（那会让界面的金额摘要变成假话）。
+ *
+ * ⚠️ 拒绝发生在用户扫码之前（payUrl 还没交出去）⇒ **不会产生任何扣费**；
+ *    订单行留成 pending，30 分钟后自行过期。文案回落到通用的
+ *    `account.rechargeFailed`（"发起支付失败，请重试"）—— 这句话**准确**：
+ *    支付确实没有被发起。不新增 i18n 键。
+ */
+function amountAligned(actualCents: number, expectations: ReadonlyArray<number | null>): boolean {
+  if (!Number.isSafeInteger(actualCents) || actualCents <= 0) return false;
+  return expectations.every((expected) => expected === null || expected === actualCents);
+}
+
 export async function createRechargeOrder(sku: string): Promise<IpcResult<RechargeOrderHandle>> {
   const supabase = getCommercialClient();
   if (!supabase) {
@@ -198,7 +225,13 @@ export async function createRechargeOrder(sku: string): Promise<IpcResult<Rechar
     if (!orderNo) {
       return { ok: false, error: 'Order was created without an order number', errorCode: 'recharge_create_failed' };
     }
-    return openCheckout(supabase, orderNo);
+    const handle = await openCheckout(supabase, orderNo);
+    if (!handle.ok || !handle.result) return handle;
+    // T08 金额对齐：订单回显与收银台必须同一笔（档位价签在两处之间被改过也要挡住）。
+    if (!amountAligned(handle.result.amountCents, [readOrderAmountCents(order)])) {
+      return { ok: false, error: 'Recharge amount does not match the order', errorCode: 'recharge_amount_mismatch' };
+    }
+    return handle;
   } catch (error) {
     return fail(error, 'recharge_create_failed');
   }
@@ -251,7 +284,14 @@ export async function createCustomRechargeOrder(amountCents: number): Promise<Ip
     if (!orderNo) {
       return { ok: false, error: 'Order was created without an order number', errorCode: 'recharge_create_failed' };
     }
-    return openCheckout(supabase, orderNo);
+    const handle = await openCheckout(supabase, orderNo);
+    if (!handle.ok || !handle.result) return handle;
+    // T08 金额对齐：自定义路径是客户端唯一能定价的地方，所以这里连**用户请求的金额**
+    // 一起对齐 —— 订单回显与收银台都必须等于用户按下的那个数。
+    if (!amountAligned(handle.result.amountCents, [amountCents, readOrderAmountCents(order)])) {
+      return { ok: false, error: 'Recharge amount does not match the order', errorCode: 'recharge_amount_mismatch' };
+    }
+    return handle;
   } catch (error) {
     return fail(error, 'recharge_create_failed');
   }

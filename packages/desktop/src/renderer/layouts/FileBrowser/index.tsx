@@ -138,6 +138,24 @@ export default function FileBrowser() {
         action: () => void reportOpenFailure(window.clawwork.openArtifactFile(a.id, a.taskId), a.name),
       },
       {
+        // 2026-10-19 闭环：`saveArtifactAs` 早就存在（产物卡在用），文件管理里却没入口。
+        label: t('artifactCard.saveAs'),
+        action: () => {
+          void (async () => {
+            try {
+              const response = await window.clawwork.saveArtifactAs(a.id, a.taskId);
+              if (!response.ok) {
+                toast.error(t('artifactCard.error'));
+                return;
+              }
+              if (response.result?.status === 'cancelled') toast.info(t('artifactCard.cancelled'));
+            } catch {
+              toast.error(t('artifactCard.error'));
+            }
+          })();
+        },
+      },
+      {
         label: t('filePreview.revealInFolder'),
         action: () =>
           void reportFileActionFailure(window.clawwork.showArtifactInFolder(a.id, a.taskId), t('artifactCard.error')),

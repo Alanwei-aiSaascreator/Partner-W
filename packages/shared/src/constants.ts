@@ -130,6 +130,23 @@ export interface ThinkingSegments {
    *    完全同文——拿全历史做 includes/前缀都会吞掉合法新段）。
    */
   lastSealed: string;
+  /**
+   * **源端段身份**（BUG-075 / T26，2026-10-16）：当前段由源端（网关/运行时）给出的标识。
+   *
+   * 为什么需要它：`current` / `lastSealed` 全是**文本**，而 BUG-075 的两条未决反例
+   * （复审探针 `new-prefix-after-tool` / `new-identical-after-tool`）恰好是"边界后的新段
+   * 与刚归档段**前缀相同 / 完全同文**"——纯字符串在这两种输入上**没有可判据的差异**
+   * （同一对字符串既可能是回声、也可能是合法新段），所以当时只能保留 skip。
+   *
+   * 有了源端身份就不再需要猜：**同 id = 同一段的累计快照；不同 id = 一定是新段**，
+   * 哪怕文本一模一样、哪怕新段是旧段的前缀。
+   *
+   * ⚠️ 缺省（`undefined` / `''`）= 该帧**没有**身份（旧运行时 / 旧协议）⇒ 逐字回落到
+   *    原来的字符串启发式 + 回声守卫，既有行为一字不变。
+   */
+  currentId?: string;
+  /** 刚归档那一段的身份（同 `lastSealed`，用于身份侧的回声判定；缺省 = 未知）。 */
+  lastSealedId?: string;
 }
 
 /** 显示文本：已完成段 + 空行 + 当前段（给 UI 与 final 用）。 */
@@ -151,9 +168,39 @@ export function renderThinkingSegments(state: ThinkingSegments): string {
  *    新段与历史/已完成段完全同文**也允许**（文本相同 ≠ 同一段）。
  *
  * 复杂度：每次调用 ≤3 次前缀比较（O(len)），没有后缀扫描/历史搜索。
+ *
+ * ## 源端段身份（BUG-075 / T26，2026-10-16）
+ *
+ * 第三个参数 `id` 是**源端给的段身份**（缺省 = 没有）。给了身份就**不再用字符串猜**：
+ *  - `id === state.currentId` ⇒ 同一段的累计快照 ⇒ 与下面"同段"分支同样的替换规则
+ *    （相等/前缀 ⇒ 原样；延伸/更短重投 ⇒ 替换当前段）——**绝不会**被回声守卫吞掉；
+ *  - `id !== state.currentId` ⇒ **一定是新段**（哪怕与 `lastSealed` 完全同文）⇒ 归档 + 开新段。
+ *
+ * 这正是 `new-prefix-after-tool` / `new-identical-after-tool` 两条未决反例的可判据：
+ * 身份不同 ⇒ 新段；身份相同 ⇒ 同段。没有身份时下方字符串路径**逐字不变**。
  */
-export function mergeThinkingSnapshot(state: ThinkingSegments, incoming: string): ThinkingSegments {
+export function mergeThinkingSnapshot(state: ThinkingSegments, incoming: string, id?: string): ThinkingSegments {
   if (!incoming) return state;
+  const hasId = typeof id === 'string' && id !== '';
+  if (hasId) {
+    if (state.currentId === id) {
+      // 同一段：相等/重复前缀 ⇒ 原样不动（同引用）；否则替换当前段快照。
+      if (state.current === incoming) return state;
+      if (state.current.startsWith(incoming)) return state;
+      return { ...state, current: incoming };
+    }
+    // 身份不同 ⇒ 新段（不管文本与新段/旧段像不像）。
+    // ⚠️ `current` 为空（刚被工具边界归档过）= **没有东西可归档** ⇒ 不能拼出多余的段间空行，
+    //    也不能把 `lastSealed` 覆盖成空（回声守卫基线要留着）。
+    if (!state.current) return { ...state, current: incoming, currentId: id };
+    return {
+      completed: state.completed ? state.completed + '\n\n' + state.current : state.current,
+      current: incoming,
+      currentId: id,
+      lastSealed: state.current,
+      lastSealedId: state.currentId ?? '',
+    };
+  }
   if (state.current === incoming) return state;
   if (state.current.startsWith(incoming)) return state;
   if (incoming.startsWith(state.current)) {
@@ -164,7 +211,9 @@ export function mergeThinkingSnapshot(state: ThinkingSegments, incoming: string)
   return {
     completed: state.completed ? state.completed + '\n\n' + state.current : state.current,
     current: incoming,
+    currentId: '',
     lastSealed: state.current,
+    lastSealedId: state.currentId ?? '',
   };
 }
 
@@ -180,7 +229,9 @@ export function sealThinkingSegment(state: ThinkingSegments): ThinkingSegments {
   return {
     completed: state.completed ? state.completed + '\n\n' + state.current : state.current,
     current: '',
+    currentId: '',
     lastSealed: state.current,
+    lastSealedId: state.currentId ?? '',
   };
 }
 
@@ -395,13 +446,14 @@ export const NON_RETRYABLE_ERROR_CODES = new Set([
  * 2026-09-17 实机就是因为两边各定义一次（main 取"中转目录第一条"= qwen3.5-27b，
  * 渲染层写死 deepseek-v4-flash），用户看到的模型和实际生成消息的模型对不上。
  *
- * 2026-10-10 Cephalon 批：默认 = `glm-5.3-flash`（与智能档同一模型 —— 三档映射
- * 见 `task-modes.ts`，此处是"新任务默认"的唯一来源）。
+ * 2026-10-17：默认 = **智能档的模型** `glm-5.3-flashx`（三档映射见 `task-modes.ts`）。
+ * 两者必须同值 —— 2026-09-17 实机故障就是"激活时的默认"与"composer 显示的默认"
+ * 两个值，用户看到的模型和实际跑的对不上。
  *
  * ⚠️ 只写**model id 本体**（不带 `clawrouter/` 前缀）：网关里的 ref 是两段，
  *    前缀由调用方按自己的上下文拼（见 relay-config.ts 的说明）。
  */
-export const COMMERCIAL_DEFAULT_MODEL_ID = 'glm-5.3-flash';
+export const COMMERCIAL_DEFAULT_MODEL_ID = 'glm-5.3-flashx';
 
 /**
  * 冷启动开场片（1 分钟，含内嵌音轨）。

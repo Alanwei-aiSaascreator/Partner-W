@@ -50,7 +50,7 @@ export interface ArtifactDeliveryProof {
 }
 
 /** 卡片种类（决定"哪份已登记产物算这一张卡片的交付"与活动帧的归属判据）。 */
-export type RequestCardKind = 'docgen' | 'htmlgen' | 'videogen';
+export type RequestCardKind = 'docgen' | 'htmlgen' | 'videogen' | 'imagegen';
 
 /**
  * 每种卡片认哪些扩展名的**已登记产物**。
@@ -63,6 +63,7 @@ const KIND_EXTENSIONS: Readonly<Record<RequestCardKind, readonly string[]>> = Ob
   docgen: ['.pptx', '.docx', '.xlsx', '.pdf'],
   htmlgen: ['.html'],
   videogen: ['.mp4'],
+  imagegen: ['.png'],
 });
 
 function isKindArtifactName(kind: RequestCardKind, name: string | undefined): boolean {
@@ -104,7 +105,12 @@ export function useArtifactDeliveryProof(
       //    否则一条"文档+视频"混排消息里，视频帧失败会把已经拿到 docx 的文档卡染成失败。
       if (kind) {
         const video = isVideoActivity(record);
-        if (kind === 'videogen' ? !video : video) continue;
+        const image =
+          record.phase === 'generating-image' ||
+          (record.observedPhases ?? []).some((step) => step.phase === 'generating-image');
+        if (kind === 'videogen' && (!video || image)) continue;
+        if (kind === 'imagegen' && (!image || video)) continue;
+        if (kind !== 'videogen' && kind !== 'imagegen' && (video || image)) continue;
       }
       const newer =
         !best ||
@@ -120,12 +126,15 @@ export function useArtifactDeliveryProof(
       taskId && messageId
         ? artifacts.find(
             (artifact) =>
-              artifact.messageId === messageId &&
+              artifact.taskId === taskId &&
+              (kind === 'imagegen' && activity?.artifactId
+                ? artifact.id === activity.artifactId
+                : artifact.messageId === messageId) &&
               artifact.availability === 'available' &&
               (kind ? isKindArtifactName(kind, artifact.name) : true),
           )
         : undefined,
-    [artifacts, taskId, messageId, kind],
+    [artifacts, taskId, messageId, kind, activity?.artifactId],
   );
   return {
     state: deriveRequestCardState({ activity, availableArtifactId: available?.id }),

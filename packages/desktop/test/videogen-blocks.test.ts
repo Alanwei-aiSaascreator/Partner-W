@@ -150,3 +150,58 @@ describe('videoFileNameFor（文件名与 docgen/htmlgen 共用同一份清洗�
     expect(dangerous.endsWith('.mp4')).toBe(true);
   });
 });
+
+/**
+ * 视频画质档位 + 图生视频（2026-10-17 用户要求）。
+ *
+ * 两条不变量：
+ *  · 界面选的档位**只补默认值**：围栏里明确写了 `model` 就以围栏为准（用户在对话里指定过）；
+ *  · 首帧**只在 Seedance 分支**补，且围栏自己写了 `firstFrame` 时不覆盖。
+ */
+describe('extractVideogenBlocks（档位与首帧注入）', () => {
+  it('界面选高质量档 ⇒ 没写 model 的围栏按 Seedance 解析（duration/resolution 走 Seedance 规则）', () => {
+    const { requests, failures } = extractVideogenBlocks(block({ prompt: '海边日落' }), {
+      forceModel: 'seedance-2.5',
+    });
+    expect(failures).toEqual([]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].model).toBe('seedance-2.5');
+  });
+
+  it('围栏明确写了别的模型 ⇒ 界面档位不覆盖', () => {
+    const { requests } = extractVideogenBlocks(block({ prompt: '海边日落', model: 'seedance-2.5' }), {
+      forceModel: 'seedance-2.5',
+    });
+    expect(requests[0].model).toBe('seedance-2.5');
+    // H3 围栏（不写 model）在**没有**档位覆盖时仍然是 H3
+    const h3 = extractVideogenBlocks(block({ prompt: '海边日落' }));
+    expect(h3.requests[0].model).not.toBe('seedance-2.5');
+  });
+
+  it('图生视频：给了首帧路径且是 Seedance 分支 ⇒ 写进 firstFrame，宽高比自动 adaptive', () => {
+    const { requests, failures } = extractVideogenBlocks(block({ prompt: '让猫眨眼' }), {
+      forceModel: 'seedance-2.5',
+      firstFramePath: 'C:\data\videogen-refs\abc.png',
+    });
+    expect(failures).toEqual([]);
+    expect(requests[0].model).toBe('seedance-2.5');
+    expect(requests[0].firstFrame).toBe('C:\data\videogen-refs\abc.png');
+    expect(requests[0].aspectRatio).toBe('adaptive');
+  });
+
+  it('围栏自己写了 firstFrame ⇒ 不覆盖', () => {
+    const { requests } = extractVideogenBlocks(
+      block({ prompt: '让猫眨眼', model: 'seedance-2.5', firstFrame: 'workspace:cat.png' }),
+      { firstFramePath: 'C:\data\videogen-refs\abc.png' },
+    );
+    expect(requests[0].firstFrame).toBe('workspace:cat.png');
+  });
+
+  it('⭐ 标准档（H3）+ 附了图 ⇒ 明确失败、不生成（旧行为会静默丢图却照常扣费）', () => {
+    const { requests, failures } = extractVideogenBlocks(block({ prompt: '让猫眨眼' }), {
+      firstFramePath: 'C:\data\videogen-refs\abc.png',
+    });
+    expect(requests).toEqual([]);
+    expect(failures.map((f) => f.failure)).toEqual([{ code: 'videogen-image-requires-seedance' }]);
+  });
+});

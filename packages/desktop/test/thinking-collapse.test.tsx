@@ -131,3 +131,41 @@ describe('ThinkingCollapse', () => {
     view.unmount();
   });
 });
+
+/**
+ * 长思考只渲染尾部（2026-10-18 同事批次移植）。
+ *
+ * 现场数据：一次任务吐 58,036 字思考 / 2,638 个增量帧 ⇒ live 态每帧把整段重贴一遍 DOM，
+ * 渲染进程吃满一个核、界面等于卡死。规则：**live 时只渲染最后 8,000 字**（用户看的是滚动尾部），
+ * 定稿后渲染全文 —— 短思考完全不受影响。
+ */
+describe('ThinkingCollapse —— 长思考 live 只渲染尾部', () => {
+  const LONG = 'A'.repeat(5000) + 'Z'.repeat(5000) + '尾'.repeat(10_000);
+
+  it('⭐ live 且超过 8,000 字 ⇒ 只渲染最后 8,000 字，并明确提示"只显示最近内容"', () => {
+    const view = mount(<ThinkingCollapse text={LONG} phase="live" />);
+    const body = view.container.querySelector('.thinking-collapse__body')!;
+    expect(body.textContent).toBe(LONG.slice(-8000));
+    // 复制到的只有尾部 —— 界面上必须说清楚（不许让用户以为这就是全文）。
+    const hint = view.container.querySelector('[data-testid="thinking-tail-hint"]');
+    expect(hint?.textContent).toBe(i18n.t('chatMessage.thinking.liveTailHint'));
+    view.unmount();
+  });
+
+  it('定稿（done）⇒ 渲染全文（收起态；展开后是完整推理），且不再显示省略提示', () => {
+    const view = mount(<ThinkingCollapse text={LONG} phase="done" />);
+    const header = view.container.querySelector('[data-testid="thinking-collapse-header"]')!;
+    click(header);
+    const body = view.container.querySelector('.thinking-collapse__body');
+    expect(body?.textContent).toBe(LONG);
+    expect(view.container.querySelector('[data-testid="thinking-tail-hint"]')).toBeNull();
+    view.unmount();
+  });
+
+  it('短思考（不超过 8,000）live 也原样渲染', () => {
+    const view = mount(<ThinkingCollapse text={TEXT} phase="live" />);
+    const body = view.container.querySelector('.thinking-collapse__body')!;
+    expect(body.textContent).toBe(TEXT);
+    view.unmount();
+  });
+});

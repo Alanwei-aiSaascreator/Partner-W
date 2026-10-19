@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useRef, type Dispatch, type ReactElement, type SetStateAction } from 'react';
+import { act, useRef, useState, type Dispatch, type ReactElement, type SetStateAction } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Artifact, MeetingStatus, Message, ModelCatalogEntry, Task } from '@clawwork/shared';
@@ -167,6 +167,48 @@ import type { ImportedMaterialFile, TaskContextFile } from '../src/renderer/comp
 import { useCommercialStore } from '../src/renderer/stores/commercialStore';
 import { compareStore } from '../src/renderer/features/compare/compare-store-instance';
 
+function HarnessWithAttachments({
+  initialValue = '',
+  attachments,
+}: {
+  initialValue?: string;
+  attachments: PendingAttachment[];
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [, setBump] = useState(0);
+  const chat = useChatSend({
+    textareaRef,
+    pendingAttachments: attachments,
+    setPendingAttachments: vi.fn(),
+    selectedTasks: [],
+    setSelectedTasks: vi.fn(),
+    selectedArtifacts: [],
+    setSelectedArtifacts: vi.fn(),
+    selectedLocalFiles: [],
+    setSelectedLocalFiles: vi.fn(),
+    selectedImportedFiles: [],
+    clearSelectedImportedFiles: vi.fn(),
+    markImportedFileMissing: vi.fn(),
+    selectedAgents: [],
+    setSelectedAgents: vi.fn(),
+    stopVoiceInput: vi.fn(),
+  });
+  return (
+    <>
+      <textarea ref={textareaRef} defaultValue={initialValue} />
+      <button type="button" onClick={() => void chat.handleAbort()}>
+        abort
+      </button>
+      <button type="button" onClick={() => void chat.handleSend()}>
+        send
+      </button>
+      <button type="button" onClick={() => setBump((value) => value + 1)}>
+        bump
+      </button>
+    </>
+  );
+}
+
 function render(ui: ReactElement): {
   container: HTMLDivElement;
   rerender: (next: ReactElement) => void;
@@ -194,6 +236,8 @@ function render(ui: ReactElement): {
 
 function Harness({ initialValue = '' }: { initialValue?: string }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 排队放行靠"这一轮回到 idle"触发；桩 store 不会自己重渲染，用一次显式 bump 逼出那一步。
+  const [, setBump] = useState(0);
   const chat = useChatSend({
     textareaRef,
     pendingAttachments: [],
@@ -222,6 +266,10 @@ function Harness({ initialValue = '' }: { initialValue?: string }) {
         send
       </button>
       <div data-testid="aborting">{chat.aborting ? 'aborting' : 'idle'}</div>
+      <button type="button" onClick={() => setBump((value) => value + 1)}>
+        bump
+      </button>
+      <div data-testid="queued">{chat.queuedSends.map((queued) => queued.text).join('|')}</div>
       <div data-testid="model-availability">{chat.modelAvailability}</div>
       <div data-testid="tool-ids">
         {chat.toolsCatalog?.groups.flatMap((group) => group.tools.map((tool) => tool.id)).join(',') ?? ''}
@@ -486,19 +534,43 @@ describe('useChatSend abort flow', () => {
     },
   );
 
-  it('⭐ 上一轮仍在处理 ⇒ 普通发送被具名拦住（保留草稿、不发请求）', async () => {
-    // ⚠️ DOCX-205 合同（2026-10-10）B 块：会话在执行中时普通新请求单飞 ——
-    //    键盘 Enter 与发送按钮都走 `handleSend`（按钮变"停止"不代表 Enter 被拦）。
+  it('⭐ 上一轮仍在处理 ⇒ 纯文字排队（不打断、不发请求），本轮结束后自动发出', async () => {
+    // 2026-10-17 用户需求：执行中可以追加对话，不打断模型。
+    // 单飞合同（DOCX-205）不变 —— 这一轮不插话，话**排队**，idle 后自动发。
     mocks.messageState.processingBySession = new Set(['agent:main:clawwork:task:task-1']);
     const { container, unmount } = render(<Harness initialValue="再发一条消息" />);
     await act(async () => {
       container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
+    expect(mocks.toastInfo).toHaveBeenCalledWith('chatInput.queuedToast');
+    expect(mocks.send).not.toHaveBeenCalled();
+    // 交给队列后清空输入框（用户能继续打下一句）。
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('');
+    expect(container.querySelector('[data-testid="queued"]')?.textContent).toBe('再发一条消息');
+
+    // 这一轮结束 ⇒ 排队项自动发出去（判据是 textarea 里的原文，不是改写过的东西）。
+    mocks.messageState.processingBySession = new Set();
+    await act(async () => {
+      container.querySelectorAll('button')[2]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect((mocks.send.mock.calls[0][1] as { content?: string }).content).toBe('再发一条消息');
+    expect(container.querySelector('[data-testid="queued"]')?.textContent).toBe('');
+    unmount();
+  });
+
+  it('排队只收纯文字：带附件时仍按原样拦住（材料不能跨轮排队）', async () => {
+    mocks.messageState.processingBySession = new Set(['agent:main:clawwork:task:task-1']);
+    const attachment = { file: { name: 'a.png', type: 'image/png', size: 10 } };
+    const { container, unmount } = render(
+      <HarnessWithAttachments initialValue="看图" attachments={[attachment as unknown as PendingAttachment]} />,
+    );
+    await act(async () => {
+      container.querySelectorAll('button')[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
     expect(mocks.toastError).toHaveBeenCalledWith('chatInput.turnInFlight', expect.any(Object));
     expect(mocks.send).not.toHaveBeenCalled();
-    // 草稿保留：输入框里还是原文。
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    expect(textarea.value).toBe('再发一条消息');
     unmount();
   });
 
@@ -704,6 +776,35 @@ describe('useChatSend abort flow', () => {
     });
 
     expect(mocks.applySlashCommand).toHaveBeenCalledWith('task-1', 'model', 'public/deepseek-v4-pro');
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  // ── `/compact`（无参命令）────────────────────────────────────────────────
+  // 缺陷：注册表里有它、发送路径却只拦 `/model|/think`（且都要求带参），于是 `/compact`
+  // 落回普通消息被直接发给模型。这两条用例在修复前**必红**（applySlashCommand 没被调、
+  // 反而 send 被调），修复后转绿。
+  it('⭐ `/compact` 触发既有压缩链（不是普通消息）', async () => {
+    const { container } = render(<Harness initialValue="/compact" />);
+    const buttons = container.querySelectorAll('button');
+
+    await act(async () => {
+      buttons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // 复用既有链 = 走 `applySlashCommand('compact')`（内部即 `runManualCompaction`）。
+    expect(mocks.applySlashCommand).toHaveBeenCalledWith('task-1', 'compact', undefined);
+  });
+
+  it('⭐ `/compact` 绝不作为普通消息发给模型', async () => {
+    const { container } = render(<Harness initialValue="/compact" />);
+    const buttons = container.querySelectorAll('button');
+
+    await act(async () => {
+      buttons[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
@@ -2267,20 +2368,7 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
     unmount();
   });
 
-  /**
-   * ⛔ R8-04（2026-10-15 独立终审 P1）：**带图片的 @ 岗位在渲染层早阻断**。
-   *
-   * 旧 ensemble（`ensemble=true`、无 teamId）里「主任务模型过完视觉门禁」≠「岗位接收模型
-   * 支持图像」—— core 的 mention 分支不钉 presetModel，图片由各岗位**自己的模型**直接接收。
-   * **真实派发边界上的兜底拒绝已由 core 测试覆盖**
-   *（`packages/core/test/chat-composer.test.ts`「R8-04：带图片的 @ 分发整体拒绝」；
-   *   审阅方探针复本与 RED→GREEN 原始日志在 `D:/claude/mofang/reviews/r8-rework-vision/`），
-   * 这里钉的是**用户可见那一层**：弹产品文案、保留草稿与附件、不触发视觉回读/切换。
-   *
-   * 判据与 core 同形：图片 ×（@ 岗位 或 @all）× ensemble × 无 teamId × room 存在。
-   * 不依赖主模型检查结果、不切换任何模型；无 room 的普通 @ 不受影响（room 前提拦掉误伤）。
-   */
-  describe('R8-04：带图片的 @ 岗位在发送前被拦下', () => {
+  describe('R8-04：image mentions use recipient validation', () => {
     const WORKER = {
       agentId: 'worker',
       agentName: 'Worker',
@@ -2302,34 +2390,31 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
       };
     }
 
-    it('@worker + 图片 ⇒ 不发送、不切模型、草稿保留、给产品文案', async () => {
+    it('@worker image reaches composer without changing the main model', async () => {
       ensembleRoom();
       mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
       const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} agents={[WORKER]} />);
-
       await clickSend(container);
-
-      expect(mocks.send).not.toHaveBeenCalled();
-      // 早阻断在任何网关副作用之前：不读静态配置、不切模型
-      expect(window.clawwork.getConfig).not.toHaveBeenCalled();
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(sendOptions()?.mentions).toEqual(['worker']);
+      expect(sendOptions()?.attachments).toEqual([
+        { fileName: 'screenshot.png', mimeType: 'image/png', content: 'cG5n' },
+      ]);
       expect(gateway.patchSession).not.toHaveBeenCalled();
-      // 保留草稿与附件（清除发生在发送成功之后，这里根本没走到）
-      expect(container.querySelector('textarea')?.value).toBe('看看这张图');
-      expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionMentionBlocked', { duration: 10000 });
       unmount();
     });
 
-    it('@all + 图片 ⇒ 同样拦下（mentionAll 那条入口不能漏）', async () => {
+    it('@all refusal from composer preserves draft and attachments', async () => {
       ensembleRoom();
       mocks.uiState.modelCatalogByGateway = { 'gw-1': catalogWithVision };
+      mocks.send.mockResolvedValueOnce({ ok: false });
       const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} agents={[MENTION_ALL]} />);
-
       await clickSend(container);
-
-      expect(mocks.send).not.toHaveBeenCalled();
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(sendOptions()?.mentionAll).toBe(true);
+      expect(sendOptions()?.attachments).toHaveLength(1);
       expect(gateway.patchSession).not.toHaveBeenCalled();
       expect(container.querySelector('textarea')?.value).toBe('看看这张图');
-      expect(mocks.toastError).toHaveBeenCalledWith('chatInput.visionMentionBlocked', { duration: 10000 });
       unmount();
     });
 
@@ -2364,14 +2449,65 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
       unmount();
     });
   });
+
+  /**
+   * 2026-10-17 用户反馈（测试.doc）："这个生成的一个 PPT，它会自动切换到 DeepSeek 的模型，
+   * 然后我现在让他去识图，他就不会了，让我自己去切换一个视图的模型".
+   *
+   * 根因：deck 路由是**任务粘性**的（`task.deckRouted`），粘住之后连"看看这张图"这种
+   * 与 PPT 无关的消息也会被钉回 DeepSeek；而 DeepSeek 不看图 ⇒ 视觉路由被
+   * `preservesDeckModel` 关掉 ⇒ 直接报「当前模型不能识别图片」。
+   *
+   * 判据修正：**本轮自己没有 deck 意图**（纯识图/聊天）时，deck 粘性不许拦视觉备选；
+   * 本轮真的在要 PPT（"用这张图做PPT"）时仍保持 deck 模型（那条链的稳定性是产品拍板）。
+   */
+  it('⭐ PPT 粘性任务里发一张图 ⇒ 本轮没有 deck 意图，允许切到视觉模型（不再要求用户手动换）', async () => {
+    const DECK_MODEL = 'deepseek-v4-flash-cephalon';
+    const catalog: ModelCatalogEntry[] = [
+      { id: DECK_MODEL, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
+      { id: VISION_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+    ];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalog };
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: DECK_MODEL, deckRouted: true }];
+
+    const { container, unmount } = render(<VisionRoutingHarness imported={[imageMaterial]} draft="看看这张图里是什么" />);
+    await clickSend(container);
+
+    expect(gateway.patchSession).toHaveBeenCalledWith('gw-1', mocks.baseTask.sessionKey, { model: VISION_MODEL_ID });
+    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(sendOptions()?.presetModel).toBe(VISION_MODEL_ID);
+    expect(mocks.toastError).not.toHaveBeenCalledWith('chatInput.visionUnavailable', { duration: 10000 });
+    unmount();
+  });
+
+  it('对照：同一粘性任务里"用这张图做PPT"仍走 deck 模型（本轮确有 deck 意图，不劫持）', async () => {
+    const DECK_MODEL = 'deepseek-v4-flash-cephalon';
+    const catalog: ModelCatalogEntry[] = [
+      { id: DECK_MODEL, name: 'DeepSeek V4 Flash', provider: 'clawrouter', input: ['text'] },
+      { id: VISION_MODEL_ID, name: 'Qwen 3.7 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+    ];
+    mocks.uiState.modelCatalogByGateway = { 'gw-1': catalog };
+    mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart', model: DECK_MODEL, deckRouted: true }];
+
+    const { container, unmount } = render(
+      <VisionRoutingHarness imported={[imageMaterial]} draft="用这张图制作PPT" />,
+    );
+    await clickSend(container);
+
+    // deck 意图优先：不切视觉模型（图片这一轮会按既有门禁处理）。
+    expect(gateway.patchSession).not.toHaveBeenCalledWith('gw-1', mocks.baseTask.sessionKey, {
+      model: VISION_MODEL_ID,
+    });
+    unmount();
+  });
 });
 
 /**
  * 任务模式（快速 / 智能 / 深度 / 高级指定模型）——**发送链**的接线。
  *
  * 判据只有一条：这一轮真正交给 composer 的 `presetModel` / `presetThinking` 是什么。
- * 三档按 `MODE_POLICY` 走（2026-10-10 Cephalon 批：三档统一 `glm-5.3-flash` +
- * low/high/max）；高级（custom）与旧任务（mode 为空）**原样保留既有行为**
+ * 三档按 `MODE_POLICY` 走（**2026-10-17 用户拍板：三档按能力分模型** ——
+ * 快速 `glm-5.3-flash` / 智能 `glm-5.3-flashx` / 深度 `glm-5.3`，思考档 low/high/max）；高级（custom）与旧任务（mode 为空）**原样保留既有行为**
  * —— 不劫持用户当年显式选过的模型，是这一批的硬要求。
  *
  * 目录解析：只认目录里真实存在的 id；解析不出来（目录没拉到 / 模型下架）⇒
@@ -2379,20 +2515,29 @@ describe('Auto Capability Routing：带图发送先切到能看图的模型', ()
  * 旧 Qwen 快速别名（`qwen3.7-flash-fast`）保留在目录/隐藏下拉里，但**不再被任何一档使用**。
  */
 describe('任务模式：发送链的 presetModel / presetThinking', () => {
-  const BASE_MODEL_ID = 'glm-5.3-flash';
+  const FAST_MODEL_ID = 'glm-5.3-flash';
+  const SMART_MODEL_ID = 'glm-5.3-flashx';
+  const DEEP_MODEL_ID = 'glm-5.3';
+  /** 三档里"默认档"（智能）的模型 —— 存量任务提示语里"新默认"指的就是它。 */
+  const BASE_MODEL_ID = SMART_MODEL_ID;
   const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
   const LEGACY_MODEL_ID = 'deepseek-v4-flash';
 
   const catalogBase: ModelCatalogEntry[] = [
     { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
-    { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+    { id: FAST_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter', input: ['text', 'image'] },
+    { id: SMART_MODEL_ID, name: 'GLM 5.3 FlashX', provider: 'clawrouter', input: ['text', 'image'] },
+    { id: DEEP_MODEL_ID, name: 'GLM 5.3', provider: 'clawrouter', input: ['text', 'image'] },
   ];
   const catalogWithAlias: ModelCatalogEntry[] = [
     ...catalogBase,
     { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
   ];
-  /** 目录里没有模式基础模型（目录未就绪 / 模型下架）；旧别名仍在目录里也不使用。 */
-  const catalogWithoutModeModels: ModelCatalogEntry[] = [catalogBase[0]!, catalogWithAlias[2]!];
+  /** 目录里没有模式模型（目录未就绪 / 全下架）；旧别名仍在目录里也不使用。 */
+  const catalogWithoutModeModels: ModelCatalogEntry[] = [
+    { id: LEGACY_MODEL_ID, name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
+    { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
+  ];
 
   function ModeHarness({
     draft = '帮我写一段周报',
@@ -2503,7 +2648,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
 
     await clickSend(container);
 
-    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(sendOptions()?.presetModel).toBe(FAST_MODEL_ID);
     expect(sendOptions()?.presetThinking).toBe('low');
     unmount();
   });
@@ -2520,7 +2665,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     unmount();
   });
 
-  it('智能（默认）⇒ glm-5.3-flash + high', async () => {
+  it('智能（默认）⇒ glm-5.3-flashx + high', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'smart' }];
     const { container, unmount } = render(<ModeHarness />);
 
@@ -2531,13 +2676,13 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     unmount();
   });
 
-  it('深度 ⇒ glm-5.3-flash + max', async () => {
+  it('深度 ⇒ glm-5.3 + max', async () => {
     mocks.taskState.tasks = [{ ...mocks.baseTask, mode: 'deep' }];
     const { container, unmount } = render(<ModeHarness />);
 
     await clickSend(container);
 
-    expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+    expect(sendOptions()?.presetModel).toBe(DEEP_MODEL_ID);
     expect(sendOptions()?.presetThinking).toBe('max');
     unmount();
   });
@@ -2684,9 +2829,10 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
 
     expect(mocks.toastInfo, '模型已实际采用 —— 异常路径同样要告知').toHaveBeenCalledWith('chatInput.modePolicyUpdated');
     expect(window.localStorage.getItem('rongying-cube:mode-policy-notice:v1:task-1')).not.toBeNull();
-    // 原始异常不被提示侧覆盖：仍走原错误出口（系统消息 + error toast）。
-    expect(mocks.messageState.addMessage).toHaveBeenCalledWith('task-1', 'system', 'dispatch boom');
-    expect(mocks.toastError).toHaveBeenCalledWith('dispatch boom', expect.anything());
+    // 异常仍走原错误出口（系统消息 + error toast）；用户侧文案已由 humanize 归类
+    // （2026-10-17：不再把英文原始异常直接弹给用户；原文只在 console）。
+    expect(mocks.messageState.addMessage).toHaveBeenCalledWith('task-1', 'system', 'errors.human.send-failed');
+    expect(mocks.toastError).toHaveBeenCalledWith('errors.human.send-failed', expect.anything());
     unmount();
   });
 
@@ -2719,17 +2865,17 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
    *
    * 计划要求"仅检查 UI 或白名单常量不够，须捕获最终出站请求"——这里在发送链的客户端
    * 末段（composer.send 载荷 + 会话 patch + 任务元数据）做全量捕获，钉住：
-   * ①模型 = `glm-5.3-flash`；②有效思考档 low/high/max；③**全链不含 enable_search**。
+   * ①模型 = 该档位模型（flash / flashx / glm-5.3）；②有效思考档 low/high/max；③**全链不含 enable_search**。
    * 网关参数合并后的**最终上游 HTTP body** 由同批
    * `relay-mode-final-body.integration.test.ts`（实际交付运行时 + 本地 127.0.0.1 接收器）
    * 捕获，含 Qwen `enable_search=true` 正对照；两层证据合起来才是完整出站链路。
    */
   it.each([
-    ['fast', 'low'],
-    ['smart', 'high'],
-    ['deep', 'max'],
-  ] as const)('⭐ Cephalon 批：%s 档最终请求钉 glm + %s；新旧任务全链不含 enable_search', async (mode, level) => {
-    for (const taskModel of [LEGACY_MODEL_ID, BASE_MODEL_ID]) {
+    ['fast', 'low', FAST_MODEL_ID],
+    ['smart', 'high', SMART_MODEL_ID],
+    ['deep', 'max', DEEP_MODEL_ID],
+  ] as const)('⭐ Cephalon 批：%s 档最终请求钉该档模型 + %s；新旧任务全链不含 enable_search', async (mode, level, modelId) => {
+    for (const taskModel of [LEGACY_MODEL_ID, modelId]) {
       mocks.send.mockClear();
       mocks.taskState.updateTaskMetadata.mockClear();
       mocks.taskState.tasks = [{ ...mocks.baseTask, mode, model: taskModel }];
@@ -2737,7 +2883,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
 
       await clickSend(container);
 
-      expect(sendOptions()?.presetModel).toBe(BASE_MODEL_ID);
+      expect(sendOptions()?.presetModel).toBe(modelId);
       expect(sendOptions()?.presetThinking).toBe(level);
       const wire = JSON.stringify([
         mocks.send.mock.calls,
@@ -2790,7 +2936,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
   //    （「已切换到 glm-5.3-flash，思考档位已重置为默认」：模型名不该露，语义也不对）。
   //    修法：模式档不参与这段回落（发送时档位由 MODE_POLICY 现算，该字段只是留痕）。
   const flashEntryWithRealLevels = {
-    ...catalogBase[1]!,
+    ...catalogBase[2]!,
     thinkingLevels: [{ id: 'low' }, { id: 'high' }, { id: 'max' }],
   } as unknown as ModelCatalogEntry;
 
@@ -2816,7 +2962,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
     const { unmount } = render(<ModeHarness />);
 
     expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-1', { thinkingLevel: 'low' });
-    expect(mocks.t).toHaveBeenCalledWith('chatInput.thinkingResetByModel', { model: 'GLM 5.3 Flash' });
+    expect(mocks.t).toHaveBeenCalledWith('chatInput.thinkingResetByModel', { model: 'GLM 5.3 FlashX' });
     unmount();
   });
 
@@ -2896,7 +3042,7 @@ describe('任务模式：发送链的 presetModel / presetThinking', () => {
  *   · 只认**用户手打的字**，附件名/文件正文不算。
  */
 describe('Deck 意图路由：演示类任务钉新 Cephalon 渠道 DeepSeek（模式任务的内部路由）', () => {
-  const BASE_MODEL_ID = 'glm-5.3-flash';
+  const BASE_MODEL_ID = 'glm-5.3-flashx';
   const ALIAS_MODEL_ID = 'qwen3.7-flash-fast';
   const OTHER_MODEL_ID = 'qwen3.5-27b';
   /** 目录里的真实写法带命名空间 —— 钉"原样交给 composer"，不自己拼前缀。 */
@@ -2904,7 +3050,7 @@ describe('Deck 意图路由：演示类任务钉新 Cephalon 渠道 DeepSeek（�
   const DECK_DRAFT = '帮我做一份 PPT，讲第三季度的数据';
 
   const catalogWithDeck: ModelCatalogEntry[] = [
-    { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter' },
+    { id: BASE_MODEL_ID, name: 'GLM 5.3 FlashX', provider: 'clawrouter' },
     { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
     { id: OTHER_MODEL_ID, name: 'Qwen 3.5 27B', provider: 'clawrouter' },
     // 新旧两条 DeepSeek 渠道**并存**（旧渠道保持可选）—— 路由必须精确命中新渠道。
@@ -2913,7 +3059,7 @@ describe('Deck 意图路由：演示类任务钉新 Cephalon 渠道 DeepSeek（�
   ];
   /** 目录里**只有旧渠道**、没有新 Cephalon 渠道（还没拉到 / 下架）——路由不得悄悄回退旧渠道。 */
   const catalogWithoutDeck: ModelCatalogEntry[] = [
-    { id: BASE_MODEL_ID, name: 'GLM 5.3 Flash', provider: 'clawrouter' },
+    { id: BASE_MODEL_ID, name: 'GLM 5.3 FlashX', provider: 'clawrouter' },
     { id: ALIAS_MODEL_ID, name: 'Qwen 3.7 Flash Fast', provider: 'clawrouter' },
     { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'clawrouter' },
   ];

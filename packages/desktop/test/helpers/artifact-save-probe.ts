@@ -25,12 +25,20 @@ function seedTaskAndMessage(taskId = 'task-1', messageId = 'msg-1'): void {
        VALUES (?, ?, '', '', 'active', ?, ?, '[]', '', '')`,
     )
     .run(taskId, `session-${taskId}`, now, now);
+  seedMessage(taskId, messageId);
+}
+
+/** 只补一条 assistant 消息（跨消息续写场景：同一 task 里第二条 assistant 消息）。 */
+let messageSeq = 0;
+function seedMessage(taskId: string, messageId: string): void {
+  // messages_dedup 是 (task_id, session_key, role, timestamp) —— 同一毫秒会撞，故逐条递增。
+  const stamp = new Date(Date.now() + messageSeq++).toISOString();
   getSqlite()!
     .prepare(
       `INSERT INTO messages (id, task_id, role, content, timestamp, session_key)
        VALUES (?, ?, 'assistant', 'done', ?, ?)`,
     )
-    .run(messageId, taskId, now, `session-${taskId}`);
+    .run(messageId, taskId, stamp, `session-${taskId}`);
 }
 
 /** 最小但**真实有效**的 pptx（过 `verifyArtifactBuffer` 的 pptx 判据）。 */
@@ -152,8 +160,66 @@ async function saveSourceReplayScenario(): Promise<Record<string, unknown>> {
   };
 }
 
+/**
+ * ⭐ T20（2026-10-16 本地全量执行 · Owner D）：**跨 assistant 消息的同源去重**。
+ *
+ * 现场线索：`finish_reason` 续写会创建**新的 assistant 消息（新 messageId）**；若同一套
+ * 牌在两条消息里各出现一次（续写把同一份 deck 再吐一遍 / 同一任务内重放），则登记层的
+ * 两条唯一约束**都不触发**：
+ *   · `artifacts_source_dedup(message_id, source_key)` —— message_id 不同 ⇒ 不撞；
+ *   · `artifacts_task_local_path(task_id, root, local_path)` —— `uniqueFileNameIn`
+ *     **只看磁盘库不看库**，第一份文件还在 ⇒ 第二份退到 `<名>-<rand>.pptx` ⇒ local_path 不同 ⇒ 不撞。
+ * ⇒ 同一套牌被登记两次、落两份文件。这是本任务必须证明的**反例**。
+ *
+ * 期望（修好后）：同 task 同 sourceKey 内容 == 同一份产物 ⇒ 只登记一次、只落一份文件。
+ */
+async function saveCrossMessageReplayScenario(): Promise<Record<string, unknown>> {
+  initDatabase(workspacePath);
+  seedTaskAndMessage('task-1', 'msg-1');
+  seedMessage('task-1', 'msg-2'); // 续写产生的第二条 assistant 消息
+  seedMessage('task-1', 'msg-3'); // 改稿（新内容）所在的第三条消息
+  const taskDir = join(workspacePath, 'task-1');
+  const deck = await validPptx();
+  const base = {
+    workspacePath,
+    taskId: 'task-1',
+    fileName: '季度汇报.pptx',
+    artifactType: 'file' as const,
+    buffer: deck,
+    sourceKey: 'slidegen:abcdef0123456789',
+  };
+
+  const first = await saveArtifactFromBuffer({ ...base, messageId: 'msg-1' });
+  const continuation = await saveArtifactFromBuffer({ ...base, messageId: 'msg-2' });
+
+  const rows = getSqlite()!
+    .prepare('SELECT id, name, local_path, message_id, source_key FROM artifacts ORDER BY created_at, id')
+    .all() as Array<Record<string, unknown>>;
+  const files = readdirSync(taskDir).sort();
+
+  // 再验一条：新消息里**不同内容**（新版 deck，改稿）必须照常产新版（不能被跨消息去重误伤）。
+  const revised = await saveArtifactFromBuffer({
+    ...base,
+    messageId: 'msg-3',
+    buffer: Buffer.concat([deck, Buffer.from('<!--revised-->')]),
+    sourceKey: 'slidegen:9999999999999999',
+  });
+
+  return {
+    first,
+    continuation,
+    rows,
+    files,
+    rowCount: rows.length,
+    fileCount: files.length,
+    revised: { id: revised.id, name: revised.name },
+    filesAfterRevised: readdirSync(taskDir).sort(),
+  };
+}
+
 async function main(): Promise<Record<string, unknown>> {
   if (scenario === 'save-source-replay') return saveSourceReplayScenario();
+  if (scenario === 'save-cross-message-replay') return saveCrossMessageReplayScenario();
 
   if (scenario !== 'save-index-semantics') throw new Error(`unknown scenario: ${scenario}`);
 

@@ -178,10 +178,16 @@ export const COMMON_OPERATING_CONTRACT = `# Shared operating contract
 - When the user requests an actual video file and \`video_generate\` is available, use that tool;
   do not replace the request with a script or shooting plan. If unavailable, state the missing
   capability without claiming that a video is running or offering fictitious links.
-- The Rongying hosted Seedance trial currently accepts text-to-video, 5 seconds, 480P and
-  16:9/9:16/1:1. Use these defaults only when the user omitted the corresponding specification.
-  If the user explicitly requests unsupported specifications or reference media, explain that
-  limitation and ask before changing the request. Other user-configured providers keep their own limits.
+- Hosted video capabilities are defined by the installed \`video-generation\` skill, not by
+  memory: read that skill before answering what is or is not supported. The default tier
+  (MiniMax H3) is text-to-video, 4–15 seconds, 768P or 2K. The high-quality Seedance 2.5 tier
+  **also supports image-to-video**: when the user attached an image in this same turn and asked
+  to animate it, submit the normal video request and let the client inject that image as the
+  first frame. On the default H3 tier there is no first-frame input — say that the image needs
+  the high-quality tier. Never claim image-to-video is unsupported as a blanket statement, and
+  never quote old trial limits (5 seconds / 480P) as current. Only a single first frame is
+  supported; other reference media still is not — say that specifically instead of inventing
+  other limits. Other user-configured providers keep their own limits.
 - Submit once. An accepted background job is still running, not a completed video. Track its
   actual status and wait for the real media artifact; a provider job ID is not a downloadable file.
 - Never automatically resubmit after a timeout, uncertain acceptance or failed follow-up message.
@@ -233,8 +239,16 @@ function withCommonContract(roleSoul: string): string {
  * 可执行读法（"读清单条目里的 `<location>`，用 `read` 工具"）+ 新增 "Using skills" 一节
  * （不存在"打开技能"的工具；找不到就说找不到）——演示现场模型"去打开技能"的指令来源
  * 就是旧措辞，用户定调：错误的调用方式在合同层掐死，不给模型猜的机会。
+ *
+ * 2026-10-18 提版（BUG-166）：视频交付条款还写着 2026-09 的试用口径
+ * "text-to-video, 5 seconds, 480P"，与现在的能力（H3 4–15s/768P/2K；高质量
+ * Seedance 2.5 支持图生视频）直接冲突。产物里 `video-generation` 技能早已更新，
+ * 但 SOUL.md 是**每轮全文注入**且优先级更高 ⇒ 模型照着旧条款回答"不支持图生视频、
+ * 只有 5 秒 480P"。本次把条款改成"以技能为准 + 明确说明两档能力差异"，并**提版**
+ * 让已发出的盘在下次启动时按版本标记自动升级（`needsPromptUpgrade`）。
+ * ⚠️ 没标记的旧盘（标记机制之前）仍不碰 —— 用户手改的内容不能被覆盖。
  */
-export const PRESET_PROMPT_VERSION = '2026-10-08.1';
+export const PRESET_PROMPT_VERSION = '2026-10-18.1';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

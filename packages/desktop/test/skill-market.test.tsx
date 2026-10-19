@@ -105,15 +105,15 @@ describe('技能市场面板', () => {
     useUiStore.setState({ defaultGatewayId: GATEWAY });
   });
 
-  it('uses the full working width with compact rows instead of a centered card grid', async () => {
+  it('按设计稿改成卡片网格（2026-10-17 用户给稿；旧契约是"紧凑行"）', async () => {
     installStubs();
     const { container, unmount } = render(<SkillMarket />);
     await flush();
     const list = container.querySelector('[data-testid="our-skill-list"]')!;
-    expect(list.className).not.toContain('grid');
+    // 网格 + 不居中收窄：卡片在宽屏上铺开（4 列），而不是一列长条。
+    expect(list.className).toContain('grid');
     expect(list.parentElement?.className).not.toContain('max-w-');
-    expect(row(container, 'meeting-minutes').className).not.toContain('surface-card');
-    expect(row(container, 'meeting-minutes').className).toContain('sm:flex-row');
+    expect(row(container, 'meeting-minutes').className).toContain('rounded-xl');
     unmount();
   });
 
@@ -473,7 +473,7 @@ describe('技能市场 · 助手侧能不能用', () => {
     expect(counter, '要有数量装置').not.toBeNull();
     expect(counter.getAttribute('data-total')).toBe('2');
     expect(counter.getAttribute('data-installed')).toBe('1');
-    expect(counter.textContent).toContain('skillMarket.count');
+    expect(counter.textContent).toContain('skillMarket.allInstalled');
     unmount();
   });
 

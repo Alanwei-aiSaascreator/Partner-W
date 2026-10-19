@@ -9,6 +9,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import type { PortraitGender, PortraitRoleCode } from '@/lib/user-portrait';
 import { ARTIFACT_FAILURE_MARKER, stripInternalFailureCodes } from '@/lib/artifact-delivery-feedback';
 import { parseArtifactQualityNote } from '@/lib/artifact-quality-feedback';
+import { layoutWarningDetail } from '@/lib/slidegen-copy';
 import AssistantBlock from './AssistantBlock';
 import { AttachmentFileCard, InlineImageBubble, MessageActionButton } from './MessageParts';
 import MessageAvatar from './MessageAvatar';
@@ -193,7 +194,10 @@ const ChatMessage = memo(function ChatMessage({
                       { page: warning.page },
                     )}
                   </p>
-                  <p className="whitespace-pre-wrap">{`#${warning.element}: ${warning.detail}`}</p>
+                  {/* 细说走本地化（`layoutWarningDetail`）；`data` 缺失时它自己回落 `warning.detail`。
+                      ⚠️ 别退回 `#${element}: ${detail}` 直拼 —— 那会把主进程里两条英文硬编码
+                      原样送上中文界面（2026-10-16 集成人真机截图就是这样）。 */}
+                  <p className="whitespace-pre-wrap">{layoutWarningDetail(warning, t)}</p>
                 </li>
               ))}
             </ul>

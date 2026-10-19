@@ -16,7 +16,18 @@ import {
 } from '../src/main/artifact/too-large.js';
 import { resolve } from 'node:path';
 import { join } from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import JSZip from 'jszip';
@@ -113,6 +124,52 @@ async function minimalDocx(): Promise<Buffer> {
 }
 
 describe('artifact handlers', () => {
+  it('imagegen same-length corrupt files are unsafe in list/get and cannot open; unrelated PNG keeps existing behavior', async () => {
+    const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+    registerArtifactHandlers();
+    allMock.mockReturnValue([
+      {
+        id: 'imagegen-id',
+        taskId: 'task-1',
+        messageId: 'old-message',
+        name: 'generated.png',
+        localPath: 'task-1/generated.png',
+        sourceKey: 'imagegen:operation:spec',
+        size: 45,
+      },
+    ]);
+    getArtifactAvailabilityMock.mockReturnValue('available');
+    readVerifiedArtifactFileMock.mockResolvedValue(Buffer.alloc(45, 120));
+    await expect(handleMap.get('artifact:list')?.({}, { taskId: 'task-1' })).resolves.toMatchObject({
+      ok: true,
+      result: [{ id: 'imagegen-id', availability: 'unsafe' }],
+    });
+    await expect(handleMap.get('artifact:get')?.({}, { id: 'imagegen-id' })).resolves.toMatchObject({
+      ok: true,
+      result: { availability: 'unsafe' },
+    });
+    await expect(
+      handleMap.get('artifact:open-file')?.({}, { artifactId: 'imagegen-id', taskId: 'task-1' }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(openPathMock).not.toHaveBeenCalled();
+    readVerifiedArtifactFileMock.mockClear();
+    allMock.mockReturnValue([
+      {
+        id: 'ordinary',
+        taskId: 'task-1',
+        name: 'photo.png',
+        localPath: 'task-1/photo.png',
+        sourceKey: 'download',
+        size: 45,
+      },
+    ]);
+    await expect(handleMap.get('artifact:list')?.({}, { taskId: 'task-1' })).resolves.toMatchObject({
+      ok: true,
+      result: [{ availability: 'available' }],
+    });
+    expect(readVerifiedArtifactFileMock).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     handleMap.clear();
@@ -218,6 +275,168 @@ describe('artifact handlers', () => {
       'task-1/report.txt',
       'C:\\Exports\\report.txt',
     );
+  });
+
+  /**
+   * ⭐ D5「另存」与「打开」必须同一套 M1 判据（2026-10-15 F owner）。
+   *
+   * 打开那条路（`artifact:open-file`）登记后**复核字节**：受检格式（pptx/docx/xlsx/pdf/mp4）
+   * 与 imagegen PNG 若在登记之后被写坏 / 半截 / 外部改坏，点开一律拒（图14/16 同族）。
+   * 但**另存**原来只 `copyArtifactToDestination` 直拷，判据缺一档 ⇒ 同一份坏件
+   * 「打不开却能导出成保存成功」= 失败条目伪装可下载。这里把两条路钉成同一判据。
+   */
+  describe('artifact:save-as 另存前复核（与打开同一条判据）', () => {
+    const deck = [{ id: 'a1', taskId: 'task-1', name: 'deck.pptx', localPath: 'task-1/deck.pptx' }];
+
+    it('⭐ 受检格式字节是坏的（登记后被写坏/半截）⇒ 拒绝另存，绝不导出一份打不开的文件', async () => {
+      allMock.mockReturnValue(deck);
+      inspectArtifactFileMock.mockResolvedValue({
+        availability: 'available',
+        absolutePath: '/workspace/task-1/deck.pptx',
+      });
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from('PK broken, not a zip'));
+      showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: 'C:\\Exports\\deck.pptx' });
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(
+        handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' }),
+      ).resolves.toEqual({ ok: false, error: 'artifact invalid' });
+      expect(copyArtifactToDestinationMock).not.toHaveBeenCalled();
+    });
+
+    it('受检格式字节是好的 ⇒ 照常另存（不把这条门变成所有文件的拒绝）', async () => {
+      allMock.mockReturnValue(deck);
+      inspectArtifactFileMock.mockResolvedValue({
+        availability: 'available',
+        absolutePath: '/workspace/task-1/deck.pptx',
+      });
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from(await minimalPptx()));
+      showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: 'C:\\Exports\\deck.pptx' });
+      copyArtifactToDestinationMock.mockResolvedValue({ status: 'saved', filePath: 'C:\\Exports\\deck.pptx' });
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(
+        handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(copyArtifactToDestinationMock).toHaveBeenCalled();
+    });
+
+    it('负对照：不受检的扩展名（.txt）⇒ 一个字节都不读（不把这条门扩成所有文件的读门）', async () => {
+      allMock.mockReturnValue([{ id: 'a1', taskId: 'task-1', name: 'report.txt', localPath: 'task-1/report.txt' }]);
+      showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: 'C:\\Exports\\report.txt' });
+      copyArtifactToDestinationMock.mockResolvedValue({ status: 'saved', filePath: 'C:\\Exports\\report.txt' });
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' });
+      expect(readVerifiedArtifactFileMock).not.toHaveBeenCalled();
+      expect(copyArtifactToDestinationMock).toHaveBeenCalled();
+    });
+
+    /**
+     * ⭐ D5（2026-10-16 审计反例 SAVE_RACE）：**导出的必须是校验过的那份字节**。
+     *
+     * 校验与导出若各读一次盘，两次之间源文件被编辑器截断 ⇒ 导出一份打不开的坏件却回
+     * `saved`（审计实测 `originalValid=true → ok=true,status=saved → exportedValid=false`，
+     * 导出 60B）。这里把"复制器的源"钉成**校验时那份字节的快照**：源文件此后怎么变都不影响。
+     */
+    it('⭐ D5：弹框之后才去读源文件等于导出未校验的字节 ⇒ 复制源必须是校验过的那份快照', async () => {
+      allMock.mockReturnValue(deck);
+      const checked = Buffer.from(await minimalPptx());
+      readVerifiedArtifactFileMock.mockResolvedValue(checked);
+      showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: 'C:\\Exports\\deck.pptx' });
+      let stagedRoot = '';
+      let stagedLocal = '';
+      let stagedBytes: Buffer | undefined;
+      copyArtifactToDestinationMock.mockImplementation(async (root: string, localPath: string) => {
+        stagedRoot = root;
+        stagedLocal = localPath;
+        stagedBytes = readFileSync(join(root, localPath));
+        return { status: 'saved', filePath: 'C:\\Exports\\deck.pptx' };
+      });
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(
+        handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' }),
+      ).resolves.toMatchObject({ ok: true, result: { status: 'saved' } });
+      // 复制器读的是**校验时抓到的字节**（快照落在 tmpdir，与 `artifact:save` 的受信前缀同档）
+      expect(stagedRoot).toBe(realpathSync(tmpdir()));
+      expect(stagedBytes?.equals(checked)).toBe(true);
+      // 快照用完即删（不许在临时目录里留产物）
+      expect(existsSync(join(stagedRoot, stagedLocal))).toBe(false);
+    });
+
+    it('⭐ D5 负对照：另存**到源文件自己**仍拒绝（快照换掉源身份后按路径等价补判）', async () => {
+      allMock.mockReturnValue(deck);
+      copyArtifactToDestinationMock.mockReset();
+      readVerifiedArtifactFileMock.mockResolvedValue(Buffer.from(await minimalPptx()));
+      showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: resolve('/workspace', 'task-1/deck.pptx') });
+      const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+      registerArtifactHandlers();
+
+      await expect(
+        handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' }),
+      ).resolves.toEqual({ ok: false, error: 'destination matches source' });
+      expect(copyArtifactToDestinationMock).not.toHaveBeenCalled();
+    });
+
+    /**
+     * ⭐ BUG-090 残余（2026-10-16 r14 独立终审）：**"另存到了源文件自己"要按真实文件身份判**。
+     *
+     * D5 的快照路把"源"换成了 tmpdir 里的暂存件（另一个 inode），于是"同一文件"只剩
+     * `resolve()` **字符串等价**一条判据 —— 而它在 Windows 上**大小写敏感**：
+     * `report.docx` 与 `REPORT.DOCX` 是**同一个文件**（同 dev/ino）却被放行 ⇒ 保存框停留
+     * 期间用户在编辑器里新写的那份字节，被 395B 的旧快照覆盖回去，还回 `saved`
+     * （审计实测 `keptEdit=false / revertedToSnapshot=true`）。
+     * 旧 `copyArtifactToDestination` 的 dev/ino 判据对**同一身份**是拒绝的 —— 这道保护
+     * 不许因为"另存必须先校验"而丢掉。这里用**真实文件**钉住它。
+     *
+     * ⚠️ 别名的造法与平台无关、形状相同（不同路径字符串 / 同一个 inode）：
+     *    Windows 用大小写翻转（同一目录项），其他平台用硬链接。两边都是"同身份、异路径"。
+     */
+    it('⭐ BUG-090 残余：路径别名（同一文件身份）⇒ 拒绝，绝不拿旧快照覆盖用户新编辑', async () => {
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'artifact-alias-')));
+      const sourcePath = join(root, 'report.docx');
+      const original = Buffer.from(await minimalDocx());
+      writeFileSync(sourcePath, original);
+      const aliasPath = join(root, 'REPORT.DOCX');
+      if (process.platform === 'win32') {
+        // Windows/NTFS 大小写不敏感 ⇒ 上面那个拼写**已经**是同一个文件
+      } else {
+        linkSync(sourcePath, aliasPath); // 硬链接：异路径、同 dev/ino
+      }
+      expect(statSync(aliasPath, { bigint: true }).ino).toBe(statSync(sourcePath, { bigint: true }).ino);
+
+      const { getWorkspacePath } = await import('../src/main/workspace/config.js');
+      const previousWorkspace = vi.mocked(getWorkspacePath).getMockImplementation() ?? (() => '/workspace');
+      vi.mocked(getWorkspacePath).mockReturnValue(root);
+      try {
+        allMock.mockReturnValue([
+          { id: 'a1', taskId: 'task-1', name: 'report.docx', localPath: 'report.docx', root: 'workspace' },
+        ]);
+        readVerifiedArtifactFileMock.mockResolvedValue(original);
+        // 保存框停留期间用户改了源文件（同一个文件对象，就地写回）
+        const edited = Buffer.concat([original, Buffer.from('NEW USER EDIT')]);
+        showSaveDialogMock.mockImplementation(async () => {
+          writeFileSync(sourcePath, edited);
+          return { canceled: false, filePath: aliasPath };
+        });
+        const { registerArtifactHandlers } = await import('../src/main/ipc/artifact-handlers.js');
+        registerArtifactHandlers();
+
+        await expect(
+          handleMap.get('artifact:save-as')?.({}, { artifactId: 'a1', taskId: 'task-1' }),
+        ).resolves.toEqual({ ok: false, error: 'destination matches source' });
+        expect(readFileSync(aliasPath).equals(edited), '用户新编辑必须活着').toBe(true);
+        expect(copyArtifactToDestinationMock).not.toHaveBeenCalled();
+      } finally {
+        vi.mocked(getWorkspacePath).mockImplementation(previousWorkspace);
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   it('rejects a mismatched task before opening or revealing an artifact', async () => {

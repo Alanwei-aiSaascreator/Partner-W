@@ -28,13 +28,17 @@ const mocks = vi.hoisted(() => ({
     // 2026-10-10 Cephalon 批：商业默认 = glm-5.3-flash（智能档同款）——
     // 夹具目录按**切换后现实**准备（含新默认 + 旧渠道/其它目录项并存）。
     'gw-1': [
+      // 2026-10-17 三档按能力分模型：商业默认（智能档）= glm-5.3-flashx。
+      { id: 'glm-5.3-flashx', provider: 'clawrouter', name: 'GLM 5.3 FlashX' },
       { id: 'glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
       { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
       { id: 'qwen3.5-plus', provider: 'clawrouter', name: 'Qwen 3.5 Plus' },
     ],
     'gw-2': [
       {
-        id: 'clawrouter/glm-5.3-flash',
+        // 目的网关的目录里也有商业默认（relay 现网目录含 glm-5.3-flashx）；
+        // 这条用例证明"标签取目的网关的那份，不是旧待发态里的"。
+        id: 'clawrouter/glm-5.3-flashx',
         provider: 'clawrouter',
         name: 'Gateway Two GLM',
       },
@@ -254,7 +258,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
       agentId: 'main',
-      model: 'glm-5.3-flash',
+      model: 'glm-5.3-flashx',
     });
     // chip 区只留一级入口（当前罗盘）：预置的 rongying-video 不再是其中一格（它归「技能与能力」）。
     const chipLabels = [...container.querySelectorAll('button')].map((button) => button.textContent?.trim());
@@ -306,7 +310,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(view.container.textContent).not.toContain('GLM 5.3 Flash');
     // `pending.model` 仍是那条"留痕"（商业默认写到状态层）—— 显示层不上屏不改状态。
     expect(mocks.setPending).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayId: 'gw-1', model: 'glm-5.3-flash' }),
+      expect.objectContaining({ gatewayId: 'gw-1', model: 'glm-5.3-flashx' }),
     );
 
     // ⚠️ 2026-10-11 两级口径：模式档只显示模式名（模型=内部实现）；
@@ -332,7 +336,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
       agentId: 'main',
-      model: 'glm-5.3-flash',
+      model: 'glm-5.3-flashx',
     });
     view.unmount();
   });
@@ -419,7 +423,7 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.updatePending.mockClear();
     view.rerender(ui());
 
-    expect(mocks.updatePending).toHaveBeenCalledWith({ model: 'glm-5.3-flash' });
+    expect(mocks.updatePending).toHaveBeenCalledWith({ model: 'glm-5.3-flashx' });
     expect(mocks.setPending).not.toHaveBeenCalled();
     expect(mocks.pendingNewTask?.tags).toEqual(['private', 'assistant-task-preset:compass:goal-breakdown']);
     view.unmount();
@@ -459,7 +463,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-2',
       agentId: 'main',
-      model: 'clawrouter/glm-5.3-flash',
+      model: 'clawrouter/glm-5.3-flashx',
       tags: ['private'],
     });
     view.unmount();
@@ -493,7 +497,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(mocks.setPending).toHaveBeenCalledWith({
       gatewayId: 'gw-1',
       agentId: 'custom-agent',
-      model: 'glm-5.3-flash',
+      model: 'glm-5.3-flashx',
       tags: ['private'],
     });
     unmount();
@@ -726,6 +730,7 @@ describe('WelcomeScreen assistant workspace', () => {
     mocks.modelCatalogByGateway['gw-1'] = [
       { id: 'deepseek-v4-flash', provider: 'clawrouter', name: 'DeepSeek V4 Flash' },
       { id: 'glm-5.3-flash', provider: 'clawrouter', name: 'GLM 5.3 Flash' },
+      { id: 'glm-5.3-flashx', provider: 'clawrouter', name: 'GLM 5.3 FlashX' },
     ];
     const { container, unmount } = render(
       <WelcomeScreen
@@ -741,7 +746,7 @@ describe('WelcomeScreen assistant workspace', () => {
     expect(container.textContent, '背后模型不上屏（2026-10-11 用户拍板）').not.toContain('GLM 5.3 Flash');
     expect(container.textContent, '目录里别的模型（旧默认时代那条）不上屏').not.toContain('DeepSeek V4 Flash');
     // `pending.model` 仍是那条"留痕"（= 商业默认）—— 状态不被显示层改写。
-    expect(mocks.setPending).toHaveBeenCalledWith(expect.objectContaining({ model: 'glm-5.3-flash' }));
+    expect(mocks.setPending).toHaveBeenCalledWith(expect.objectContaining({ model: 'glm-5.3-flashx' }));
     unmount();
     mocks.modelCatalogByGateway['gw-1'] = previous;
   });

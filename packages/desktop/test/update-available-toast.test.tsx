@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * 这条测试钉的是三件事：
  *   ① 有新版本 ⇒ 弹提示；没有 ⇒ 不弹（不打扰）
- *   ② 提示带一个按钮，点了会把用户送到「设置 → 关于」那条已有的更新流程
- *   ③ 跳转请求走 store 的两个字段（`settingsOpen` + `settingsSection`），
- *      而不是某个组件内部的临时状态 —— 这样设置页才能接得住
+ *   ② 提示带一个按钮，点了会打开**应用级**「更新与关于」弹窗（登录页也能用）
+ *   ③ 跳转请求走 store 的 `updateDialogOpen`，而不是某个组件内部的临时状态 ——
+ *      这样弹窗在任何界面都接得住（2026-10-19 从「设置 → 关于」改过来）
  *
  * 2026-10-11（升级补齐）追加一组：
  *   ④ 启动离线恢复联网（online）/ 长期不退出（30 分钟周期）/ 回前台都要再查一次 ——
@@ -39,6 +39,11 @@ function Harness(): ReactElement | null {
   return null;
 }
 
+function GatedHarness({ enabled }: { enabled: boolean }): ReactElement | null {
+  useUpdateCheck(enabled);
+  return null;
+}
+
 const STARTUP_MS = 5_000;
 const PERIODIC_MS = 30 * 60_000;
 const THROTTLE_MS = 60_000;
@@ -64,7 +69,7 @@ describe('useUpdateCheck —— 有新版本要给可操作提示', () => {
     toastSpy.mockClear();
     checkForUpdates.mockReset();
     (window as unknown as ClaudeApi).clawwork = { checkForUpdates };
-    useUiStore.setState({ hasUpdate: false, settingsOpen: false, settingsSection: null });
+    useUiStore.setState({ hasUpdate: false, settingsOpen: false, settingsSection: null, updateDialogOpen: false });
     useSettingsStore.setState({ settings: null, loaded: false, loading: false });
 
     container = document.createElement('div');
@@ -79,7 +84,7 @@ describe('useUpdateCheck —— 有新版本要给可操作提示', () => {
     vi.useRealTimers();
   });
 
-  it('有新版本 ⇒ 弹提示 + 标记 hasUpdate；点提示的按钮 ⇒ 打开「设置 → 关于」', async () => {
+  it('有新版本 ⇒ 弹提示 + 标记 hasUpdate；点提示的按钮 ⇒ 打开应用级「更新与关于」弹窗', async () => {
     checkForUpdates.mockResolvedValue({ hasUpdate: true });
 
     await act(async () => {
@@ -94,8 +99,36 @@ describe('useUpdateCheck —— 有新版本要给可操作提示', () => {
     expect(options.action?.label).toBe('settings.checkForUpdates');
 
     act(() => options.action?.onClick());
-    expect(useUiStore.getState().settingsOpen).toBe(true);
-    expect(useUiStore.getState().settingsSection).toBe('about');
+    // 2026-10-19：落点从「设置 → 关于」改为 App 级弹窗 —— 设置页只在工作区挂载，
+    // 登录页用户点了会没反应；弹窗在任何界面都能打开（含登录页），且不需要登录就能下载。
+    expect(useUiStore.getState().updateDialogOpen).toBe(true);
+    expect(useUiStore.getState().settingsOpen).toBe(false);
+  });
+
+  /**
+   * `enabled` 是**调用方主动暂停**检查的开关（当前没有调用方用它做界面门控）。
+   *
+   * ⚠️ 历史（2026-10-19 已翻案）：以前 App 用 `enabled = entryScreen === 'workspace'`
+   *    把检查限制在工作区，因为提示落点是"设置 → 关于"、登录页点了没反应。
+   *    现在落点改成 App 级 `UpdateDialog`，登录页也能提示与下载 ⇒ 那条门控已撤。
+   *    这条用例只保留"false 时确实不查、恢复后按启动延迟开始查"的契约。
+   */
+  it('enabled=false 暂停检查；恢复后才按启动延迟开始查', async () => {
+    checkForUpdates.mockResolvedValue({ hasUpdate: true });
+
+    act(() => root.render(<GatedHarness enabled={false} />));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STARTUP_MS * 3);
+    });
+    expect(checkForUpdates).not.toHaveBeenCalled();
+    expect(toastSpy).not.toHaveBeenCalled();
+
+    act(() => root.render(<GatedHarness enabled />));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STARTUP_MS);
+    });
+    expect(checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(toastSpy).toHaveBeenCalledTimes(1);
   });
 
   it('没有新版本 ⇒ 什么都不弹（不打扰用户）', async () => {

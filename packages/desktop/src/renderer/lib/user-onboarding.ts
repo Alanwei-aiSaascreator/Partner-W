@@ -712,6 +712,11 @@ export function saveOnboardingProfile(
     throw failure;
   }
   if (diagnostics) reportOnboardingProfileSave({ ok: true, keyKind }, profile.userId, diagnostics);
+  /**
+   * 落盘成功后才广播（失败已在上面重抛，走不到这里）—— 头像位据此**当场**重读真源。
+   * 这只是通知，不是第二套 store：订阅方仍然只读 `rongying-cube:onboarding:v3:<userId>`。
+   */
+  notifyOnboardingProfileChanged(profile.userId);
 }
 
 /* ────────────────────── 保存成功后的刷新请求（BUG-034，2026-10-14 · M3） ────────────────────── */
@@ -1046,6 +1051,59 @@ export function readStoredPortraitIdentity(
     return null;
   }
   return null;
+}
+
+/**
+ * 档案变更通知（2026-10-18，左下角个人资料头像）。
+ *
+ * 头像位（`LeftNav/ProfileMenu`）拿不到 App 下发的 `profile`（App 只把它给了 MainArea/Settings），
+ * 只能走上面的只读选择器。要"在个性化中心换了头像后**当场**反映"，就需要一个变更信号：
+ * 这里只在 `saveOnboardingProfile` 落盘成功之后广播一次。
+ *
+ * ⚠️ 它**不是第二套 store**、也没有引入新存储键：事件只带"是谁变了"，订阅方收到信号后
+ *    仍然回到**同一个只读选择器**重读真源（`rongying-cube:onboarding:v3:<userId>`）。
+ * ⚠️ 同窗口写入不会触发浏览器原生的 `storage` 事件，所以必须有这个自定义事件；
+ *    `storage` 事件仍照听（另一个窗口/页签写入时也能跟上）。
+ */
+export const ONBOARDING_PROFILE_CHANGED_EVENT = 'rongying-cube:onboarding-profile-changed';
+
+/** 广播一次档案变更（`detail.userId` = 变的是谁；订阅方据此丢弃别人的变更）。 */
+export function notifyOnboardingProfileChanged(userId: string): void {
+  try {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+    window.dispatchEvent(new CustomEvent(ONBOARDING_PROFILE_CHANGED_EVENT, { detail: { userId } }));
+  } catch {
+    // 通知失败绝不影响保存：此时档案已经落盘成功。
+  }
+}
+
+/**
+ * 订阅档案变更（**只读**）。回调参数 = 触发变更的账号 id；
+ * `undefined` = 说不清是谁（例如别的窗口清空了存储），调用方应无差别重读一次。
+ *
+ * 没有 `window`（node 测试 / 非渲染进程）时是**空订阅**，绝不抛。
+ * 返回取消订阅函数。
+ */
+export function subscribeOnboardingProfileChanged(listener: (userId?: string) => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  const onChanged = (event: Event): void => {
+    const detail = (event as CustomEvent<{ userId?: unknown }>).detail;
+    listener(typeof detail?.userId === 'string' ? detail.userId : undefined);
+  };
+  const onStorage = (event: StorageEvent): void => {
+    const key = event.key;
+    if (key === null) {
+      listener(undefined);
+      return;
+    }
+    if (key.startsWith(FIRST_RUN_STORAGE_PREFIX)) listener(key.slice(FIRST_RUN_STORAGE_PREFIX.length));
+  };
+  window.addEventListener(ONBOARDING_PROFILE_CHANGED_EVENT, onChanged);
+  window.addEventListener('storage', onStorage);
+  return () => {
+    window.removeEventListener(ONBOARDING_PROFILE_CHANGED_EVENT, onChanged);
+    window.removeEventListener('storage', onStorage);
+  };
 }
 
 export function goalAnalysisVersion(profile: OnboardingProfile): string {

@@ -544,29 +544,6 @@ export type WorkspaceStartupDecision =
   /** 零命中或多命中 ⇒ 必须让用户决定，**绝不退出**。 */
   | { kind: 'ask-user'; recordedPath: string; candidates: WorkspaceHealCandidate[] };
 
-/**
- * 启动时该用哪个工作区 —— 判定顺序（钉死，改动必须同时改测试）：
- *
- * ```
- * 有记录：
- *   记录存在 且（非 app-volume，或记录卷 == 当前运行卷）
- *        且（配置无 id，或目录 marker id 可读且严格相等）⇒ configured（R8-03）
- *        配置有 id 但 marker 冲突/缺 id/坏 JSON ⇒ ask-user（保留两侧证据，绝不静默开库）
- *   explicit-path 且记录不存在：
- *     唯一候选在当前运行卷上 + 目录有工作区标记 + **workspaceId 相等** ⇒ healed（仅身份路径）
- *     否则                                  ⇒ ask-user（老记录无可核证关联；技能账本路径不算，R8-01）
- *   候选 === 1 且（非 app-volume，或候选在运行卷上，或运行卷未知）
- *        且（配置无 id，或候选 marker id 可读且严格相等）⇒ healed（静默）
- *   候选 === 1 但 app-volume 候选在别的卷 ⇒ ask-user（唯一候选不许从旧卷静默胜出，R1）
- *   候选 === 1 但配置有 id 而候选 id 缺失/不等 ⇒ ask-user（不许补铸覆盖原关联，R8-02）
- *   候选 > 1                            ⇒ ask-user（多命中不许猜）
- *   候选 === 0 且 记过 relPath（盘上）   ⇒ ask-user（盘不在，不能拿别的卷顶）
- *   候选 === 0 且 卷都还在（本机目录）   ⇒ recreated（就地重建，旧行为）
- * 首启：
- *   盘上运行                            ⇒ auto-portable
- *   否则                                ⇒ default
- * ```
- */
 export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceStartupDecision {
   const recorded = input.recordedPath?.trim();
   if (recorded) {
@@ -613,13 +590,32 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
     };
 
     if (recordedExists) {
-      if (!appVolume) return configuredOrAsk();
       const recordedVolume = volumeRootOf(recorded);
-      if (!runVolume || !recordedVolume || sameVolumeRoot(recordedVolume, runVolume)) {
+      const onRunVolume = Boolean(runVolume && recordedVolume && sameVolumeRoot(recordedVolume, runVolume));
+      /**
+       * 记录路径存在时的早退纪律（2026-10-19 BUG-172）：
+       *   · 记录在**当前运行卷**上（或运行卷未知）⇒ 照旧 configured/ask；
+       *   · `explicit-path` 记录的是**用户显式选的外部目录** ⇒ 只要它还在，就遵从用户
+       *     （哪怕程序跑在另一块盘上）；
+       *   · **唯一例外**：记录恰好是"某卷根下的便携工作区"（`<旧卷>:\荣盈魔方工作区`）
+       *     且它在别的卷上 —— 这是 1.0.6/1.0.7 手选入口留下的 legacy 形状，交给下面的
+       *     结构 + 身份自愈加窄例外处理。
+       *
+       * 用户真实场景：U 盘在自己电脑是 E:，拿回家那台电脑自带 E: 固态 ⇒ U 盘变 F:。
+       * 旧 E: 上可能恰好还有一个同名目录；旧行为在 `recordedExists` 为真时直接问人，
+       * 等于"即插即用"在最常见的换机场景失效。
+       */
+      if (explicitPath) {
+        const wasPortableWorkspace =
+          recordedVolume !== null &&
+          foldForCompare(recorded) === foldForCompare(portableWorkspacePathFor(recordedVolume));
+        if (!wasPortableWorkspace || !runVolume || onRunVolume) return configuredOrAsk();
+      } else if (!appVolume) {
+        // 没有归属的老记录：沿用原行为（存在即 configured/ask，不进候选流程）。
+        return configuredOrAsk();
+      } else if (!runVolume || !recordedVolume || onRunVolume) {
         return configuredOrAsk();
       }
-      // 记录的卷 ≠ 当前运行卷：不早退，落入下面的候选流程 —— 无证据的旧卷同名目录
-      // 会被候选构造拒绝（唯一 F 命中 ⇒ healed）；两卷都有证据 ⇒ ask-user（绝不猜）。
     }
 
     const candidates = buildWorkspaceHealCandidates({
@@ -632,40 +628,53 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
       exists: input.exists,
     });
 
-    /**
-     * R1（2026-10-10 集中终审 §3）：explicit-path 的原始目录不在了 ⇒ 默认 ask-user。
-     * 候选照摆（用户可以从里面确认一个），但**未经确认不跨卷、不改归属** ——
-     * 旧行为会静默 opened(F) 并把归属改记成 app-volume，等于替用户换掉了工作区。
-     *
-     * ⚠️ 2026-10-15 首次启动硬合同（P-A）的**唯一例外**：旧 1.0.6 把"同盘（当前运行卷）
-     *    手选目录"也记成了 explicit-path（workspace:setup/change 与启动页 browse 的旧
-     *    行为），换机器/换盘符后旧绝对路径失效 —— 而目录就在**当前运行卷**上。
-     *
-     *    例外**必须窄**（P-A v2 → R8 返工后收窄到只认身份）：
-     *    - 候选必须恰好一个、必须落在**当前运行卷**上（别的卷 = 真外部目录，仍问）；
-     *    - 目标目录里必须有我们自己的工作区标记（`.clawwork-workspace.json`）；
-     *    - **只接受可核证的工作区身份**：配置里的 `workspaceId` == 候选标记里的 id。
-     *      ⚠️ R8-01（独立终审）：**技能账本/历史路径集合不能证明"配置所在旧运行盘"**
-     *      （技能目录来源不受约束、可跨盘多根、可陈旧），已整体撤销该信任——外部键、
-     *      多根、陈旧键都会被静默收养到"同相对路径的另一份工作区"上。
-     *      老记录（配置无 id）**没有**可核证的迁移关联 ⇒ 一律问人；正常的自动恢复
-     *      走"老记录正常启动一次即补铸身份、之后按身份迁移"这条升级路径。
-     *    - 判据看的是**文件在不在**，不是候选的 `evidence` 枚举值 —— 盘根 marker 在场时
-     *      `evidenceOf` 会把候选记成 `volume-marker`（先判盘根），那样会漏掉目录标记。
-     */
     if (explicitPath && !recordedExists) {
-      const onlyCandidate = candidates.length === 1 ? candidates[0] : null;
-      if (
-        onlyCandidate !== null &&
-        recordedId &&
-        runVolume !== null &&
-        sameVolumeRoot(volumeRootOf(onlyCandidate.path), runVolume) &&
-        input.exists(P().join(onlyCandidate.path, WORKSPACE_MARKER_FILE)) &&
-        readableIdOf(onlyCandidate.path) === recordedId
-      ) {
-        return { kind: 'healed', path: onlyCandidate.path, from: recorded, via: onlyCandidate };
+      /**
+       * 层①遗留分支（2026-10-17 实机取证 + 审查）：1.0.6/1.0.7 的「设置里手选工作区」
+       * 入口**无条件**写 `explicit-path`（`1e03715f:main/ipc/workspace-handlers.ts:70-72`），
+       * 于是"用户选的就是本盘 `X:\荣盈魔方工作区`"也被记成显式外部目录 ⇒ 换盘符后
+       * 必然弹「选择工作区」，用户看到的就是"两个盘"。
+       *
+       * 收窄例外**只认结构与身份，绝不认目录名**：
+       *   ① 记录路径必须**恰好是它自己那块卷根下的便携工作区**（`<旧卷>\荣盈魔方工作区`）。
+       *      `D:\客户资料\荣盈魔方工作区` 这种同名外部目录结构上就不满足 ⇒ 仍走 ask-user，
+       *      R1「显式选择不被静默改指」不放松；
+       *   ② 当前运行卷已知，且该卷上的同名工作区**带候选证据**（盘根 marker / 工作区 marker）；
+       *   ③ 配置记过 `workspaceId` ⇒ 目标目录 marker 里的 id 必须**严格相等**
+       *      （另一块盘 / 另一份副本 ⇒ 弹框摆证据，绝不静默把用户换到别的工作区）。
+       *
+       * ⚠️ 命中的是"旧记录本来就是这块盘自己的工作区"，所以按 app-volume 语义继续
+       *    （`startup.ts` 的 healed 分支会把 `workspacePath` + 归属一并改写）。
+       */
+      const recordedVolume = volumeRootOf(recorded);
+      const recordedWasPortableWorkspace =
+        recordedVolume !== null &&
+        foldForCompare(recorded) === foldForCompare(portableWorkspacePathFor(recordedVolume));
+      if (recordedWasPortableWorkspace && runVolume) {
+        const portablePath = portableWorkspacePathFor(runVolume);
+        const via =
+          candidates.find((candidate) => foldForCompare(candidate.path) === foldForCompare(portablePath)) ?? null;
+        const identityOk = !recordedId || readableIdOf(portablePath) === recordedId;
+        if (via && identityOk && input.exists(portablePath)) {
+          return { kind: 'healed', path: portablePath, from: recorded, via };
+        }
       }
       return { kind: 'ask-user', recordedPath: recorded, candidates };
+    }
+
+    if (binding === 'app-volume' && runVolume && recordedId && input.recordedRelPath) {
+      const expected = resolveWorkspaceRelative(runVolume, input.recordedRelPath);
+      const onRunVolume = candidates.filter((candidate) => sameVolumeRoot(volumeRootOf(candidate.path), runVolume));
+      const current = onRunVolume.length === 1 ? onRunVolume[0] : null;
+      if (
+        expected &&
+        current &&
+        foldForCompare(current.path) === foldForCompare(expected) &&
+        input.exists(P().join(current.path, WORKSPACE_MARKER_FILE)) &&
+        readableIdOf(current.path) === recordedId
+      ) {
+        return { kind: 'healed', path: current.path, from: recorded, via: current };
+      }
     }
 
     if (candidates.length === 1) {
@@ -680,7 +689,12 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
        *    配置无 id 的老记录保持旧行为（保守自愈），不制造新的假询问。
        */
       const viaVolume = volumeRootOf(candidates[0].path);
-      if (appVolume && runVolume && !sameVolumeRoot(viaVolume, runVolume)) {
+      // ⚠️ 2026-10-19 自审：这条守卫原先只对 `app-volume` 生效。可 explicit 的 legacy
+      //    便携记录（`<旧卷>\荣盈魔方工作区`）也会落到本分支（见 608 行的早退例外）——
+      //    旧卷插着另一台也装了本产品的电脑、它那份工作区带证据、当前卷又还没有工作区时，
+      //    唯一候选就在旧卷 ⇒ 旧行为会**静默切到别人那台电脑的工作区**。
+      //    R1 的红线是"唯一候选不许从旧卷静默胜出"，对两种归属一视同仁。
+      if ((appVolume || explicitPath) && runVolume && !sameVolumeRoot(viaVolume, runVolume)) {
         return { kind: 'ask-user', recordedPath: recorded, candidates };
       }
       if (recordedId && readableIdOf(candidates[0].path) !== recordedId) {
@@ -696,7 +710,7 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
     // 卷重建会在错误的位置造出一份空工作区，用户会以为数据丢了。必须问。
     const volumeRoot = volumeRootOf(recorded);
     const onVolume = Boolean(input.recordedRelPath);
-    if (onVolume || !volumeRoot || !input.exists(volumeRoot)) {
+    if (recordedId || onVolume || !volumeRoot || !input.exists(volumeRoot)) {
       return { kind: 'ask-user', recordedPath: recorded, candidates: [] };
     }
     return { kind: 'recreated', path: recorded };

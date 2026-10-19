@@ -123,12 +123,14 @@ export function createVideogenRelayClient(options: VideogenRelayClientOptions): 
         usage?: { outputSeconds?: unknown; inputSeconds?: unknown; inputImageCount?: unknown };
         resolution?: unknown;
         code?: unknown;
+        billingPending?: unknown;
       } | null;
       if (!res.ok || !body) {
         return { status: 'failed', failure: { code: 'videogen-task-failed', upstreamCode: null } };
       }
       if (body.status === 'running') return { status: 'running' };
       if (body.status === 'failed') {
+        if (body.billingPending === true) return { status: 'failed', failure: { code: 'videogen-billing-pending' } };
         const code = typeof body.code === 'number' ? body.code : null;
         if (code === CONTENT_SAFETY_CODE) return { status: 'failed', failure: { code: 'videogen-content-rejected' } };
         return { status: 'failed', failure: { code: 'videogen-task-failed', upstreamCode: code } };

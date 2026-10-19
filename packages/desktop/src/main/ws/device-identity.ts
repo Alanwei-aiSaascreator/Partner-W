@@ -64,6 +64,28 @@ function resolveDefaultIdentityPath(): string {
 }
 
 /**
+ * 轮换前**把即将被取代的凭据留档**（改名，绝不删除、绝不原地覆盖）。
+ *
+ * 为什么必须有（Owner C / T16 硬红线「解不开不得无备份地删除凭据」）：
+ * 设备身份解不开（换机器 / 换 Windows 用户 ⇒ DPAPI 作用域变了，或密文坏掉）时，
+ * 旧实现直接原地覆盖身份文件、并把配对 store 清空 —— **旧密文无备份消失**。
+ * 但 DPAPI 是**按 Windows 用户**加密的：用户切回原来那个账户（合同 T05 场景）时，
+ * 那份密文本来解得开 —— 前提是它还在。留档才能让"切回去"重新可用，也才有现场可查。
+ *
+ * ⚠️ 绝不抛：留档失败只意味着少一条线索，绝不能让"应用起不来"。
+ */
+export function preserveSupersededCredential(file: string): string | null {
+  try {
+    if (!fs.existsSync(file)) return null;
+    const target = `${file}.superseded-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    fs.renameSync(file, target);
+    return target;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 解出来的东西**必须真是一把能用的私钥**才算数。
  *
  * ⚠️ 只判"解密返回了非空字符串"是不够的 —— 2026-09-28 真机就是这个形状：
@@ -139,6 +161,9 @@ export function loadOrCreateDeviceIdentity(filePath?: string): DeviceIdentity {
   // ⭐ 轮换 = 身份换了 ⇒ **旧设备的配对 token 必须清掉**（2026-09-29，§二 P0）。
   //    留着的话新身份会带着旧配对去握手，网关侧必然失配，用户只看到"连不上"。
   //    ⚠️ 只在这一支清：上面 `derivedId !== deviceId` 那条只是**规范化 id**，钥匙没换。
+  // ⭐ T16 硬红线（2026-10-16 Owner C）：清/换之前**先把旧身份留档** —— 解不开的
+  //    那份密文是"用户切回原 Windows 账户还能用"的唯一凭据，不许无备份消失。
+  preserveSupersededCredential(resolved);
   clearDeviceTokens();
   const identity = generateIdentity();
   writeIdentityFile(resolved, {
@@ -307,6 +332,13 @@ export function loadDeviceToken(gatewayId: string): string | null {
  *    也正因为如此，"轮换身份"这件事的破坏面被限制在这一个文件里。
  */
 export function clearDeviceTokens(): void {
+  // ⭐ T16 硬红线（2026-10-16 Owner C）：清空之前先把旧 token 密文**留档**（改名，不删）。
+  //    换 Windows 用户时这些密文在当前作用域解不开，但用户切回去时还解得开 —— 留档才能回去。
+  try {
+    preserveSupersededCredential(resolveDeviceTokenStorePath());
+  } catch {
+    // 留档失败不阻断轮换：清的是"配对"，不是"用户的文件"。
+  }
   try {
     writeTokenStore({ version: 1, tokens: {} });
   } catch {

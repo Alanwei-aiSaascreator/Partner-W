@@ -118,6 +118,8 @@ function createHarness() {
 }
 
 const thinking = (text: string) => ({ type: 'thinking', thinking: text });
+/** ⭐ T26：带**源端段身份**的思考块（网关/运行时给了身份时就走这条）。 */
+const thinkingWithId = (text: string, itemId: string) => ({ type: 'thinking', thinking: text, itemId });
 const text = (t: string) => ({ type: 'text', text: t });
 const toolCall = (id: string, name = 'read') => ({ type: 'toolCall', id, name, arguments: { path: 'a.txt' } });
 
@@ -264,30 +266,55 @@ describe('BUG-075 r3：帧内写入顺序 = content blocks 真实顺序', () => 
   });
 
   /**
-   * ⚠️ 待明确契约（第三次独立复审 2026-10-13 明确"暂列待明确契约，不作为已归因缺陷"）：
+   * ⭐⭐ T26 / BUG-075 消歧（2026-10-16）：**源端段身份**。
    *
-   * 「边界后新段与刚归档段**前缀/同文**」到底是"新段（应显示）"还是"旧回声（应忽略）"，
-   * 在 store 层没有任何可判据的差异（两者拿到的是同一对字符串）。当前实现选择了
-   * **回声守卫优先**（忽略），依据是 F1 形状（`[工具回显, 思考回声, 正文]` 同帧，
-   * 见上方"回声守卫"用例与旧 `turn-activity-snapshot` F1 测试）。
-   * 复审探针 `new-prefix-after-tool` / `new-identical-after-tool`（r3-verify.cjs:25-26）
-   * 记录的是**相反预期**（显示为新段）。消歧需要帧级上下文（同帧是否携带工具回显）
-   * 或产品口径裁决 —— 定案前这两个用例保持 skip，禁止单方面翻转。
+   * 旧口径（第三次独立复审 2026-10-13）：「边界后新段与刚归档段前缀/同文」在 store 层
+   * 拿到的**是同一对字符串**，没有任何可判据的差异 ⇒ 两个用例只能 skip 待契约。
+   *
+   * 现在身份到位：**同 id = 同段累计快照；不同 id = 新段**（哪怕文本与刚归档段完全同文、
+   * 哪怕新段只是旧段的前缀）。原两条 skip 因此**变成可判定的普通用例**（断言"显示为新段"，
+   * 与复审探针 `r3-verify.cjs:25-26` 的预期一致），不再靠 skip 掩盖。
+   * 无身份的旧路径**行为不变** —— 由下面第三条用例显式钉住。
    */
-  it.skip('[待契约] 边界后新段 = 刚归档段前缀（复审探针 new-prefix-after-tool）', () => {
+  it('⭐ [T26] 边界后新段 = 刚归档段前缀，但**源端段身份不同** ⇒ 显示为新段（探针 new-prefix-after-tool）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinkingWithId('检查配置后再继续', 'seg-1')]);
+    h.emitChatDelta([toolCall('tool1')]);
+    h.emitChatDelta([thinkingWithId('检查配置', 'seg-2')]);
+    expect(turnText(h)).toBe('检查配置后再继续\n\n检查配置');
+  });
+
+  it('⭐ [T26] 边界后新段与刚归档段完全同文，但**身份不同** ⇒ 显示为新段（探针 new-identical-after-tool）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinkingWithId('检查配置', 'seg-1')]);
+    h.emitChatDelta([toolCall('tool1')]);
+    h.emitChatDelta([thinkingWithId('检查配置', 'seg-2')]);
+    expect(turnText(h)).toBe('检查配置\n\n检查配置');
+  });
+
+  it('⭐ [T26] 边界后**复用同一身份**（源端 contentIndex 跨推理请求重置 ⇒ 两段都 c0）仍显示为新段（c0 复用安全性）', () => {
+    const h = createHarness();
+    // 运行时 contentIndex 每请求重置 ⇒ 工具前/后两段都是 "c0"（同一身份值）。
+    h.emitChatDelta([thinkingWithId('检查配置', 'c0')]);
+    h.emitChatDelta([toolCall('tool1')]);
+    h.emitChatDelta([thinkingWithId('检查配置', 'c0')]);
+    expect(turnText(h), '同 id 不得并段：工具边界 upsertToolCall 已 seal 清 currentId').toBe('检查配置\n\n检查配置');
+  });
+
+  it('⭐ [T26] 同一身份内的累计快照照常合并（身份不是"每帧新段"）', () => {
+    const h = createHarness();
+    h.emitChatDelta([thinkingWithId('检查', 'seg-1')]);
+    h.emitChatDelta([thinkingWithId('检查配置', 'seg-1')]);
+    h.emitChatDelta([thinkingWithId('检查配置', 'seg-1')]);
+    expect(turnText(h)).toBe('检查配置');
+  });
+
+  it('[T26] **没有身份**时行为一字不变：同形状仍按回声守卫忽略（不悄悄改旧语义）', () => {
     const h = createHarness();
     h.emitChatDelta([thinking('检查配置后再继续')]);
     h.emitChatDelta([toolCall('tool1')]);
     h.emitChatDelta([thinking('检查配置')]);
-    expect(turnText(h)).toBe('检查配置后再继续\n\n检查配置');
-  });
-
-  it.skip('[待契约] 边界后新段与刚归档段完全同文（复审探针 new-identical-after-tool）', () => {
-    const h = createHarness();
-    h.emitChatDelta([thinking('检查配置')]);
-    h.emitChatDelta([toolCall('tool1')]);
-    h.emitChatDelta([thinking('检查配置')]);
-    expect(turnText(h)).toBe('检查配置\n\n检查配置');
+    expect(turnText(h)).toBe('检查配置后再继续');
   });
 });
 

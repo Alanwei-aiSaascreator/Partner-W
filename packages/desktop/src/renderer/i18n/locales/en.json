@@ -6,6 +6,8 @@
     "notActivated": "Not activated",
     "offline": "Offline, data may be out of date",
     "plan": "Current plan",
+    "quotaHeld": "On hold",
+    "quotaHeldUnknown": "In-flight holds are unavailable right now, so the available balance cannot be calculated.",
     "quotaPending": "No balance yet",
     "recharge": "Top up",
     "rechargeCardRequired": "Bind a license card under Activation before recharging",
@@ -18,6 +20,7 @@
     "rechargeCustomInvalid": "Enter an amount between ¥{{min}} and ¥{{max}}",
     "rechargeCustomPlaceholder": "¥{{min}} – ¥{{max}}",
     "rechargeFailed": "Could not start the payment, please try again",
+    "rechargeOrderFailed": "This payment failed and no credits were added",
     "rechargePaid": "Payment received, credits added",
     "rechargePickAmount": "Choose an amount",
     "rechargeRate": "Rate: ¥1 = 100 credits",
@@ -103,7 +106,8 @@
     "image": "Image",
     "link": "Link",
     "markdown": "Markdown document",
-    "text": "Text file"
+    "text": "Text file",
+    "video": "Video"
   },
   "assistantWorkspaces": {
     "compass": {
@@ -397,7 +401,36 @@
     "tab": "Bounties",
     "titlePlaceholder": "What needs doing, in one line"
   },
+  "mascot": {
+    "talk": "Say hi to Xiaoying",
+    "hide": "Hide Xiaoying",
+    "line0": "I’m right here, ready when you are~",
+    "line1": "Too much to do? I can chop it into small pieces.",
+    "line2": "You keep going — I’ll watch the progress.",
+    "desktop": "Send to desktop"
+  },
   "chatInput": {
+    "queuedWhileRunning": "Task running — keep typing; Enter queues it and sends after this turn",
+    "queuedToast": "Queued — it will be sent automatically when this turn finishes",
+    "queuedChip": "Queued: {{text}}",
+    "queuedCancel": "Cancel this queued message",
+    "workingLines": {
+      "0": "Thinking it through…",
+      "1": "Almost there, hang tight~",
+      "2": "Big task, chopped into small bites",
+      "3": "Digging through the material…",
+      "4": "This part takes care, one moment",
+      "5": "Nearly done — deep breath, emm ovo"
+    },
+    "videoQuality": {
+      "title": "Video quality",
+      "standardShort": "Standard",
+      "seedanceShort": "High",
+      "standard": "Standard · MiniMax H3",
+      "standardDesc": "Cheaper and fast; cannot use an image as the first frame. Billed per second.",
+      "seedance": "High quality · Doubao Seedance 2.5",
+      "seedanceDesc": "Sharper, and supports image-to-video: an image attached in this turn becomes the first frame. Noticeably more expensive, billed per second."
+    },
     "abortFailed": "Failed to stop generation",
     "addFiles": "Add files",
     "addFolder": "Add folder",
@@ -433,6 +466,7 @@
       "downloading-media": "Downloading images or video…",
       "generating-document": "Generating document…",
       "generating-html": "Generating web page…",
+      "generating-image": "Generating image…",
       "generating-presentation": "Generating presentation…",
       "generating-video": "Generating video — this may take a few minutes…",
       "reconciling-artifacts": "Checking generated files…",
@@ -448,6 +482,7 @@
         "downloading-media": "Download images or video",
         "generating-document": "Generate document",
         "generating-html": "Generate webpage",
+        "generating-image": "Generate image",
         "generating-presentation": "Generate presentation",
         "generating-video": "Generate video",
         "reconciling-artifacts": "Check files",
@@ -482,6 +517,7 @@
     "materialTrimToLimit": "Keep the first {{count}} only",
     "materialUnavailable": "{{fileName}} was moved or is unavailable",
     "mode": {
+      "mediaModelsNote": "Image and video generation use their own models, chosen automatically by the assistant — they are not in this list. Just ask to draw an image or make a video.",
       "advanced": "Advanced: choose a model",
       "deep": "Deep",
       "deepDesc": "Deeper reasoning for complex analysis and long tasks",
@@ -506,6 +542,7 @@
     "recognizeImage": "Recognize image",
     "relayActivationLimitReachedDetail": "This activation has reached its device limit. Use a different card, or contact support.",
     "relayActivationRequiredDetail": "Finish activation in Settings → Activation.",
+    "relayApplyFailedDetail": "The model configuration was not applied locally. You can try again; if it keeps failing, send us the logs.",
     "relayEntitlementRejectedDetail": "This activation can no longer be used. Activate again or use a different card in Settings → Activation.",
     "relayOrganizationMismatchDetail": "This activation is bound to a different organization. Check Settings → Activation.",
     "relayRetryableDetail": "The commercial service is not ready yet. You can try again.",
@@ -544,7 +581,6 @@
     "unsupportedCapability": "This capability isn't supported yet. You can use the capabilities already available in the workspace instead.",
     "unsupportedModel": "This model isn't supported yet. Please pick an available model from the model list.",
     "visionFallbackSwitched": "Switched to a vision-capable model for this image: {{model}}",
-    "visionMentionBlocked": "Images can't be sent to team roles yet. Remove the images before mentioning a role, or drop the @ to send the images directly.",
     "visionUnavailable": "Image support could not be confirmed for this model. Choose an image-capable model or remove the images. For an illustrated PPT, analyze the images first.",
     "waiting": {
       "awaitingAnswer": "Waiting for your answer",
@@ -569,9 +605,14 @@
     }
   },
   "chatMessage": {
+    "turnDurationMinutesSeconds": "Took {{minutes}}m {{seconds}}s",
+    "turnDurationSeconds": "Took {{seconds}}s",
     "autoRetryNotice": "The previous run didn't finish — retrying once automatically (you'll be charged again).",
     "conductor": "Coordinator",
     "copied": "Copied",
+    "turnCost": "This turn used {{credits}} credits",
+    "liveTaskCost": "{{credits}} credits used in this task",
+    "taskCostTotal": "This task used {{credits}} credits in total",
     "copyCode": "Copy code",
     "copyMessage": "Copy message",
     "docgenDelivered": "Document generated",
@@ -584,9 +625,15 @@
     "htmlgenGenerating": "Generating web page…",
     "htmlgenPending": "Web page content pending",
     "htmlgenUnconfirmed": "Web page not yet confirmed as registered — check the latest file in Artifacts on the right",
+    "imagegenDelivered": "Image generated",
+    "imagegenFailed": "Image generation failed",
+    "imagegenGenerating": "Generating image…",
+    "imagegenPending": "Image pending",
+    "imagegenUnconfirmed": "Image delivery unconfirmed",
     "noVisibleAnswer": "The assistant returned no visible answer. Please try again.",
     "retryHint": "Resend the previous message — you'll be charged again",
     "thinking": {
+      "liveTailHint": "Showing the latest content only; full reasoning is available when it finishes.",
       "title": "Deep thinking"
     },
     "toolCallSummary": "{{count}} tool calls executed",
@@ -1043,6 +1090,15 @@
     "workspace": "Workspace read and write"
   },
   "errors": {
+    "userStopped": "Stopped this turn",
+    "human": {
+      "not-connected": "The local service is not connected yet. Please try again shortly.",
+      "timeout": "That request timed out. Please try again.",
+      "rate-limit": "Too many requests — please wait a moment and retry.",
+      "context-length": "This conversation is too long. Start a new task or clear the context, then retry.",
+      "insufficient-credits": "Not enough credits. Please top up and try again.",
+      "send-failed": "Could not send. Please try again."
+    },
     "agentMissing": "That assistant is not on this machine. Pick another one and send again.",
     "agentNotResponding": "Agent is not responding — it may be unavailable or misconfigured on the server. Try a different agent.",
     "boundaryTitle": "Something went wrong",
@@ -1070,6 +1126,27 @@
     "wrapper": {
       "providerRequestRejected": "This service is temporarily unavailable. Try a different model, or try again later."
     }
+  },
+  "experts": {
+    "countLabel": "{{n}} specialists",
+    "domain": {
+      "all": "All",
+      "design": "Design",
+      "engineering": "Engineering",
+      "knowledge": "Knowledge",
+      "news": "News & trends"
+    },
+    "filterLabel": "Filter by field",
+    "installHint": "Each expert works through a bundled skill. If one is not installed yet, install it under the Skill library first.",
+    "launch": "Start a task",
+    "launchPrompt": "Use your installed skill “{{name}}” to do this:",
+    "subtitle": "Specialists that ship with the app. Pick one to start a task with the right approach.",
+    "title": "Expert library",
+    "dialogTitle": "What should “{{name}}” do?",
+    "dialogDescription": "Describe the task in one line — Start creates the task and sends it right away.",
+    "dialogPlaceholder": "e.g. Write an architecture decision record for this module",
+    "dialogStart": "Start",
+    "dialogCancel": "Cancel"
   },
   "export": {
     "exportedToFiles": "Exported to Files"
@@ -1258,6 +1335,50 @@
       "engineer": {},
       "legal": {}
     },
+    "industryBriefLabel": {
+      "focus": "Focus: ",
+      "method": "Method: ",
+      "template": "Delivery: "
+    },
+    "industryMethod": "Industry approach",
+    "industryMethodBrief": {
+      "C": {
+        "focus": "Capacity, yield, lead time, quality; data tied to line and batch.",
+        "method": "Define spec and acceptance first, then plan; verify with capacity data.",
+        "template": "Delivery: process note → plan and schedule → quality checklist."
+      },
+      "H": {
+        "focus": "Footfall, reputation, turnover, cost; data tied to store and time slot.",
+        "method": "Name guests and time slots first, then flow and menu; verify with turnover.",
+        "template": "Delivery: store note → flow and menu plan → service and cost list."
+      },
+      "J": {
+        "focus": "Compliance, risk, return, traceability; every number needs a source.",
+        "method": "Set limits first, then model scenarios; verify with risk metrics.",
+        "template": "Delivery: compliance note → model and scenarios → risk checklist."
+      },
+      "K": {
+        "focus": "Location, absorption, cost, policy; tie results to project and period.",
+        "method": "Frame scope and policy, then compare options; verify with absorption data.",
+        "template": "Delivery: project and location note → comparison table → cost checklist."
+      },
+      "L": {
+        "focus": "Client acquisition, delivery quality, cost; tie results to the contract.",
+        "method": "Clarify needs and contract first, then propose and schedule.",
+        "template": "Delivery: client and contract note → proposal and schedule → cost list."
+      },
+      "P": {
+        "focus": "Learning goals, learner gaps, evidence; tie results to course and class.",
+        "method": "State goal and starting point, then design teaching; verify by assessment.",
+        "template": "Delivery: learner note → course and activity plan → assessment list."
+      },
+      "R": {
+        "focus": "Audience, content rhythm, reach; tie results to work and release window.",
+        "method": "Fix audience and theme, then structure and rhythm; verify with reach data.",
+        "template": "Delivery: audience and theme note → content and rhythm → results list."
+      }
+    },
+    "industryMethodNone": "No industry selected — nothing extra is written to your assistants.",
     "needTag": "Pick at least one tag",
     "nickname": "Nickname",
     "portraitHint": "Saved by the first-run guide. Read-only.",
@@ -1273,6 +1394,7 @@
     },
     "shuffle": "Shuffle tag",
     "skill": {},
+    "skillsConfirmed": "Confirmed at setup:",
     "skillsHint": "These six capability sets ship with the app. Describe what you need in chat and the team will use them.",
     "subtitle": "Your portrait, work identity, AI team, core skills and preferences — all in one place. Saving writes them into every assistant's memory.",
     "tag": {
@@ -1307,6 +1429,17 @@
       }
     },
     "title": "Personalization Center"
+  },
+  "imagegen": {
+    "blockInvalid": "The image request is incomplete or uses an unsupported specification.",
+    "failedTitle": "Image generation status",
+    "generationFailed": "Image generation failed. Revise the description before generating again.",
+    "imageInvalid": "The image cannot be fully opened or has the wrong dimensions. No artifact was registered.",
+    "requestUnconfirmed": "The image request is unconfirmed. Recover using the original operation ID instead of generating again.",
+    "resultUnconfirmed": "The result or settlement is unconfirmed. No artifact was registered. Recover using the original operation ID.",
+    "saveFailed": "The image has not been saved. Recover using the original operation ID.",
+    "unavailable": "Image generation is unavailable. No new generation request was sent.",
+    "workspaceChanged": "The workspace or account changed. Image delivery was stopped."
   },
   "kb": {
     "addDone": "Added {{count}} source(s)",
@@ -1359,6 +1492,17 @@
     "title": "Knowledge base"
   },
   "leftNav": {
+    "taskGroups": {
+      "header": "Tasks",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "week": "This week",
+      "earlier": "Earlier",
+      "all": "All tasks",
+      "empty": "No tasks yet",
+      "running": "Running",
+      "untitled": "Untitled task"
+    },
     "addAssistant": "Add assistant",
     "appSettings": "App Settings",
     "archivedChats": "Archived Chats",
@@ -1376,17 +1520,21 @@
       "search": "Search tasks",
       "skills": "Skill market",
       "square": "Square",
-      "teams": "Teams"
+      "teams": "Teams",
+      "more": "More",
+      "agentsSimple": "Agents"
     },
     "recentTasks": "Recent tasks",
     "searchTasks": "Search tasks…",
     "updateAvailable": "Update available",
-    "usageOverview": "My AI usage overview"
+    "usageOverview": "My AI usage overview",
+    "profile": "Profile",
+    "usageAndCredits": "Usage & credits"
   },
   "login": {
     "agreement": "I have read and agree to the {0} and {1}",
     "authenticatedForActivation": "Signed in. Confirm access for this account.",
-    "betaPhoneNotice": "Your phone number is used only to register your beta account and to notify you. It is deleted within 30 days after the test ends and is not used for anything else.",
+    "betaPhoneNotice": "Your phone number is used only to create your account, to sign in, and for essential service notifications. It is not used for anything else.",
     "brandSubline": "After signing in, say what you want to get done and you're ready to start.",
     "changeAccount": "Change account",
     "changePhone": "Change number",
@@ -1422,7 +1570,6 @@
     "currentAssistant": "Current assistant",
     "messageLayoutCentered": "Center message width",
     "messageLayoutWide": "Expand message width",
-    "refreshUsage": "Refresh usage",
     "scrollToBottom": "Scroll to bottom",
     "toggleContextPanel": "Toggle context panel",
     "welcomeSubtitle": "Describe your task and Rongying Cube will help choose the right assistant and model.",
@@ -1635,7 +1782,6 @@
       },
       "industry": "Your main industry",
       "introduction": "A brief introduction (optional)",
-      "model": "Actual model",
       "nicknameFallback": "My work profile",
       "personaSourceDefault": "Character source: default artwork",
       "personaSourceRule": "Character source: saved approved rule",
@@ -1752,9 +1898,7 @@
           "name": "Virtuoso"
         },
         "partial": "Some questions were skipped — this result is for reference only."
-      },
-      "usagePending": "Usage: pending verification",
-      "usageSettled": "Usage: settled against the actual receipt"
+      }
     },
     "goalAnalysisHint": "Your work goal is saved without an automatic AI call. Choose an assistant in the workbench to start a task.",
     "multipleHint": "Choose more than one",
@@ -1979,6 +2123,60 @@
     "contextReset": "Session context has been reset"
   },
   "settings": {
+    "connectors": {
+      "nav": "Connectors",
+      "title": "Connectors",
+      "subtitle": "Connect Feishu on your phone to this computer so you can hand off tasks while away. The channel runs inside the local gateway; no port is exposed to the internet.",
+      "refresh": "Refresh status",
+      "feishu": {
+        "stateClosed": "Channel off",
+        "boundAgent": "Assistant receiving Feishu messages",
+        "bindNone": "Not bound",
+        "bindUnset": "Not bound yet",
+        "unboundWarning": "No assistant is bound yet, so Feishu messages will have no owner. Choose an assistant.",
+        "unbind": "Unbind",
+        "disableChannel": "Turn channel off",
+        "enableChannel": "Turn channel on",
+        "bindChanged": "Bound assistant updated",
+        "bindCleared": "Binding removed",
+        "actionFailed": "Action failed. Please try again.",
+        "channelEnabled": "Channel turned on",
+        "channelDisabled": "Channel turned off (credentials kept - you can turn it back on anytime)",
+        "dialogTitle": "Connect Feishu by QR code",
+        "dialogDescription": "Scan the QR code below with Feishu on your phone and confirm to finish connecting.",
+        "userCode": "Code: {{code}}",
+        "scanWaiting": "Waiting for confirmation on your phone…",
+        "scanSuccess": "Scanned successfully - Feishu is connected",
+        "scanDenied": "The scan was declined. Please try again.",
+        "scanExpired": "The QR code expired. Get a new one.",
+        "scanFailed": "Connection failed. Please try again.",
+        "scanCancelled": "Scan cancelled",
+        "scanUnavailable": "Feishu QR connection is unavailable right now. Please try again later.",
+        "scanNetworkFailed": "Network error. Check your connection and try again.",
+        "cancelScan": "Cancel",
+        "retryScan": "Get a new QR code",
+        "done": "Done",
+        "title": "Feishu",
+        "description": "Message the bot from Feishu on your phone and the work runs on this computer.",
+        "stateIdle": "Not connected",
+        "stateConfigured": "Configured",
+        "stateUnavailable": "Runtime unavailable",
+        "appId": "Connected · App ID: {{appId}}",
+        "pluginMissing": "The Feishu plugin ships with the app — just click \"Connect Feishu\" (no download, no manual extraction).",
+        "runtimeMissing": "The local runtime is not ready yet, so connecting is unavailable. Make sure the app works normally first.",
+        "connect": "Connect Feishu",
+        "reconnect": "Scan again",
+        "scanHint": "After scanning, come back and press \"Refresh status\". This shows local configuration only, not whether the channel is online.",
+        "billingNote": "Tasks started from Feishu consume credits from this computer's account, billed exactly like the desktop app.",
+        "gatewayUnavailable": "The local AI service isn't ready, so Feishu can't be connected right now. Wait a moment and try again.",
+        "writeFailed": "The Feishu settings were written but not accepted by the local AI service. Try scanning again.",
+        "invalidAgent": "That assistant no longer exists. Pick another assistant and try again.",
+        "pluginInstallFailed": "The bundled Feishu plugin couldn't be installed. Restart the app and try again.",
+        "unsupportedAuth": "This Feishu account doesn't support this scan method. Try again from the Feishu mobile app, or contact support.",
+        "unknownError": "Feishu setup failed. Try again; if it keeps failing, restart the app.",
+        "ingressUnavailable": "Feishu is connected but can't receive messages: the plugin is missing its trusted install record. Run the scan again here (the app will reinstall the plugin), or restart the app and try again."
+      }
+    },
     "about": "About",
     "aboutDesc": "Version, updates, and links",
     "account": "Account",
@@ -2103,17 +2301,54 @@
     "memory": "Memory",
     "memoryAboutYou": "About you",
     "memoryAboutYouHint": "Your habits, what you care about, how you want them to work with you. Saving writes it to every assistant on this disk.",
+    "memoryAboutYouScope": "This box is the \"about you\" file the assistant reads every turn. It is separate from the long-term memory below — that one is kept per account and is not shared between accounts — and it is written to every assistant on this disk.",
+    "memoryAdd": "Remember this",
+    "memoryAdded": "Saved. The assistant will read it from the next turn on.",
+    "memoryAddPlaceholder": "Write something you want the assistant to keep in mind.",
+    "memoryConfirmed": "Accepted. The assistant will read it from the next turn on.",
     "memoryCounter": "{{used}} / {{max}}",
+    "memoryDelete": "Delete",
+    "memoryDeleted": "Deleted. The assistant will no longer read it.",
+    "memoryDraftCancelEdit": "Cancel",
+    "memoryDraftConfirm": "Accept",
+    "memoryDraftCount": "{{count}} waiting",
+    "memoryDraftEdit": "Edit",
+    "memoryDraftReject": "Reject",
+    "memoryDrafts": "Pending suggestions",
+    "memoryDraftSaveEdit": "Accept edited",
+    "memoryDraftsEmpty": "The assistant has not suggested anything to remember.",
+    "memoryDraftsHint": "Suggested by the assistant. Nothing is remembered until you accept it.",
+    "memoryDraftSourceAssistant": "Suggested by the assistant",
     "memoryDraftTrackNotYet": "Note: this version only lets you write it yourself. The assistant cannot yet propose a draft for you to confirm.",
+    "memoryEntries": "Long-term memory",
+    "memoryEntriesEmpty": "No confirmed memories yet.",
+    "memoryEntriesHint": "Confirmed memories are written into the prompt the assistant reads on every turn.",
+    "memoryEntryCount": "Saved: {{count}}",
+    "memoryErrorBlockFull": "Long-term memory is full — delete one before adding another.",
+    "memoryErrorControlCharacters": "This text contains characters that cannot be stored.",
+    "memoryErrorCountFull": "Too many memories — delete one before adding another.",
+    "memoryErrorDuplicate": "This one is already saved.",
+    "memoryErrorEmpty": "Write something first.",
+    "memoryErrorNotFound": "That memory no longer exists.",
+    "memoryErrorOverLimit": "Too long — one memory can hold at most {{max}} characters.",
+    "memoryErrorUnavailable": "Memory is unavailable right now.",
     "memoryIntro": "The assistants on this disk read the following every turn. What you write here, they remember.",
     "memoryNoAgents": "There are no assistants on this disk yet. Create one first.",
     "memoryPlaceholder": "For example: I read the conclusion first; quote tax-inclusive prices; do not schedule work for me on weekends.",
     "memoryReadFailed": "Could not read this memory. Reopening this page may help.",
+    "memoryRejected": "Rejected. It was not saved.",
+    "memoryRejectNote": "Rejected suggestions are remembered as rejected, so the assistant will not ask about the same thing again.",
     "memorySave": "Save",
     "memorySaved": "Saved. {{count}} assistants will read this.",
     "memorySaveFailed": "Save failed. Please try again.",
     "memorySavePartial": "{{failed}} of {{total}} assistants were not saved. Please save again.",
+    "memoryStoredOnDisk": "Memories live on this disk and are kept per account — signing in with another account will not show them.",
+    "memorySyncPartial": "Saved, but {{failed}} assistant(s) did not receive it — open the app once more while online and it will sync.",
+    "memorySyncPending": "Changed, but the assistant has not received it yet - the local service is offline. Reopen this page or restart the app while online and it will sync.",
     "memoryTooLong": "Over the limit ({{max}} characters). The extra part will not be saved - please shorten it.",
+    "memoryUserMdTitle": "About You",
+    "memoryUserMdObserved": "Observed: {{date}} | status: active",
+    "memoryUserMdSampleDirective": "- Prefer concise progress updates.",
     "memoryUnsaved": "Unsaved changes",
     "mobile": "Mobile",
     "mobileDesc": "Access Rongying Cube from your phone",
@@ -2168,6 +2403,145 @@
     "quickLaunchUpdateFailed": "Failed to update Quick Launch config",
     "readyToInstall": "Restart to Update",
     "remove": "Remove",
+    "repair": {
+      "applySelected": "Fix selected ({{count}})",
+      "code": {
+        "apply": {
+          "already-current": "Already up to date — no files were changed.",
+          "already-gone": "Nothing left to do — the file was already handled, or it does not exist.",
+          "backup-failed": "Not applied: the backup did not succeed, so the original file was left untouched.",
+          "became-live": "Cancelled: this lock turned out to be in active use.",
+          "blocked-live-instance": "Not applied: Rongying Cube is running on this computer.",
+          "diagnostics-failed": "Could not export the diagnostics pack (the drive may be read-only).",
+          "diagnostics-written": "Diagnostics pack exported to: {{path}}",
+          "invalid-json": "Not applied: the configuration file is not valid JSON.",
+          "not-object": "Not applied: the configuration file has an unrecognised format.",
+          "plugin-dir-missing": "Not applied: the plugin folder could not be created on this drive (the drive may be read-only).",
+          "quarantined": "Quarantined (the original file was renamed and kept, and a backup copy was saved).",
+          "read-failed": "Not applied: the configuration file could not be read.",
+          "rebased": "Plugin paths were re-pointed to the current drive.",
+          "rename-failed": "Not applied: renaming for quarantine failed (the file may be in use).",
+          "rewritten": "The capability boundary block was rewritten with the current version.",
+          "skill-migrated": "Skill installation records were moved to the current skill folder.",
+          "unreadable-lock": "Not applied: the lock file is still there but cannot be read (another program may be holding it).",
+          "unsafe-target-link": "Not applied: this location is not a regular file (it may be a link pointing elsewhere), so it is left alone for safety.",
+          "write-failed": "Not applied: writing the configuration back failed."
+        },
+        "capability": {
+          "block-corrupt": "The start and end markers of the capability boundary block do not match (half-written) and it needs rewriting: {{path}}",
+          "block-missing": "AGENTS.md has no capability boundary block, so the assistant may be misled by old rules: {{path}}",
+          "block-newer": "The capability boundary block is newer than this build (v{{version}}), so it will not be downgraded: {{path}}",
+          "block-stale": "The capability boundary block is stuck on an older version (v{{version}} < v{{current}}): {{path}}",
+          "no-downgrade": "The block version is higher than this build, so it is left as is (to avoid overwriting a newer version with an older one): {{path}}",
+          "no-file": "The assistant has not written AGENTS.md yet, so the block check was skipped.",
+          "no-workspace": "This state has no assistant workspace, so the block check was skipped: {{path}}",
+          "none": "No assistant workspace was found to check.",
+          "ok": "The capability boundary block is up to date (v{{version}}): {{path}}",
+          "rewrite-block": "Rewrite the capability boundary block with the current version (only inside the block, up to v{{version}}): {{path}}"
+        },
+        "diagnostics": {
+          "export": "Export the diagnostics pack to: {{path}}",
+          "failed": "Could not export the diagnostics pack (the drive may be read-only).",
+          "ready": "You can export a diagnostics pack to send to support. It leaves out password-like values, is packed only to {{path}}, and is never uploaded automatically.",
+          "written": "The diagnostics pack has been exported to: {{path}}"
+        },
+        "env": {
+          "data-root-not-writable": "The runtime data folder is not writable, so repair actions will fail: {{path}}",
+          "data-root-writable": "The runtime data folder is writable: {{path}}",
+          "guide-antivirus-quarantine": "An antivirus program has most likely quarantined it. Restore it from the antivirus quarantine, add it to the allow list, then open this app again. See the \"Blocked by antivirus on first start\" section in the user guide.",
+          "guide-never-started": "This copy has probably never started successfully. Open this app once normally so it can set up its runtime, then come back to repair.",
+          "guide-readonly-drive": "The drive may be read-only (write-protect switch, or permissions changed by the system). Check the USB drive's write-protect switch, or try a different USB port.",
+          "guide-workspace": "The workspace cannot be found on that drive, or nothing can be written to it. Make sure the drive is not write-protected, or try a different USB port.",
+          "mode-installed": "Running as an installed copy; runtime data is at: {{root}}",
+          "mode-portable": "Running from the drive; runtime data is at: {{root}}",
+          "runtime-deployed": "The local runtime is deployed: {{path}}",
+          "runtime-media-dev-skip": "Not running a packaged build, so the bundled-runtime check was skipped.",
+          "runtime-media-missing": "The bundled runtime is missing, so the local service cannot start.",
+          "runtime-media-present": "The bundled runtime is present: {{path}}",
+          "runtime-not-deployed": "The local runtime has not been deployed yet (it is prepared automatically the first time you open the app, which takes a few minutes).",
+          "state-found": "Found {{count}} state folder(s), for example: {{path}}",
+          "state-missing": "No state folder was found: {{path}}",
+          "workspace-ok": "The user data workspace is usable: {{path}}",
+          "workspace-unusable": "The user data workspace is not usable (missing or not writable): {{path}}"
+        },
+        "live": {
+          "gateway-lock": "A Gateway lock is in active use, which means the local service is still running: {{path}}. Quit Rongying Cube completely, then come back and choose \"Run full check again\".",
+          "instance-owner": "Rongying Cube is running on this computer (process PID {{pid}}), so no repair action will run. Quit it completely, then come back and choose \"Run full check again\".",
+          "port-listener": "A process is listening on the local port (PID {{pid}}), so the local service may still be running. Quit Rongying Cube completely, then come back and choose \"Run full check again\"."
+        },
+        "lock": {
+          "corrupt": {
+            "bad-pid": "The lock file has no usable process ID: {{path}}",
+            "not-json": "The lock file is not valid JSON (most likely the power went out mid-write): {{path}}",
+            "not-object": "The lock file content is not an object: {{path}}",
+            "unreadable": "The lock file could not be read (it may be in use): {{path}}"
+          },
+          "live": {
+            "start-time-match": "This lock belongs to a running Gateway, so it will be left alone: {{path}}",
+            "unverifiable": "It cannot be confirmed whether this lock is stale (the process start time is unavailable), so it is left alone to be safe: {{path}}"
+          },
+          "no-state": "No state folder was found, so the lock check was skipped.",
+          "none": "The local Gateway lock files are fine ({{count}} state folder(s) were checked).",
+          "quarantine": "Rename this broken lock and quarantine it: {{path}}",
+          "stale": {
+            "pid-gone": "The process in the lock (PID {{pid}}) has already exited, so this lock is stale: {{path}}",
+            "pid-reused": "The process ID in the lock (PID {{pid}}) has been reused by the system for another program, so this lock is stale: {{path}}"
+          }
+        },
+        "plugin": {
+          "foreign-dead-path": "The configuration contains a dead path pointing to another program; we will not delete it for you: {{path}}",
+          "no-state": "No state folder was found, so the plugin path check was skipped.",
+          "none": "All plugin load paths are still there.",
+          "own-dead-path": "The configuration points to an app plugin folder that no longer exists (usually because the drive letter changed): {{path}}",
+          "rebase": "Re-point the plugin paths to the current drive (changes {{path}}, covering {{count}} dead path(s))"
+        },
+        "skill": {
+          "ambiguous": "Several state folders were found and none of them is clearly the current one, so the records were left untouched.",
+          "matched": "Skill installation records match this computer's skill folder.",
+          "migrate": "Move the skill installation records to the current skill folder ({{count}} entry(ies), to: {{path}})",
+          "no-access": "Skill records could not be read in this mode, so they were not checked.",
+          "no-config": "The configuration file could not be read, so skill records were not checked.",
+          "no-state": "No state folder was found, so skill records were not checked.",
+          "none": "No skill installation records yet, so there is nothing to reconcile.",
+          "orphan": "Skill installation records still point at {{count}} skill folder(s) that no longer exist (usually after switching gateway or drive)."
+        }
+      },
+      "item": {
+        "capability-block": "Capability boundary prompt",
+        "diagnostics-pack": "Diagnostics pack",
+        "environment": "Runtime self-check",
+        "gateway-locks": "Startup locks (broken / half-written)",
+        "plugin-paths": "Plugin load paths",
+        "skill-records": "Skill installation records"
+      },
+      "nav": "Diagnostics & repair",
+      "needsYou": "Needs your action",
+      "noChanges": "No files were changed in this round.",
+      "notApplicable": "Not applicable here",
+      "nothingDesc": "The full check found no problems. If the app still does not work, you can export a diagnostics pack and send it to support.",
+      "nothingTitle": "Nothing needs fixing",
+      "offlineNote": "The whole process works offline: nothing connects to a server before the fix is done, and the diagnostics pack stays on this computer — you send it yourself.",
+      "openBackup": "Open the backup folder ({{path}})",
+      "rescan": "Run full check again",
+      "restore": {
+        "blocked-live-instance": "Rongying Cube is running, so nothing was restored. Quit it completely and try again.",
+        "nothing": "Nothing to undo here (no restorable backup).",
+        "partial": "{{count}} of {{total}} file(s) put back; the rest could not be restored.",
+        "restored": "{{count}} file(s) put back in place."
+      },
+      "restoreBackup": "Undo this round (put the backups back)",
+      "resultTitle": "What was just done",
+      "scanFailed": "The full check did not finish: {{error}}",
+      "scannedRoots": "Checked {{count}} location(s)",
+      "scanning": "Running the full check…",
+      "severity": {
+        "attention": "Can be fixed",
+        "blocked": "Could not be checked",
+        "broken": "Needs action",
+        "ok": "Normal"
+      },
+      "title": "Diagnostics & repair"
+    },
     "rightPanelShortcut": "Toggle context panel",
     "selectGateway": "Select gateway",
     "sendCmdEnter": "{{mod}} Enter",
@@ -2263,6 +2637,11 @@
     "version": "Version",
     "webSearch": "Let the assistant search the web",
     "webSearchHint": "When on, the assistant searches the web automatically when it needs up-to-date information and cites its sources — each search is billed separately (≈6 credits). qwen-plus, qwen-turbo and qwen3.7-flash also support built-in model search: page content counts toward input and costs roughly 100× a normal question. Saving re-applies the connection.",
+    "showMascot": "Show XiaoYing",
+    "showMascotHint": "The mascot in the lower-right of the chat area; you can turn it back on here anytime.",
+    "desktopMascot": "Desktop XiaoYing",
+    "desktopMascotHint": "Put a draggable XiaoYing on your desktop to look at and tidy your files",
+    "desktopMascotOpen": "Open",
     "webSearchSection": "Web search",
     "workspace": "Workspace",
     "workspaceChange": "Change",
@@ -2303,7 +2682,6 @@
   },
   "skillMarket": {
     "actionFailed": "Could not complete that: {{reason}}",
-    "count": "{{total}} in total · {{installed}} installed",
     "empty": "This build ships no skills.",
     "gatewayRequired": "Not connected to a gateway yet — installing a skill needs one. Reconnect, then refresh.",
     "install": "Install",
@@ -2320,11 +2698,25 @@
     "repairConfirmTitle": "Repair “{{name}}”?",
     "repaired": "Repaired “{{name}}”",
     "repairedBackup": "Backup of the previous files: {{path}}",
-    "subtitle": "These skills come with the app. Once installed, every assistant can use them.",
     "verdictBlocked": "This assistant can't use it yet",
     "verdictChecking": "Checking whether the assistant can use it…",
     "verdictUnknown": "Couldn't find out — we don't know whether the assistant can use it yet",
-    "verdictUsable": "This assistant can use it now"
+    "verdictUsable": "This assistant can use it now",
+    "tabSkills": "Skills",
+    "tabAgents": "Agents",
+    "tabPrompts": "Prompts",
+    "promptsSoon": "Prompt library coming soon",
+    "searchPlaceholder": "Search skills",
+    "allInstalled": "{{n}} skills · all bundled",
+    "tileCount": "{{n}} skills",
+    "category": {
+      "content": "Content",
+      "commerce": "Commerce",
+      "research": "Research",
+      "office": "Office",
+      "other": "Other"
+    },
+    "noMatch": "No matching skills"
   },
   "slash": {
     "argOptions": "Options for /{{command}}"
@@ -2347,6 +2739,18 @@
     "tooltip": "Commands"
   },
   "slidegen": {
+    "detail": {
+      "footerOverlap": "The footer #{{footer}} overlaps the body area #{{body}}. Leave space above the footer, or move the body area up; do not delete any text.",
+      "lowContrast": "{{who}} has only {{ratio}}:1 contrast on the measured solid background, below the target of {{minimum}}:1. Change the text color or the background color.",
+      "occluded": "{{who}} is partly covered by {{occludedBy}}. Move it, or move the element that covers it.",
+      "outOfBounds": "{{who}} runs off the canvas: {{sides}}. After export this part sits outside the slide, so it will not show when presented.",
+      "side": {
+        "bottom": "{{px}}px past the bottom edge",
+        "left": "{{px}}px past the left edge",
+        "right": "{{px}}px past the right edge",
+        "top": "{{px}}px past the top edge"
+      }
+    },
     "fail": {
       "blockEmpty": "The layout the assistant sent was empty.",
       "blockUnclosed": "The content was too long and got cut off, so nothing was generated. Ask the assistant to split it into two decks.",
@@ -2364,6 +2768,12 @@
       "unparsable": "The layout has a syntax error and could not be read."
     },
     "failedTitle": "The presentation couldn't be generated",
+    "kind": {
+      "block": "Color block",
+      "image": "Image",
+      "text": "Text"
+    },
+    "listJoiner": ", ",
     "unconfirmedTitle": "Presentation was not auto-confirmed",
     "warn": {
       "footerOverlap": "The footer on page {{page}} overlaps a content card",
@@ -2372,7 +2782,11 @@
       "occluded": "Text on page {{page}} is covered by another element",
       "outOfBounds": "Page {{page}} has content outside the slide, so it will not show when presented"
     },
-    "warnedTitle": "The presentation was generated, with a few spots to fix"
+    "warnedTitle": "The presentation was generated, with a few spots to fix",
+    "who": {
+      "plain": "{{kind}} (#{{id}})",
+      "withText": "{{kind}} “{{snippet}}” (#{{id}})"
+    }
   },
   "startupReadiness": {
     "aiCatalogFailed": "Could not get the model list",
@@ -2404,6 +2818,7 @@
     "progress": "{{completed}} / {{total}}",
     "relayActivationLimitReached": "This activation has reached its device limit. Use a different card or contact support.",
     "relayActivationRequired": "This device is not activated yet. Activate it to use the models.",
+    "relayApplyFailed": "The local service did not accept the model configuration. You can try again — but if it keeps failing this needs troubleshooting, not waiting. Please send us the logs.",
     "relayEntitlementRejected": "This activation can no longer be used. Activate again or use a different card.",
     "relayOrganizationMismatch": "This activation belongs to another organization, so the signed-in account cannot use it.",
     "relayRetryable": "The commercial service is not ready yet. You can try again.",
@@ -2474,6 +2889,8 @@
       "compass": "Main compass",
       "emptyHint": "Once you create a team, real collaboration status for the five roles appears here.",
       "latest": "Latest meeting: {{question}}",
+      "participants": "Actual participants",
+      "positions": "Five roles",
       "status": {
         "attention": "Needs attention",
         "disabled": "Not enabled",
@@ -2630,8 +3047,6 @@
     "degradeTitle": "Balance almost used up",
     "quotaTotal": "Total quota",
     "quotaUsed": "Used",
-    "rateLimits": "Rate Limits",
-    "resetsAt": "Resets at {{time}}",
     "unknownDesc": "The network seems unstable, so your balance could not be read. This does not mean you are out of quota — please retry in a moment.",
     "unknownTitle": "Could not confirm your quota",
     "unlicensedDesc": "Activate a licence or redeem a code to continue.",
@@ -2640,6 +3055,7 @@
   },
   "videogen": {
     "aspectInvalid": "Aspect ratio \"{{value}}\" is not supported (available: {{allowed}}). Ask the assistant to fix it.",
+    "billingPending": "Video generation did not succeed. Billing is still unconfirmed. Keep the task record and do not generate again.",
     "blockInvalid": "The videogen block in the reply did not pass validation, so nothing was generated. Ask the assistant to rewrite it in the documented format.",
     "contentRejected": "The video was blocked by a content-safety check (this kind of block is not charged). Ask the assistant to try a different description.",
     "createFailedNetwork": "Couldn't reach the video service, so this video was not generated. Ask the assistant to retry later.",
@@ -2656,14 +3072,16 @@
     "saveFailed": "The video file couldn't be saved on this computer. Ask the assistant to generate it again.",
     "taskFailed": "The video task failed. Ask the assistant to try again.",
     "timeout": "Waited too long and stopped waiting (you were not charged for this one). Ask the assistant to try again.",
-    "unsupportedField": "The request uses \"{{field}}\", which this version doesn't support (no reference images or first/last frames yet). Ask the assistant to remove it."
+    "unsupportedField": "The request uses \"{{field}}\", which this version doesn't support (no reference images or first/last frames yet). Ask the assistant to remove it.",
+    "imageRequiresSeedance": "This video uses the image you attached, which only the high-quality tier supports. Switch Video quality to High (Seedance 2.5) and ask again — or remove the image if you wanted a text-only video. Nothing was generated or charged."
   },
   "voiceInput": {
     "answerTooLong": "The answer exceeds 6000 characters. Ask for a shorter answer before playing it.",
+    "discardRecording": "Discard recording recovery",
     "introConfirm": "Got it",
     "introDescription": "Click the microphone or hold Space to speak, up to 60 seconds.",
     "introSkip": "Not now",
-    "introStepBeta": "Cloud transcription is billed at the displayed rate.",
+    "introStepBeta": "Cloud transcription is charged by the second and deducted from your credits.",
     "introStepHold": "The transcript is inserted into the input box and is never sent automatically.",
     "introStepInsert": "Short press Space still inserts a normal space.",
     "introTitle": "Voice input",
@@ -2675,19 +3093,38 @@
     "playing": "Playing…",
     "preparingSpeech": "Preparing speech…",
     "readAnswer": "Read latest answer",
-    "readAnswerFee": "Read latest answer (about {{fee}} credits)",
     "recognitionFailed": "Voice recognition failed",
-    "serviceFeeAsr": "Transcription: {{fee}} credits/minute",
-    "serviceFeeTts": "Speech: {{fee}} credits/100 characters",
+    "recoveryPending": "The speech result is unconfirmed. Retrying will reuse the original request.",
+    "retryRecognition": "Retry speech recognition",
     "stop": "Stop audio",
     "tooltip": "Voice input",
     "transcribing": "Transcribing...",
     "unsupported": "Voice input is unavailable. Continue with text input.",
-    "unsupportedTooltip": "Voice input is unavailable in this app."
+    "unsupportedTooltip": "Voice service is unavailable. Check your sign-in and network, then try again."
   },
   "workspaceNotice": {
     "dismiss": "Got it",
     "openSettings": "Open workspace settings",
     "recreated": "The original workspace folder no longer exists (it may have been moved or deleted), so a new empty workspace was created. To recover old data: check the original folder or switch workspaces."
+  },
+  "pet": {
+    "title": "Xiaoying · Desktop buddy",
+    "peek": "Look at desktop",
+    "organize": "Tidy desktop",
+    "trash": "Delete files",
+    "close": "Hide Xiaoying",
+    "desktopClean": "Your desktop is already tidy~",
+    "desktopSummary": "{{count}} files on the desktop: {{detail}}",
+    "peekFailed": "Cannot read the desktop (permission?)",
+    "organized": "Tidied up — munched {{count}} messy files~",
+    "organizeFailed": "Tidy-up failed, try again?",
+    "trashed": "Moved {{count}} files to the Recycle Bin",
+    "trashFailed": "Delete failed — nothing was moved",
+    "cancelled": "Okay, leaving it alone",
+    "line3": "Burp~ I’m full",
+    "line4": "Why are you poking me~",
+    "menuGreet": "Say hi",
+    "menu": "More",
+    "menuMove": "Move somewhere"
   }
 }

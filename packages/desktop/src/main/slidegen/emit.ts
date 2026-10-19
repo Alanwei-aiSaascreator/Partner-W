@@ -263,6 +263,47 @@ export async function applyGradients(pptxPath: string, gradients: readonly Gradi
 }
 
 /**
+ * 把产物里的**时间戳钉成常量**（2026-10-17）。
+ *
+ * 为什么必需：`pptxgenjs 4.0.1` 把 `new Date()` 写进 `docProps/core.xml`
+ * （`dcterms:created/modified`），ZIP 条目时间也取当前时间 ⇒ **同一份页面隔一秒渲染两次，
+ * 字节就不同**。后果不是只影响测试：`outputSha256` 是恢复续跑、"是不是同一份成品"、
+ * 证据链的判据 —— 跨秒就变等于这些判据永远对不上（现场红在
+ * `slidegen-render-segments > byte-identical … resumed`）。
+ *
+ * 钉成 `1980-01-01T00:00:00Z`（ZIP 的 DOS 时间下限，任何解压工具都认）。
+ * ⚠️ 产物内容一字未动，只改元数据与打包时间。
+ */
+export async function pinDeckTimestamps(pptxPath: string): Promise<number> {
+  const zip = await JSZip.loadAsync(fs.readFileSync(pptxPath));
+  const pinned = new Date(1980, 0, 1, 0, 0, 0);
+  let patched = 0;
+  const core = zip.file('docProps/core.xml');
+  if (core) {
+    const xml = await core.async('string');
+    const next = xml
+      .replace(
+        /<dcterms:created([^>]*)>[^<]*<\/dcterms:created>/,
+        '<dcterms:created$1>1980-01-01T00:00:00Z</dcterms:created>',
+      )
+      .replace(
+        /<dcterms:modified([^>]*)>[^<]*<\/dcterms:modified>/,
+        '<dcterms:modified$1>1980-01-01T00:00:00Z</dcterms:modified>',
+      );
+    if (next !== xml) {
+      zip.file('docProps/core.xml', next);
+      patched += 1;
+    }
+  }
+  for (const name of Object.keys(zip.files)) {
+    const entry = zip.files[name];
+    if (entry) entry.date = pinned;
+  }
+  fs.writeFileSync(pptxPath, await zip.generateAsync({ type: 'nodebuffer' }));
+  return patched;
+}
+
+/**
  * 写出 `.pptx`。
  *
  * ⚠️ 底色**必须从量测里取**（`<Slide>` 的 background），不能写死成封面那页的深色 ——
@@ -286,6 +327,8 @@ export async function writeSlidePptx(
   for (const page of pages) emitPage(pptx, page, assetsRoot, gradients);
   await pptx.writeFile({ fileName: outPath });
   await applyGradients(outPath, gradients);
+  // 时间戳不进产物：同一份页面两次渲染必须逐字节相同（见 `pinDeckTimestamps`）。
+  await pinDeckTimestamps(outPath);
 }
 
 function emitPage(pptx: PptxGenJS, page: SlidePage, assetsRoot: string | null, gradients: GradientTarget[]): void {

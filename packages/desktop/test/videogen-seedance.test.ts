@@ -204,7 +204,7 @@ describe('Seedance 生产入口接线（R8-06）', () => {
     mocks.saveArtifactFromBuffer.mockClear();
     mocks.findReplayArtifact.mockReset();
     mocks.findReplayArtifact.mockReturnValue(null);
-    // 工作区库：requestId 的稳定身份落在这里（库未就绪时只退化成派生 id，测不出"重启保持"）。
+    // 工作区库：requestId 的稳定身份必须在收费调用之前落库。
     initDatabase(dir);
   });
 
@@ -336,7 +336,28 @@ describe('Seedance 生产入口接线（R8-06）', () => {
     });
     expect(guarded.createCount()).toBe(0);
     expect(result.saved).toEqual([]);
-    expect(result.failed).toEqual([{ code: 'videogen-task-failed', upstreamCode: null }]);
+    expect(result.failed).toEqual([]);
+  });
+
+  it('first-frame file read awaits cannot start a paid request after source cancellation', async () => {
+    let current = true;
+    const guarded = zeroCreateClient();
+    const result = await generateVideosFromMessage({
+      workspacePath: workspace,
+      taskId: TASK_ID,
+      messageId: MESSAGE_ID,
+      content: seedanceBlock({ prompt: 'flower', firstFrame: 'images/flower.png', duration: 5 }),
+      client: guarded.client,
+      sourceCurrent: () => current,
+      onActivity: () => {
+        queueMicrotask(() => {
+          current = false;
+        });
+      },
+    });
+    expect(guarded.createCount()).toBe(0);
+    expect(result).toEqual({ saved: [], failed: [] });
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
   });
 
   it('文生视频（无首帧）不装载图片、不再造 id：H3 通道的 body 一个字节没变', async () => {
@@ -353,5 +374,43 @@ describe('Seedance 生产入口接线（R8-06）', () => {
     // H3 通道走 /v1/videos（没有 Seedance 分支字段）
     expect(captured.calls[0].url).toBe('https://relay.example/v1/videos');
     expect(Object.keys(captured.calls[0].body).sort()).toEqual(['aspectRatio', 'duration', 'prompt', 'resolution']);
+  });
+});
+
+describe('Seedance terminal billing state at the real relay client boundary', () => {
+  it('preserves pending billing as a dedicated failure and never treats it as a refund', async () => {
+    const client = createVideogenRelayClient({
+      baseUrl: 'https://relay.example',
+      relayKey: 'fixture',
+      fetchImpl: async () => Response.json({ status: 'failed', code: 0, billingPending: true }),
+    });
+    expect(await client.query('seedance:operation-1234')).toEqual({
+      status: 'failed',
+      failure: { code: 'videogen-billing-pending' },
+    });
+  });
+  it('pending billing takes precedence over a provider content rejection code', async () => {
+    const client = createVideogenRelayClient({
+      baseUrl: 'https://relay.example',
+      relayKey: 'fixture',
+      fetchImpl: async () => Response.json({ status: 'failed', code: 70000, billingPending: true }),
+    });
+    expect(await client.query('seedance:operation-1234')).toEqual({
+      status: 'failed',
+      failure: { code: 'videogen-billing-pending' },
+    });
+  });
+  it('false or absent billingPending retains the ordinary failure without asserting a refund', async () => {
+    for (const billingPending of [false, undefined, 'true']) {
+      const client = createVideogenRelayClient({
+        baseUrl: 'https://relay.example',
+        relayKey: 'fixture',
+        fetchImpl: async () => Response.json({ status: 'failed', code: 0, billingPending }),
+      });
+      expect(await client.query('seedance:operation-1234')).toEqual({
+        status: 'failed',
+        failure: { code: 'videogen-task-failed', upstreamCode: 0 },
+      });
+    }
   });
 });
