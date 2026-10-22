@@ -1,4 +1,9 @@
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb';
+import { isNativeApp, nativeGetJson, nativeRemove, nativeSetJson } from './native-bridge';
+
+// 原生壳里这两张"丢了就要重新扫码"的表走 Preferences（native 存储），不走 IndexedDB。
+const NATIVE_IDENTITY_KEY = 'identity.v1';
+const NATIVE_GATEWAYS_KEY = 'gateways.v1';
 
 interface DeviceIdentityRecord {
   id: string;
@@ -109,27 +114,49 @@ function getDb(): Promise<IDBPDatabase<ClawWorkDBSchema>> {
 }
 
 export async function getIdentity(): Promise<DeviceIdentityRecord | undefined> {
+  if (isNativeApp()) return nativeGetJson<DeviceIdentityRecord>(NATIVE_IDENTITY_KEY);
   const db = await getDb();
   const all = await db.getAll('identity', undefined, 1);
   return all[0];
 }
 
 export async function saveIdentity(record: DeviceIdentityRecord): Promise<void> {
+  if (isNativeApp()) {
+    await nativeSetJson(NATIVE_IDENTITY_KEY, record);
+    return;
+  }
   const db = await getDb();
   await db.put('identity', record);
 }
 
 export async function listGateways(): Promise<GatewayConfigRecord[]> {
+  if (isNativeApp()) return (await nativeGetJson<GatewayConfigRecord[]>(NATIVE_GATEWAYS_KEY)) ?? [];
   const db = await getDb();
   return db.getAll('gateways');
 }
 
 export async function saveGateway(record: GatewayConfigRecord): Promise<void> {
+  if (isNativeApp()) {
+    const list = (await nativeGetJson<GatewayConfigRecord[]>(NATIVE_GATEWAYS_KEY)) ?? [];
+    const index = list.findIndex((entry) => entry.id === record.id);
+    if (index >= 0) list[index] = record;
+    else list.push(record);
+    await nativeSetJson(NATIVE_GATEWAYS_KEY, list);
+    return;
+  }
   const db = await getDb();
   await db.put('gateways', record);
 }
 
 export async function updateGatewayToken(gatewayId: string, token: string): Promise<void> {
+  if (isNativeApp()) {
+    const list = (await nativeGetJson<GatewayConfigRecord[]>(NATIVE_GATEWAYS_KEY)) ?? [];
+    const gw = list.find((entry) => entry.id === gatewayId);
+    if (!gw) return;
+    gw.deviceToken = token;
+    await nativeSetJson(NATIVE_GATEWAYS_KEY, list);
+    return;
+  }
   const db = await getDb();
   const gw = await db.get('gateways', gatewayId);
   if (!gw) return;
@@ -199,12 +226,27 @@ export async function saveScopeId(id: string): Promise<void> {
 }
 
 export async function isPaired(): Promise<boolean> {
+  // ⚠️ 原生壳里配对数据存在 Preferences，**不在 IndexedDB**。
+  //    这里原来只数 IndexedDB，于是每次冷启动都判成"没配对" ⇒ 又弹配对页、
+  //    又要电脑批准一次（真机上就是这个现象）。
+  if (isNativeApp()) {
+    const [identity, gateways] = await Promise.all([
+      nativeGetJson<DeviceIdentityRecord>(NATIVE_IDENTITY_KEY),
+      nativeGetJson<GatewayConfigRecord[]>(NATIVE_GATEWAYS_KEY),
+    ]);
+    return Boolean(identity) && Array.isArray(gateways) && gateways.length > 0;
+  }
+
   const db = await getDb();
   const [gatewayCount, identityCount] = await Promise.all([db.count('gateways'), db.count('identity')]);
   return gatewayCount > 0 && identityCount > 0;
 }
 
 export async function clearAll(): Promise<void> {
+  if (isNativeApp()) {
+    await Promise.all([nativeRemove(NATIVE_IDENTITY_KEY), nativeRemove(NATIVE_GATEWAYS_KEY)]);
+    return;
+  }
   const db = await getDb();
   const tx = db.transaction(['identity', 'gateways', 'tasks', 'messages', 'preferences'], 'readwrite');
   await tx.objectStore('identity').clear();

@@ -1008,6 +1008,28 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
       pending.frames.push({ event, payload, meta: frame.meta });
       return;
     }
+    /*
+     * 不是本端发起（没有 pendingDispatch）⇒ 这是手机/另一台电脑上的轮次。
+     * 增量照旧走下面的处理器，但"用户消息"必须靠 history 补 —— 见 foreignSessionSyncAt 的注释。
+     */
+    if (!pending && typeof sessionKey === 'string') {
+      const key = `${gatewayId}|${sessionKey}`;
+      const now = Date.now();
+      const last = foreignSessionSyncAt.get(key) ?? 0;
+      // 1.5s 防抖：一轮里几十帧，既要"像实时"，又不能每帧拉一次 history。
+      if (now - last > 1_500) {
+        foreignSessionSyncAt.set(key, now);
+        const taskId = resolveTaskId(sessionKey);
+        if (taskId) {
+          // 任务已在本机：只补这一条会话（快，几毫秒），不惊动整张任务表。
+          void deps.syncSessionMessages(taskId, sessionKey).catch(() => undefined);
+        } else {
+          // 本机还没有这个任务（对端新建的会话）⇒ 走全量同步把它登记进来，否则永远找不到 task。
+          void deps.syncFromGateway().catch(() => undefined);
+        }
+      }
+    }
+
     if (event === 'chat') handleChatEvent(payload as unknown as ChatEventPayload, gatewayId, frame);
     else handleAgentEvent(payload as unknown as AgentEvent, gatewayId, frame);
   }
@@ -1879,7 +1901,18 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     }
   }
 
-  function handleSessionChangedEvent(payload: SessionChangedEvent, gatewayId: string): void {
+  const unknownSessionSyncAt = new Map<string, number>();
+
+/**
+ * 「对端发起的轮次」→ 拉一次历史，把用户那条消息本身补进来。
+ *
+ * 为什么：本端只收到 agent 增量（模型输出），**发出去的那句用户消息不会再有事件**
+ * —— 于是手机上发的消息，电脑端只看到"模型在响应"，看不到那条提问；反过来一样。
+ * 键 = gatewayId|sessionKey，5 秒防抖（一轮里会有几十帧，不能每帧拉一次 history）。
+ */
+const foreignSessionSyncAt = new Map<string, number>();
+
+function handleSessionChangedEvent(payload: SessionChangedEvent, gatewayId: string): void {
     const { sessionKey, spawnedBy, reason, phase } = payload;
     if (!sessionKey) {
       debugEvent('renderer.session.dropped.missing_session', { gatewayId, reason, phase });
@@ -1889,6 +1922,20 @@ export function createGatewayDispatcher(deps: GatewayDispatcherDeps) {
     const taskSession = deps
       .getTaskStore()
       .tasks.find((task) => task.gatewayId === gatewayId && task.sessionKey === sessionKey);
+
+    /**
+     * ⭐ 别的客户端（手机 App）刚建的会话，本机任务列表里还没有。
+     *    这里拉一次网关会话列表把它登记进来 —— 否则电脑端要等下一次手动刷新才看得见，
+     *    用户看到的就是"手机在跑，电脑上没反应"。防抖 3 秒，避免多帧事件反复拉。
+     */
+    if (!taskSession) {
+      const now = Date.now();
+      const last = unknownSessionSyncAt.get(gatewayId) ?? 0;
+      if (now - last > 3_000) {
+        unknownSessionSyncAt.set(gatewayId, now);
+        void deps.syncFromGateway().catch(() => undefined);
+      }
+    }
     if (taskSession && (!reason || !SESSION_DELETE_REASONS.has(reason))) {
       void fetchEffectiveTools(gatewayId, sessionKey);
     }

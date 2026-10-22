@@ -1,8 +1,11 @@
 import { useTranslation } from 'react-i18next';
 import { useTaskStore, useUiStore } from '../stores/hooks';
+import { ensureHydrationReady } from '../stores';
 
 interface TaskListProps {
   onSelect: () => void;
+  /** 关键词过滤（抽屉顶部的搜索框）。空串 = 不过滤。 */
+  filter?: string;
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -39,7 +42,7 @@ function groupByTime(
   return groups.filter((g) => g.tasks.length > 0);
 }
 
-export function TaskList({ onSelect }: TaskListProps) {
+export function TaskList({ onSelect, filter = '' }: TaskListProps) {
   const { t } = useTranslation();
   const tasks = useTaskStore((s) => s.tasks);
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
@@ -47,7 +50,12 @@ export function TaskList({ onSelect }: TaskListProps) {
   const unreadTaskIds = useUiStore((s) => s.unreadTaskIds);
   const clearUnread = useUiStore((s) => s.clearUnread);
 
-  const groupedTasks = groupByTime(tasks, {
+  const keyword = filter.trim().toLowerCase();
+  const visibleTasks = keyword
+    ? tasks.filter((task) => (task.title ?? '').toLowerCase().includes(keyword))
+    : tasks;
+
+  const groupedTasks = groupByTime(visibleTasks, {
     today: t('tasks.today'),
     yesterday: t('tasks.yesterday'),
     thisWeek: t('tasks.thisWeek'),
@@ -57,8 +65,8 @@ export function TaskList({ onSelect }: TaskListProps) {
   return (
     <nav className="py-2" role="navigation" aria-label={t('tasks.navigationLabel')}>
       {groupedTasks.map((group) => (
-        <div key={group.label}>
-          <div className="px-4 py-1.5">
+        <div key={group.label} className="mb-2 px-2">
+          <div className="px-2 py-1.5">
             <span className="type-meta" style={{ color: 'var(--text-muted)' }}>
               {group.label}
             </span>
@@ -69,16 +77,20 @@ export function TaskList({ onSelect }: TaskListProps) {
             return (
               <button
                 key={task.id}
-                onClick={() => {
+                onClick={async () => {
+                  // 先确保消息已从本地库灌进 store，否则切过去是一片空白，
+                  // 看起来就像"点了没反应"（真机反馈）。
+                  await ensureHydrationReady();
                   setActiveTask(task.id);
                   clearUnread(task.id);
                   onSelect();
                 }}
                 aria-label={task.title || t('tasks.newTask')}
                 aria-current={isActive ? 'true' : undefined}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left transition-colors"
+                className="list-item-card mb-1 flex w-full items-center gap-2 px-3 py-3 text-left"
                 style={{
-                  backgroundColor: isActive ? 'var(--bg-hover)' : 'transparent',
+                  backgroundColor: isActive ? 'var(--bg-hover)' : undefined,
+                  borderColor: isActive ? 'var(--accent)' : undefined,
                 }}
               >
                 <span

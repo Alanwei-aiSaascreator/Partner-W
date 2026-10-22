@@ -408,6 +408,49 @@ function notifySkillCache(gatewayId: string, slug: string, enabled: boolean, for
   });
 }
 
+/**
+ * 手机端（18780 API）用的随包技能操作。
+ *
+ * 只做转接：全部复用下面 registerSkillsHandlers 里同一套私有实现，
+ * 不复制业务逻辑（安装/修复的判据、备份、冲突处理都在一处）。
+ */
+export async function mobileListBundledSkills(gatewayId: string, agentId?: string) {
+  const skills = readBundledSkills(ourSkillsRoot());
+  const managedDir = await managedSkillsDirOf(gatewayId, agentId);
+  return {
+    managedDirKnown: managedDir !== null,
+    skills: skills.map((skill) => ({
+      ...skill,
+      installed: managedDir ? isBundledSkillInstalled(managedDir, skill.slug) : false,
+    })),
+  };
+}
+
+export async function mobileInstallBundledSkill(gatewayId: string, slug: string, agentId?: string) {
+  const managedDir = await managedSkillsDirOf(gatewayId, agentId);
+  if (!managedDir) return { ok: false as const, error: 'GATEWAY_UNAVAILABLE' };
+  const skill = readBundledSkills(ourSkillsRoot()).find((entry) => entry.slug === slug);
+  const mode: SkillInstallMode = isBundledSkillInstalled(managedDir, slug) ? 'confirmed-repair' : 'missing';
+  const outcome = installAndRecordSkill({
+    gatewayId,
+    managedDir,
+    slug,
+    packageSha: skill?.packageSha,
+    mode,
+  });
+  if (outcome.kind === 'failed') return { ok: false as const, error: outcome.error };
+  const backupDir = 'backupDir' in outcome ? outcome.backupDir : undefined;
+  return backupDir ? { ok: true as const, result: { backupDir } } : { ok: true as const };
+}
+
+export async function mobileRemoveBundledSkill(gatewayId: string, slug: string, agentId?: string) {
+  const managedDir = await managedSkillsDirOf(gatewayId, agentId);
+  if (!managedDir) return { ok: false as const, error: 'GATEWAY_UNAVAILABLE' };
+  const result = removeBundledSkill({ managedDir, slug });
+  if (result.ok) notifySkillCache(gatewayId, slug, false);
+  return result;
+}
+
 export function registerSkillsHandlers(): void {
   /**
    * 列出随包技能。**网关没连上也能列**（`installed` 全为 `false`）——

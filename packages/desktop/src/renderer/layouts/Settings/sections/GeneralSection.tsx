@@ -19,8 +19,8 @@ import SegmentedControl from '../components/SegmentedControl';
 import Toggle from '../components/Toggle';
 import SettingGroup from '@/components/semantic/SettingGroup';
 import PairMobileDialog from '../components/PairMobileDialog';
+import RemoteDevicesPanel from '../components/RemoteDevicesPanel';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { isMobileGatewayAddress } from '@/lib/mobile-pairing';
 import { isMascotHidden, setMascotHidden, subscribeMascotVisibility } from '@/lib/mascot-visibility';
 
 export default function GeneralSection() {
@@ -39,10 +39,18 @@ export default function GeneralSection() {
   const rightPanelShortcut = useUiStore((s) => s.rightPanelShortcut);
   const setRightPanelShortcut = useUiStore((s) => s.setRightPanelShortcut);
   const notifications = useSettingsStore((s) => s.settings?.notifications);
-  const mobilePairingAvailable = useSettingsStore((s) =>
-    s.settings?.gateways.some((gateway) => isMobileGatewayAddress(gateway.url)),
-  );
   const settingsLoaded = useSettingsStore((s) => s.loaded);
+  /**
+   * ⚠️ 1.0.11 起设置里不再有 `settings.gateways`（网关身份改由 `useUiStore.defaultGatewayId` 表达）。
+   *    沿用它会让条件恒为 false —— 真机现象就是「设置里根本没有『移动端』这一栏，检测不到配对入口」。
+   *    配对入口是增强能力，缺网关时让面板自己报错，不该整块隐藏。
+   */
+  const settingsGatewayId = useSettingsStore(
+    (s) => (s.settings as { defaultGatewayId?: string } | undefined)?.defaultGatewayId,
+  );
+  const uiGatewayId = useUiStore((s) => s.defaultGatewayId);
+  const remoteGatewayId = settingsGatewayId ?? uiGatewayId ?? 'local';
+  const mobilePairingAvailable = settingsLoaded || Boolean(uiGatewayId);
   const loadSettings = useSettingsStore((s) => s.load);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
 
@@ -320,6 +328,7 @@ export default function GeneralSection() {
                 {t('settings.pairMobileButton')}
               </button>
             </SettingRow>
+            <RemoteDevicesPanel gatewayId={remoteGatewayId} />
           </SettingGroup>
         </div>
       )}

@@ -67,7 +67,23 @@ function buildApi(): ClawWorkAPI {
     abortChat: (gatewayId: string, sessionKey: string) =>
       ipcRenderer.invoke('ws:abort-chat', { gatewayId, sessionKey }),
     listGateways: () => ipcRenderer.invoke('ws:list-gateways'),
+    /** 手机端配对：一次性 setup code + 隧道域名 → v2 二维码 payload（不含网关 token）。 */
+    mobilePairSetupCode: (
+      gatewayId: string,
+      publicUrl: string,
+      options?: { gatewayName?: string; deviceId?: string },
+    ) => ipcRenderer.invoke('ws:mobile-pair-setup-code', { gatewayId, publicUrl, ...(options ?? {}) }),
     listModels: (gatewayId: string, agentId?: string) => ipcRenderer.invoke('ws:models-list', { gatewayId, agentId }),
+    /** 待批/已配对的手机设备（手机首次连接后会停在这里等批准）。 */
+    copyText: (text: string) => ipcRenderer.invoke('app:copy-text', text),
+    /** 身份画像镜像（主进程读得到，手机端「个性化中心」用同一份）。 */
+    saveProfile: (profile: unknown) => ipcRenderer.invoke('profile:save', profile),
+    getProfile: () => ipcRenderer.invoke('profile:get'),
+    devicePairList: (gatewayId: string) => ipcRenderer.invoke('ws:device-pair-list', { gatewayId }),
+    devicePairApprove: (gatewayId: string, requestId: string) =>
+      ipcRenderer.invoke('ws:device-pair-approve', { gatewayId, requestId }),
+    devicePairRemove: (gatewayId: string, deviceId: string) =>
+      ipcRenderer.invoke('ws:device-pair-remove', { gatewayId, deviceId }),
     listCommands: (gatewayId: string, params?: CommandsListParams) =>
       ipcRenderer.invoke('ws:commands-list', { gatewayId, ...(params ?? {}) }),
     listAgents: (gatewayId: string) => ipcRenderer.invoke('ws:agents-list', { gatewayId }),

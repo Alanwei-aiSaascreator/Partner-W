@@ -2,7 +2,8 @@ import { lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Message } from '@clawwork/shared';
 import { ToolCallCard } from './ToolCallCard';
-import { AlertCircle } from 'lucide-react';
+import { ToolCallsGroup } from './ToolCallsGroup';
+import { AlertCircle, Bot } from 'lucide-react';
 
 const MarkdownContent = lazy(() => import('./MarkdownContent').then((m) => ({ default: m.MarkdownContent })));
 
@@ -42,8 +43,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
   if (isUser) {
     return (
       <div role="article" aria-label={t('chat.userMessage')} className="mb-4 flex justify-end">
-        <div className="rounded-2xl px-4 py-2.5" style={{ backgroundColor: 'var(--user-bubble-bg)', maxWidth: '85%' }}>
-          <p className="whitespace-pre-wrap type-body" style={{ color: 'var(--text-primary)' }}>
+        <div className="bubble-user px-4 py-2.5" style={{ maxWidth: '85%' }}>
+          <p className="whitespace-pre-wrap type-body">
             {message.content}
           </p>
         </div>
@@ -52,7 +53,16 @@ export function ChatMessage({ message }: ChatMessageProps) {
   }
 
   return (
-    <div role="article" aria-label={t('chat.assistantMessage')} className="mb-4">
+    <div role="article" aria-label={t('chat.assistantMessage')} className="mb-4 flex gap-2.5">
+      {/* 与桌面端一致：助手消息带一个圆形头像 */}
+      <div
+        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: 'var(--accent-dim)' }}
+        aria-hidden="true"
+      >
+        <Bot size={15} style={{ color: 'var(--accent)' }} />
+      </div>
+      <div className="min-w-0 flex-1">
       {message.content && (
         <div className="prose-chat type-body">
           <Suspense fallback={<MarkdownFallback content={message.content} />}>
@@ -61,13 +71,10 @@ export function ChatMessage({ message }: ChatMessageProps) {
         </div>
       )}
 
-      {message.toolCalls.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {message.toolCalls.map((toolCall) => (
-            <ToolCallCard key={toolCall.id} toolCall={toolCall} />
-          ))}
-        </div>
-      )}
+      {/* 定稿消息：工具调用不再有帧来收场 ⇒ settled 投影（running/declared → 未收到结果），
+          否则历史同步来的消息永远显示「正在执行」（2026-10-21 真机）。 */}
+      {message.toolCalls.length > 0 && <ToolCallsGroup toolCalls={message.toolCalls} settled />}
+      </div>
     </div>
   );
 }

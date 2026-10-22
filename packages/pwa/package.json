@@ -6,11 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:app": "tsc --noEmit && vite build --base=/ --outDir=dist-app",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "../../node_modules/.bin/playwright test --config ../../e2e/playwright.config.ts --project pwa"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.4",
     "@clawwork/core": "workspace:*",
     "@clawwork/shared": "workspace:*",
     "framer-motion": "^11.0.0",

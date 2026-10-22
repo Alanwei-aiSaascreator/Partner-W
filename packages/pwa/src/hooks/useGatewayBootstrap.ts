@@ -3,7 +3,7 @@ import type { DebugEvent } from '@clawwork/shared';
 import { listGateways, getIdentity, updateGatewayToken } from '../persistence/db.js';
 import { importDeviceIdentity } from '../gateway/device-identity.js';
 import { BrowserGatewayClient } from '../gateway/client.js';
-import { registerClient, destroyAllClients } from '../gateway/client-registry.js';
+import { registerClient, registerApprovalClient, destroyAllClients } from '../gateway/client-registry.js';
 import { getGatewayBroadcasters } from '../platform/index.js';
 import { dispatcher, uiStoreApi } from '../stores/index.js';
 import { useTaskStore, useUiStore } from '../stores/hooks.js';
@@ -86,6 +86,27 @@ export function useGatewayBootstrap(): void {
 
         registerClient(client);
         client.connect();
+
+        // ⚠️ 审批副连接（照桌面端 APPROVAL_CHANNEL_CAPS）：主连接 caps=['tool-events']
+        // 不满足引擎 `canDeliverApprovals(kind='exec')` 的四选一，且自己发起的回合还会被
+        // excludeConnId 跳过 —— exec 审批事件只有这条 caps=['exec-approvals'] 的副连接能收到。
+        // 与主连接同 id / 同 auth / 同 identity；事件只放行 exec.approval.*（client.ts 过滤）。
+        const approvalClient = new BrowserGatewayClient({
+          id: cfg.id,
+          name: cfg.name,
+          url: cfg.url,
+          auth,
+          identity,
+          approvalChannel: true,
+          onEvent: (data) => broadcastEvent(data),
+          onStatus: () => {
+            // 副连接不驱动主 UI 的连接状态（断线横幅 / 重连按钮由主连接负责）。
+          },
+          reportDebugEvent: (event) => reportDebugEvent(event as Partial<DebugEvent>),
+        });
+
+        registerApprovalClient(approvalClient);
+        approvalClient.connect();
       }
 
       const removeEvents = dispatcher.start();

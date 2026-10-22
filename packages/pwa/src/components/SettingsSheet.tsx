@@ -70,7 +70,7 @@ export function SettingsSheet({ open, onClose, onSignOut }: SettingsSheetProps) 
 
         <button
           onClick={toggleTheme}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-3 transition-colors"
+          className="list-item-card flex w-full items-center gap-3 px-3 py-3"
           style={{ color: 'var(--text-primary)' }}
         >
           {isDark ? <Moon size={18} /> : <Sun size={18} />}
@@ -150,7 +150,7 @@ export function SettingsSheet({ open, onClose, onSignOut }: SettingsSheetProps) 
         <div className="mt-4" style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
           <button
             onClick={onSignOut}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 transition-colors"
+            className="list-item-card flex w-full items-center gap-3 px-3 py-3"
             style={{ color: 'var(--danger)' }}
           >
             <LogOut size={18} />

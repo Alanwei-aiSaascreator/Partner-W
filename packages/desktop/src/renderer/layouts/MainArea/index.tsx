@@ -30,6 +30,7 @@ import {
   type ActiveTurn,
 } from '@clawwork/core';
 import { useTaskStore } from '@/stores/taskStore';
+import { syncSessionMessages } from '@/lib/session-sync';
 import { useMessageStore, EMPTY_MESSAGES, activeTurnToMessage } from '@/stores/messageStore';
 import { useUiStore } from '@/stores/uiStore';
 import { useFileStore } from '@/stores/fileStore';
@@ -503,6 +504,22 @@ function LiveTimeline({ children }: { children: (scope: LiveTimelineScope) => Re
   const activeTaskId = useTaskStore((s) => s.activeTaskId);
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
   const activeRoom = useRoomStore((s) => (activeTaskId ? s.rooms[activeTaskId] : undefined));
+
+  /**
+   * ⭐ 兜底轮询：打开着的任务每 2 秒拉一次 `chat.history`。
+   *
+   * 为什么必须有它：手机端发起的轮次，桌面端只收到模型增量事件 —— "用户那条消息"
+   * 不会再有事件（它是手机本地写进去的）。一次事件驱动的同步只要漏掉（重连、防抖、
+   * 任务尚未登记），这条消息就永远不出现，用户看到的就是"手机发了，电脑只看到模型在跑"。
+   * 这条轮询不依赖任何事件：DB 里有什么，界面 2 秒内必然与之一致。
+   */
+  useEffect(() => {
+    if (!activeTaskId) return;
+    const timer = window.setInterval(() => {
+      void syncSessionMessages(activeTaskId).catch(() => undefined);
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [activeTaskId]);
   const messages = useMessageStore((s) =>
     activeTaskId ? (s.messagesByTask[activeTaskId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );

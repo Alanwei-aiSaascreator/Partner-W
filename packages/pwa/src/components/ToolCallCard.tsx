@@ -4,12 +4,13 @@ import type { ToolCall } from '@clawwork/shared';
 import { Wrench, CheckCircle, Loader, AlertCircle, Clock, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface ToolCallCardProps {
-  toolCall: ToolCall;
+  /** 定稿投影后可能出现第三态 `unreported`（未收到结果），见 ToolCallsGroup。 */
+  toolCall: Omit<ToolCall, 'status'> & { status: ToolCall['status'] | 'unreported' };
 }
 
 const RESULT_TRUNCATE_LIMIT = 500;
 
-function getStatusIcon(status: ToolCall['status']) {
+function getStatusIcon(status: ToolCall['status'] | 'unreported') {
   switch (status) {
     case 'done':
       return CheckCircle;
@@ -26,14 +27,15 @@ function getStatusIcon(status: ToolCall['status']) {
     case 'declared':
       return Loader;
     // ⭐ A2「等待批准」：**不转圈** —— 转圈说的是"在动"，而这条恰恰是"没动，在等人"。
-    // ⚠️ 这个 switch 是**穷尽**的（没有 default）⇒ 桌面端那边加状态时，这里会被
-    //    `tsc` 点名（真被点过一次）——那是好事，别改成 default 把它糊过去。
     case 'awaitingApproval':
+      return Clock;
+    // 第三态「未收到结果」（对齐桌面端）：定稿后还没收场 —— 中性提醒，不转圈、不算失败。
+    case 'unreported':
       return Clock;
   }
 }
 
-function getStatusColor(status: ToolCall['status']): string {
+function getStatusColor(status: ToolCall['status'] | 'unreported'): string {
   switch (status) {
     case 'done':
       return 'var(--accent)';
@@ -43,6 +45,7 @@ function getStatusColor(status: ToolCall['status']): string {
     case 'dispatched':
     case 'declared':
     case 'awaitingApproval':
+    case 'unreported':
       return 'var(--text-muted)';
   }
 }

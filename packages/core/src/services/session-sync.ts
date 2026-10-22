@@ -504,6 +504,80 @@ export function createSessionSync(deps: SessionSyncDeps) {
 
     const messageStore = deps.getMessageStore();
     const localMsgs = messageStore.messagesByTask[taskId] ?? [];
+
+    /*
+     * ⭐ **补齐对端发的那句用户消息**。
+     *
+     * 这一路（`syncSessionMessages`）原本只搬 assistant 消息 —— user 消息是**本机 composer**
+     * 写进去的，所以"对端的提问"永远不会经这里出现。这就是反复修都没通的原因：
+     * 事件到了、历史拉到了，但代码只认 assistant。
+     *
+     * 判据：网关历史里的 user 条数 > 本机 user 条数 ⇒ 差的几条就是对端发的，按时间顺序补上。
+     */
+    const localUserMsgs = localMsgs.filter((m) => m.role === 'user');
+    const remoteUserMsgs = rawMsgs.filter((message) => message.role === 'user');
+    if (remoteUserMsgs.length > localUserMsgs.length) {
+      const missingUser = remoteUserMsgs.slice(localUserMsgs.length).map((rawMsg): Message => {
+        /*
+         * ⚠️ `content` 有两种真实形态：**字符串**（网关对普通用户消息就是这么返回的，
+         *    见 chat.history 实测）或 `[{type:'text',text}]` 数组。只按数组处理会在字符串上
+         *    `.map` 抛异常 → 整段被 catch 吞掉 → 界面什么都不变（这正是"改了还是没同步"）。
+         */
+        const rawContent: unknown = rawMsg.content;
+        let text = '';
+        if (typeof rawContent === 'string') {
+          text = rawContent;
+        } else if (Array.isArray(rawContent)) {
+          text = rawContent
+            .map((block) =>
+              block && typeof (block as { text?: unknown }).text === 'string'
+                ? (block as { text: string }).text
+                : '',
+            )
+            .join('');
+        }
+        text = text.trim();
+        /*
+         * 网关会在用户消息前面拼一段 `<response-language>…</response-language>`（实测 547 字符里
+         * 500+ 是它，真正那句"罗技的怎么样"在最后）。不剥掉的话，对端看到的是整段系统提示。
+         */
+        text = text.replace(/^<response-language>[\s\S]*?<\/response-language>\s*/i, '').trim();
+        const ts = rawMsg.timestamp;
+        const iso =
+          typeof ts === 'number'
+            ? new Date(ts).toISOString()
+            : typeof ts === 'string' && !Number.isNaN(Date.parse(ts))
+              ? new Date(Date.parse(ts)).toISOString()
+              : new Date().toISOString();
+        return {
+          id: crypto.randomUUID(),
+          taskId,
+          role: 'user',
+          content: text,
+          artifacts: [],
+          toolCalls: [],
+          timestamp: iso,
+        } as Message;
+      }).filter((message) => message.content.length > 0);
+      if (missingUser.length > 0) {
+        const merged = [...localMsgs, ...missingUser].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        messageStore.bulkLoad(taskId, merged);
+        await persistCanonicalMessages(
+          missingUser,
+          {
+            taskId,
+            messages: missingUser,
+            sessionKey,
+            agentId: task.agentId,
+            existingMessages: localMsgs,
+            gatewayId: task.gatewayId,
+            epoch,
+          },
+          epoch,
+        );
+      }
+    }
+
     const localAssistantMsgs = localMsgs.filter(
       (m) => m.role === 'assistant' && (m.sessionKey ?? task.sessionKey) === sessionKey,
     );

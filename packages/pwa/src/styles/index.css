@@ -24,38 +24,55 @@
 @layer base {
   :root,
   :root[data-theme='dark'] {
-    --bg-primary: #000000;
-    --bg-secondary: #171717;
-    --bg-tertiary: #1c1c1c;
-    --bg-hover: #2a2a2a;
-    --accent: #0ffd0d;
-    --accent-foreground: #041204;
-    --accent-dim: rgba(15, 253, 13, 0.15);
-    --text-primary: #f3f4f4;
-    --text-secondary: #9ca3af;
-    --text-muted: #6b7280;
-    --border: rgba(255, 255, 255, 0.04);
-    --border-accent: rgba(15, 253, 93, 0.15);
-    --scrollbar-thumb: #444444;
+    /* 与桌面端 packages/desktop/src/renderer/styles/theme.css 的深色令牌保持一致：
+       紫品牌色 + 深灰蓝底。手机端用绿色是早期自定的，和桌面端完全不是一套语言。 */
+    --bg-primary: #13131c;
+    --bg-secondary: #1a1a25;
+    --bg-tertiary: #20202d;
+    --bg-hover: #292936;
+    --bg-elevated: #1f1f2c;
+    --bg-input: var(--bg-primary);
+    --accent: #8088fb;
+    --accent-hover: #9097ff;
+    --accent-foreground: #0e0e18;
+    --accent-dim: rgba(128, 136, 251, 0.16);
+    --accent-soft: rgba(128, 136, 251, 0.1);
+    --accent-soft-hover: rgba(128, 136, 251, 0.18);
+    --brand-start: #a51ad1;
+    --brand-end: #ff6a2a;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #e52378 58%, var(--brand-end));
+    --brand-glow: rgba(229, 35, 120, 0.22);
+    --text-primary: #f1f1f8;
+    --text-secondary: #b0b0bf;
+    --text-muted: #797987;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-subtle: rgba(255, 255, 255, 0.05);
+    --border-accent: rgba(128, 136, 251, 0.3);
+    --border-hover: var(--border-accent);
+    --scrollbar-thumb: #383846;
     --scrollbar-track: transparent;
-    --danger: #f87171;
-    --danger-bg: rgba(248, 113, 113, 0.1);
-    --warning: #f59e0b;
-    --info: #3b82f6;
-    --accent-hover: #0de00b;
-    --accent-soft: rgba(15, 253, 13, 0.1);
-    --accent-soft-hover: rgba(15, 253, 13, 0.18);
-    --bg-elevated: #2f2f2f;
-    --ring-accent: rgba(15, 253, 13, 0.4);
-    --glow-accent: rgba(15, 253, 13, 0.06);
-    --shadow-elevated: none;
-    --shadow-card: none;
-    --shadow-floating: 0 10px 28px rgba(0, 0, 0, 0.45);
-    --shadow-dialog: 0 18px 48px rgba(0, 0, 0, 0.5);
-    --overlay-scrim: rgba(0, 0, 0, 0.5);
-    --border-subtle: rgba(255, 255, 255, 0.03);
-    --input-bar-bg: #2f2f2f;
-    --user-bubble-bg: #2f2f2f;
+    --danger: #f07079;
+    --danger-bg: rgba(240, 112, 121, 0.12);
+    --warning: #e6b35a;
+    --bg-warning: rgba(230, 179, 90, 0.12);
+    --border-warning: rgba(230, 179, 90, 0.28);
+    --info: #6aa9ed;
+    --ring-accent: rgba(128, 136, 251, 0.4);
+    --glow-accent: rgba(128, 136, 251, 0.08);
+    --elev-1: 0 0 0 0.5px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.25), 0 2px 3px rgba(0, 0, 0, 0.2);
+    --elev-2:
+      0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 10px rgba(0, 0, 0, 0.28),
+      0 12px 28px rgba(0, 0, 0, 0.25);
+    --elev-3:
+      0 0 0 0.5px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.35), 0 12px 24px rgba(0, 0, 0, 0.35),
+      0 32px 64px rgba(0, 0, 0, 0.4);
+    --shadow-card: var(--elev-1);
+    --shadow-elevated: var(--elev-2);
+    --shadow-floating: var(--elev-3);
+    --shadow-dialog: var(--elev-3);
+    --overlay-scrim: rgba(0, 0, 0, 0.55);
+    --input-bar-bg: #1a1a25;
+    --user-bubble-bg: #26263a;
     --surface-page: var(--bg-primary);
     --surface-panel: var(--bg-secondary);
     --surface-card: var(--bg-secondary);
@@ -81,44 +98,60 @@
   }
 
   :root[data-theme='light'] {
-    --bg-primary: #fafafa;
-    --bg-secondary: #ffffff;
-    --bg-tertiary: #f3f4f6;
-    --bg-hover: #e5e7eb;
-    --accent: #0b8a0a;
-    --accent-foreground: #ffffff;
-    --accent-dim: rgba(11, 138, 10, 0.1);
-    --text-primary: #111827;
-    --text-secondary: #6b7280;
-    --text-muted: #9ca3af;
-    --border: rgba(0, 0, 0, 0.08);
-    --border-accent: rgba(11, 138, 10, 0.15);
-    --scrollbar-thumb: #d1d5db;
-    --scrollbar-track: transparent;
-    --danger: #dc2626;
-    --danger-bg: rgba(220, 38, 38, 0.08);
-    --warning: #f59e0b;
-    --info: #3b82f6;
-    --accent-hover: #0a7a09;
-    --accent-soft: rgba(11, 138, 10, 0.08);
-    --accent-soft-hover: rgba(11, 138, 10, 0.14);
+    /* 桌面端浅色：暖白底 + 玫红品牌色（不是绿色）。 */
+    --bg-primary: #f4f3ef;
+    --bg-secondary: #fbfaf7;
+    --bg-tertiary: #efeee9;
+    --bg-hover: #e9e8e2;
     --bg-elevated: #ffffff;
-    --ring-accent: rgba(11, 138, 10, 0.3);
-    --glow-accent: rgba(11, 138, 10, 0.04);
-    --shadow-elevated: 0 2px 12px rgba(0, 0, 0, 0.08);
-    --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
-    --shadow-floating: 0 10px 28px rgba(0, 0, 0, 0.14);
-    --shadow-dialog: 0 18px 48px rgba(0, 0, 0, 0.18);
-    --overlay-scrim: rgba(0, 0, 0, 0.5);
-    --border-subtle: rgba(0, 0, 0, 0.06);
+    --bg-input: var(--bg-primary);
+    --accent: #c51d78;
+    --accent-hover: #a81667;
+    --accent-foreground: #ffffff;
+    --accent-dim: rgba(197, 29, 120, 0.1);
+    --accent-soft: rgba(197, 29, 120, 0.07);
+    --accent-soft-hover: rgba(197, 29, 120, 0.13);
+    --brand-start: #a30fd0;
+    --brand-end: #ff6b2b;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #e51d78 58%, var(--brand-end));
+    --brand-glow: rgba(229, 29, 120, 0.18);
+    --text-primary: #17171c;
+    --text-secondary: #3a3a42;
+    --text-muted: #6e6e7a;
+    --border: rgba(23, 23, 28, 0.07);
+    --border-subtle: rgba(23, 23, 28, 0.045);
+    --border-accent: rgba(197, 29, 120, 0.24);
+    --border-hover: var(--border-accent);
+    --scrollbar-thumb: #d0d0cb;
+    --scrollbar-track: transparent;
+    --danger: #d9434b;
+    --danger-bg: rgba(217, 67, 75, 0.08);
+    --warning: #c48a18;
+    --bg-warning: rgba(196, 138, 24, 0.1);
+    --border-warning: rgba(196, 138, 24, 0.26);
+    --info: #2f7bd1;
+    --ring-accent: rgba(197, 29, 120, 0.3);
+    --glow-accent: rgba(197, 29, 120, 0.08);
+    --elev-1: 0 0 0 0.5px rgba(23, 23, 28, 0.06), 0 1px 1px rgba(23, 23, 28, 0.03), 0 2px 3px rgba(23, 23, 28, 0.02);
+    --elev-2:
+      0 0 0 0.5px rgba(23, 23, 28, 0.07), 0 1px 1px rgba(23, 23, 28, 0.04), 0 4px 10px rgba(23, 23, 28, 0.04),
+      0 12px 28px rgba(23, 23, 28, 0.05);
+    --elev-3:
+      0 0 0 0.5px rgba(23, 23, 28, 0.08), 0 2px 4px rgba(23, 23, 28, 0.06), 0 12px 24px rgba(23, 23, 28, 0.08),
+      0 32px 64px rgba(23, 23, 28, 0.12);
+    --shadow-card: var(--elev-1);
+    --shadow-elevated: var(--elev-2);
+    --shadow-floating: var(--elev-3);
+    --shadow-dialog: var(--elev-3);
+    --overlay-scrim: rgba(23, 23, 28, 0.28);
     --surface-page: var(--bg-primary);
     --surface-panel: var(--bg-secondary);
     --surface-card: var(--bg-secondary);
     --surface-elevated-bg: var(--bg-elevated);
     --surface-floating-bg: var(--bg-elevated);
     --surface-dialog-bg: var(--bg-elevated);
-    --input-bar-bg: #f3f4f6;
-    --user-bubble-bg: #f3f4f6;
+    --input-bar-bg: #fbfaf7;
+    --user-bubble-bg: #efeee9;
     --state-hover: var(--bg-hover);
     --state-selected: var(--accent-dim);
   }
@@ -356,10 +389,15 @@
     letter-spacing: -0.011em;
   }
   .safe-area-top {
-    padding-top: var(--safe-area-top);
+    /*
+      原生壳会注入 `--inset-top`（MainActivity 读真实 WindowInsets 写进来）。
+      为什么不用 env() 就完事：Android WebView 的 env(safe-area-inset-top) 恒为 0，
+      只有 iOS Safari 才会给值。两个取最大，谁有值算谁。
+    */
+    padding-top: max(env(safe-area-inset-top, 0px), var(--inset-top, 0px));
   }
   .safe-area-bottom {
-    padding-bottom: var(--safe-area-bottom);
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), var(--inset-bottom, 0px));
   }
   .safe-area-x {
     padding-left: var(--safe-area-left);
@@ -374,5 +412,491 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---- 与桌面端一致：思考扫光 + 深度思考折叠 ---- */
+.text-shimmer {
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--text-primary) 26%, transparent) 0%,
+    color-mix(in srgb, var(--text-primary) 26%, transparent) 35%,
+    color-mix(in srgb, var(--text-primary) 60%, transparent) 50%,
+    color-mix(in srgb, var(--text-primary) 26%, transparent) 65%,
+    color-mix(in srgb, var(--text-primary) 26%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  width: fit-content;
+  animation: text-shimmer-sweep 2.2s linear infinite;
+}
+
+@keyframes text-shimmer-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.thinking-collapse {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 2px;
+}
+
+.thinking-collapse__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.75;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.18s;
+}
+
+.thinking-collapse__header:active {
+  color: var(--text-primary);
+}
+
+.thinking-collapse__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: -4px;
+  flex: none;
+  transform-origin: 50%;
+  transition:
+    transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.18s,
+    color 0.18s;
+}
+
+.thinking-collapse--expanded .thinking-collapse__icon {
+  transform: rotate(90deg);
+}
+
+.thinking-collapse--collapsed .thinking-collapse__icon {
+  opacity: 0;
+  transform: rotate(0deg);
+}
+
+.thinking-collapse--done.thinking-collapse--collapsed .thinking-collapse__icon {
+  opacity: 1;
+}
+
+.thinking-collapse__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinking-collapse__content {
+  interpolate-size: allow-keywords;
+  height: auto;
+  overflow: hidden;
+  contain: layout paint;
+  opacity: 1;
+  transition:
+    height 0.28s cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 0.2s ease-out;
+}
+
+.thinking-collapse--collapsed .thinking-collapse__content {
+  height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    height 0.28s cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 0.18s ease-out,
+    visibility 0s linear 0.28s;
+}
+
+.thinking-collapse__body {
+  border-left: 4px solid var(--border-subtle);
+  margin: 8px 0 4px;
+  padding-left: 12px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+/* ---- 活动条（调用模型时的跳动竖条，对齐桌面端 ActivityBars） ---- */
+.activity-bar {
+  display: block;
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+  background-color: var(--accent);
+  transform-origin: bottom;
+  animation: bar-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes bar-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* ── 首屏「发光星球」动效 ──────────────────────────────────────────────
+   只动 transform / opacity / filter：手机上（WebView）走合成层，不触发重排。
+   用户开了「减少动态效果」就全部停掉。 */
+
+@keyframes heroSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes heroPulse {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes heroTwinkle {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes heroScan {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hero-planet {
+  animation: heroSpin 46s linear infinite;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.hero-glow {
+  animation: heroPulse 7s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.hero-stars {
+  animation: heroTwinkle 5.5s ease-in-out infinite;
+  will-change: opacity;
+}
+
+.hero-stars--slow {
+  animation-duration: 9s;
+  animation-delay: -2.5s;
+}
+
+.hero-scan {
+  position: absolute;
+  inset: -18%;
+  border-radius: 9999px;
+  background: conic-gradient(from 0deg, rgba(160,110,255,0) 0deg, rgba(160,110,255,0.18) 42deg, rgba(160,110,255,0) 96deg);
+  animation: heroScan 18s linear infinite;
+  pointer-events: none;
+  filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-planet,
+  .hero-glow,
+  .hero-stars,
+  .hero-stars--slow,
+  .hero-scan {
+    animation: none !important;
+  }
+}
+
+/* ── 「深度思考」重制 ────────────────────────────────────────────────
+   原来是一条 4px 灰色左边框，像引用块、很廉价。改成一张"精致小卡"：
+   细边 + 极淡紫渐变 + 内高光；正文默认**降低对比并轻微虚化**（思考不是结论，
+   不该和答复抢注意力），正在思考时还原清晰 + 呼吸点。 */
+
+@keyframes thinkingDot {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.thinking-collapse {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 8px;
+  padding: 9px 11px;
+  border-radius: 14px;
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  background:
+    linear-gradient(180deg, rgba(139, 92, 246, 0.075) 0%, rgba(139, 92, 246, 0.02) 55%, rgba(139, 92, 246, 0) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 1px 2px rgba(20, 10, 40, 0.04);
+}
+
+.thinking-collapse--live {
+  border-color: rgba(139, 92, 246, 0.38);
+}
+
+.thinking-collapse__header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  line-height: 1.5;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.18s;
+}
+
+.thinking-collapse__header:active {
+  color: var(--text-primary);
+}
+
+.thinking-collapse__live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
+  animation: thinkingDot 1.4s ease-in-out infinite;
+  flex: none;
+}
+
+.thinking-collapse__body {
+  border-left: 0;
+  margin: 7px 0 0;
+  padding-left: 0;
+  max-height: 190px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+  /* 「虚化」= 低对比 + 极轻模糊：读得出来，但不是视线焦点 */
+  opacity: 0.82;
+  filter: blur(0.35px) saturate(0.9);
+  transition:
+    filter 0.22s ease-out,
+    opacity 0.22s ease-out;
+}
+
+.thinking-collapse--live .thinking-collapse__body {
+  opacity: 1;
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-collapse__live-dot {
+    animation: none;
+  }
+}
+
+/* ── 全局设计语言：模块页入场 + 玻璃吸顶 header ─────────────────────
+   参考稿的"分量"来自三件事：层级（浮起的卡片）、材质（半透明玻璃）、运动（进入有来处）。
+   这里只补运动与材质，**不改任何色值** —— 强调色仍取 `--accent` 原色系。 */
+
+@keyframes sheetIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.module-sheet {
+  animation: sheetIn 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform, opacity;
+}
+
+.module-sheet > header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* 列表/卡片统一：细边 + 内高光（原色系，只加质感） */
+.ui-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition:
+    transform 0.14s ease-out,
+    box-shadow 0.14s ease-out;
+}
+
+.ui-card:active {
+  transform: scale(0.988);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .module-sheet,
+  .ui-card {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── 对话区 / 输入区 / 列表项的材质统一 ──────────────────────────────
+   一律沿用原色系的 `--accent`，只加梯度、阴影与玻璃，不换颜色。 */
+
+.bubble-user {
+  background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 72%, #7c3aed) 100%);
+  color: #fff;
+  border-radius: 18px 18px 6px 18px;
+  box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--accent) 85%, transparent);
+}
+
+.bubble-user * {
+  color: #fff !important;
+}
+
+.composer-shell {
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    0 10px 30px -18px rgba(20, 10, 40, 0.35);
+}
+
+.composer-send {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, #fff) 0%, var(--accent) 100%);
+  color: var(--accent-foreground, #fff);
+  box-shadow: 0 6px 16px -10px color-mix(in srgb, var(--accent) 90%, transparent);
+  transition:
+    transform 0.12s ease-out,
+    opacity 0.12s ease-out;
+}
+
+.composer-send:active {
+  transform: scale(0.94);
+}
+
+.list-item-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  transition:
+    transform 0.12s ease-out,
+    background-color 0.12s ease-out;
+}
+
+.list-item-card:active {
+  transform: scale(0.99);
+  background: var(--bg-hover);
+}
+
+/* 骨架屏（首屏加载时用，避免一片空白） */
+@keyframes skeletonShimmer {
+  from {
+    background-position: -160% 0;
+  }
+  to {
+    background-position: 260% 0;
+  }
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 8px;
+  background-image: linear-gradient(
+    90deg,
+    var(--bg-secondary) 0%,
+    color-mix(in srgb, var(--bg-secondary) 55%, var(--bg-hover)) 45%,
+    var(--bg-secondary) 100%
+  );
+  background-size: 220% 100%;
+  animation: skeletonShimmer 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}
+
+
+.thinking-collapse__hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+@media (max-width: 380px) {
+  .thinking-collapse__hint {
+    display: none;
   }
 }

@@ -5,6 +5,7 @@ import { reportDebugEvent } from './lib/debug';
 import { useGatewayBootstrap } from './hooks/useGatewayBootstrap';
 import { useUiStore } from './stores/hooks';
 import { reconnectAllClients } from './gateway/client-registry';
+import { clearAll } from './persistence/db';
 import { DrawerLayout } from './views/DrawerLayout';
 import { Toaster } from 'sonner';
 import { useThemeInit } from './hooks/useThemeInit';
@@ -16,6 +17,18 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [paired, setPaired] = useState(false);
   const storeTheme = useUiStore((s) => s.theme);
+
+  // 带配对参数的链接强制进配对页（哪怕本地已配对过）：给真机联调用的后门。
+  // ⚠️ 只取**首次渲染**的值：配对成功后要复位，否则 URL 参数还在，用户会一直
+  //    停在配对页（实测踩过）。
+  const [forcePairing, setForcePairing] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return Boolean(params.get('pair') || (params.get('host') && params.get('token')));
+    } catch {
+      return false;
+    }
+  });
 
   useThemeInit();
 
@@ -41,10 +54,19 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Suspense fallback={<LoadingSpinner text={t('app.loading')} />}>
-        {paired ? (
+        {paired && !forcePairing ? (
           <AppShell onSignedOut={() => setPaired(false)} />
         ) : (
-          <PairingViewLazy onPaired={() => setPaired(true)} />
+          <PairingViewLazy
+            onPaired={() => {
+              setPaired(true);
+              setForcePairing(false);
+              // 配对成功后清掉 URL 里的配对参数，避免刷新又被打回配对页。
+              if (window.location.search) {
+                window.history.replaceState({}, '', window.location.pathname);
+              }
+            }}
+          />
         )}
       </Suspense>
       <Toaster theme={storeTheme === 'auto' ? 'system' : storeTheme} richColors position="top-center" />
@@ -78,17 +100,45 @@ function AppShell({ onSignedOut }: { onSignedOut: () => void }) {
         <p className="max-w-sm text-center type-support" style={{ color: 'var(--text-muted)' }}>
           {t('pairing.instruction')}
         </p>
-        <button
-          onClick={reconnectAllClients}
-          className="rounded-xl px-6 type-body"
-          style={{
-            backgroundColor: 'var(--accent)',
-            color: 'var(--accent-foreground)',
-            minHeight: 44,
-          }}
-        >
-          {t('shell.reconnect')}
-        </button>
+        <div className="flex w-full max-w-xs flex-col gap-2">
+          <button
+            onClick={reconnectAllClients}
+            className="w-full rounded-xl px-6 type-body"
+            style={{
+              backgroundColor: 'var(--accent)',
+              color: 'var(--accent-foreground)',
+              minHeight: 44,
+            }}
+          >
+            {t('shell.reconnect')}
+          </button>
+          {/*
+           * ⚠️ 出口必须有：真机上这一步曾经是个死胡同 —— 首次连接失败后整屏只剩"重新连接"，
+           *    用户既回不到扫码页、也清不掉坏凭据（唯一的办法是卸载重装）。
+           *    "重新配对"= 清空本地身份/网关后重载，回到扫码页。
+           */}
+          <button
+            onClick={() => {
+              void (async () => {
+                try {
+                  await clearAll();
+                } catch {
+                  /* 清不掉也要往下走：重载后至少能重新扫码 */
+                }
+                window.location.replace(`${import.meta.env.BASE_URL}?forcePairing=1`);
+              })();
+            }}
+            className="w-full rounded-xl px-6 type-body"
+            style={{
+              backgroundColor: 'var(--bg-secondary)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-subtle)',
+              minHeight: 44,
+            }}
+          >
+            {t('pairing.restartPairing')}
+          </button>
+        </div>
       </div>
     );
   }

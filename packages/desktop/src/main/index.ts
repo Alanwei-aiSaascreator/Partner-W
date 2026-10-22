@@ -1,4 +1,4 @@
-import { app, dialog, shell, BrowserWindow, Menu, ipcMain, globalShortcut, protocol } from 'electron';
+import { app, dialog, shell, BrowserWindow, Menu, ipcMain, globalShortcut, protocol, clipboard } from 'electron';
 import { join } from 'path';
 import { electronApp, is } from '@electron-toolkit/utils';
 import { existsSync } from 'node:fs';
@@ -44,6 +44,7 @@ import { registerAnalyticsHandlers } from './ipc/analytics-handlers.js';
 import { registerPrivacyHandlers } from './ipc/privacy-handlers.js';
 import { registerKbHandlers } from './ipc/kb-handlers.js';
 import { registerSkillsHandlers } from './skills/handlers.js';
+import { registerProfileHandlers } from './ipc/profile-handlers.js';
 import { buildKbRuntime, ensureKbRuntime } from './kb/runtime.js';
 import { setupAnalytics, teardownAnalytics } from './analytics/setup.js';
 import { initUsageReporter, destroyUsageReporter } from './commercial/usage-reporter.js';
@@ -104,6 +105,12 @@ import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runt
 import { removableDrives } from './workspace/removable-drives.js';
 import { GATEWAY_WS_PORT } from '@clawwork/shared';
 import type { RuntimeDeployProgress } from '@clawwork/shared';
+import {
+  getRemoteAccessService,
+  notifyGatewayConnected,
+  startRemoteAccess,
+  stopRemoteAccess,
+} from './remote-access/index.js';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'clawwork-avatar', privileges: { secure: true, supportFetchAPI: true } },
@@ -658,6 +665,7 @@ continueAfterPortableAppData(
           registerKbHandlers();
           // 「我们自己的技能」—— 随包目录 + 一键装/卸（T-a2）。
           registerSkillsHandlers();
+
           // ⭐ M3（BUG-034）：画像保存成功后的 DOMStorage 落盘请求。
           //    sender 定 session、渲染层无参；`requested` 仅为"已请求"，非物理落盘确认。
           registerProfileStorageHandlers();
@@ -704,6 +712,44 @@ continueAfterPortableAppData(
           registerPetHandlers();
           // 视频画质档位（标准 / 豆包 Seedance 2.5 高质量）。
           registerVideoQualityHandlers();
+
+          registerProfileHandlers();
+
+          // 手机端远程访问：18780 统一入口 + frpc（技术方案 v1.2 §5.2）。
+          // ⚠️ 不 await、不抛：远程访问是增强能力，起不来只让设置里显示"已降级 + 原因"，
+          //    绝不能拖垮桌面端启动（这是 M1 起的第一条硬约束）。
+          void startRemoteAccess();
+
+          // `allowedOrigins` 必须在网关 hello-ok 之后才写得进去：冷启动时网关还没起来，
+          // 远程访问服务里那次写入必然失败。这里 5s 轮询一次，写成功即停（幂等）。
+          // 失败要继续重试（网关可能还在重启），成功或尝试 120 次（10 分钟）才停。
+          let remoteOriginAttempts = 0;
+          const remoteOriginTimer = setInterval(() => {
+            remoteOriginAttempts += 1;
+            const gatewayClient = getGatewayClient(LOCAL_GATEWAY_ID);
+            const giveUp = remoteOriginAttempts > 120;
+            if (!gatewayClient?.isConnected) {
+              if (giveUp) clearInterval(remoteOriginTimer);
+              return;
+            }
+            void notifyGatewayConnected().then(() => {
+              const configured = getRemoteAccessService().getStatus().gatewayConfigured === true;
+              if (configured || giveUp) clearInterval(remoteOriginTimer);
+            });
+          }, 5_000);
+
+          /**
+           * 复制文本到系统剪贴板。
+           *
+           * 为什么不用渲染层的 `navigator.clipboard`：Electron 里它要求安全上下文 +
+           * 焦点在文档上，弹窗刚开时经常直接 reject —— 真机验证时就是「复制失败」。
+           * 主进程的 clipboard 模块没有这些限制。
+           */
+          ipcMain.handle('app:copy-text', (_event, text: unknown) => {
+            clipboard.writeText(String(text ?? ''));
+            return { ok: true };
+          });
+
 
           ipcMain.handle('app:rebuild-menu', () => {
             devModeEnabled = readConfig()?.devMode === true;
@@ -1036,6 +1082,9 @@ app.on('before-quit', (event) => {
           console.error('[runtime] 退出时收尾失败（忽略，继续退出）:', err);
         })
         .finally(async () => {
+          // 先停远程访问（frpc + 18780），再拆网关：两者都握着本机端口，
+          // 顺序反了会让 frpc 在网关消失后短暂对着空端口重试。
+          await stopRemoteAccess().catch(() => {});
           destroyAllGateways();
           destroyTray();
           destroyQuickLaunch();

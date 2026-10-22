@@ -14,6 +14,7 @@ import {
   summarizePayload,
 } from '@clawwork/shared';
 import { buildDeviceConnectPayload } from './auth.js';
+import { PWA_MAX_PROTOCOL, PWA_MIN_PROTOCOL, PWA_OPERATOR_SCOPES, PWA_REQUIRED_PROTOCOL } from './scopes.js';
 import type { DeviceIdentity } from './device-identity.js';
 import type { GatewayAuth } from '@clawwork/shared';
 
@@ -30,12 +31,33 @@ type PendingReq = {
   taskId?: string;
 };
 
+/**
+ * 审批副连接只转发这一族事件（与桌面端 `APPROVAL_CHANNEL_EVENTS` 同口径）。
+ *
+ * ⚠️ 不能转发全部：tick / health / chat / agent 是广播事件，两条连接都会收到，
+ * 全转发 = 渲染层每帧两遍。这条连接存在的唯一理由是收 `exec.approval.*` ——
+ * 主连接 caps=['tool-events'] 不满足引擎 `canDeliverApprovals(kind='exec')` 的
+ * 四选一（且自己发起的回合还会被 excludeConnId 跳过），所以必须另开一条
+ * caps=['exec-approvals'] 的副连接（照桌面端 APPROVAL_CHANNEL_CAPS 修法）。
+ *
+ * ⚠️ 刻意只加 `exec-approvals`，不加通用 `approvals` cap：那会让
+ * plugin.approval.* / openclaw.approval.* 也变成可投递，而手机端没接线，收到只会被丢掉。
+ */
+const APPROVAL_CHANNEL_EVENTS = new Set(['exec.approval.requested', 'exec.approval.resolved']);
+
 type BrowserGatewayClientConfig = {
   id: string;
   name: string;
   url: string;
   auth?: GatewayAuth;
   identity: DeviceIdentity;
+  /** 手机端权限天花板；默认 PWA_OPERATOR_SCOPES（不含 admin / pairing）。 */
+  scopes?: readonly string[];
+  /**
+   * 审批副连接：hello 带 caps=['exec-approvals']，事件只放行 exec.approval.*。
+   * 与主连接同 id / 同 auth / 同 identity（网关按 connId 排除请求者，不按 client.id）。
+   */
+  approvalChannel?: boolean;
   onEvent?: (data: { event: string; payload: Record<string, unknown>; gatewayId: string; seq?: number }) => void;
   onStatus?: (data: {
     gatewayId: string;
@@ -60,6 +82,8 @@ export class BrowserGatewayClient {
   private readonly url: string;
   private readonly auth?: GatewayAuth;
   private readonly identity: DeviceIdentity;
+  private readonly scopes: readonly string[];
+  private readonly approvalChannel: boolean;
   private readonly onEvent?: BrowserGatewayClientConfig['onEvent'];
   private readonly onStatus?: BrowserGatewayClientConfig['onStatus'];
   private readonly onPairingSuccess?: BrowserGatewayClientConfig['onPairingSuccess'];
@@ -85,6 +109,8 @@ export class BrowserGatewayClient {
     this.url = config.url;
     this.auth = config.auth;
     this.identity = config.identity;
+    this.scopes = config.scopes ?? PWA_OPERATOR_SCOPES;
+    this.approvalChannel = config.approvalChannel === true;
     this.deviceToken = config.auth?.deviceToken;
     this.onEvent = config.onEvent;
     this.onStatus = config.onStatus;
@@ -226,11 +252,13 @@ export class BrowserGatewayClient {
     });
   }
 
-  private sessionMeta(sessionKey: string) {
+  // 公开：其他 store（如 questionStore 的 question.resolve/cancel）需要与
+  // 桌面端一致地带上 requestId + sessionKey + taskId 的会话元信息。
+  sessionMeta(sessionKey?: string | null) {
     return {
       requestId: this.nextReqId(),
-      sessionKey,
-      taskId: parseTaskIdFromSessionKey(sessionKey) ?? undefined,
+      sessionKey: sessionKey ?? undefined,
+      taskId: (sessionKey && parseTaskIdFromSessionKey(sessionKey)) || undefined,
     };
   }
 
@@ -355,6 +383,11 @@ export class BrowserGatewayClient {
         return;
       }
 
+      // 审批副连接只转发 exec.approval.*（其余都是广播事件，转发 = 每帧两遍）。
+      if (this.approvalChannel && !APPROVAL_CHANNEL_EVENTS.has(eventFrame.event)) {
+        return;
+      }
+
       const payload = eventFrame.payload as Record<string, unknown>;
       const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey : undefined;
 
@@ -382,7 +415,7 @@ export class BrowserGatewayClient {
 
   private handleChallenge(nonce: string): void {
     this.state = 'authorization_pending';
-    const scopes = ['operator.admin', 'operator.write', 'operator.read', 'operator.approvals', 'operator.pairing'];
+    const scopes = [...this.scopes];
     const signatureToken =
       this.auth && 'token' in this.auth
         ? this.auth.token
@@ -405,17 +438,19 @@ export class BrowserGatewayClient {
         }
 
         const params: GatewayConnectParams = {
-          minProtocol: 3,
-          maxProtocol: 3,
+          minProtocol: PWA_MIN_PROTOCOL,
+          maxProtocol: PWA_MAX_PROTOCOL,
           client: {
             id: 'gateway-client',
-            displayName: 'ClawWork PWA',
+            // 同一份身份（网关按 connId 排除请求者、不按 client.id 判四选一）；
+            // 后缀只为在网关的客户端列表里分得清。
+            displayName: this.approvalChannel ? 'ClawWork PWA (approvals)' : 'ClawWork PWA',
             version: __APP_VERSION__,
             platform: 'pwa',
             mode: 'backend',
             deviceFamily: 'mobile',
           },
-          caps: ['tool-events'],
+          caps: this.approvalChannel ? ['exec-approvals'] : ['tool-events'],
           auth: auth as GatewayConnectParams['auth'],
           role: 'operator',
           scopes,
@@ -442,6 +477,16 @@ export class BrowserGatewayClient {
   private handleConnectResponse(payload: Record<string, unknown>): void {
     const pType = payload['type'] as string | undefined;
     if (pType === 'hello-ok') {
+      // 协议版本低于 4 = 电脑端太旧（方案 v1.1 §6.1）。字段缺失不拦（老网关未必发），
+      // 但只要报出来的版本过旧就必须断开：否则手机会在"以为连上"的状态里发错帧。
+      const negotiated = typeof payload['protocol'] === 'number' ? (payload['protocol'] as number) : undefined;
+      if (negotiated !== undefined && negotiated < PWA_REQUIRED_PROTOCOL) {
+        this._lastError = 'gateway protocol too old';
+        this.debug('gateway.connect.protocol.too-old', { protocol: negotiated });
+        this.ws?.close(WS_CLOSE_POLICY_VIOLATION, 'protocol too old');
+        return;
+      }
+
       this.state = 'connected';
       this.reconnectAttempts = 0;
       this._lastError = undefined;
@@ -472,6 +517,23 @@ export class BrowserGatewayClient {
       }
 
       this.startHeartbeat();
+
+      /**
+       * ⚠️ 关键：订阅会话事件。
+       *
+       * 不订阅的话，网关虽然照常执行 `chat.send`，但**不会把 session/delta 推给这条连接** ——
+       * 真机表现就是"消息发出去了，回复永远不出来"（手机端 5 分钟没反应，桌面端正常）。
+       * 桌面壳在连接后第一件事就是发这条（`sessions.subscribe`），PWA 之前漏了。
+       *
+       * 审批副连接跳过：它只收 exec.approval.*，订阅会话是白收一堆被过滤掉的广播帧。
+       */
+      if (!this.approvalChannel) {
+        void this.sendReq('sessions.subscribe', {}, { requestId: 'sessions-subscribe' }).catch((err: unknown) => {
+          this.debug('gateway.sessions.subscribe.failed', {
+            error: err instanceof Error ? err.message : 'subscribe failed',
+          });
+        });
+      }
 
       this.onStatus?.({
         gatewayId: this.gatewayId,
@@ -575,7 +637,8 @@ export class BrowserGatewayClient {
 
   private scheduleReconnect(): void {
     if (this.destroyed) return;
-    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    // 移动端不放弃：断线后一直按 5 秒重试（原逻辑 10 次后彻底放弃，用户只能杀 App）
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS * 20) {
       this.debug('gateway.reconnect.give-up', {
         attempts: this.reconnectAttempts,
       });
@@ -590,7 +653,16 @@ export class BrowserGatewayClient {
       return;
     }
 
-    const delay = RECONNECT_DELAY_MS * Math.pow(2, Math.min(this.reconnectAttempts, 5));
+    /*
+     * ⚠️ 移动端退避必须短：原先是 1s/2s/4s/8s/16s/32s 指数退避，一次弱网抖动
+     *    （切后台、Wi-Fi/4G 切换、隧道空闲断开）就能让用户干等 30 秒以上 ——
+     *    真机现象就是"发了消息，半分钟才出字"。
+     *    现在：首次 300ms 立刻重连，之后最多 5 秒一次，且永不放弃（见下面 MAX 判断）。
+     */
+    const delay =
+      this.reconnectAttempts === 0
+        ? 300
+        : Math.min(500 * Math.pow(2, Math.min(this.reconnectAttempts, 4)), 5_000);
     this.reconnectAttempts++;
 
     this.debug('gateway.reconnect.scheduled', {

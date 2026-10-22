@@ -492,6 +492,21 @@ export interface ClawWorkAPI {
   abortChat: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
 
   listModels: (gatewayId: string, agentId?: string) => Promise<IpcResult>;
+  /** 待批/已配对的手机设备。 */
+  /** 复制文本到系统剪贴板（走主进程，不依赖 navigator.clipboard 的安全上下文）。 */
+  copyText: (text: string) => Promise<IpcResult>;
+  /** 身份画像镜像（供手机端读取同一份画像）。 */
+  saveProfile: (profile: unknown) => Promise<IpcResult>;
+  getProfile: () => Promise<IpcResult>;
+  devicePairList: (gatewayId: string) => Promise<IpcResult>;
+  devicePairApprove: (gatewayId: string, requestId: string) => Promise<IpcResult>;
+  devicePairRemove: (gatewayId: string, deviceId: string) => Promise<IpcResult>;
+  /** 手机端配对（v2 二维码：只有主机 + 一次性 setup code）。 */
+  mobilePairSetupCode: (
+    gatewayId: string,
+    publicUrl: string,
+    options?: { gatewayName?: string; deviceId?: string },
+  ) => Promise<IpcResult>;
   listCommands: (gatewayId: string, params?: CommandsListParams) => Promise<IpcResult>;
   listAgents: (gatewayId: string) => Promise<IpcResult>;
   createAgent: (

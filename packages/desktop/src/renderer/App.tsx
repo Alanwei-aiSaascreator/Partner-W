@@ -135,6 +135,7 @@ export default function App() {
       setOnboardingAccount(account);
       const onboardingLoad = loadOnboardingProfileResult(account.userId, undefined, { source: 'entry' });
       setOnboardingProfile(onboardingLoad.profile);
+      void window.clawwork.saveProfile(onboardingLoad.profile).catch(() => undefined);
       setOnboardingResolved(true);
       setEntryErrorCode(undefined);
       setAuthState('ok');
@@ -388,6 +389,9 @@ export default function App() {
           setOnboardingAccount({ userId: 'local', nickname: '' });
           const localOnboardingLoad = loadOnboardingProfileResult('local', undefined, { source: 'local-entry' });
           setOnboardingProfile(localOnboardingLoad.profile);
+          if (localOnboardingLoad.profile) {
+            void window.clawwork.saveProfile(localOnboardingLoad.profile).catch(() => undefined);
+          }
           setOnboardingResolved(true);
           setAuthState('ok');
           return;
@@ -578,6 +582,8 @@ export default function App() {
       // BUG-034（2026-10-13）：失败照旧向上抛（编辑页留住）；成功/失败各留一条诊断（不含画像内容）。
       saveOnboardingProfile(profile, undefined, { source: 'entry-complete' });
       acceptedOnboardingCompletion.current = completionKey;
+      // 同时镜像到主进程：手机端「个性化中心」要读同一份画像
+      void window.clawwork.saveProfile(profile).catch(() => undefined);
       setOnboardingProfile(profile);
       setEditingOnboardingProfile(false);
       /**

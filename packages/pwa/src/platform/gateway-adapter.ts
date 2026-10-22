@@ -187,7 +187,10 @@ export function createBrowserGatewayTransport(
         try {
           const raw = (await client.listSessions()) as unknown as SessionsListPayload;
           const allSessions = raw.sessions ?? [];
-          const ours = allSessions.filter((s) => isClawWorkSession(s.key, deviceId));
+          // ⚠️ 不按 deviceId 过滤：桌面端建的会话带的是电脑的设备 id，手机端带手机 id，
+          //    一旦按本机 id 过滤，手机上就永远看不到电脑上的任务（真机验证踩到）。
+          //    这里只认「是不是 ClawWork 会话」，同一个网关下的任务就是同一批任务。
+          const ours = allSessions.filter((s) => isClawWorkSession(s.key));
 
           for (const s of ours) {
             const taskId = parseTaskIdFromSessionKey(s.key);

@@ -60,6 +60,14 @@ export default function TeamsPanel() {
 
   useEffect(() => {
     loadTeams();
+    /*
+     * 手机端建的团队写进的是同一张 `teams` 表，但这里不订阅任何事件 ——
+     * 用户停在团队页时看不到"刚在手机上建的那个"。5 秒刷一次，代价是一次本地查询。
+     */
+    const timer = window.setInterval(() => {
+      void loadTeams();
+    }, 5_000);
+    return () => window.clearInterval(timer);
   }, [loadTeams]);
 
   const handleStartChat = useCallback(

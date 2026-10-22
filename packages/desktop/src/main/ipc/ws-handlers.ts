@@ -516,7 +516,11 @@ export function registerWsHandlers(): void {
         const deviceId = ensureDeviceId();
         const raw = (await gw.listSessions()) as unknown as SessionsListPayload;
         const allSessions = raw.sessions ?? [];
-        const ours = allSessions.filter((s) => isClawWorkSession(s.key, deviceId));
+        // ⚠️ 不按本机 deviceId 过滤：手机端建的会话带的是**手机**的设备 id，
+        //    一旦按电脑的 id 过滤，电脑端就永远看不到手机上的任务（用户要求双向同步）。
+        //    同一个网关下的 ClawWork 会话就是同一批任务。
+        void deviceId;
+        const ours = allSessions.filter((s) => isClawWorkSession(s.key));
 
         // ⚠️ **session 级的隔离边界**：`sessions.list` 属于 gateway 级
         //    （失败 ⇒ 上面那个 catch ⇒ `gateway-failed`，该网关整体作废，合理）；
@@ -1129,4 +1133,78 @@ export function registerWsHandlers(): void {
     const { gatewayId, ...params } = payload;
     return gatewayRpc(gatewayId, (gw) => gw.listCronRuns(params));
   });
+
+  /**
+   * 手机端配对（内测用）。
+   *
+   * ⚠️ 引擎 2026.9.3 **没有** `device.pair.setupCode`（hello-ok 方法表实测），
+   *    `gateway.auth.mode` 也只有 none/token/password/trusted-proxy —— 没有"一次性配对码"模式。
+   *    所以这里回退到引擎原生的 v1 码：二维码里带网关 token。
+   *    一张截图 = 交出电脑；只用于真机验证，PWA 侧要求 URL 带 `?legacyPair=1` 才接受。
+   *    正式方案见技术方案 v1.2 §6.2 的"认证代理"（M2）。
+   */
+  ipcMain.handle(
+    'ws:mobile-pair-setup-code',
+    async (_event, payload: { gatewayId: string; publicUrl: string; gatewayName?: string; deviceId?: string }) =>
+      gatewayRpc(payload.gatewayId, async () => {
+        const rawUrl = payload.publicUrl.trim();
+        if (!rawUrl) throw new Error('publicUrl is required');
+        // 用户可能填 `https://host/app/?x=1`、`host`、甚至带 query 的完整手机地址：
+        // 一律只取 host（含端口），协议强制 wss。之前只做字符串前缀替换，
+        // 于是 `https://...` 被拼成了 `wss://https://...`（真机验证时踩到）。
+        const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+        let parsedPublicUrl: URL;
+        try {
+          parsedPublicUrl = new URL(withScheme);
+        } catch {
+          throw new Error(`publicUrl is not a valid URL: ${rawUrl}`);
+        }
+        if (!parsedPublicUrl.hostname) throw new Error('publicUrl has no hostname');
+        const normalized = `wss://${parsedPublicUrl.host}`;
+
+        const gatewayConfig = readConfig()?.gateways.find((entry) => entry.id === payload.gatewayId);
+        const token = gatewayConfig?.token;
+        if (!token) throw new Error('gateway token unavailable for legacy pairing');
+
+        // ⚠️ 二维码里必须放 **URL**，不能放 JSON：手机系统相机/微信扫到 JSON 只会显示
+        //    一段文本、不会出现"打开"动作 —— 真机上表现就是"扫了完全没反应"。
+        const mobileUrl = `https://${parsedPublicUrl.host}/m/?legacyPair=1&host=${parsedPublicUrl.host}&token=${encodeURIComponent(
+          token,
+        )}`;
+
+        return {
+          legacy: true,
+          url: mobileUrl,
+          payload: {
+            v: 1,
+            s: payload.deviceId,
+            g: [{ n: payload.gatewayName ?? '荣盈魔方', u: normalized, t: token, m: 'token' }],
+          },
+        };
+      }),
+  );
+
+  /**
+   * 待批设备（手机首次连接后停在这里等批准）。
+   *
+   * 为什么必须有：`device.pair.approve` 需要 operator.pairing，只有桌面壳具备；
+   * 手机自己批准自己就等于没有这道闸。
+   */
+  ipcMain.handle('ws:device-pair-list', async (_event, payload: { gatewayId: string }) =>
+    gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('device.pair.list', {})),
+  );
+
+  ipcMain.handle(
+    'ws:device-pair-approve',
+    async (_event, payload: { gatewayId: string; requestId: string }) =>
+      gatewayRpc(payload.gatewayId, (gw) =>
+        gw.sendReq('device.pair.approve', { requestId: payload.requestId }),
+      ),
+  );
+
+  ipcMain.handle(
+    'ws:device-pair-remove',
+    async (_event, payload: { gatewayId: string; deviceId: string }) =>
+      gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('device.pair.remove', { deviceId: payload.deviceId })),
+  );
 }

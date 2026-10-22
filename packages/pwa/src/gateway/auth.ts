@@ -1,5 +1,6 @@
 import type { DeviceIdentity } from './device-identity.js';
 import { publicKeyRawBase64Url, signPayload } from './device-identity.js';
+import { PWA_OPERATOR_SCOPES } from './scopes.js';
 
 interface DeviceConnectPayload {
   id: string;
@@ -26,9 +27,7 @@ export async function buildDeviceConnectPayload(
   const clientId = params?.clientId ?? 'clawwork-pwa';
   const clientMode = params?.clientMode ?? 'backend';
   const role = params?.role ?? 'operator';
-  const scopes = (
-    params?.scopes ?? ['operator.admin', 'operator.write', 'operator.read', 'operator.approvals', 'operator.pairing']
-  ).join(',');
+  const scopes = (params?.scopes ?? PWA_OPERATOR_SCOPES).join(',');
   const platform = params?.platform ?? 'pwa';
   const deviceFamily = params?.deviceFamily ?? 'mobile';
 

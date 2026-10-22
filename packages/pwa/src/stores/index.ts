@@ -7,11 +7,13 @@ import {
   createGatewayDispatcher,
 } from '@clawwork/core';
 import type { PlatformPorts, ChatComposer } from '@clawwork/core';
-import type { ModelCatalogEntry, AgentInfo, DebugEvent } from '@clawwork/shared';
+import type { ModelCatalogEntry, AgentInfo, DebugEvent, ExecApprovalRequest } from '@clawwork/shared';
 import { ports } from '../platform/index.js';
 import { getIdentity } from '../persistence/db.js';
 import { getClient } from '../gateway/client-registry.js';
 import { reportDebugEvent } from '../lib/debug.js';
+import { useQuestionStore, bindQuestionTaskLookup } from './questionStore.js';
+import { useApprovalStore, bindApprovalTaskLookup, bindApprovalUi } from './approvalStore.js';
 import { THEME_STORAGE_KEY } from '../lib/constants.js';
 import i18next from 'i18next';
 import { toast } from 'sonner';
@@ -91,6 +93,21 @@ const taskStoreApi = createTaskStore({
   onTaskCreated: () => uiStoreApi.getState().setMainView('chat'),
 });
 
+// 询问面板要靠 sessionKey 反查任务：能力从这里注入，避免 questionStore ⇄ index 成环
+bindQuestionTaskLookup(
+  (sessionKey) => taskStoreApi.getState().tasks.find((task) => task.sessionKey === sessionKey)?.id ?? null,
+);
+
+// 审批面板同款注入（审批到达时任务可能还没同步，认不出任务也要照常显示）
+bindApprovalTaskLookup(
+  (sessionKey) => taskStoreApi.getState().tasks.find((task) => task.sessionKey === sessionKey)?.id ?? null,
+);
+bindApprovalUi({
+  activeTaskId: () => taskStoreApi.getState().activeTaskId,
+  markUnread: (taskId) => uiStoreApi.getState().markUnread(taskId),
+  clearUnread: (taskId) => uiStoreApi.getState().clearUnread(taskId),
+});
+
 uiStoreApi.subscribe((state, prevState) => {
   if (state.defaultGatewayId === prevState.defaultGatewayId) return;
   const gatewayId = state.defaultGatewayId;
@@ -105,7 +122,7 @@ uiStoreApi.subscribe((state, prevState) => {
   taskStoreApi.setState({ pendingNewTask: { gatewayId, agentId } });
 });
 
-const sessionSync = createSessionSync({
+export const sessionSync = createSessionSync({
   persistence: {
     loadMessages: (taskId) => getPorts().persistence.loadMessages(taskId),
     persistMessage: (...args) => getPorts().persistence.persistMessage(...args),
@@ -161,6 +178,14 @@ function getDispatcher() {
       setCommandCatalogForGateway: (gwId, commands) =>
         uiStoreApi.getState().setCommandCatalogForGateway(gwId, commands),
       notifyAgentResponse: (sessionKey) => getComposer().notifyResponse(sessionKey),
+      onQuestionRequested: (gatewayId, payload) => useQuestionStore.getState().addQuestion(gatewayId, payload),
+      onQuestionResolved: (id) => useQuestionStore.getState().removeQuestion(id),
+      // exec 审批：事件经审批副连接（caps=['exec-approvals']）到达，这里接进 store。
+      // 副连接只放行 exec.approval.requested/resolved（client.ts 过滤），不会与主连接重复。
+      onApprovalRequested: (gatewayId, payload) =>
+        useApprovalStore.getState().addApproval(gatewayId, payload as ExecApprovalRequest),
+      onApprovalResolved: (conclusion) =>
+        useApprovalStore.getState().removeApproval(conclusion.gatewayId, conclusion.id),
       translate: (key, opts) => i18next.t(key, opts),
       isWindowFocused: () => typeof document !== 'undefined' && document.hasFocus(),
       reportDebugEvent: (event) => reportDebugEvent(event as Partial<DebugEvent>),

@@ -639,6 +639,28 @@ export class GatewayClient {
     //    主连接也在收 —— 转发它们等于让渲染器把每条都处理两遍。
     if (this.approvalChannel && !APPROVAL_CHANNEL_EVENTS.has(frame.event)) return;
 
+    // ⚠️ 扫码自动批准（2026-10-22）：手机扫电脑端配对链接 → 连接 → 待批 →
+    // 桌面端收到 device.pair.requested 自动批准，全程无需手动点批准。
+    // 安全依据：v1 配对链接本来就带网关 token（持码即能连），批准只是登记设备身份，
+    // 与二维码本身的安全级别一致；此分支只在桌面主连接（有 operator.pairing）执行。
+    if (!this.approvalChannel && frame.event === 'device.pair.requested') {
+      const requestId =
+        typeof frame.payload.requestId === 'string'
+          ? frame.payload.requestId
+          : typeof frame.payload.id === 'string'
+            ? frame.payload.id
+            : null;
+      if (requestId) {
+        void this.sendReq('device.pair.approve', { requestId }, { requestId: randomUUID() })
+          .then(() => {
+            console.log(`[gateway-client] 扫码设备已自动批准: ${requestId.slice(0, 12)}…`);
+          })
+          .catch((err: unknown) => {
+            console.warn('[gateway-client] 自动批准失败:', err instanceof Error ? err.message : err);
+          });
+      }
+    }
+
     sendToWindow(getMainWindow(), 'gateway-event', {
       gatewayId: this.gatewayId,
       event: frame.event,
@@ -1416,6 +1438,17 @@ export class GatewayClient {
 
   async getSkillBins(): Promise<Record<string, unknown>> {
     return this.sendReq('skills.bins', {});
+  }
+
+  /**
+   * 生成手机端配对 setup code（网关 `device.pair.setupCode`）。
+   *
+   * 需要 admin 会话 —— 只有桌面壳自己具备；手机侧永远调不到这个方法。
+   * 返回的 url 是桌面壳视角的地址，手机走隧道，所以调用方要用
+   * `buildMobileQrPayload()` 把 url 覆写成公网域名（方案 v1.1 §6.2）。
+   */
+  async createMobilePairSetupCode(): Promise<Record<string, unknown>> {
+    return this.sendReq('device.pair.setupCode', {}, { requestId: randomUUID() });
   }
 
   async getConfig(): Promise<Record<string, unknown>> {
