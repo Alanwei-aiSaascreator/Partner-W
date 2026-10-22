@@ -264,3 +264,36 @@ To contribute:
 Built for [OpenClaw](https://github.com/openclaw/openclaw). Inspired by the great work of [Peter Steinberger](https://github.com/steipete).
 
 </div>
+
+## 📱 手机端适配（荣盈魔方 / 魔方罗盘，2026-10-22）
+
+手机端与桌面端同一网关（OpenClaw 引擎 2026.9.3），由 `packages/pwa`（Capacitor Android App + PWA 网页，`/m/` 入口）提供：
+
+| 功能 | 说明 |
+| --- | --- |
+| 语音输入 | 三通道自动切换：系统语音引擎 → 云端转写（桌面端 relay 中转 `/api/mobile/voice/transcribe`）→ Web Speech；长按说话 + 三泡泡（取消 / 录音时长 / 发送），松手写入输入框 |
+| 扫码配对 | App 内扫码（兼容 JSON 与 URL 两种二维码）；桌面端收到 `device.pair.requested` **自动批准**，全程免手动 |
+| 结构化提问 | `ask_user` 问题面板（`operator.questions` scope，网关事件闸门） |
+| 执行授权 | exec 审批弹层（审批副连接 `caps=exec-approvals`，事件只放行 `exec.approval.*`） |
+| 工具状态 | 定稿投影：历史消息里的工具调用不再卡「执行中」（对齐桌面端 `markUnreportedCalls`） |
+| 双端同步 | 消息 / 任务 / 会话状态实时同步（轮询 + 事件流双通道） |
+
+### 手机端构建
+
+```bash
+cd packages/pwa
+pnpm build:app && npx cap sync android
+cd android && ./gradlew app:assembleRelease   # 产物：app/build/outputs/apk/release/app-release.apk
+
+# 网页版（桌面端 18780 /m/ 入口，dev 态读 packages/pwa/dist）
+pnpm build
+```
+
+### 接入方式
+
+1. 电脑端启动，网关监听 `18789`，远程入口 `18780`
+2. 手机 App 扫码或粘贴配对链接（桌面端「设置 → 通用 → 移动端」生成）
+3. 桌面端自动批准新设备，手机直接进入主界面
+
+> ⚠️ 语音转写消耗电脑端账号的云端 ASR 额度（与桌面端语音同一账户按量计费）。
+> ⚠️ Android 原生壳需 `CAMERA` / `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS` 权限（Capacitor 权限请求缺一即整体拒绝）。
