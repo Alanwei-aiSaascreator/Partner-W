@@ -419,13 +419,6 @@ function buildApi(): ClawWorkAPI {
     setFeishuChannelEnabled: (enabled: boolean) => ipcRenderer.invoke('connectors:feishu-enabled', { enabled }),
     /** 旧终端的扫码窗口（保留兼容；界面已改走应用内扫码）。 */
     connectFeishu: () => ipcRenderer.invoke('connectors:feishu-login'),
-    // 桌面宠物（2026-10-17）：开/关置顶小窗；整理/删除都由主进程先弹确认框。
-    petOpen: () => ipcRenderer.invoke('pet:open'),
-    petClose: () => ipcRenderer.invoke('pet:close'),
-    petMove: () => ipcRenderer.invoke('pet:move'),
-    petDesktopSummary: () => ipcRenderer.invoke('pet:desktop-summary'),
-    petOrganize: () => ipcRenderer.invoke('pet:organize'),
-    petTrash: () => ipcRenderer.invoke('pet:trash'),
     getVideoQuality: () => ipcRenderer.invoke('videogen:get-quality'),
     setVideoQuality: (quality: 'standard' | 'seedance') => ipcRenderer.invoke('videogen:set-quality', quality),
     reportPortableUpdateRendererReady: () => ipcRenderer.send('app:portable-update-renderer-ready'),
@@ -729,6 +722,22 @@ function buildApi(): ClawWorkAPI {
     commercialGetConfig: () => ipcRenderer.invoke('commercial:get-config'),
     commercialSetConfig: (payload: { supabaseUrl?: string; supabaseAnonKey?: string }) =>
       ipcRenderer.invoke('commercial:set-config', payload),
+    modelApiGet: () => ipcRenderer.invoke('model-api:get'),
+    modelApiApply: (payload: {
+      endpoints: Array<{
+        id: string;
+        name: string;
+        baseUrl: string;
+        apiKey?: string;
+        modelIds: string[];
+        modelLevels?: Record<string, string>;
+      }>;
+    }) => ipcRenderer.invoke('model-api:apply', payload),
+    modelApiList: (payload: { baseUrl: string; apiKey: string }) => ipcRenderer.invoke('model-api:list', payload),
+    modelApiRemove: () => ipcRenderer.invoke('model-api:remove'),
+    relayApiGet: () => ipcRenderer.invoke('relay-api:get'),
+    relayApiApply: (payload: { baseUrl?: string; key?: string }) => ipcRenderer.invoke('relay-api:apply', payload),
+    relayApiRemove: () => ipcRenderer.invoke('relay-api:remove'),
     commercialSendOtp: (target: string) => ipcRenderer.invoke('commercial:send-otp', target),
     commercialVerifyOtp: (target: string, token: string) => ipcRenderer.invoke('commercial:verify-otp', target, token),
     commercialSignInPassword: (email: string, password: string) =>

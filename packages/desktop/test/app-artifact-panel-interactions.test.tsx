@@ -50,6 +50,7 @@ vi.mock('../src/renderer/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 vi.mock('../src/renderer/layouts/LeftNav', () => ({ default: () => null }));
+vi.mock('../src/renderer/layouts/TopBar', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/MainArea', async () => {
   const React = await import('react');
   return {
@@ -166,6 +167,8 @@ function installBridge(): void {
       setWindowButtonVisibility: vi.fn(),
       // 本地模式：没配置 supabase ⇒ 无登录、无许可门（App 快速进工作区）。
       commercialGetConfig: async () => ({ ok: true, result: { hasAnonKey: false } }),
+      // 本地模式分支会回写 onboarding profile（App.tsx `entryMode === 'local'`）。
+      saveProfile: vi.fn(async () => ({ ok: true })),
       isWorkspaceConfigured: async () => true,
       listArtifacts,
       onArtifactSaved: unsubscribe,

@@ -24,8 +24,8 @@ export default defineConfig(({ command }) => ({
       injectRegister: null,
       includeAssets: ['icons/icon-192.png', 'icons/icon-512.png'],
       manifest: {
-        name: '魔方罗盘',
-        short_name: '魔方罗盘',
+        name: 'Partner-W',
+        short_name: 'Partner-W',
         description: 'Mobile companion for ClawWork',
         theme_color: '#000000',
         background_color: '#000000',

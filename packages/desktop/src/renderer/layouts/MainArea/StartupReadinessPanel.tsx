@@ -105,8 +105,8 @@ export default function StartupReadinessPanel({
       : readiness.hasError || takingLonger
         ? 'retry'
         : null;
-  const openActivationSettings = useCallback(() => {
-    setSettingsSection('activation');
+  const openRelayApiSettings = useCallback(() => {
+    setSettingsSection('relayApi');
     setSettingsOpen(true);
   }, [setSettingsSection, setSettingsOpen]);
   const openSystemSettings = useCallback(() => {
@@ -263,10 +263,10 @@ export default function StartupReadinessPanel({
           </Button>
         ) : action === 'activation' ? (
           // ⚠️ 确定性失败**不给重试按钮**：那个按钮按下去只会让用户再做一次无用功。
-          //    给的是"去哪儿能解决"——设置里那一页（`setSettingsSection('activation')`）。
-          <Button type="button" variant="outline" size="sm" onClick={openActivationSettings} className="shrink-0">
+          //    给的是"去哪儿能解决"——开源版里是「官方 API」配置页（relay key）。
+          <Button type="button" variant="outline" size="sm" onClick={openRelayApiSettings} className="shrink-0">
             <KeyRound size={14} />
-            {t('startupReadiness.openActivation')}
+            {t('startupReadiness.openRelayApi')}
           </Button>
         ) : action === 'workspace' ? (
           // 同上：文件系统不支持 / 工作区不可写，都是"换个地方"才好的事。

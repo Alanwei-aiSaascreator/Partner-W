@@ -5,7 +5,6 @@ import './styles/theme.css';
 import i18n from './i18n';
 import { useUiStore } from './stores/uiStore';
 import App from './App';
-import PetWindow from './pet/PetWindow';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ThemeProvider } from './context/ThemeProvider';
 import { resolveSystemLanguage, type Language } from './i18n/languages';
@@ -71,8 +70,7 @@ async function bootstrap() {
     <React.StrictMode>
       <ThemeProvider>
         <ErrorBoundary>
-          {/* 桌面宠物窗（`index.html#pet`）：同一份 bundle 的另一支入口，不加载主应用路由。 */}
-          {window.location.hash === '#pet' ? <PetWindow /> : <App />}
+          <App />
         </ErrorBoundary>
       </ThemeProvider>
     </React.StrictMode>,

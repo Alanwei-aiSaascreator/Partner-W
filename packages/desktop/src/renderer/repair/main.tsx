@@ -8,7 +8,7 @@ import RepairPanel from '../features/repair/RepairPanel';
 import { resolveSystemLanguage } from '../i18n/languages';
 
 /**
- * `荣盈魔方.exe --repair` 的独立窗口（SPEC 一·形态）。
+ * `Partner-W.exe --repair` 的独立窗口（SPEC 一·形态）。
  *
  * ⚠️ 与主界面**不共用 `App.tsx`**，也**不挂 `ThemeProvider`**：后者要读
  *    `settings:get`（设置模块），而修复模式下主进程**只注册 `repair:*` 四条通道** ——
@@ -53,9 +53,7 @@ function RepairApp() {
 function MissingBridge() {
   return (
     <div className="flex h-full items-center justify-center px-6 text-center">
-      <p className="type-body text-[var(--danger)]">
-        window.clawwork is undefined — the preload bridge did not load.
-      </p>
+      <p className="type-body text-[var(--danger)]">window.clawwork is undefined — the preload bridge did not load.</p>
     </div>
   );
 }

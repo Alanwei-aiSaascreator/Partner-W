@@ -113,7 +113,7 @@ export interface ConnectorHandlerDeps {
    * 运行时缓存的根目录（2026-10-18 同事实机：便携盘上连接器一直报「运行时不可用」）。
    *
    * 便携形态下运行时部署在 `<userData>/portable-runtime-cache/runtime/deployed`，
-   * 而 `app.getPath('userData')` 是 `<盘>/荣盈魔方-运行数据` —— 两者**不是同一个目录**。
+   * 而 `app.getPath('userData')` 是 `<盘>/Partner-W-运行数据` —— 两者**不是同一个目录**。
    * 连接器此前拿 userData 去读 `current.json`，在便携盘上必然读不到 ⇒ 明明能正常聊天，
    * 连接器却禁用飞书接入。这里必须跟 `bootstrapLocalGatewayRuntime` 用同一个根。
    */
@@ -238,7 +238,7 @@ export function launchInTerminal(command: string): void {
   //  · 不写 `.ps1` ⇒ 不碰 `-ExecutionPolicy`（默认策略会拒脚本文件）；
   //  · 不走 `.cmd` ⇒ 不受 GBK 代码页拆坏 UTF-8 中文的影响（实机踩过）。
   const inner = `powershell.exe -NoProfile -NoExit -Command "${command.replace(/"/g, '`"')}"`;
-  spawn('cmd.exe', ['/c', `start "荣盈魔方 · 接入飞书" ${inner}`], {
+  spawn('cmd.exe', ['/c', `start "Partner-W · 接入飞书" ${inner}`], {
     detached: true,
     stdio: 'ignore',
     windowsVerbatimArguments: true,

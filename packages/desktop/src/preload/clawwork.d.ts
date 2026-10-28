@@ -220,6 +220,41 @@ interface CommercialLicenseStatus {
   deviceFingerprint: string;
 }
 
+/** BYOK 模型服务配置的脱敏只读态（不回传明文 apiKey）。 */
+interface ModelApiState {
+  /** 端点列表（每个端点一个 provider）。 */
+  endpoints: Array<{
+    id: string;
+    name: string;
+    baseUrl: string;
+    modelIds: string[];
+    /** 每个模型的推理功率档（model id → low/medium/high/max），缺省回落 high。 */
+    modelLevels?: Record<string, string>;
+    hasApiKey: boolean;
+  }>;
+}
+
+/** BYOK 写入/移除的结果（`applyByokConfig` / `removeByokConfig` 的返回值）。 */
+interface ModelApiApplyResult {
+  ok: boolean;
+  error?: string;
+  errorCode?: 'transport' | 'rejected' | 'hash-conflict' | 'verify-failed';
+}
+
+/** 官方 API（relay 中继）配置的脱敏只读态（不回传明文 key）。 */
+interface RelayApiState {
+  baseUrl: string;
+  hasKey: boolean;
+}
+
+/** 官方 API 写入/移除的结果（`applyRelayConfig` / `removeRelayConfig` 的返回值）。 */
+interface RelayApiApplyResult {
+  ok: boolean;
+  configured?: boolean;
+  error?: string;
+  errorCode?: string;
+}
+
 interface QuickLaunchConfigResult {
   enabled: boolean;
   shortcut: string;
@@ -867,17 +902,6 @@ export interface ClawWorkAPI {
   setFeishuChannelEnabled: (enabled: boolean) => Promise<IpcResult<{ enabled: boolean }>>;
   /** 旧流程：拉起系统终端的扫码窗口（保留兼容；界面已改走应用内扫码）。 */
   connectFeishu: () => Promise<IpcResult<{ launched: true }>>;
-  /** 桌面宠物：开/关那个置顶的透明小窗（主区右下角的「放到桌面」用它）。 */
-  petOpen: () => Promise<IpcResult<{ ok: true }>>;
-  petClose: () => Promise<IpcResult<{ ok: true }>>;
-  /** 换个位置（桌面宠物「走动」）。 */
-  petMove: () => Promise<IpcResult<{ ok: true }>>;
-  /** 只读：桌面这一层有多少可整理文件、按类别分布。 */
-  petDesktopSummary: () => Promise<IpcResult<{ fileCount: number; groups: Array<{ folder: string; count: number }> }>>;
-  /** 整理桌面：**主进程先弹确认框**，用户同意才移动；只移动文件、重名自动加序号。 */
-  petOrganize: () => Promise<IpcResult<{ moved: number; cancelled: boolean; failed: string[] }>>;
-  /** 删除：先让用户选文件，再弹确认，最后进**回收站**（可恢复）。 */
-  petTrash: () => Promise<IpcResult<{ trashed: number; cancelled: boolean }>>;
   /** 视频画质档位：standard = H3（便宜）；seedance = 豆包 Seedance 2.5（更贵、更清晰）。 */
   getVideoQuality: () => Promise<IpcResult<{ quality: 'standard' | 'seedance' }>>;
   setVideoQuality: (quality: 'standard' | 'seedance') => Promise<IpcResult<{ quality: 'standard' | 'seedance' }>>;
@@ -1107,6 +1131,25 @@ export interface ClawWorkAPI {
 
   commercialGetConfig: () => Promise<IpcResult<{ supabaseUrl: string; hasAnonKey: boolean; licenseKey: string }>>;
   commercialSetConfig: (payload: { supabaseUrl?: string; supabaseAnonKey?: string }) => Promise<IpcResult>;
+
+  modelApiGet: () => Promise<IpcResult<ModelApiState | null>>;
+  modelApiApply: (payload: {
+    endpoints: Array<{
+      id: string;
+      name: string;
+      baseUrl: string;
+      apiKey?: string;
+      modelIds: string[];
+      modelLevels?: Record<string, string>;
+    }>;
+  }) => Promise<ModelApiApplyResult>;
+  /** 调端点 `GET /models`（OpenAI 兼容）拉可用模型 id 列表。 */
+  modelApiList: (payload: { baseUrl: string; apiKey: string }) => Promise<IpcResult<{ modelIds: string[] }>>;
+  modelApiRemove: () => Promise<ModelApiApplyResult>;
+
+  relayApiGet: () => Promise<IpcResult<RelayApiState | null>>;
+  relayApiApply: (payload: { baseUrl?: string; key?: string }) => Promise<RelayApiApplyResult>;
+  relayApiRemove: () => Promise<RelayApiApplyResult>;
   commercialSendOtp: (target: string) => Promise<IpcResult<{ target: string; channel: string }>>;
   commercialVerifyOtp: (target: string, token: string) => Promise<IpcResult<{ userId: string | null }>>;
   commercialSignInPassword: (email: string, password: string) => Promise<IpcResult<{ userId: string | null }>>;

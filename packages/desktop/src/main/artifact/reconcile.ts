@@ -243,8 +243,8 @@ function trustedAgentWorkspaceRoot(agentWorkspacePath: string): TrustedTaskRoot 
  *
  * ## 为什么需要它
  *
- * 模型绕过 docgen/slidegen，用 exec / CLI 把成品直接写在 `荣盈魔方工作区\` 的**根**上
- * （真机形态：`荣盈魔方工作区\荣盈互动公司介绍-v2-ade3018a.pptx`）。前两个根一个扫
+ * 模型绕过 docgen/slidegen，用 exec / CLI 把成品直接写在 `Partner-W工作区\` 的**根**上
+ * （真机形态：`Partner-W工作区\荣盈互动公司介绍-v2-ade3018a.pptx`）。前两个根一个扫
  * `<应用工作区>/<taskId>`、一个扫助手工作区 —— 根层文件**谁都不扫**，
  * 于是"文件真的生成了，产物面板里却什么都没有"，而且**连失败提示都没有**
  * （claim-guard 找得到那份文件 ⇒ 它不算"丢了"，只是从来没被登记过）。

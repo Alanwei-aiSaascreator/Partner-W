@@ -6,21 +6,19 @@ import {
   Bot,
   Blocks,
   Info,
-  UserRound,
-  KeyRound,
   ShieldCheck,
   Brain,
   Laptop,
   Stethoscope,
   Plug,
+  Cpu,
+  PlugZap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { motionSpring } from '@/styles/design-tokens';
 
 export type SettingsSection =
-  | 'activation'
-  | 'account'
   | 'general'
   | 'system'
   | 'gateways'
@@ -30,12 +28,12 @@ export type SettingsSection =
   | 'computerAccess'
   | 'privacy'
   | 'connectors'
+  | 'modelApi'
+  | 'relayApi'
   | 'repair'
   | 'about';
 
 const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings2; labelKey: string }[] = [
-  { key: 'activation', icon: KeyRound, labelKey: 'settings.activation' },
-  { key: 'account', icon: UserRound, labelKey: 'settings.account' },
   { key: 'general', icon: Settings2, labelKey: 'settings.general' },
   { key: 'system', icon: MonitorDot, labelKey: 'settings.system' },
   { key: 'gateways', icon: Server, labelKey: 'settings.gateways' },
@@ -47,6 +45,10 @@ const NAV_ITEMS: { key: SettingsSection; icon: typeof Settings2; labelKey: strin
   { key: 'privacy', icon: ShieldCheck, labelKey: 'settings.privacy' },
   // 连接器（飞书等外部通道）：它是「把能力接出去」，与「数据留在本机」同一层级的用户可见设置。
   { key: 'connectors', icon: Plug, labelKey: 'settings.connectors.nav' },
+  // 模型 API（BYOK）：私有化/开源版里用户自配模型服务的入口，放在连接器之后、修复之前。
+  { key: 'modelApi', icon: Cpu, labelKey: 'settings.modelApi' },
+  // 官方 API（relay 中继）：与官网同价、不盈利的模型服务，紧跟 BYOK。
+  { key: 'relayApi', icon: PlugZap, labelKey: 'settings.relayApi' },
   // 放在「关于」**上面**：它是"出事了先来这里"，比版本号更需要被看见。
   { key: 'repair', icon: Stethoscope, labelKey: 'settings.repair.nav' },
   { key: 'about', icon: Info, labelKey: 'settings.about' },
@@ -74,17 +76,17 @@ export default function SettingsNav({
             aria-current={isActive ? 'page' : undefined}
             className={cn(
               'glow-focus type-label relative flex items-center gap-2.5 w-full h-9 px-3 rounded-lg transition-colors cursor-pointer',
-              isActive ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
+              isActive ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
             )}
           >
             {isActive && (
               <motion.div
                 layoutId="settings-nav-active"
-                className="absolute inset-0 rounded-lg bg-[var(--bg-hover)] border border-[var(--border-subtle)]"
+                className="absolute inset-0 rounded-lg bg-[var(--accent-dim)] border border-[var(--border-accent)]"
                 transition={motionSpring.snappy}
               />
             )}
-            <Icon size={16} className="relative z-10 flex-shrink-0" />
+            <Icon size={16} className={cn('relative z-10 flex-shrink-0', isActive && 'text-[var(--accent)]')} />
             <span className="relative z-10">{t(item.labelKey)}</span>
           </button>
         );

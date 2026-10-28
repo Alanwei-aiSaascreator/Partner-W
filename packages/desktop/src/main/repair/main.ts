@@ -1,5 +1,5 @@
 /**
- * `荣盈魔方.exe --repair` 的**修复模式**（SPEC 一·形态）。
+ * `Partner-W.exe --repair` 的**修复模式**（SPEC 一·形态）。
  *
  * 与正常启动的差别（全部是刻意的）：
  *
@@ -39,7 +39,7 @@ function createRepairWindow(): BrowserWindow {
     minWidth: 760,
     minHeight: 520,
     show: false,
-    title: '荣盈魔方 修复工具',
+    title: 'Partner-W 修复工具',
     autoHideMenuBar: true,
     backgroundColor: '#FAFAFA',
     webPreferences: {
@@ -109,9 +109,9 @@ export async function runRepairMode(): Promise<void> {
   //    setName 之后拿到的是修复工具自己的 Chromium 目录；正常应用的运行数据
   //    （`openclaw-state` 所在）在**产品名**那份下面 —— 两者不是同一个目录。
   //    实测（2026-10-18 打包态冒烟）：正常应用 = `%APPDATA%\@clawwork`，
-  //    修复工具 = `%APPDATA%\荣盈魔方 修复工具`；用错根 ⇒ 永远"没有找到状态目录"。
+  //    修复工具 = `%APPDATA%\Partner-W 修复工具`；用错根 ⇒ 永远"没有找到状态目录"。
   const installedUserDataDir = app.getPath('userData');
-  app.setName('荣盈魔方 修复工具');
+  app.setName('Partner-W 修复工具');
 
   await app.whenReady();
 

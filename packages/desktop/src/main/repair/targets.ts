@@ -214,7 +214,7 @@ export function isPathWithinAnyRoot(candidate: string, roots: readonly (string |
  * 还原的目标路径直接来自盘上的 `index.json`（**不可信输入**：谁都能改修复备份目录里
  * 那份纯文本）。这一份清单就是"**任意文件覆写**"原语唯一的闸门 —— **多列一个根，
  * 就多放行一整棵子树**。旧实现列了 `volumeRoot`，而盘上形态下它 = **整支 U 盘的根**
- * ⇒ 一条被改写的索引就能"还原"覆写盘上**任意**文件（含 `荣盈魔方工作区` 里的用户文档）。
+ * ⇒ 一条被改写的索引就能"还原"覆写盘上**任意**文件（含 `Partner-W工作区` 里的用户文档）。
  * 而按下面四个**全部**备份点的实测，没有一个落在 `volumeRoot` / `programDir` 的
  * 直接子树上 ⇒ 那两个根是**纯冗余授权**，收掉。
  *
@@ -234,7 +234,7 @@ export function isPathWithinAnyRoot(candidate: string, roots: readonly (string |
  *    `resolveRepairTargets()` 的 `dataRoot: opts.userDataDir`），且 `stateDirs ⊆ dataRoot`
  *    （候选全由 `dataRoot` 派生）；
  *  · `workspaceRoot` —— 主助手 `AGENTS.md` 的落点（盘上形态取
- *    `<盘根>\荣盈魔方工作区`，见 `workspace/portable.ts:203` / `runtime/state-config.ts`
+ *    `<盘根>\Partner-W工作区`，见 `workspace/portable.ts:203` / `runtime/state-config.ts`
  *    的 `mergePortableAgentDefaults(_, portableWorkspacePath)`）；
  *  · `logsRoot` —— 备份目录的家（`<logsRoot>/repair-<时间戳>`），`repair:reveal`
  *    要打开的就是它 ⇒ 保留（它是窄的应用目录，不是"整块盘"）。
@@ -247,19 +247,16 @@ export function isPathWithinAnyRoot(candidate: string, roots: readonly (string |
  * （`stateDir` / `workspaceRoot`）照常成功。
  */
 export function appOwnedRoots(targets: RepairTargets): string[] {
-  return [
-    targets.logsRoot,
-    targets.dataRoot,
-    targets.workspaceRoot,
-    ...targets.stateDirs,
-  ].filter((root): root is string => typeof root === 'string' && root.length > 0);
+  return [targets.logsRoot, targets.dataRoot, targets.workspaceRoot, ...targets.stateDirs].filter(
+    (root): root is string => typeof root === 'string' && root.length > 0,
+  );
 }
 
 /**
  * 修复模式该拿哪个目录当"运行数据根"（安装形态）。
  *
- * ⚠️ 2026-10-18 打包态冒烟抓到的真缺陷：修复模式 `app.setName('荣盈魔方 修复工具')`
- *    之后 `app.getPath('userData')` 变成 `%APPDATA%\荣盈魔方 修复工具`（它自己的
+ * ⚠️ 2026-10-18 打包态冒烟抓到的真缺陷：修复模式 `app.setName('Partner-W 修复工具')`
+ *    之后 `app.getPath('userData')` 变成 `%APPDATA%\Partner-W 修复工具`（它自己的
  *    Chromium 缓存目录），而正常应用的运行数据在 `%APPDATA%\@clawwork`（产品名）。
  *    用错根 ⇒ `openclaw-state` 永远找不到 ⇒ 面板永远说"没有找到状态目录、这里用不上"
  *    —— 安装版用户点开修复工具等于看一个空目录。
@@ -267,9 +264,6 @@ export function appOwnedRoots(targets: RepairTargets): string[] {
  * 规则：盘上形态以**实际重定向到的目录**为准（`applyPortableAppData` 的 target，
  * 那是正常应用也在用的同一份）；否则用**正常应用**的 userData（`setName` 之前取的）。
  */
-export function resolveRepairDataRoot(opts: {
-  portableTarget: string | null;
-  installedUserDataDir: string;
-}): string {
+export function resolveRepairDataRoot(opts: { portableTarget: string | null; installedUserDataDir: string }): string {
   return opts.portableTarget ?? opts.installedUserDataDir;
 }

@@ -13,7 +13,7 @@
  *
  * ## 活锁保护（SPEC 四）
  *
- * 本机有荣盈魔方在跑（单实例锁的主人还活着）、或 18789 上有监听、或扫到一把
+ * 本机有Partner-W在跑（单实例锁的主人还活着）、或 18789 上有监听、或扫到一把
  * **实锤在跑**的网关锁 ⇒ `liveInstance` 非 null ⇒ **所有写动作一律 skipped**。
  * 理由：主程序启动时正在改同一批文件（它自己也在写 `openclaw.json`、也在写锁），
  * 并发写就是把用户的配置搅成两半。
@@ -252,7 +252,7 @@ export function createRepairSession(options: RepairEngineOptions): RepairSession
       params: { path: outputDir },
       requiresConfirmation: false,
       backup: false,
-      targets: [path.join(outputDir, '荣盈魔方-诊断包-<时间戳>.zip')],
+      targets: [path.join(outputDir, 'Partner-W-诊断包-<时间戳>.zip')],
     };
     nextExecutors.set(DIAGNOSTICS_ACTION_ID, (backup) => {
       const written = writeDiagnosticsPack(

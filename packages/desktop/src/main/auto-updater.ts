@@ -477,7 +477,7 @@ export async function installUpdate(): Promise<{ ok: boolean; error?: string }> 
   setImmediate(() => {
     getDebugLogger().info({ domain: 'updater', event: 'updater.install.quit-and-install.called' });
     // ⚠️ 第一个参数是 **isSilent**：`false`（旧行为）会让 NSIS 弹出安装向导等人点
-    //    —— 2026-09-18 实测窗口标题「荣盈魔方 安装」就卡在那儿，而承诺是
+    //    —— 2026-09-18 实测窗口标题「Partner-W 安装」就卡在那儿，而承诺是
     //    "自动更新，什么都不用做"。第二个参数 = 装完把新版本拉起来。
     autoUpdater.quitAndInstall(true, true);
 
@@ -564,12 +564,12 @@ function verifyPreviousInstall(): void {
 // ---------------------------------------------------------------- 更新缓存清理
 
 /**
- * 解析 `荣盈魔方-0.0.21-win-x64.exe` 里的版本号；认不出来返回 null（那种文件不碰）。
+ * 解析 `Partner-W-0.0.21-win-x64.exe` 里的版本号；认不出来返回 null（那种文件不碰）。
  *
  * ⚠️ 两条都别省：
  * ① 版本形状必须**带点**（`\d+\.\d+`）—— 否则 `-win-x64.exe` 尾巴上的 `x64` 会被当成版本；
  * ② 取**最后一个**候选。取第一个的话，artifactName 前面一旦也带版本形状
- *   （`…-setup-1.0.0-荣盈魔方-0.0.22.exe`），就会按 `1.0.0` 判定 ⇒ 可能把比当前**新**的包删掉。
+ *   （`…-setup-1.0.0-Partner-W-0.0.22.exe`），就会按 `1.0.0` 判定 ⇒ 可能把比当前**新**的包删掉。
  *   取最后一个，误判只会落到"保留"这个安全侧。
  */
 function versionFromFileName(name: string): string | null {

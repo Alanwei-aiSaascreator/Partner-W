@@ -64,6 +64,15 @@ test('只留 clawrouter 的模型', () => {
   expect(relayModelsFrom(all).map((m) => m.id)).toEqual(['deepseek-v4-flash', 'qwen3-max']);
 });
 
+test('BYOK（私有化）的模型同样保留 —— 不认它私有化目录会筛成空（"暂时没有可用模型"）', () => {
+  const all = [
+    entry('claude-cli', 'claude-opus-5'),
+    entry('byok', 'deepseek-v4.1-flash'),
+    entry('deepseek', 'deepseek-chat'),
+  ];
+  expect(relayModelsFrom(all).map((m) => m.id)).toEqual(['deepseek-v4.1-flash']);
+});
+
 test('过滤后为空是**正常结果**，不能退回全量目录', () => {
   // 网关只配了别的 provider 时就是这个样子。退回全量 = 用户又能选到用不了的模型。
   const onlyOthers = [entry('claude-cli', 'claude-opus-5'), entry('deepseek', 'deepseek-chat')];

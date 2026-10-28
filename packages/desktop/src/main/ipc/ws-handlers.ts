@@ -1178,7 +1178,7 @@ export function registerWsHandlers(): void {
           payload: {
             v: 1,
             s: payload.deviceId,
-            g: [{ n: payload.gatewayName ?? '荣盈魔方', u: normalized, t: token, m: 'token' }],
+            g: [{ n: payload.gatewayName ?? 'Partner-W', u: normalized, t: token, m: 'token' }],
           },
         };
       }),
@@ -1194,17 +1194,11 @@ export function registerWsHandlers(): void {
     gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('device.pair.list', {})),
   );
 
-  ipcMain.handle(
-    'ws:device-pair-approve',
-    async (_event, payload: { gatewayId: string; requestId: string }) =>
-      gatewayRpc(payload.gatewayId, (gw) =>
-        gw.sendReq('device.pair.approve', { requestId: payload.requestId }),
-      ),
+  ipcMain.handle('ws:device-pair-approve', async (_event, payload: { gatewayId: string; requestId: string }) =>
+    gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('device.pair.approve', { requestId: payload.requestId })),
   );
 
-  ipcMain.handle(
-    'ws:device-pair-remove',
-    async (_event, payload: { gatewayId: string; deviceId: string }) =>
-      gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('device.pair.remove', { deviceId: payload.deviceId })),
+  ipcMain.handle('ws:device-pair-remove', async (_event, payload: { gatewayId: string; deviceId: string }) =>
+    gatewayRpc(payload.gatewayId, (gw) => gw.sendReq('device.pair.remove', { deviceId: payload.deviceId })),
   );
 }

@@ -17,7 +17,7 @@ import type { DocgenXlsxRequest } from './request.js';
 
 export async function renderXlsx(request: DocgenXlsxRequest): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = '荣盈魔方';
+  workbook.creator = 'Partner-W';
 
   for (const sheet of request.sheets) {
     const worksheet = workbook.addWorksheet(sheet.name);

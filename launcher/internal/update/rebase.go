@@ -16,7 +16,7 @@ import (
 // and fell through to ErrRecoveryImpossible, so the launcher refused to start a
 // program that was sitting right there and perfectly intact.
 //
-// The state file is read from <root>\.荣盈魔方更新\update-state.json, so whatever
+// The state file is read from <root>\.Partner-W更新\update-state.json, so whatever
 // volume it sits on *is* the disk the record belongs to. Moving every path onto
 // that root is therefore not a guess; it is the only reading that is consistent
 // with where the file was found.

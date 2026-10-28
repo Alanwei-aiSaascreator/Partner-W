@@ -576,7 +576,7 @@ function readState(store: UsageAttributionStore): UsageAttributionState | null {
  * - 其它环境（单测、纯 Node）：**内存**，不落盘 —— 没有 userData 语义的地方不该
  *   在磁盘上留计费状态，更不该因为读不到 electron 就抛。
  *
- * ⚠️ userData 在便携模式下就是 `<卷根>\荣盈魔方-运行数据`（见 `main/index.ts`），
+ * ⚠️ userData 在便携模式下就是 `<卷根>\Partner-W-运行数据`（见 `main/index.ts`），
  *    所以这份账本**跟着盘走** —— 正是 BUG-087 需要的行为（清账后重启仍认得旧归属）。
  */
 let injectedStore: UsageAttributionStore | null = null;

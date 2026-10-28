@@ -50,7 +50,7 @@ import { cn } from '@/lib/utils';
 import { getArtifactLabel } from '@/lib/artifact-labels';
 import { createWhisperSttSession } from '@/lib/voice/whisper-stt';
 import { RUN_PHASE_IDS } from '@clawwork/core';
-import { MODE_POLICY, TASK_MODES, resolveModeModelId, type ModelCatalogEntry, type TaskMode } from '@clawwork/shared';
+import { MODE_POLICY, resolveModeModelId, type ModelCatalogEntry, type TaskMode } from '@clawwork/shared';
 import ComposerActivity from '@/components/ComposerActivity';
 import { useMessageStore } from '@/stores/messageStore';
 import { useRoomStore } from '@/stores/roomStore';
@@ -72,6 +72,8 @@ import { composerPlaceholderKey } from '@/lib/gateway-display-phase';
 import { thinkingAlwaysOnKey, thinkingLabelKey, thinkingMenuFor } from './thinking-levels.js';
 import type { DraftPromptRequest, DraftPromptResolution } from './types';
 import { useChatSend } from './useChatSend';
+import { isByokProviderId } from './model-families';
+import { byokEndpointName } from '@/stores/byokStore';
 import { quotaBlockCopy } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
 import { useAttachments } from './useAttachments';
@@ -94,11 +96,6 @@ const MODE_LABEL_KEYS: Record<TaskMode, string> = {
   fast: 'chatInput.mode.fast',
   smart: 'chatInput.mode.smart',
   deep: 'chatInput.mode.deep',
-};
-const MODE_DESC_KEYS: Record<TaskMode, string> = {
-  fast: 'chatInput.mode.fastDesc',
-  smart: 'chatInput.mode.smartDesc',
-  deep: 'chatInput.mode.deepDesc',
 };
 
 /** 视频画质档位的本地记忆键（主进程那一份才是执行依据，这里只负责"下次打开还是上次选的"）。 */
@@ -186,6 +183,10 @@ export default function ChatInput({
   const { t } = useTranslation();
   const reduced = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** 「自定义任务」聚焦反馈（2026-10-28）：欢迎屏点自定义任务后输入框亮一下 ——
+      欢迎屏很长、输入框在视口底部，只有光标闪一下用户会以为"点了没反应"。 */
+  const [focusPulse, setFocusPulse] = useState(false);
+  const focusPulseTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const handledDraftRequestIdsRef = useRef(new Set<string>());
   /** 专家启动用：草稿落进输入框后立刻发送（见 `DraftPromptRequest.autoSend`）。 */
   const handleSendRef = useRef<(() => void) | null>(null);
@@ -413,7 +414,6 @@ export default function ChatInput({
     queuedSends,
     cancelQueuedSend,
     handleSend,
-    handleModeQuickSend,
     handleModelQuickSend,
     handleThinkingQuickSend,
     handleAbort,
@@ -807,6 +807,9 @@ export default function ChatInput({
     handledDraftRequestIdsRef.current.add(draftRequest.id);
     if (draftRequest.prompt.length === 0) {
       textarea.focus();
+      setFocusPulse(true);
+      clearTimeout(focusPulseTimerRef.current);
+      focusPulseTimerRef.current = setTimeout(() => setFocusPulse(false), 1000);
       onDraftResolved?.(draftRequest, 'applied');
       return;
     }
@@ -1214,6 +1217,7 @@ export default function ChatInput({
               'glass-heavy rounded-3xl border border-[var(--border)] shadow-[var(--shadow-floating-layered)]',
               'ring-accent-focus transition-all duration-200 hover:border-[var(--border-accent)] focus-within:border-[var(--border-accent)]',
               isFileDragging && 'border-[var(--border-accent)] ring-2 ring-[var(--accent)]',
+              focusPulse && 'border-[var(--border-accent)] ring-2 ring-[var(--accent)]',
               isOffline && 'opacity-60',
             )}
           >
@@ -1444,159 +1448,135 @@ export default function ChatInput({
                           </ToolbarButton>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" className="max-h-96 overflow-y-auto">
-                          {/* 一级：三档模式。选中态用既有口径（accent 加粗），不引入新样式。 */}
-                          {TASK_MODES.map((mode) => (
-                            <DropdownMenuItem
-                              key={mode}
-                              onClick={() => handleModeQuickSend(mode)}
-                              className={cn(currentMode === mode && 'font-medium text-[var(--accent)]')}
-                            >
-                              <span className="flex flex-col items-start gap-0.5">
-                                <span className="flex items-center gap-1.5">
-                                  {t(MODE_LABEL_KEYS[mode])}
-                                  {mode === 'smart' && (
-                                    <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
-                                      {t('chatInput.mode.recommended')}
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="type-support whitespace-normal text-[var(--text-muted)]">
-                                  {t(MODE_DESC_KEYS[mode])}
-                                </span>
-                              </span>
-                            </DropdownMenuItem>
+                          {/*
+                            2026-10-28（用户）：三档模式（快速/智能/深度）不再出现在这个下拉里 ——
+                            直接平铺自配模型（BYOK 按端点分组，其余按模型家族分组）。
+                            ⚠️ 模式系统本身仍在（MODE_POLICY / 新任务默认 smart / 欢迎屏预设），
+                            这里只是移除了 composer 的手动切换入口。
+                          */}
+                          {Object.entries(advancedModelsByProvider).map(([group, models]) => (
+                            <DropdownMenuSub key={group}>
+                              <DropdownMenuSubTrigger>
+                                {/* BYOK 组（provider = byok / byok-xxx）显示端点友好名，其余显示家族名。 */}
+                                <span>{isByokProviderId(group) ? (byokEndpointName(group) ?? group) : group}</span>
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent className="max-h-96 overflow-y-auto">
+                                {models.map((m) => (
+                                  <DropdownMenuItem
+                                    key={m.id}
+                                    onClick={() => handleModelQuickSend(m.id)}
+                                    // 选中态 = **这一轮真正会跑的模型**：custom 看任务记着的，
+                                    // 模式任务看模式解析出来的（快速档用别名时列表里没有它 ⇒ 不高亮，
+                                    // 那是诚实：跑的不是这张表里的任何一条）。
+                                    className={cn(
+                                      m.id === (modeDriven ? displayModelEntry?.id : currentModel) &&
+                                        'font-medium text-[var(--accent)]',
+                                    )}
+                                  >
+                                    <span className="truncate">{m.name ?? m.id}</span>
+                                    {m.reasoning && (
+                                      <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
+                                        R
+                                      </span>
+                                    )}
+                                    {m.contextWindow && (
+                                      <span className="ml-auto pl-2 type-badge rounded bg-[var(--info)]/15 px-1 py-px text-[var(--info)]">
+                                        {formatContextWindow(m.contextWindow)}
+                                      </span>
+                                    )}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
                           ))}
-                          <DropdownMenuSeparator />
-                          {/* 二级：高级 —— 展开既有模型下拉（别名不出现在这里）。 */}
-                          <DropdownMenuSub>
-                            <DropdownMenuSubTrigger>
-                              <span>{t('chatInput.mode.advanced')}</span>
-                            </DropdownMenuSubTrigger>
-                            <DropdownMenuSubContent className="max-h-96 overflow-y-auto">
-                              {Object.entries(advancedModelsByProvider).map(([family, models]) => (
-                                <DropdownMenuSub key={family}>
-                                  <DropdownMenuSubTrigger>
-                                    <span>{family}</span>
-                                  </DropdownMenuSubTrigger>
-                                  <DropdownMenuSubContent className="max-h-96 overflow-y-auto">
-                                    {models.map((m) => (
-                                      <DropdownMenuItem
-                                        key={m.id}
-                                        onClick={() => handleModelQuickSend(m.id)}
-                                        // 选中态 = **这一轮真正会跑的模型**：custom 看任务记着的，
-                                        // 模式任务看模式解析出来的（快速档用别名时列表里没有它 ⇒ 不高亮，
-                                        // 那是诚实：跑的不是这张表里的任何一条）。
-                                        className={cn(
-                                          m.id === (modeDriven ? displayModelEntry?.id : currentModel) &&
-                                            'font-medium text-[var(--accent)]',
-                                        )}
-                                      >
-                                        <span className="truncate">{m.name ?? m.id}</span>
-                                        {m.reasoning && (
-                                          <span className="type-badge rounded bg-[var(--accent)]/15 px-1 py-px text-[var(--accent)]">
-                                            R
-                                          </span>
-                                        )}
-                                        {m.contextWindow && (
-                                          <span className="ml-auto pl-2 type-badge rounded bg-[var(--info)]/15 px-1 py-px text-[var(--info)]">
-                                            {formatContextWindow(m.contextWindow)}
-                                          </span>
-                                        )}
-                                      </DropdownMenuItem>
-                                    ))}
-                                  </DropdownMenuSubContent>
-                                </DropdownMenuSub>
-                              ))}
-                              {/*
+                          {/*
                                 2026-10-17（用户实机反馈 BUG-139 / BUG-143）：
                                 生图 / 视频**不在**这张表里 —— 它们不是对话模型，选进来会直接 400。
                                 由助手根据技能围栏自动选择（图→qwen-image、视频→H3/Seedance）。
                                 这句注释式的说明必须出现在**用户找它们的地方**，否则每次都会
                                 被当成"模型没更新 / 显示不全"。
                               */}
-                              <DropdownMenuSeparator />
-                              <div className="type-support max-w-72 px-2 py-1.5 leading-relaxed text-[var(--text-muted)]">
-                                {t('chatInput.mode.mediaModelsNote')}
-                              </div>
+                          <DropdownMenuSeparator />
+                          <div className="type-support max-w-72 px-2 py-1.5 leading-relaxed text-[var(--text-muted)]">
+                            {t('chatInput.mode.mediaModelsNote')}
+                          </div>
 
-                              {/*
+                          {/*
                                 视频画质档位（2026-10-17 用户要求）：
                                 · 标准 = MiniMax H3（便宜）；
                                 · 高质量 = 豆包 Seedance 2.5（更贵、更清晰，支持"图生视频"首帧）。
                                 只影响视频生成，不改这一轮的对话模型。
                               */}
-                              <DropdownMenuSeparator />
-                              <DropdownMenuSub>
-                                <DropdownMenuSubTrigger>
-                                  <span>{t('chatInput.videoQuality.title')}</span>
-                                  <span className="ml-auto pl-3 type-support text-[var(--text-muted)]">
-                                    {t(
-                                      videoQuality === 'seedance'
-                                        ? 'chatInput.videoQuality.seedanceShort'
-                                        : 'chatInput.videoQuality.standardShort',
-                                    )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuSub>
+                            <DropdownMenuSubTrigger>
+                              <span>{t('chatInput.videoQuality.title')}</span>
+                              <span className="ml-auto pl-3 type-support text-[var(--text-muted)]">
+                                {t(
+                                  videoQuality === 'seedance'
+                                    ? 'chatInput.videoQuality.seedanceShort'
+                                    : 'chatInput.videoQuality.standardShort',
+                                )}
+                              </span>
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent className="max-w-80">
+                              <DropdownMenuItem onClick={() => chooseVideoQuality('standard')}>
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span>{t('chatInput.videoQuality.standard')}</span>
+                                  <span className="type-support text-[var(--text-muted)]">
+                                    {t('chatInput.videoQuality.standardDesc')}
                                   </span>
-                                </DropdownMenuSubTrigger>
-                                <DropdownMenuSubContent className="max-w-80">
-                                  <DropdownMenuItem onClick={() => chooseVideoQuality('standard')}>
-                                    <div className="flex flex-col items-start gap-0.5">
-                                      <span>{t('chatInput.videoQuality.standard')}</span>
-                                      <span className="type-support text-[var(--text-muted)]">
-                                        {t('chatInput.videoQuality.standardDesc')}
-                                      </span>
-                                    </div>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => chooseVideoQuality('seedance')}>
-                                    <div className="flex flex-col items-start gap-0.5">
-                                      <span>{t('chatInput.videoQuality.seedance')}</span>
-                                      <span className="type-support text-[var(--text-muted)]">
-                                        {t('chatInput.videoQuality.seedanceDesc')}
-                                      </span>
-                                    </div>
-                                  </DropdownMenuItem>
-                                </DropdownMenuSubContent>
-                              </DropdownMenuSub>
-                              {/*
+                                </div>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => chooseVideoQuality('seedance')}>
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span>{t('chatInput.videoQuality.seedance')}</span>
+                                  <span className="type-support text-[var(--text-muted)]">
+                                    {t('chatInput.videoQuality.seedanceDesc')}
+                                  </span>
+                                </div>
+                              </DropdownMenuItem>
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                          {/*
                                 ⚠️ 判据是"**有明细就渲染** + 不是准备态"，不是"目录恰好是 empty"。
                                 原来 gate 在 `modelAvailability === 'empty'` 上：已知中转失败时
                                 `preparing` 变 false、而目录还在取（实机观察到的形态）⇒ **整块不渲染**，
                                 用户只剩 chip 上一个被截断的标签，看不到"为什么"和"怎么办"
                                 （2026-09-21 复核）。取不到那一档（catalog-failed）也一样漏。
                               */}
-                              {modelIsPreparing ? (
-                                <DropdownMenuItem
-                                  disabled
-                                  className="max-w-80 items-start gap-2 py-3 opacity-100"
-                                  aria-live="polite"
-                                >
-                                  <Loader2
-                                    size={16}
-                                    aria-hidden="true"
-                                    className="mt-0.5 shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
-                                  />
-                                  <span className="flex flex-col gap-1">
-                                    <span className="type-body font-medium text-[var(--text-primary)]">
-                                      {modelStatusLabel}
-                                    </span>
-                                    <span className="type-support whitespace-normal text-[var(--text-muted)]">
-                                      {modelStatusDetail}
-                                    </span>
-                                  </span>
-                                </DropdownMenuItem>
-                              ) : modelStatusDetail ? (
-                                <DropdownMenuItem disabled className="max-w-80 items-start py-3 opacity-100">
-                                  <span className="flex flex-col gap-1">
-                                    <span className="type-body font-medium text-[var(--text-primary)]">
-                                      {modelStatusLabel}
-                                    </span>
-                                    <span className="type-support whitespace-normal text-[var(--text-muted)]">
-                                      {modelStatusDetail}
-                                    </span>
-                                  </span>
-                                </DropdownMenuItem>
-                              ) : null}
-                            </DropdownMenuSubContent>
-                          </DropdownMenuSub>
+                          {modelIsPreparing ? (
+                            <DropdownMenuItem
+                              disabled
+                              className="max-w-80 items-start gap-2 py-3 opacity-100"
+                              aria-live="polite"
+                            >
+                              <Loader2
+                                size={16}
+                                aria-hidden="true"
+                                className="mt-0.5 shrink-0 animate-spin text-[var(--accent)] motion-reduce:animate-none"
+                              />
+                              <span className="flex flex-col gap-1">
+                                <span className="type-body font-medium text-[var(--text-primary)]">
+                                  {modelStatusLabel}
+                                </span>
+                                <span className="type-support whitespace-normal text-[var(--text-muted)]">
+                                  {modelStatusDetail}
+                                </span>
+                              </span>
+                            </DropdownMenuItem>
+                          ) : modelStatusDetail ? (
+                            <DropdownMenuItem disabled className="max-w-80 items-start py-3 opacity-100">
+                              <span className="flex flex-col gap-1">
+                                <span className="type-body font-medium text-[var(--text-primary)]">
+                                  {modelStatusLabel}
+                                </span>
+                                <span className="type-support whitespace-normal text-[var(--text-muted)]">
+                                  {modelStatusDetail}
+                                </span>
+                              </span>
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -1860,9 +1840,9 @@ export default function ChatInput({
                                   disabled={disabled || !canSend || materialLimit !== null}
                                   aria-label={t('chatInput.send')}
                                   className={cn(
-                                    'rounded-2xl',
+                                    'rounded-full',
                                     canSend && materialLimit === null
-                                      ? 'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent-hover)]'
+                                      ? 'text-white [background:var(--brand-gradient)] shadow-[var(--shadow-card)] transition-opacity hover:opacity-90'
                                       : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-muted)]',
                                   )}
                                 >

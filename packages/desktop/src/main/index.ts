@@ -37,6 +37,8 @@ import { registerAvatarHandlers, registerAvatarProtocol } from './ipc/avatar-han
 import { registerOpeningMediaProtocol } from './media/opening-asset.js';
 import { registerHubHandlers } from './ipc/hub-handlers.js';
 import { registerCommercialHandlers } from './ipc/commercial-handlers.js';
+import { registerModelApiHandlers } from './ipc/model-api-handlers.js';
+import { registerRelayApiHandlers } from './ipc/relay-api-handlers.js';
 import { registerCommunityHandlers } from './ipc/community-handlers.js';
 import { registerMarketHandlers } from './ipc/market-handlers.js';
 import { registerGrowthHandlers } from './ipc/growth-handlers.js';
@@ -99,7 +101,6 @@ import { registerRepairHandlers } from './ipc/repair-handlers.js';
 import { registerConnectorHandlers } from './ipc/connector-handlers.js';
 import { repairFeishuInstallOnStartup } from './connectors/feishu-install-repair.js';
 import { clearProviderBillingCooldowns, resolveCooldownStateDirs } from './commercial/auth-cooldown.js';
-import { registerPetHandlers } from './ipc/pet-handlers.js';
 import { registerVideoQualityHandlers } from './ipc/video-quality-handlers.js';
 import { getRuntimeBootstrapStatus, publishRuntimeBootstrapStatus } from './runtime/bootstrap-status.js';
 import { removableDrives } from './workspace/removable-drives.js';
@@ -128,6 +129,17 @@ process.stderr?.on?.('error', () => {});
 if (process.env.CLAUDEW_DEBUG_PORT) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env.CLAUDEW_DEBUG_PORT);
 }
+
+// ⚠️ GPU 合成修复（2026-10-27 动画冻结确诊）：`app.getGPUFeatureStatus()` 实测
+//    `gpu_compositing: disabled_software`（2d_canvas / rasterization / webgl 全部
+//    降级）—— 整个应用退到 CPU 软件渲染，所有 CSS 动画都在主线程跑，会话一忙
+//    （拉上下文 / 渲染消息）动画立刻冻结，且**跨窗口全部如此**。
+//    现场环境：向日葵虚拟显示驱动（OrayIddDriver）+ Intel/NVIDIA 双显卡，Chromium
+//    的驱动探测/块名单把 GPU 判死。三件套强制走硬件合成：
+//    ① 忽略块名单；② 钉 D3D11 ANGLE 后端；③ 绕开 GPU 沙盒初始化失败的场景。
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('use-angle', 'd3d11');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 function buildAppMenu(devMode = false): Menu {
   const isMac = process.platform === 'darwin';
@@ -172,7 +184,7 @@ function buildAppMenu(devMode = false): Menu {
       submenu: [
         isMac
           ? { role: 'close' as const, label: '关闭窗口', accelerator: 'Command+W' }
-          : { role: 'quit' as const, label: '退出荣盈魔方' },
+          : { role: 'quit' as const, label: '退出Partner-W' },
       ],
     },
     {
@@ -223,8 +235,24 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     icon: is.dev ? join(import.meta.dirname, '../../build/icon.png') : join(process.resourcesPath, 'icon.png'),
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 16 },
+    // 2026-10-28（用户截图）：Windows 上 'hiddenInset' **不生效**（那是 macOS 专用值），
+    // 系统标题栏 + 汉化菜单栏整个露出来，和自绘 WindowTitlebar/TopBar 叠成两层。
+    // Windows 走 'hidden' + titleBarOverlay：保留原生最小化/关闭按钮、菜单栏随之消失；
+    // 拖拽与布局仍由自绘标题栏负责（页面里已有 titlebar-drag 区域）。
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } }
+      : (() => {
+          const t = readConfig()?.theme;
+          const dark = t === 'light' ? false : t === 'dark' ? true : nativeTheme.shouldUseDarkColors;
+          return {
+            titleBarStyle: 'hidden' as const,
+            titleBarOverlay: {
+              color: dark ? '#1C1C1C' : '#FAFAFA',
+              symbolColor: dark ? '#E8E8EC' : '#3A3A44',
+              height: 40,
+            },
+          };
+        })()),
     backgroundColor: (() => {
       const t = readConfig()?.theme;
       const dark = t === 'light' ? false : t === 'dark' ? true : nativeTheme.shouldUseDarkColors;
@@ -351,7 +379,7 @@ continueAfterPortableAppData(
       /**
        * ⚠️ 旧行为是**裸 `app.quit()`** —— 用户看到的是"双击了没反应"（U 盘交付包里那个
        * `①双击这里启动.bat` 唯一在做的事，就是拿 tasklist 查一遍再 echo 一段人话）。
-       * 交付包不再带 `.bat`（用户直接双击 `荣盈魔方\荣盈魔方.exe`），这句话就得由程序说。
+       * 交付包不再带 `.bat`（用户直接双击 `Partner-W\Partner-W.exe`），这句话就得由程序说。
        * 抢不到锁 ⇒ 同一个 userData 目录下已经有一份在跑 ⇒ 那一份刚写过主人文件，读出来
        * 告诉用户是哪一份、出口在哪儿。
        */
@@ -574,6 +602,9 @@ continueAfterPortableAppData(
         .then(async () => {
           initDebugLogger(app.getPath('logs'));
           getDebugLogger().info({ domain: 'app', event: 'app.start', data: { userData: app.getPath('userData') } });
+          // GPU 特性状态（动画冻结排查）：跨窗口的 CSS 动画全部冻结时，先看这里
+          // `gpu_compositing` / `webgl` 是否被降级成 disabled/software。
+          getDebugLogger().info({ domain: 'app', event: 'app.gpu.status', data: { ...app.getGPUFeatureStatus() } });
           // 盘上形态（把应用数据放进 U 盘）在 `app.ready` 之前就决定了，那时还没有日志 ——
           // 补记一笔，否则"数据到底落在哪儿"在日志里查不到（外部审计问过这个）。
           if (portableAppData.target) {
@@ -657,6 +688,8 @@ continueAfterPortableAppData(
           });
           registerHubHandlers();
           registerCommercialHandlers();
+          registerModelApiHandlers();
+          registerRelayApiHandlers();
           registerCommunityHandlers();
           registerMarketHandlers();
           registerGrowthHandlers();
@@ -708,8 +741,6 @@ continueAfterPortableAppData(
             // 解析不到（启动早期/失败）⇒ 连接器按"运行时未就绪"处理，不往推测目录写东西。
             stateDir: () => getActiveLocalGatewayStateDir() ?? process.env.OPENCLAW_STATE_DIR?.trim() ?? null,
           });
-          // 桌面宠物（2026-10-17）：看桌面 / 整理 / 删除（删除走回收站 + 确认框）。
-          registerPetHandlers();
           // 视频画质档位（标准 / 豆包 Seedance 2.5 高质量）。
           registerVideoQualityHandlers();
 
@@ -749,7 +780,6 @@ continueAfterPortableAppData(
             clipboard.writeText(String(text ?? ''));
             return { ok: true };
           });
-
 
           ipcMain.handle('app:rebuild-menu', () => {
             devModeEnabled = readConfig()?.devMode === true;

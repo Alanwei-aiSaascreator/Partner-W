@@ -116,7 +116,7 @@ function buildMenu(state: TrayState): Menu {
   }
 
   items.push({ type: 'separator' });
-  items.push({ label: '打开荣盈魔方', click: focusMainWindow });
+  items.push({ label: '打开Partner-W', click: focusMainWindow });
   items.push({ label: '设置', click: openSettings });
   items.push({ type: 'separator' });
   items.push({ label: '退出', click: () => app.quit() });
@@ -128,7 +128,7 @@ function createTray(): void {
   if (tray) return;
   const icon = loadIcon();
   tray = new Tray(icon);
-  tray.setToolTip('荣盈魔方');
+  tray.setToolTip('Partner-W');
   tray.setContextMenu(buildMenu({ status: 'idle', tasks: [] }));
   getDebugLogger().info({ domain: 'tray', event: 'tray.init' });
 }
@@ -160,16 +160,16 @@ export function updateTrayStatus(state: TrayState): void {
 
   switch (state.status) {
     case 'running':
-      tray.setToolTip(`荣盈魔方 — ${state.tasks.length} task(s) running`);
+      tray.setToolTip(`Partner-W — ${state.tasks.length} task(s) running`);
       startAnimation();
       break;
     case 'unread':
       tray.setTitle('●');
-      tray.setToolTip('荣盈魔方 — new results');
+      tray.setToolTip('Partner-W — new results');
       break;
     default:
       tray.setTitle('');
-      tray.setToolTip('荣盈魔方');
+      tray.setToolTip('Partner-W');
   }
 
   tray.setContextMenu(buildMenu(state));

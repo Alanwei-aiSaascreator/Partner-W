@@ -12,7 +12,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
  */
 const config: CapacitorConfig = {
   appId: 'com.mofangluopan.mobile',
-  appName: '魔方罗盘',
+  appName: 'Partner-W',
   webDir: 'dist-app',
   android: {
     allowMixedContent: false,

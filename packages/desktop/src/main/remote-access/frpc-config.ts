@@ -65,7 +65,7 @@ export function buildFrpcToml(input: FrpcConfigInput): string {
   const localPort = input.localPort ?? FRPC_LOCAL_PORT;
 
   return [
-    '# 由荣盈魔方自动生成，请勿手改（改请在电脑端的「移动端」设置里改）',
+    '# 由Partner-W自动生成，请勿手改（改请在电脑端的「移动端」设置里改）',
     `serverAddr = ${tomlString(serverAddr)}`,
     `serverPort = ${input.serverPort}`,
     '',

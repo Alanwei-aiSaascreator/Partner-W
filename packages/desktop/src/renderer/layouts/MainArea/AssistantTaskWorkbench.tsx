@@ -2,6 +2,7 @@ import { Bot, CheckCircle2, FileInput, FileOutput, LoaderCircle, Plus, TriangleA
 import { useTranslation } from 'react-i18next';
 import type { AssistantTaskPreset } from '@/lib/assistant-task-presets';
 import type { AssistantWorkspaceDefinition } from '@/lib/preset-agents';
+import brandLogo from '@/assets/logo.png';
 
 export interface AssistantTaskWorkbenchProps {
   definition: AssistantWorkspaceDefinition;
@@ -36,16 +37,27 @@ export default function AssistantTaskWorkbench({
   return (
     <section
       aria-labelledby="assistant-task-workbench-title"
-      className="mx-auto flex w-full max-w-[var(--content-max-width)] flex-col px-2 py-5"
+      className="relative mx-auto flex w-full max-w-[var(--content-max-width)] flex-col px-2 py-5"
     >
+      {/* 顶部氛围光晕（纯装饰，不接事件）。 */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-10 -top-8 h-44 rounded-full bg-[var(--brand-glow)] opacity-70 blur-3xl"
+      />
       <header className="flex flex-col items-center text-center">
-        <div
+        {/* 2026-10-28 用户：徽标换成荧光态的 Partner-W logo（原为「渐变底 + 助手 emoji」方块）。
+            emoji 转为 sr-only —— 既有测试按 textContent 断言它在，读屏也还需要这个语义。 */}
+        <img
+          src={brandLogo}
+          alt=""
           aria-hidden="true"
-          className="emoji-lg flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--accent-dim)] text-[var(--accent)]"
+          className="h-12 w-12 rounded-xl [filter:drop-shadow(0_0_8px_var(--accent))_drop-shadow(0_0_18px_var(--brand-glow))]"
+        />
+        <span className="sr-only">{definition.emoji}</span>
+        <h1
+          id="assistant-task-workbench-title"
+          className="type-page-title mt-3 bg-clip-text text-transparent [background-image:var(--brand-gradient)]"
         >
-          {definition.emoji}
-        </div>
-        <h1 id="assistant-task-workbench-title" className="type-page-title mt-2 text-[var(--text-primary)]">
           {t(definition.titleKey)}
         </h1>
         <p className="type-body mt-1 max-w-2xl text-[var(--text-secondary)]">{t(definition.descriptionKey)}</p>
@@ -108,7 +120,13 @@ export default function AssistantTaskWorkbench({
         </div>
       )}
 
-      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {/*
+        预设任务清单（2026-10-28 用户：**不要卡片**——边框+底色的四张大卡太占地方，
+        欢迎屏一滚就把输入框顶出视口）。改成无边框的紧凑行式：hover 才有浅底，
+        「建议资料 / 预期成果」压成两小段同排小字。⚠️ data-testid / data-preset-id /
+        网格类（grid-cols-1 / sm:grid-cols-2）是既有测试契约，别动。
+      */}
+      <div className="mt-4 grid grid-cols-1 gap-x-8 sm:grid-cols-2">
         {definition.starters.map((preset) => (
           <button
             key={preset.id}
@@ -116,24 +134,27 @@ export default function AssistantTaskWorkbench({
             data-testid="assistant-task-preset"
             data-preset-id={preset.id}
             onClick={() => onSelectPreset(preset)}
-            className="glow-focus group flex min-h-36 flex-col rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] p-4 text-left transition-colors hover:border-[var(--border-hover)] hover:bg-[var(--bg-hover)] focus-visible:outline-none motion-reduce:transition-none"
+            className="glow-focus group flex flex-col rounded-xl px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--bg-hover)] focus-visible:outline-none motion-reduce:transition-none"
           >
-            <span className="type-section-title text-[var(--text-primary)]">{t(preset.titleKey)}</span>
-            <span className="type-body mt-1 text-[var(--text-secondary)]">{t(preset.descriptionKey)}</span>
-
-            <span className="mt-4 grid w-full gap-2 border-t border-[var(--border-subtle)] pt-3">
-              <span className="flex items-start gap-2">
-                <FileInput size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
-                <span className="min-w-0">
-                  <span className="type-support block text-[var(--text-muted)]">{t('taskWorkbench.materialHint')}</span>
-                  <span className="type-support block text-[var(--text-secondary)]">{t(preset.materialHintKey)}</span>
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="type-label shrink-0 font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent)]">
+                {t(preset.titleKey)}
+              </span>
+              <span className="type-support min-w-0 truncate text-[var(--text-secondary)]">
+                {t(preset.descriptionKey)}
+              </span>
+            </span>
+            <span className="type-support mt-1 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-0.5 text-[var(--text-muted)]">
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <FileInput size={12} aria-hidden="true" className="shrink-0" />
+                <span className="truncate">
+                  {t('taskWorkbench.materialHint')}：{t(preset.materialHintKey)}
                 </span>
               </span>
-              <span className="flex items-start gap-2">
-                <FileOutput size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
-                <span className="min-w-0">
-                  <span className="type-support block text-[var(--text-muted)]">{t('taskWorkbench.output')}</span>
-                  <span className="type-support block text-[var(--text-secondary)]">{t(preset.outputKey)}</span>
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <FileOutput size={12} aria-hidden="true" className="shrink-0" />
+                <span className="truncate">
+                  {t('taskWorkbench.output')}：{t(preset.outputKey)}
                 </span>
               </span>
             </span>
@@ -146,7 +167,7 @@ export default function AssistantTaskWorkbench({
           type="button"
           data-testid="assistant-task-custom"
           onClick={onCustomTask}
-          className="glow-focus inline-flex items-center gap-2 rounded-lg px-3 py-2 type-label text-[var(--accent)] transition-colors hover:bg-[var(--accent-dim)] focus-visible:outline-none motion-reduce:transition-none"
+          className="glow-focus inline-flex items-center gap-2 rounded-lg px-4 py-2 type-label text-white [background:var(--brand-gradient)] shadow-[var(--shadow-card)] transition-opacity hover:opacity-90 focus-visible:outline-none motion-reduce:transition-none"
         >
           <Plus size={15} aria-hidden="true" />
           {t('taskWorkbench.customTask')}

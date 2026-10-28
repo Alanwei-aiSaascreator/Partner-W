@@ -14,14 +14,12 @@ import {
 } from '@/stores/uiStore';
 import { SUPPORTED_LANGUAGES } from '@/i18n/languages';
 import SettingRow from '@/components/semantic/SettingRow';
-import { Button } from '@/components/ui/button';
 import SegmentedControl from '../components/SegmentedControl';
 import Toggle from '../components/Toggle';
 import SettingGroup from '@/components/semantic/SettingGroup';
 import PairMobileDialog from '../components/PairMobileDialog';
 import RemoteDevicesPanel from '../components/RemoteDevicesPanel';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { isMascotHidden, setMascotHidden, subscribeMascotVisibility } from '@/lib/mascot-visibility';
 
 export default function GeneralSection() {
   const { t } = useTranslation();
@@ -120,17 +118,6 @@ export default function GeneralSection() {
    *    （按模型注入 `params.extra_body.enable_search`），不是在客户端这边判断的，
    *    所以光存下来不生效。用现成的重启入口（它只排队，不会卡住界面）。
    */
-  // 「小盈」显隐（2026-10-18）：关掉之后必须有回头路，否则一次误触等于永久消失。
-  const [mascotVisible, setMascotVisible] = useState(() => !isMascotHidden());
-  useEffect(() => subscribeMascotVisibility(() => setMascotVisible(!isMascotHidden())), []);
-  const handleMascotToggle = useCallback((value: boolean) => {
-    setMascotHidden(!value);
-  }, []);
-  /** 直接打开桌面小盈（2026-10-18：浮宠被藏起来后，桌面宠物的入口不能也跟着消失）。 */
-  const handleOpenDesktopMascot = useCallback(() => {
-    void window.clawwork.petOpen?.();
-  }, []);
-
   const webSearchSetting = useSettingsStore((s) => s.settings?.webSearch);
   // ⚠️ 缺省按**开**：老盘升级上来没有这个字段，按关处理等于静默拿走一个功能
   const webSearch = webSearchSetting !== false;
@@ -271,17 +258,6 @@ export default function GeneralSection() {
         <SettingGroup>
           <SettingRow label={t('settings.webSearch')} description={t('settings.webSearchHint')}>
             <Toggle checked={webSearch} onChange={handleWebSearchToggle} ariaLabel={t('settings.webSearch')} />
-          </SettingRow>
-          <SettingRow label={t('settings.showMascot')} description={t('settings.showMascotHint')}>
-            <Toggle checked={mascotVisible} onChange={handleMascotToggle} ariaLabel={t('settings.showMascot')} />
-          </SettingRow>
-          <SettingRow
-            label={t('settings.desktopMascot')}
-            description={t('settings.desktopMascotHint')}
-          >
-            <Button variant="outline" size="sm" onClick={handleOpenDesktopMascot} data-testid="open-desktop-mascot">
-              {t('settings.desktopMascotOpen')}
-            </Button>
           </SettingRow>
         </SettingGroup>
       </div>

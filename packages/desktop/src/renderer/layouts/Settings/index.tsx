@@ -5,8 +5,6 @@ import { motion as motionPresets, motionDuration } from '@/styles/design-tokens'
 import WindowTitlebar from '@/components/semantic/WindowTitlebar';
 import SettingsNav, { type SettingsSection } from './SettingsNav';
 import { useUiStore } from '@/stores/uiStore';
-import ActivationSection from './sections/ActivationSection';
-import AccountSection from './sections/AccountSection';
 import GeneralSection from './sections/GeneralSection';
 import SystemSection from './sections/SystemSection';
 import GatewaysSection from './sections/GatewaysSection';
@@ -17,12 +15,11 @@ import PrivacySection from './sections/PrivacySection';
 import MemorySection from './sections/MemorySection';
 import RepairSection from './sections/RepairSection';
 import ConnectorsSection from './sections/ConnectorsSection';
+import ModelApiSection from './sections/ModelApiSection';
+import RelayApiSection from './sections/RelayApiSection';
 import AboutSection from './sections/AboutSection';
-import type { OnboardingProfile } from '@/lib/user-onboarding';
 
 const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
-  activation: ActivationSection,
-  account: AccountSection,
   general: GeneralSection,
   system: SystemSection,
   gateways: GatewaysSection,
@@ -32,21 +29,17 @@ const SECTION_COMPONENTS: Record<SettingsSection, ComponentType> = {
   computerAccess: ComputerAccessSection,
   privacy: PrivacySection,
   connectors: ConnectorsSection,
+  modelApi: ModelApiSection,
+  relayApi: RelayApiSection,
   repair: RepairSection,
   about: AboutSection,
 };
 
 interface SettingsProps {
   initialSection?: SettingsSection;
-  onboardingProfile?: OnboardingProfile | null;
-  onEditOnboardingProfile?: () => void;
 }
 
-export default function Settings({
-  initialSection = 'general',
-  onboardingProfile = null,
-  onEditOnboardingProfile,
-}: SettingsProps) {
+export default function Settings({ initialSection = 'general' }: SettingsProps) {
   const { t } = useTranslation();
   const requestedSection = useUiStore((s) => s.settingsSection);
   const setRequestedSection = useUiStore((s) => s.setSettingsSection);
@@ -72,7 +65,11 @@ export default function Settings({
   return (
     <motion.div {...motionPresets.fadeIn} className="flex flex-col h-full">
       <WindowTitlebar
-        left={<h2 className="type-section-title text-[var(--text-primary)]">{t('common.settings')}</h2>}
+        left={
+          <h2 className="type-section-title bg-clip-text text-transparent [background-image:var(--brand-gradient)]">
+            {t('common.settings')}
+          </h2>
+        }
       />
 
       <div className="flex flex-1 min-h-0">
@@ -89,11 +86,7 @@ export default function Settings({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: motionDuration.normal }}
           >
-            {activeSection === 'account' ? (
-              <AccountSection onboardingProfile={onboardingProfile} onEditProfile={onEditOnboardingProfile} />
-            ) : (
-              <SectionComponent />
-            )}
+            <SectionComponent />
           </motion.div>
         </div>
       </div>

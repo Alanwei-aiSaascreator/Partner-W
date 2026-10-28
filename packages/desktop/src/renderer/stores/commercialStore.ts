@@ -25,6 +25,13 @@ export interface TurnSpend {
 interface CommercialState {
   status: PanelStatus;
   overview: CommercialAccountOverview | null;
+  /**
+   * 本地模式（私有化 / 开源版：无商业配置）。由 `App.tsx` 入口在判定
+   * `entryMode === 'local'` 后置位。额度闸门（`evaluateCommercialSendAccess`）
+   * 在此模式下**完全放行** —— 本地模型走 BYOK / 官方 API，不存在商业额度。
+   */
+  localMode: boolean;
+  setLocalMode: (local: boolean) => void;
   errorMessage: string;
   /** 最近一轮结算出来的消耗。**只存内存、不落盘**：它只对"刚刚结束的那一轮"有意义。 */
   turnSpend: TurnSpend | null;
@@ -114,6 +121,8 @@ function writeCache(overview: CommercialAccountOverview): void {
 export const useCommercialStore = create<CommercialState>((set, get) => ({
   status: 'idle',
   overview: readCache(),
+  localMode: false,
+  setLocalMode: (local) => set({ localMode: local }),
   errorMessage: '',
   turnSpend: null,
   liveTaskMicros: 0,

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart3, ChevronUp, Settings as SettingsIcon, Trophy } from 'lucide-react';
+import { ChevronUp, Settings as SettingsIcon, Trophy } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import brandLogo from '@/assets/logo.png';
-import { cn, formatCreditsPrecise } from '@/lib/utils';
-import { deriveAvailableDisplay, readHeldView } from '@/lib/quota-display';
+import { cn } from '@/lib/utils';
 import { mbtiAvatarArtworkFor } from '@/lib/mbti-artwork';
 import { portraitArtworkFor } from '@/lib/portrait-artwork';
 import {
@@ -28,9 +27,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
  *
  * ## 头像（2026-10-18 用户实测反馈）
  *
- * 用户原话：「这个头像可以用用户画像，如果用户没有设置就是默认荣盈魔方图标。」
+ * 用户原话：「这个头像可以用用户画像，如果用户没有设置就是默认Partner-W图标。」
  * ⇒ 优先级：**用户画像**（16 型圆头像 → 六角色立绘）→ 账号头像（`account.avatar`）
- *    → **荣盈魔方品牌图标**（复用 `@/assets/logo.png`，不新画素材、不用人形图标）。
+ *    → **Partner-W品牌图标**（复用 `@/assets/logo.png`，不新画素材、不用人形图标）。
  *
  * ⚠️ 画像**不在 props 里**（App 只把 `onboardingProfile` 给了 MainArea/Settings；LeftNav 不接它，
  *    见文件域的"只改这一个 LeftNav 文件"）。所以这里走 `lib/user-onboarding.ts` 的**只读选择器**
@@ -86,24 +85,7 @@ export default function ProfileMenu({
     return [mbti, persona, account?.avatar ?? null].filter((url): url is string => Boolean(url));
   }, [portrait, account?.avatar]);
   const avatarUrl = avatarCandidates.find((url) => !failedAvatars.includes(url)) ?? null;
-  const remaining = useMemo(() => {
-    const license = overview?.license;
-    if (!license) return null;
-    const held = readHeldView(license);
-    if (held.unknown) return null;
-    const display = deriveAvailableDisplay(license.tokenQuotaMicros, license.tokenUsedMicros, held.micros);
-    return formatCreditsPrecise(display.remaining);
-  }, [overview]);
-
   const rows = [
-    {
-      key: 'usage',
-      label: t('leftNav.usageAndCredits'),
-      icon: BarChart3,
-      value: remaining,
-      active: mainView === 'dashboard' && !settingsOpen,
-      onSelect: () => onSelectView('dashboard'),
-    },
     {
       key: 'growth',
       label: t('leftNav.pages.growth'),
@@ -149,7 +131,7 @@ export default function ProfileMenu({
                 }
               />
             ) : (
-              /* 没画像 / 读不到 / 素材全坏 ⇒ 荣盈魔方品牌图标（不新画素材、不用人形图标）。 */
+              /* 没画像 / 读不到 / 素材全坏 ⇒ Partner-W品牌图标（不新画素材、不用人形图标）。 */
               <img data-testid="profile-avatar-brand" src={brandLogo} alt="" className="h-full w-full object-cover" />
             )}
             {hasUpdate ? (
@@ -164,7 +146,11 @@ export default function ProfileMenu({
           </span>
           <ChevronUp
             size={13}
-            className={cn('flex-shrink-0 text-[var(--text-muted)] transition-transform', collapsed && 'hidden', open && 'rotate-180')}
+            className={cn(
+              'flex-shrink-0 text-[var(--text-muted)] transition-transform',
+              collapsed && 'hidden',
+              open && 'rotate-180',
+            )}
           />
         </button>
       </PopoverTrigger>

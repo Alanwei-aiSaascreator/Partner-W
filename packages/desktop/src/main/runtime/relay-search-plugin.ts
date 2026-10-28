@@ -65,7 +65,7 @@ export function relaySearchPluginDir(stateDir: string): string {
  * ⚠️ 模板字符串纪律：这份 JS 里**不用** backtick 模板字面量（外层就是模板字符串，
  *    嵌 `${` 会被当成插值）。字符串拼接一律 `+`。
  */
-export const RELAY_SEARCH_PLUGIN_ENTRY = `// 荣盈魔方 · 联网搜索 provider（由应用生成，请勿手改）
+export const RELAY_SEARCH_PLUGIN_ENTRY = `// Partner-W · 联网搜索 provider（由应用生成，请勿手改）
 //
 // 内核 web_search 工具的 provider 插件：把查询 POST 到荣盈 relay 的 /v1/search
 // （上游搜索真凭据只在服务器）。装载三条件与配置写入见应用侧
@@ -219,7 +219,7 @@ const SEARCH_PARAMETERS = {
 
 export default {
   id: PROVIDER_ID,
-  name: '荣盈魔方·联网搜索',
+  name: 'Partner-W·联网搜索',
   description: '把 web_search 接到荣盈互联网关（relay）—— 上游真凭据只留在服务器。',
   register(api) {
     api.registerWebSearchProvider({
@@ -283,7 +283,7 @@ export default {
 export const RELAY_SEARCH_PLUGIN_MANIFEST = `${JSON.stringify(
   {
     id: RELAY_SEARCH_PLUGIN_ID,
-    name: '荣盈魔方·联网搜索',
+    name: 'Partner-W·联网搜索',
     description: '把 web_search 接到荣盈互联网关（relay）—— 上游真凭据只留在服务器。',
     activation: { onStartup: true },
     contracts: { webSearchProviders: [RELAY_SEARCH_PLUGIN_ID] },

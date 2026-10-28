@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { PUBLIC_MARKET_CLOSED, PUBLIC_MARKET_CLOSED_CODE } from '@clawwork/shared';
 import type { IpcResult } from '@clawwork/shared';
 import { getCommercialClient } from '../commercial/client.js';
+import { localTemplateDetail, localTemplateSummaries } from '../market/local-templates.js';
 
 /**
  * 助手市场 / 创作者中心的 IPC。
@@ -55,6 +56,9 @@ export function registerMarketHandlers(): void {
   //    私有面（`market:mine`/create/update/delete）**不在这里**，照常开放。
   ipcMain.handle('market:templates', (_e, payload?: { category?: string | null; query?: string | null }) => {
     if (PUBLIC_MARKET_CLOSED) return { ok: false, errorCode: PUBLIC_MARKET_CLOSED_CODE };
+    // 本地部署（未接商业层，无 Supabase 客户端）⇒ 公开市场退回内置本地模板，
+    // 让「浏览 + 详情 + 在助手中使用」整条链路照常可用（见 local-templates.ts）。
+    if (!getCommercialClient()) return { ok: true, result: localTemplateSummaries(payload) };
     return callRpc(
       'market_templates',
       { p_category: payload?.category ?? null, p_query: payload?.query ?? null },
@@ -64,6 +68,11 @@ export function registerMarketHandlers(): void {
 
   ipcMain.handle('market:detail', (_e, payload: { id?: string }) => {
     if (PUBLIC_MARKET_CLOSED) return { ok: false, errorCode: PUBLIC_MARKET_CLOSED_CODE };
+    // 同上：本地部署时详情也来自内置模板；找不到按 not_found 收敛。
+    if (!getCommercialClient()) {
+      const row = localTemplateDetail(payload?.id ?? '');
+      return row ? { ok: true, result: row } : { ok: false, errorCode: 'not_found' };
+    }
     return callRpc('market_template_detail', { p_id: payload?.id ?? null }, (data) => firstRow(data));
   });
 

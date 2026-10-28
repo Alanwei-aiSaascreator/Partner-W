@@ -14,7 +14,13 @@ import { humanizeErrorKey } from '@/lib/humanize-error';
 import { buildKbContextBlock } from '@/lib/kb-context';
 import { evaluateCommercialSendAccess, type CommercialBlockReason } from '@/lib/quota';
 import { useCommercialStore } from '@/stores/commercialStore';
-import { isModelSelectable, modelFamilyLabel, relayModelsFrom, selectableModelsFrom } from './model-families.js';
+import {
+  isByokProviderId,
+  isModelSelectable,
+  modelFamilyLabel,
+  relayModelsFrom,
+  selectableModelsFrom,
+} from './model-families.js';
 import { deriveModelAvailability } from './model-availability.js';
 import { deriveGatewayDisplayPhase } from '../../lib/gateway-display-phase.js';
 import { isThinkingSupported, thinkingDefaultFor } from './thinking-levels.js';
@@ -242,9 +248,10 @@ export function useChatSend(opts: UseChatSendOpts) {
     // 此前这里自己只挡别名，是 10-12 统一时漏掉的一处），再按**模型家族**分组
     // （deepseek / qwen / glm 各一类，而不是全部堆在「clawrouter」一个组里）。
     for (const m of selectableModelsFrom(modelCatalog)) {
-      const family = modelFamilyLabel(m.id);
-      if (!groups[family]) groups[family] = [];
-      groups[family].push(m);
+      // 2026-10-28 多端点：BYOK 模型按**端点**（provider）分组，其余按模型家族分组。
+      const key = m.provider && isByokProviderId(m.provider) ? m.provider : modelFamilyLabel(m.id);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(m);
     }
     return groups;
   }, [modelCatalog]);
@@ -386,22 +393,25 @@ export function useChatSend(opts: UseChatSendOpts) {
       }
 
       const commercial = useCommercialStore.getState();
-      const access = evaluateCommercialSendAccess(commercial.status, commercial.overview);
-      if (!access.allowed) {
-        setQuotaBlock(access.reason);
-        return;
-      }
-      const verdict = access.verdict;
+      // 私有化 / 开源版：本地模式没有商业额度，整段额度闸门（拦截/告警/降级）直接跳过。
+      if (!commercial.localMode) {
+        const access = evaluateCommercialSendAccess(commercial.status, commercial.overview);
+        if (!access.allowed) {
+          setQuotaBlock(access.reason);
+          return;
+        }
+        const verdict = access.verdict;
 
-      if (verdict.level === 'warn' && !warnedThisWindowRef.current) {
-        warnedThisWindowRef.current = true;
-        toast.warning(t('usage.warnToast', { percent: Math.round(verdict.usedPercent) }));
-      }
+        if (verdict.level === 'warn' && !warnedThisWindowRef.current) {
+          warnedThisWindowRef.current = true;
+          toast.warning(t('usage.warnToast', { percent: Math.round(verdict.usedPercent) }));
+        }
 
-      if (verdict.level === 'degrade' && !degradePromptedRef.current) {
-        degradePromptedRef.current = true;
-        setQuotaDegrade(true);
-        return;
+        if (verdict.level === 'degrade' && !degradePromptedRef.current) {
+          degradePromptedRef.current = true;
+          setQuotaDegrade(true);
+          return;
+        }
       }
 
       const textarea = textareaRef.current;
@@ -1094,15 +1104,13 @@ export function useChatSend(opts: UseChatSendOpts) {
           时才让 deck 模型压住视觉备选；纯识图 / 普通聊天这一轮允许切到能看图的模型。
           deck 链的稳定性（产品拍板）在真正的 deck 轮次里一字未动。
         */
-        const deckIntentThisTurn =
-          sendMode !== 'custom' && looksLikeDeckRequest(content, task.deckRouted === true);
+        const deckIntentThisTurn = sendMode !== 'custom' && looksLikeDeckRequest(content, task.deckRouted === true);
         const visionPlan = planVisionRouting({
           hasImageAttachment: hasImageAttachment && !hasImageRecipients,
           imageInputSupport: resolveImageInputSupport(finalModelEntry),
           currentModelId: finalModelEntry?.id ?? effectiveModel,
           catalog: visionCatalog,
-          allowFallback:
-            sendMode !== 'custom' && (!preservesDeckModel || (hasImageAttachment && !deckIntentThisTurn)),
+          allowFallback: sendMode !== 'custom' && (!preservesDeckModel || (hasImageAttachment && !deckIntentThisTurn)),
         });
         if (visionPlan.kind === 'unavailable') {
           // 保留草稿与附件；不给不能识图的模型发送这轮请求。

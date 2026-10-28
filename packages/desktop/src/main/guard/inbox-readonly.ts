@@ -95,7 +95,7 @@ export function inboxReadonlyPolicyDir(stateDir: string): string {
  * ⚠️ 这是**运行在网关进程里**的普通 ESM：不 import 本仓任何东西（跨进程、跨打包边界），
  *    只用 node 内置模块。与 `definePluginEntry` 的等价物就是下面这个默认导出对象。
  */
-export const INBOX_READONLY_PLUGIN_ENTRY = `// 荣盈魔方 · 导入收件箱只读守卫（由应用生成，请勿手改）
+export const INBOX_READONLY_PLUGIN_ENTRY = `// Partner-W · 导入收件箱只读守卫（由应用生成，请勿手改）
 //
 // 规则：write / edit / apply_patch 的目标路径里出现 inbox 目录段一律拒绝。
 // 判定三层：①字面段（分隔符归一、. / .. 折叠、win32 大小写不敏感 + 段尾点/空格归一）
@@ -237,7 +237,7 @@ const handler = (event, context) => {
 
 export default {
   id: '${INBOX_READONLY_PLUGIN_ID}',
-  name: '荣盈魔方·导入收件箱只读',
+  name: 'Partner-W·导入收件箱只读',
   description: '拒绝把模型的写操作落到导入收件箱（inbox）—— 那是只读的参考材料。',
   register(api) {
     api.on('before_tool_call', handler, { priority: 100 });
@@ -249,7 +249,7 @@ export default {
 export const INBOX_READONLY_PLUGIN_MANIFEST = `${JSON.stringify(
   {
     id: INBOX_READONLY_PLUGIN_ID,
-    name: '荣盈魔方·导入收件箱只读',
+    name: 'Partner-W·导入收件箱只读',
     description: '拒绝把模型的写操作落到导入收件箱（inbox）—— 那是只读的参考材料。',
     activation: { onStartup: true },
     configSchema: { type: 'object', additionalProperties: false, properties: {} },

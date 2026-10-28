@@ -5,7 +5,7 @@
  * OpenClaw 相关目录可能含 Windows junction（实测：state 目录里有指回
  * `node_modules/openclaw` 的 junction），`rm -rf` 会**沿着 junction 进真实目录**
  * 把真身删掉。我们因此删过 `openclaw.mjs`。
- * ⇒ 「首次启动」这类测试**绝不能**靠删真实 `%APPDATA%/魔方罗盘` / `openclaw-state`
+ * ⇒ 「首次启动」这类测试**绝不能**靠删真实 `%APPDATA%/Partner-W` / `openclaw-state`
  *   / `.state-*` 来模拟；只能把 userData **指到**一次性临时目录。
  *
  * ⚠️ 这个后门**只在显式设了环境变量时**生效，而且**打包后的正式版一律不认**

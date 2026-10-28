@@ -4,7 +4,7 @@
  * ## 现场
  *
  * 盘在 `G:` 下跑过一次之后，`openclaw.json` 的 `plugins.load.paths` 里就写死了
- * `G:\荣盈魔方-运行数据\state\<id>\policies\rongying-inbox-readonly`。换插到 `E:` 后：
+ * `G:\Partner-W-运行数据\state\<id>\policies\rongying-inbox-readonly`。换插到 `E:` 后：
  * 那台机器上 `G:` 不存在 ⇒ 网关把"任一 load path 不存在"判成 **Invalid config** ⇒
  * **拒绝启动** ⇒ 整盘卡在"本机服务"。而配置里那份死条目**永远不会自己走掉**
  * （提前返回的判据只认"当前盘这一条在不在"，历史盘符那些不在它视野里）。

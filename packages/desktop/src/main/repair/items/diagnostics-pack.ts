@@ -71,7 +71,7 @@ export interface DiagnosticsInput {
 
 /** 诊断包文件名（不含目录）。 */
 export function diagnosticsFileName(stamp: string): string {
-  return `荣盈魔方-诊断包-${stamp}.zip`;
+  return `Partner-W-诊断包-${stamp}.zip`;
 }
 
 function readJsonSafe(file: string): unknown {

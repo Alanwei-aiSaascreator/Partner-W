@@ -370,6 +370,9 @@ vi.mock('../src/renderer/platform', () => {
     useUiStore: <T,>(selector: (state: typeof uiState) => T) => selector(uiState),
     useMessageStore: <T,>(selector: (state: typeof messageState) => T) => selector(messageState),
     useRoomStore: <T,>(selector: (state: typeof roomState) => T) => selector(roomState),
+    // `lib/session-sync.ts` 在**模块作用域**就解构这两个端口（`createSessionSync`），
+    // mock 缺了会让整个套件在导入期炸（"No ports export"）—— 桩成空对象即可加载。
+    ports: { persistence: {}, gateway: {} },
   };
 });
 

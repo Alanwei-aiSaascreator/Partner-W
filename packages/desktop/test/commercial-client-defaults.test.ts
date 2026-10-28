@@ -2,20 +2,15 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CONFIG_FILE_NAME,
-  DEFAULT_COMMERCIAL_SUPABASE_ANON_KEY,
-  DEFAULT_COMMERCIAL_SUPABASE_URL,
-} from '@clawwork/shared';
+import { CONFIG_FILE_NAME } from '@clawwork/shared';
 
 /**
- * 🔴 P0 回归（2026-09-18）：干净机器上 `getCommercialClient()` 必须还能建出客户端。
+ * 私有化 / 开源版（2026-10）：干净机器上 `getCommercialClient()` 返回 null。
  *
- * 这是同一条链的**后半截**：`commercial:get-config` 决定渲染层进不进登录页，
- * 而登录本身（验证码 / 密码 / 读会话 / 激活 / 用量上报）全都要走这个客户端。
- * 只修前半截的话，用户会看到一个"能显示、但一登录就报未配置"的登录页。
+ * 开源版默认凭据清空 ⇒ 商业客户端不建立 ⇒ 登录 / 激活 / 用量上报整条链
+ * 都不发网络（本地模式）。用户显式在 `commercial` 段填了 url/key 才建客户端。
  *
- * ⚠️ 这里刻意**不 mock** `client.js`：要钉的就是它真建得出客户端。
+ * ⚠️ 这里刻意**不 mock** `client.js`：要钉的就是"凭据为空 ⇒ 返回 null"这个契约。
  *    只 mock electron（userData 指到临时目录），配置从真实文件读。
  */
 
@@ -54,18 +49,14 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('getCommercialClient 的读取期兜底', () => {
-  it('⭐ 干净机器（没有配置文件）⇒ 不再返回 null，用的是随包下发的生产凭据', () => {
+describe('getCommercialClient 的本地模式行为', () => {
+  it('⭐ 干净机器（没有配置文件）⇒ 返回 null（本地模式，不发网络）', () => {
     const client = getCommercialClient();
 
-    expect(client, 'null ⇒ 登录/激活/用量上报全都会静默失败').not.toBeNull();
-    expect(clientTarget(client).supabaseUrl).toBe(DEFAULT_COMMERCIAL_SUPABASE_URL);
-    expect(clientTarget(client).supabaseKey).toBe(DEFAULT_COMMERCIAL_SUPABASE_ANON_KEY);
-    // 建出来的得是真客户端，而不是个占位对象
-    expect(typeof client?.auth.signInWithOtp).toBe('function');
+    expect(client, '私有化版凭据为空 ⇒ 商业客户端不建立').toBeNull();
   });
 
-  it('配置里有值 ⇒ 用配置里的（默认值只是兜底，不覆盖已配置的部署）', () => {
+  it('配置里有值 ⇒ 用配置里的（用户显式接回商业后端时仍可用）', () => {
     writeFileSync(
       join(dir, CONFIG_FILE_NAME),
       JSON.stringify({

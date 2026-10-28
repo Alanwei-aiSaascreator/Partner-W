@@ -40,6 +40,8 @@ function validateTask(task: Task) {
 
 async function checkQuota(signal?: AbortSignal) {
   const commercial = useCommercialStore.getState();
+  // 私有化 / 开源版：本地模式没有商业额度，整段额度闸门直接跳过。
+  if (commercial.localMode) return;
   await (commercial.overview?.account ? commercial.refresh() : commercial.load());
   if (signal?.aborted) throw new Error('Meeting cancelled');
   const snapshot = useCommercialStore.getState();

@@ -3,6 +3,7 @@ import { usePreventFileDropNavigation } from './hooks/usePreventFileDropNavigati
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, TOAST_DURATION_MS, TOAST_OPTIONS } from '@/lib/toast';
 import LeftNav from './layouts/LeftNav';
+import TopBar from './layouts/TopBar';
 import MainArea from './layouts/MainArea';
 import RightPanel from './layouts/RightPanel';
 import Setup from './layouts/Setup';
@@ -20,6 +21,8 @@ import CommandPalette from './components/CommandPalette';
 import { useUiStore, type Theme } from './stores/uiStore';
 import { useTaskStore } from './stores/taskStore';
 import { useFileStore } from './stores/fileStore';
+import { useCommercialStore } from './stores/commercialStore';
+import { refreshByokEndpoints } from './stores/byokStore';
 import { composer } from './platform';
 import { useGatewayBootstrap } from './hooks/useGatewayBootstrap';
 import { useWorkspaceRefresh } from './hooks/useWorkspaceRefresh';
@@ -375,6 +378,9 @@ export default function App() {
     /** 配置读完才会知道要不要做会话检查，所以取消函数得晚一步才有 —— 先占个位。 */
     let cancelAuthCheck: (() => void) | null = null;
 
+    // BYOK 端点名缓存（2026-10-28 多端点）：模型选择器「先选端点」需要 provider → 友好名映射。
+    void refreshByokEndpoints();
+
     (async () => {
       // ① 先看商业配置。**没配置就是本地模式，压根没有会话要检查**（也就没有网络依赖）。
       try {
@@ -386,6 +392,8 @@ export default function App() {
           return;
         }
         if (entryMode === 'local') {
+          // 私有化 / 开源版：本地模式没有商业额度，闸门必须放行（否则发不出消息）。
+          useCommercialStore.getState().setLocalMode(true);
           setOnboardingAccount({ userId: 'local', nickname: '' });
           const localOnboardingLoad = loadOnboardingProfileResult('local', undefined, { source: 'local-entry' });
           setOnboardingProfile(localOnboardingLoad.profile);
@@ -742,139 +750,138 @@ export default function App() {
   return (
     <TooltipProvider>
       <AnimatePresence>{commandPaletteOpen && <CommandPalette />}</AnimatePresence>
-      <div className="relative flex h-screen overflow-hidden bg-[var(--bg-primary)]">
-        {/* 图标栏（`GlobalRail`）已删除（2026-09-19）—— 它的页面入口与左侧导航列
-            **基本重复**；去掉后把别处还没有的几项搬进了 `NavMenu`：
-            文件管理 / 归档对话 / 资料库（主清单）、内测中心 / 设置（底部一组）。
-            ⇒ 现在左侧只剩**一列**：导航列（`LeftNav`）。 */}
-        <motion.aside
-          animate={{ width: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : leftNavWidth }}
-          transition={{
-            // H6：拖左栏时**只**取消宽度的过渡（跟手）；开关/收纳的动画照旧。
-            width: {
-              duration: draggingPanel === 'left' ? 0 : motionDuration.moderate,
-              ease: motionEase.standard,
-            },
-          }}
-          className={cn(
-            'relative z-[1] flex-shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)]',
-          )}
-          style={{ minWidth: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : 200 }}
-        >
-          <LeftNav
-            onOpenAssistantSettings={() => openSettings('agents')}
-            onOpenSettings={() => openSettings('general')}
-          />
-        </motion.aside>
+      <div className="relative flex h-screen flex-col overflow-hidden bg-[var(--bg-primary)]">
+        {/* 顶部导航栏（2026-10-28 排版重构）：页面导航 / 搜索 / 新建任务 / 助手切换 /
+            个人资料统一搬到顶部，左侧栏只留「会话 + 任务」列表。 */}
+        <TopBar onOpenAssistantSettings={() => openSettings('agents')} onOpenSettings={() => openSettings('general')} />
 
-        {!leftNavCollapsed && (
-          <div
-            className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
-            onMouseDown={(e) => startPanelDrag(e, leftNavWidth, setLeftNavWidth, 1, 'left')}
+        <div className="relative flex min-h-0 flex-1">
+          <motion.aside
+            animate={{ width: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : leftNavWidth }}
+            transition={{
+              // H6：拖左栏时**只**取消宽度的过渡（跟手）；开关/收纳的动画照旧。
+              width: {
+                duration: draggingPanel === 'left' ? 0 : motionDuration.moderate,
+                ease: motionEase.standard,
+              },
+            }}
+            className={cn('relative z-[1] flex-shrink-0 overflow-hidden border-r border-[var(--border-subtle)]')}
+            style={{
+              minWidth: leftNavCollapsed ? LEFT_NAV_RAIL_WIDTH : 200,
+              // 左栏由上至下渐入品牌主色（2026-10-28 用户要求：能看出来的那种 ——
+              // 上一版终点色只有 10% 透明度且色标超出容器，实际渲染几乎不可见）。
+              backgroundImage:
+                'linear-gradient(180deg, var(--bg-secondary) 0%, color-mix(in srgb, var(--accent) 22%, transparent) 100%)',
+            }}
           >
-            <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
-          </div>
-        )}
-        {/* 2026-09-29：**收起不再等于归零** —— 缩成一条图标条（`LEFT_NAV_RAIL_WIDTH`），
+            <LeftNav />
+          </motion.aside>
+
+          {!leftNavCollapsed && (
+            <div
+              className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
+              onMouseDown={(e) => startPanelDrag(e, leftNavWidth, setLeftNavWidth, 1, 'left')}
+            >
+              <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
+            </div>
+          )}
+          {/* 2026-09-29：**收起不再等于归零** —— 缩成一条图标条（`LEFT_NAV_RAIL_WIDTH`），
             导航项还在、图标居中、悬停出气泡。
             ⚠️ 因此原来那条 28px 展开窄条**整个删掉**（不是留着不用）：它的存在理由是
             「归零之后再也点不回来」（图标栏 `GlobalRail` 已在 2026-09-19 删除，当时只剩那一条退路），
             现在图标条自己就带着展开按钮（在 `LeftNav` 顶部第一行），理由不成立。
             留着的坏处是两条窄栏并排，用户会以为那是两个东西。 */}
 
-        <main className="relative flex-1 min-w-0 flex flex-col z-[1]">
-          {settingsOpen ? (
-            <Settings
-              initialSection={settingsSection}
-              onboardingProfile={onboardingProfile}
-              onEditOnboardingProfile={() => {
-                setSettingsOpen(false);
-                setEditingOnboardingProfile(true);
-              }}
-            />
-          ) : (
-            <MainArea
-              onTogglePanel={toggleRightPanel}
-              onboardingProfile={onboardingProfile}
-              startupReadiness={startupReadiness}
-              onRetryStartup={startupReadiness.retry}
-              // 个性化中心「编辑我的资料」入口（B 的 IdentityCenter 按需渲染；MainArea 透传）
-              onEditOnboardingProfile={() => setEditingOnboardingProfile(true)}
-            />
-          )}
-        </main>
+          <main className="relative flex-1 min-w-0 flex flex-col z-[1]">
+            {settingsOpen ? (
+              <Settings initialSection={settingsSection} />
+            ) : (
+              <MainArea
+                onTogglePanel={toggleRightPanel}
+                onboardingProfile={onboardingProfile}
+                startupReadiness={startupReadiness}
+                onRetryStartup={startupReadiness.retry}
+                // 个性化中心「编辑我的资料」入口（B 的 IdentityCenter 按需渲染；MainArea 透传）
+                onEditOnboardingProfile={() => setEditingOnboardingProfile(true)}
+              />
+            )}
+          </main>
 
-        <AnimatePresence>
-          {rightPanelOpen &&
-            !settingsOpen &&
-            mainView === 'chat' &&
-            (artifactPanelMode === 'preview' && panelLayout.mode !== 'inline' ? (
-              /* 窄窗/小屏：预览改**抽屉**（Task 4）—— Radix Dialog 供 Esc 关闭与焦点归还，
+          <AnimatePresence>
+            {rightPanelOpen &&
+              !settingsOpen &&
+              mainView === 'chat' &&
+              (artifactPanelMode === 'preview' && panelLayout.mode !== 'inline' ? (
+                /* 窄窗/小屏：预览改**抽屉**（Task 4）—— Radix Dialog 供 Esc 关闭与焦点归还，
                  内容贴右缘（样式在 theme.css 的 .artifact-drawer*；宽度由布局裁定给）。 */
-              <DialogPrimitive.Root
-                open
-                onOpenChange={(open) => {
-                  if (!open) setArtifactPanelMode('list');
-                }}
-              >
-                <DialogPrimitive.Portal>
-                  <DialogPrimitive.Overlay className="artifact-drawer__overlay" />
-                  <DialogPrimitive.Content
-                    className="artifact-drawer"
-                    data-mode={panelLayout.mode}
-                    style={{ '--artifact-drawer-width': `${panelLayout.width}px` } as React.CSSProperties}
-                    aria-describedby={undefined}
-                    /* ⭐ H5：整棵树里**没有 Trigger** —— Radix 默认的"归还 Trigger"在这里
+                <DialogPrimitive.Root
+                  open
+                  onOpenChange={(open) => {
+                    if (!open) setArtifactPanelMode('list');
+                  }}
+                >
+                  <DialogPrimitive.Portal>
+                    <DialogPrimitive.Overlay className="artifact-drawer__overlay" />
+                    <DialogPrimitive.Content
+                      className="artifact-drawer"
+                      data-mode={panelLayout.mode}
+                      style={{ '--artifact-drawer-width': `${panelLayout.width}px` } as React.CSSProperties}
+                      aria-describedby={undefined}
+                      /* ⭐ H5：整棵树里**没有 Trigger** —— Radix 默认的"归还 Trigger"在这里
                        无处可去（实测焦点落到 body）。所以自己归还：优先仍连接的进入点
                        （请求预览那一刻在导航适配层捕获的元素），入口已经随布局卸载时退到
                        当前聊天视图的稳定输入控件。焦点约束本身不取消（只接管这一次落点）。 */
-                    onCloseAutoFocus={(event) => {
-                      event.preventDefault();
-                      const target = takeArtifactPreviewFocusTarget();
-                      if (target) target.focus();
-                      else focusCurrentViewFallback();
-                    }}
+                      onCloseAutoFocus={(event) => {
+                        event.preventDefault();
+                        const target = takeArtifactPreviewFocusTarget();
+                        if (target) target.focus();
+                        else focusCurrentViewFallback();
+                      }}
+                    >
+                      <DialogPrimitive.Title className="sr-only">{t('rightPanel.artifacts')}</DialogPrimitive.Title>
+                      <RightPanel />
+                    </DialogPrimitive.Content>
+                  </DialogPrimitive.Portal>
+                </DialogPrimitive.Root>
+              ) : (
+                <>
+                  <div
+                    className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
+                    onMouseDown={(e) =>
+                      // 拖拽以**当前可见宽**（布局裁定后的有效宽）为基准：窄窗受夹时拖动仍 1:1 跟手；
+                      // 此时拖出的宽度会写进偏好 —— 那是用户的显式动作，语义上是"就调到这里"
+                      //（窗口变化本身**不会**触碰偏好，见 ui-store 注释与布局纯函数）。
+                      artifactPanelMode === 'preview'
+                        ? startPanelDrag(e, panelLayout.width, setArtifactPreviewWidth, -1, 'right')
+                        : startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1, 'right')
+                    }
                   >
-                    <DialogPrimitive.Title className="sr-only">{t('rightPanel.artifacts')}</DialogPrimitive.Title>
+                    <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
+                  </div>
+                  <motion.aside
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{
+                      width: artifactPanelMode === 'preview' ? panelLayout.width : rightPanelWidth,
+                      opacity: 1,
+                    }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={{
+                      // H6：拖右栏时**只**取消宽度的过渡 —— 拖拽跟手、opacity 入场照旧；
+                      // 释放（mouseup/blur/卸载）后恢复既有 moderate 过渡。
+                      width: {
+                        duration: draggingPanel === 'right' ? 0 : motionDuration.moderate,
+                        ease: motionEase.standard,
+                      },
+                      opacity: { duration: motionDuration.moderate, ease: motionEase.standard },
+                    }}
+                    className={cn('glass-heavy relative flex-shrink-0 overflow-hidden z-[1] border-l-0')}
+                  >
                     <RightPanel />
-                  </DialogPrimitive.Content>
-                </DialogPrimitive.Portal>
-              </DialogPrimitive.Root>
-            ) : (
-              <>
-                <div
-                  className="group w-1.5 flex-shrink-0 cursor-col-resize z-10 -mx-[3px]"
-                  onMouseDown={(e) =>
-                    // 拖拽以**当前可见宽**（布局裁定后的有效宽）为基准：窄窗受夹时拖动仍 1:1 跟手；
-                    // 此时拖出的宽度会写进偏好 —— 那是用户的显式动作，语义上是"就调到这里"
-                    //（窗口变化本身**不会**触碰偏好，见 ui-store 注释与布局纯函数）。
-                    artifactPanelMode === 'preview'
-                      ? startPanelDrag(e, panelLayout.width, setArtifactPreviewWidth, -1, 'right')
-                      : startPanelDrag(e, rightPanelWidth, setRightPanelWidth, -1, 'right')
-                  }
-                >
-                  <div className="h-full w-px mx-auto bg-[var(--border)] group-hover:bg-[var(--accent)] transition-colors" />
-                </div>
-                <motion.aside
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: artifactPanelMode === 'preview' ? panelLayout.width : rightPanelWidth, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{
-                    // H6：拖右栏时**只**取消宽度的过渡 —— 拖拽跟手、opacity 入场照旧；
-                    // 释放（mouseup/blur/卸载）后恢复既有 moderate 过渡。
-                    width: {
-                      duration: draggingPanel === 'right' ? 0 : motionDuration.moderate,
-                      ease: motionEase.standard,
-                    },
-                    opacity: { duration: motionDuration.moderate, ease: motionEase.standard },
-                  }}
-                  className={cn('glass-heavy relative flex-shrink-0 overflow-hidden z-[1] border-l-0')}
-                >
-                  <RightPanel />
-                </motion.aside>
-              </>
-            ))}
-        </AnimatePresence>
+                  </motion.aside>
+                </>
+              ))}
+          </AnimatePresence>
+        </div>
         <AppToaster themeMode={themeMode} />
         {/* 更新与关于：挂在**每个**界面（含登录页），否则登录页的更新提示又会"点了没反应"。 */}
         <UpdateDialog />

@@ -292,7 +292,7 @@ export async function downloadPortablePackage(input: {
   statfsImpl?: StatfsLike;
 }): Promise<void> {
   // ⚠️ **先 mkdir 再 statfs**（2026-09-25 真机验收抓到的发版阻断级缺陷）。
-  //    真机上的目标是 `<盘根>\.荣盈魔方更新\<事务 id>\download\portable.zip`，
+  //    真机上的目标是 `<盘根>\.Partner-W更新\<事务 id>\download\portable.zip`，
   //    而全新的一块盘上**这棵树还不存在**；`fs.statfs` 一个不存在的路径在 Windows 上
   //    抛 ENOENT ⇒ 空间检查先炸 ⇒ **连 zip 都不去取**，用户看到"未知错误"。
   //    ⇒ 盘上的 0.0.28 **永远升不上来**（下载动作是盘上那个版本在跑，签名/频道/版本号全都无关）。

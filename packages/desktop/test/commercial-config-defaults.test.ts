@@ -2,23 +2,20 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CONFIG_FILE_NAME, DEFAULT_COMMERCIAL_SUPABASE_URL } from '@clawwork/shared';
+import { CONFIG_FILE_NAME } from '@clawwork/shared';
 
 /**
- * 🔴 P0 回归（2026-09-18）：干净机器上 `commercial:get-config` 必须报"已配置"。
+ * 私有化 / 开源版（2026-10）：干净机器上 `commercial:get-config` 必须报"未配置"。
  *
  * 渲染层进不进登录页**只看这一个 IPC 的返回**（`App.tsx`）：
  *
  *   configured = config.ok && config.result.supabaseUrl && config.result.hasAnonKey
- *   configured === false ⇒ 直接进本地模式，屏幕上连登录页都没有
+ *   configured === false ⇒ 直接进本地模式（无登录页）—— 开源客户端的默认态
  *
- * 而干净机器上 `clawwork-config.json` 的 `commercial` 段必然是空的。所以这条链
- * 必须在**读 IPC 的人**这一侧兜底到随包下发的生产默认值 —— 这就是本文件钉的事。
- * （兜底规则本身在 `@clawwork/shared` 的 `resolveCommercialCredentials`，
- *   那边有独立单测；这里只钉"handler 真的用了它"。）
+ * 开源版默认凭据清空，`resolveCommercialCredentials` 无配置时返回空；
+ * 用户显式在 `commercial` 段填了 url/key 才走商业登录。
  *
- * ⚠️ 用真实临时目录、真写 `clawwork-config.json`：`readConfig()` 读的是磁盘，
- *    mock 掉它就把"从哪读"这件事一起 mock 没了，那是本 bug 的全部内容。
+ * ⚠️ 用真实临时目录、真写 `clawwork-config.json`：`readConfig()` 读的是磁盘。
  */
 
 const mocks = vi.hoisted(() => ({
@@ -114,23 +111,23 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('commercial:get-config 的读取期兜底', () => {
-  it('⭐ 干净机器（连配置文件都还没有）⇒ 渲染层仍判定"已配置"、进登录页', async () => {
+describe('commercial:get-config 的本地模式判定', () => {
+  it('⭐ 干净机器（连配置文件都还没有）⇒ 渲染层判定"未配置"、进本地模式', async () => {
     const result = await getConfig();
 
-    expect(result.supabaseUrl).toBe(DEFAULT_COMMERCIAL_SUPABASE_URL);
-    expect(result.hasAnonKey).toBe(true);
-    expect(looksConfiguredToRenderer(result), '这条链断了 ⇒ 屏幕上没有登录页（P0 复发）').toBe(true);
+    expect(result.supabaseUrl).toBe('');
+    expect(result.hasAnonKey).toBe(false);
+    expect(looksConfiguredToRenderer(result), '开源版默认无登录页').toBe(false);
   });
 
-  it('⭐ 配置文件在、但商业段是空串（老 profile / 被清过）⇒ 同样兜底到默认值', async () => {
+  it('⭐ 配置文件在、但商业段是空串（老 profile / 被清过）⇒ 同样未配置（本地模式）', async () => {
     writeConfigFile({ supabaseUrl: '', supabaseAnonKey: '' });
 
     const result = await getConfig();
 
-    expect(result.supabaseUrl).toBe(DEFAULT_COMMERCIAL_SUPABASE_URL);
-    expect(result.hasAnonKey).toBe(true);
-    expect(looksConfiguredToRenderer(result)).toBe(true);
+    expect(result.supabaseUrl).toBe('');
+    expect(result.hasAnonKey).toBe(false);
+    expect(looksConfiguredToRenderer(result)).toBe(false);
   });
 
   it('用户/测试自己填了值 ⇒ 用户的值优先（默认值只是兜底，不覆盖配置）', async () => {

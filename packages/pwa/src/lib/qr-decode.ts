@@ -163,7 +163,7 @@ export function parseQrPayloadOrUrl(raw: string, options?: ParseQrOptions): Pars
     const params = url.searchParams;
     const host = params.get('host')?.trim();
     const token = params.get('token')?.trim();
-    const name = params.get('name')?.trim() || '荣盈魔方';
+    const name = params.get('name')?.trim() || 'Partner-W';
     if (params.get('legacyPair') === '1' && host && token) {
       const normalized = host.replace(/^wss?:\/\//, '');
       return {

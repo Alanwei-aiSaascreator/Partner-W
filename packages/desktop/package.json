@@ -2,14 +2,14 @@
   "name": "@clawwork/desktop",
   "version": "1.0.11",
   "private": true,
-  "description": "荣盈魔方 AI 桌面工作台",
+  "description": "Partner-W AI 桌面工作台",
   "type": "module",
   "main": "./out/main/index.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/clawwork-ai/clawwork.git"
   },
-  "author": "荣盈魔方",
+  "author": "Partner-W",
   "scripts": {
     "clean": "node ./scripts/clean.mjs",
     "dev": "electron-vite dev",
@@ -26,6 +26,7 @@
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource-variable/noto-sans-sc": "^5.3.1",
     "@huggingface/transformers": "^4.3.0",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dialog": "^1.1.15",

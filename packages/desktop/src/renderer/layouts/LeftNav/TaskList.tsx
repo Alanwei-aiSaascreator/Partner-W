@@ -46,6 +46,14 @@ export default function TaskList({
 
   if (collapsed) return null;
 
+  /** 分组标题的 emoji 点缀（2026-10-28 视觉升级：列表不再素文字）。 */
+  const GROUP_EMOJI: Record<SidebarTaskGroupKey, string> = {
+    today: '🌤',
+    yesterday: '🌙',
+    week: '📅',
+    earlier: '🗂',
+  };
+
   const groupLabel = (key: SidebarTaskGroupKey) =>
     t(
       key === 'today'
@@ -85,7 +93,12 @@ export default function TaskList({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {groups.length === 0 ? (
-          <p className="px-2 py-3 type-support text-[var(--text-muted)]">{t('leftNav.taskGroups.empty')}</p>
+          <p className="flex flex-col items-center gap-1.5 px-2 py-6 type-support text-[var(--text-muted)]">
+            <span aria-hidden="true" className="text-xl">
+              🗒️
+            </span>
+            {t('leftNav.taskGroups.empty')}
+          </p>
         ) : (
           groups.map((group) => {
             const folded = collapsedGroups.has(group.key);
@@ -96,11 +109,18 @@ export default function TaskList({
                   data-testid={`left-nav-group-${group.key}`}
                   aria-expanded={!folded}
                   onClick={() => toggleGroup(group.key)}
-                  className="glow-focus flex w-full items-center gap-1.5 rounded px-2 pt-2 pb-1 text-left type-badge text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
+                  className="glow-focus flex w-full items-center gap-1.5 rounded-md px-2 pt-2 pb-1 text-left type-badge text-[var(--text-muted)] transition-colors hover:text-[var(--text-secondary)]"
                 >
+                  <span aria-hidden="true" className="text-[11px] leading-none">
+                    {GROUP_EMOJI[group.key]}
+                  </span>
                   <span>{groupLabel(group.key)}</span>
-                  <span className="opacity-70">{group.tasks.length}</span>
-                  {folded ? <ChevronRight size={12} className="ml-auto" /> : <ChevronDown size={12} className="ml-auto" />}
+                  <span className="rounded-full bg-[var(--bg-tertiary)] px-1.5 opacity-90">{group.tasks.length}</span>
+                  {folded ? (
+                    <ChevronRight size={12} className="ml-auto" />
+                  ) : (
+                    <ChevronDown size={12} className="ml-auto" />
+                  )}
                 </button>
                 {!folded &&
                   group.tasks.map((task) => {
@@ -114,19 +134,36 @@ export default function TaskList({
                         aria-current={active ? 'true' : undefined}
                         onClick={() => onSelect(task.id)}
                         className={cn(
-                          'titlebar-no-drag glow-focus flex h-8 w-full items-center gap-2 rounded-md px-2 text-left transition-colors',
+                          'titlebar-no-drag glow-focus relative flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-all hover:translate-x-0.5 motion-reduce:transition-none motion-reduce:hover:translate-x-0',
                           active
-                            ? 'bg-[var(--state-selected)] text-[var(--text-primary)]'
+                            ? 'bg-[var(--accent-dim)] text-[var(--text-primary)]'
                             : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
                         )}
                       >
+                        {active && (
+                          <span
+                            aria-hidden="true"
+                            className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-full [background:var(--brand-gradient)]"
+                          />
+                        )}
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                            running
+                              ? 'bg-[var(--accent)]'
+                              : active
+                                ? '[background:var(--brand-gradient)]'
+                                : 'bg-[var(--border-hover)]',
+                          )}
+                        />
                         <span className="min-w-0 flex-1 truncate type-body">
                           {task.title || t('leftNav.taskGroups.untitled')}
                         </span>
                         {running ? (
                           <span
                             data-testid="left-nav-task-running"
-                            className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[var(--accent)] animate-pulse"
+                            className="h-2 w-2 flex-shrink-0 rounded-full bg-[var(--accent)] shadow-[0_0_6px_var(--accent)] animate-pulse motion-reduce:animate-none"
                             aria-label={t('leftNav.taskGroups.running')}
                           />
                         ) : null}

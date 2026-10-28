@@ -219,7 +219,7 @@ function quarantineUnusableLocks(root: string, entries: Entry[], probe: Resolved
         `无法隔离不可用的网关锁（${relative}）：文件被占用或所在介质不可写（${
           error instanceof Error ? error.message : String(error)
         }）。` +
-          '请先完全退出荣盈魔方、等本机服务结束后重试；' +
+          '请先完全退出Partner-W、等本机服务结束后重试；' +
           `若确认没有网关在运行，可手动把该锁文件改名备份后重试：${file}`,
       );
     }
@@ -337,7 +337,7 @@ function previousGatewayRunning(file: string, relative: string, pid: number): Er
   return new Error(
     'Previous gateway is still running; close it before migrating portable state' +
       `（锁文件: ${relative}，PID ${pid}）。` +
-      '请先完全退出荣盈魔方、等本机服务结束再重试；' +
+      '请先完全退出Partner-W、等本机服务结束再重试；' +
       `若确认该进程不是网关（pid 被复用/旧机器残留），可把锁文件改名备份后重试：${file}`,
   );
 }

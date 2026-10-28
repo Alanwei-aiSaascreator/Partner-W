@@ -156,7 +156,7 @@ const PORTABLE_ERRORS: Readonly<Record<PortableUpdateErrorCode, PortableErrorInf
     category: 'filesystem',
     retryable: false,
     action: 'contact-support',
-    text: '更新失败，自动恢复也没能完成。请不要拔出 U 盘、不要删除任何文件，并把这台电脑上的「.荣盈魔方更新」目录提供给技术支持。',
+    text: '更新失败，自动恢复也没能完成。请不要拔出 U 盘、不要删除任何文件，并把这台电脑上的「.Partner-W更新」目录提供给技术支持。',
   },
   cancelled: {
     category: 'no-update',
@@ -168,7 +168,7 @@ const PORTABLE_ERRORS: Readonly<Record<PortableUpdateErrorCode, PortableErrorInf
     category: 'filesystem',
     retryable: true,
     action: 'retry',
-    text: '更新没能完成。请重试；如果一直失败，请把「.荣盈魔方更新」目录提供给技术支持。',
+    text: '更新没能完成。请重试；如果一直失败，请把「.Partner-W更新」目录提供给技术支持。',
   },
 };
 
@@ -262,7 +262,7 @@ export function describeUpdateError(
       return '更新服务还没有提供更新清单（服务端未就绪），当前版本可以继续使用。';
     case 'portable-service':
       // 盘上运行、但整目录更新服务没建起来：重开一次就好，不是用户的错，也不是"已是最新"
-      return '盘上运行的更新服务还没准备好。请重新打开一次荣盈魔方再试。';
+      return '盘上运行的更新服务还没准备好。请重新打开一次Partner-W再试。';
     case 'network':
       return '连不上更新服务器，请检查网络后重试。';
     case 'signature':

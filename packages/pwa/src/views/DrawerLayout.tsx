@@ -2,7 +2,32 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, LazyMotion, domMax, m } from 'framer-motion';
-import { Archive, BookOpen, Bot, ChevronDown, CircleDashed, Clock, Compass, FolderOpen, ListChecks, ListOrdered, LogOut, Menu, MessageCircle, PenTool, Rocket, Search, Settings, Sparkles, SquarePen, TrendingUp, Trophy, UserRound, Users, type LucideIcon } from 'lucide-react';
+import {
+  Archive,
+  BookOpen,
+  Bot,
+  ChevronDown,
+  CircleDashed,
+  Clock,
+  Compass,
+  FolderOpen,
+  ListChecks,
+  ListOrdered,
+  LogOut,
+  Menu,
+  MessageCircle,
+  PenTool,
+  Rocket,
+  Search,
+  Settings,
+  Sparkles,
+  SquarePen,
+  TrendingUp,
+  Trophy,
+  UserRound,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { ArtifactsView } from './ArtifactsView';
 import { AgentsView } from './GatewayModulesView';
@@ -57,7 +82,7 @@ interface NavItem {
  */
 const NAV_ITEMS: NavItem[] = [
   { id: 'search', icon: Search, label: '搜索任务', short: '搜索', group: '任务' },
-  { id: 'assistant', icon: Compass, label: '罗盘助手', short: '罗盘', group: '能力' },
+  { id: 'assistant', icon: Compass, label: 'Partner-W 助手', short: '助手', group: '能力' },
   { id: 'tasks', icon: ListOrdered, label: '最近任务', short: '任务', group: '任务', ready: true },
   { id: 'personalize', icon: UserRound, label: '个性化中心', short: '个性化', group: '我的' },
   { id: 'team', icon: Users, label: '团队', short: '团队', group: '能力', badge: 'BETA' },

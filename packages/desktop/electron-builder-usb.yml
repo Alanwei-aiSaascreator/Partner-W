@@ -1,6 +1,6 @@
 npmRebuild: false
 appId: com.mofangluopan.app
-productName: 荣盈魔方
+productName: Partner-W
 directories:
   buildResources: build
   output: dist
@@ -168,7 +168,7 @@ mac:
     - '!**/onnxruntime-node/bin/napi-v6/linux/**'
     - '!**/onnxruntime-node/bin/napi-v6/win32/**'
   extendInfo:
-    NSMicrophoneUsageDescription: 荣盈魔方 needs microphone access for voice dictation in chat input.
+    NSMicrophoneUsageDescription: Partner-W needs microphone access for voice dictation in chat input.
 win:
   target:
     - target: nsis

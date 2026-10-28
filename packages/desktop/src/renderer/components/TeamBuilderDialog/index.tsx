@@ -87,7 +87,7 @@ export function defaultTeamPositionForRole(role: AgentConfig['role']): TeamPosit
   return role === 'coordinator' ? 'moderator' : 'expert';
 }
 
-const SYSTEM_PROMPT_TEMPLATE = `You are a Team creation assistant for Rongying Cube. Help the user create a new AI Team — a group of specialized Agents that work together on tasks.
+const SYSTEM_PROMPT_TEMPLATE = `You are a Team creation assistant for Partner-W. Help the user create a new AI Team — a group of specialized Agents that work together on tasks.
 
 Your job:
 1. Ask what kind of Team the user wants and what tasks it should handle

@@ -332,7 +332,7 @@ export async function recoverPortablePrepare(input: {
   return true;
 }
 
-/** 更新状态文件名（`<盘根>\.荣盈魔方更新\update-state.json`）。 */
+/** 更新状态文件名（`<盘根>\.Partner-W更新\update-state.json`）。 */
 export const PORTABLE_UPDATE_STATE_FILE_NAME = 'update-state.json';
 
 /**
@@ -354,7 +354,7 @@ export type PortablePrepareRecoveryResult =
  *
  * 为什么需要它（2026-09-23 取证）：`recoverPortablePrepare` **生产零调用** ——
  * 只有它自己的单测引用了它。于是客户端在 PREPARE 阶段被断电/强杀时，
- * `.荣盈魔方更新/download/<txn>/`（几百 MB 的包）与 `staged/<txn>/`（解压了一半的树）
+ * `.Partner-W更新/download/<txn>/`（几百 MB 的包）与 `staged/<txn>/`（解压了一半的树）
  * 会**永远留着**：下次更新用的是新的 transactionId，没有任何东西会回收它们。
  *
  * 两条硬约束：

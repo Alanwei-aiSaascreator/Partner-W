@@ -64,7 +64,6 @@ describe('Login', () => {
 
     expect(container.querySelector('[data-login-region="brand"]')).not.toBeNull();
     expect(container.querySelector('[data-login-region="form"]')).not.toBeNull();
-    expect(container.querySelector('[data-guide-mascot]')).not.toBeNull();
     expect(container.textContent).toContain('mainArea.welcomeTitle');
     expect(container.textContent).toContain('login.brandSubline');
     // 2026-10-09 登录页文案 A：左栏第二行改用登录向独立键；工作台的罗盘描述

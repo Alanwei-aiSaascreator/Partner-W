@@ -114,7 +114,7 @@ export function PairingView({ onPaired }: PairingViewProps) {
       return;
     }
     await handleScanResult(
-      JSON.stringify({ v: 1, s: '', g: [{ n: '魔方罗盘', u: `wss://${host}`, t: token, m: 'token' }] }),
+      JSON.stringify({ v: 1, s: '', g: [{ n: 'Partner-W', u: `wss://${host}`, t: token, m: 'token' }] }),
     );
   }, [pasteValue, handleScanResult, t]);
 
@@ -200,7 +200,7 @@ export function PairingView({ onPaired }: PairingViewProps) {
       className="safe-area-top safe-area-bottom flex h-full flex-col items-center justify-center px-8"
       style={{ backgroundColor: 'var(--bg-primary)' }}
     >
-      <img src={`${import.meta.env.BASE_URL}icons/logo.png`} alt="魔方罗盘" className="mb-6 h-20 w-20" />
+      <img src={`${import.meta.env.BASE_URL}icons/logo.png`} alt="Partner-W" className="mb-6 h-20 w-20" />
       <h1 className="type-page-title mb-2" style={{ color: 'var(--text-primary)' }}>
         {t('app.name')}
       </h1>

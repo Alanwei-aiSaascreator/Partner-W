@@ -43,7 +43,7 @@ import {
   type StarterId,
 } from '@/lib/user-onboarding';
 import logo from '@/assets/logo.png';
-import GuideMascot from '@/components/GuideMascot';
+
 import PortraitCard from '@/components/PortraitCard';
 import PortraitQuestions, { FIRST_RUN_QUESTIONS } from '@/components/PortraitQuestions';
 import {
@@ -526,7 +526,6 @@ function LegacyOnboarding({
               )}
             </p>
           </div>
-          <GuideMascot pose={step >= 2 ? 'phone' : 'idle'} className="mx-auto max-w-xs" />
         </aside>
       </main>
     </div>

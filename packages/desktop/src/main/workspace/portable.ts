@@ -15,8 +15,8 @@
 import path from 'node:path';
 import { RUNTIME_MANIFEST_FILE, resolveBundledRuntimeRoot } from '../runtime/locate.js';
 
-/** 盘上运行时工作区目录名（`<盘根>\荣盈魔方工作区\`）。 */
-export const PORTABLE_WORKSPACE_DIR_NAME = '荣盈魔方工作区';
+/** 盘上运行时工作区目录名（`<盘根>\Partner-W工作区\`）。 */
+export const PORTABLE_WORKSPACE_DIR_NAME = 'Partner-W工作区';
 
 /**
  * 工作区**自身**的标记文件：写在 `<工作区>/.clawwork-workspace.json`。
@@ -108,7 +108,7 @@ export interface DeliveryLayoutInput {
  * 叮嘱"千万别拷"的那个文件 ⇒ 两条判据全落空，数据与工作区都留在本机，
  * 换台机器/换个 USB 口就是「找不到工作区」。
  *
- * 认的是**我们自己的交付形状**（实测于真交付包 `荣盈魔方U盘交付-0.0.24\荣盈魔方\`：
+ * 认的是**我们自己的交付形状**（实测于真交付包 `Partner-WU盘交付-0.0.24\Partner-W\`：
  * exe 旁边就是 `resources\runtime\openclaw-runtime-manifest.json`），四条一起成立才算：
  *
  * ① `resourcesPath` 就是**这个 exe 自己那份**（`dirname(resourcesPath) === exe 所在目录`）
@@ -117,7 +117,7 @@ export interface DeliveryLayoutInput {
  *    （我们的包 1 层、手工压的包 2 层）；本机开发树/构建产物都在更深的目录里，
  *    这条同时挡住"dev/CI 被误判成盘上形态"；
  * ③ 路径里没有安装形态的常见段（`Program Files` / `Programs` / `AppData`）
- *    —— 用户完全可能把安装版装在 `D:\Program Files\荣盈魔方`，那时深度也够浅；
+ *    —— 用户完全可能把安装版装在 `D:\Program Files\Partner-W`，那时深度也够浅；
  * ④ 夹子里**真带着我们那份随包运行时**（`<resources>\runtime\openclaw-runtime-manifest.json`）
  *    —— 只认这一份文件，不认目录名、不认卷标（与"认盘只认 marker 与 DriveType"同一条纪律）。
  */
@@ -199,13 +199,13 @@ export function isPortableRun(input: PortableRunInput): boolean {
   return detectPortableRun(input).portable;
 }
 
-/** 盘上运行时工作区 = `<盘根>\荣盈魔方工作区\`。 */
+/** 盘上运行时工作区 = `<盘根>\Partner-W工作区\`。 */
 export function portableWorkspacePathFor(volumeRoot: string): string {
   const root = normalizeVolumeRoot(volumeRoot) ?? volumeRoot;
   return P().join(root, PORTABLE_WORKSPACE_DIR_NAME);
 }
 
-/** 相对盘根的路径（`E:\荣盈魔方工作区` → `荣盈魔方工作区`）；推不出来返回 null。 */
+/** 相对盘根的路径（`E:\Partner-W工作区` → `Partner-W工作区`）；推不出来返回 null。 */
 export function deriveWorkspaceRelPath(workspacePath: string): string | null {
   const volumeRoot = volumeRootOf(workspacePath);
   if (!volumeRoot) return null;
@@ -419,7 +419,7 @@ export function buildWorkspaceHealCandidates(input: WorkspaceHealInput): Workspa
    *
    * 机器上留着**更老版本**写的配置（`workspacePath` 指向一块已不存在的盘、**没有**
    * `workspaceRelPath` —— 那个字段是 2026-09-18 的 T-U1 才加的），换盘符后原来直接
-   * `return []` ⇒ 弹框让用户手选，而盘上明明躺着 `E:\荣盈魔方工作区\.clawwork-workspace.json`
+   * `return []` ⇒ 弹框让用户手选，而盘上明明躺着 `E:\Partner-W工作区\.clawwork-workspace.json`
    * （我们自己写的标记）。用户随手建个空目录，看到的就是"历史数据没了"。
    *
    * ⚠️ 退路**必须窄**，否则就变成"猜"（下面那条 `C:\Users\…` 的测试守的就是这个）：
@@ -537,7 +537,7 @@ export type WorkspaceStartupDecision =
   | { kind: 'healed'; path: string; from: string; via: WorkspaceHealCandidate }
   /** 本机目录被删（卷还在、又不是盘上工作区）⇒ 就地重建，与旧行为一致。 */
   | { kind: 'recreated'; path: string }
-  /** 首启 + 盘上运行 ⇒ 自动设为 `<盘根>\荣盈魔方工作区\`，不弹选择框。 */
+  /** 首启 + 盘上运行 ⇒ 自动设为 `<盘根>\Partner-W工作区\`，不弹选择框。 */
   | { kind: 'auto-portable'; path: string; volumeRoot: string }
   /** 首启 + 非盘上 ⇒ 默认位置（Setup 里仍可改，与旧行为一致）。 */
   | { kind: 'default'; path: string }
@@ -597,7 +597,7 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
        *   · 记录在**当前运行卷**上（或运行卷未知）⇒ 照旧 configured/ask；
        *   · `explicit-path` 记录的是**用户显式选的外部目录** ⇒ 只要它还在，就遵从用户
        *     （哪怕程序跑在另一块盘上）；
-       *   · **唯一例外**：记录恰好是"某卷根下的便携工作区"（`<旧卷>:\荣盈魔方工作区`）
+       *   · **唯一例外**：记录恰好是"某卷根下的便携工作区"（`<旧卷>:\Partner-W工作区`）
        *     且它在别的卷上 —— 这是 1.0.6/1.0.7 手选入口留下的 legacy 形状，交给下面的
        *     结构 + 身份自愈加窄例外处理。
        *
@@ -632,12 +632,12 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
       /**
        * 层①遗留分支（2026-10-17 实机取证 + 审查）：1.0.6/1.0.7 的「设置里手选工作区」
        * 入口**无条件**写 `explicit-path`（`1e03715f:main/ipc/workspace-handlers.ts:70-72`），
-       * 于是"用户选的就是本盘 `X:\荣盈魔方工作区`"也被记成显式外部目录 ⇒ 换盘符后
+       * 于是"用户选的就是本盘 `X:\Partner-W工作区`"也被记成显式外部目录 ⇒ 换盘符后
        * 必然弹「选择工作区」，用户看到的就是"两个盘"。
        *
        * 收窄例外**只认结构与身份，绝不认目录名**：
-       *   ① 记录路径必须**恰好是它自己那块卷根下的便携工作区**（`<旧卷>\荣盈魔方工作区`）。
-       *      `D:\客户资料\荣盈魔方工作区` 这种同名外部目录结构上就不满足 ⇒ 仍走 ask-user，
+       *   ① 记录路径必须**恰好是它自己那块卷根下的便携工作区**（`<旧卷>\Partner-W工作区`）。
+       *      `D:\客户资料\Partner-W工作区` 这种同名外部目录结构上就不满足 ⇒ 仍走 ask-user，
        *      R1「显式选择不被静默改指」不放松；
        *   ② 当前运行卷已知，且该卷上的同名工作区**带候选证据**（盘根 marker / 工作区 marker）；
        *   ③ 配置记过 `workspaceId` ⇒ 目标目录 marker 里的 id 必须**严格相等**
@@ -690,7 +690,7 @@ export function decideWorkspaceStartup(input: WorkspaceStartupInput): WorkspaceS
        */
       const viaVolume = volumeRootOf(candidates[0].path);
       // ⚠️ 2026-10-19 自审：这条守卫原先只对 `app-volume` 生效。可 explicit 的 legacy
-      //    便携记录（`<旧卷>\荣盈魔方工作区`）也会落到本分支（见 608 行的早退例外）——
+      //    便携记录（`<旧卷>\Partner-W工作区`）也会落到本分支（见 608 行的早退例外）——
       //    旧卷插着另一台也装了本产品的电脑、它那份工作区带证据、当前卷又还没有工作区时，
       //    唯一候选就在旧卷 ⇒ 旧行为会**静默切到别人那台电脑的工作区**。
       //    R1 的红线是"唯一候选不许从旧卷静默胜出"，对两种归属一视同仁。

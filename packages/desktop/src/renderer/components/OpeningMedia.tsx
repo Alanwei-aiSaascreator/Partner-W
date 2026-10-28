@@ -22,7 +22,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, VolumeX } from 'lucide-react';
 import { OPENING_MEDIA_DIR_NAME, OPENING_MEDIA_SCHEME, OPENING_VIDEO_FILE_NAME } from '@clawwork/shared';
-import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
 
 export const OPENING_VIDEO_URL = `${OPENING_MEDIA_SCHEME}://${OPENING_MEDIA_DIR_NAME}/${OPENING_VIDEO_FILE_NAME}`;
 /** 产品要求"音量小"：自动播放的背景衬底，不是主内容。 */
@@ -39,12 +38,9 @@ interface OpeningMediaProps {
   failed: boolean;
   /** 与页面同源的 reduce-motion 判定：视频永不登场（动态开启同样作废在途播放）。 */
   reduceMotion: boolean;
-  /** 透传给兜底吉祥物（视频正常时不可见）。 */
-  pose: GuideMascotPose;
-  label: string;
 }
 
-export default function OpeningMedia({ stopRequested, failed, reduceMotion, pose, label }: OpeningMediaProps) {
+export default function OpeningMedia({ stopRequested, failed, reduceMotion }: OpeningMediaProps) {
   const { t } = useTranslation();
   const videoRef = useRef<HTMLVideoElement>(null);
   /**
@@ -242,14 +238,6 @@ export default function OpeningMedia({ stopRequested, failed, reduceMotion, pose
   // - 静音/开声音：右上角浮层，在**视频可见**（playing 且未失败）时渲染。
   return (
     <div data-opening-phase={phase} className="relative h-full w-full">
-      <div className="flex h-full w-full items-center justify-center">
-        <div
-          className={`w-64 md:w-80 ${videoVisible ? 'opacity-0' : 'opacity-100'} transition-opacity duration-500`}
-          aria-hidden={videoVisible}
-        >
-          <GuideMascot pose={pose} trackPointer={false} label={label} />
-        </div>
-      </div>
       {showVideo && (
         <video
           ref={videoRef}

@@ -3,7 +3,7 @@
  *
  * 背景（为什么要有这个文件）：同一个"盘根"以前被好几处各算各的 ——
  * `workspace/config.ts` 里那个 `getPortableWorkspaceRoot()` 起的其实是**盘根**的名字
- * （`E:\`），真工作区是 `<盘根>\荣盈魔方工作区\`；应用数据、state、缓存、日志、临时
+ * （`E:\`），真工作区是 `<盘根>\Partner-W工作区\`；应用数据、state、缓存、日志、临时
  * 目录又各自在别的模块里现拼。名字一混，调用方就会把"盘根"当成"工作区"用。
  *
  * 现在：**判定仍然只有一处** —— `workspace/portable.ts` 的 `detectPortableRun`
@@ -12,13 +12,13 @@
  *
  * ```
  * volumeRoot     E:\
- * programDir     E:\荣盈魔方
- * dataRoot       E:\荣盈魔方-运行数据            （userData/sessionData/logs/temp 的家）
- * stateRoot      E:\荣盈魔方-运行数据\state      （各身份 state 的父目录）
- * workspaceRoot  E:\荣盈魔方工作区              （用户资料，**不是** dataRoot）
- * cacheRoot      E:\荣盈魔方-运行数据\portable-runtime-cache（随包运行时的部署缓存）
- * logsRoot       E:\荣盈魔方-运行数据\logs
- * tempRoot       E:\荣盈魔方-运行数据\tmp       （网关子进程的 TEMP/TMP，见 gateway-process）
+ * programDir     E:\Partner-W
+ * dataRoot       E:\Partner-W-运行数据            （userData/sessionData/logs/temp 的家）
+ * stateRoot      E:\Partner-W-运行数据\state      （各身份 state 的父目录）
+ * workspaceRoot  E:\Partner-W工作区              （用户资料，**不是** dataRoot）
+ * cacheRoot      E:\Partner-W-运行数据\portable-runtime-cache（随包运行时的部署缓存）
+ * logsRoot       E:\Partner-W-运行数据\logs
+ * tempRoot       E:\Partner-W-运行数据\tmp       （网关子进程的 TEMP/TMP，见 gateway-process）
  * ```
  *
  * ⚠️ 惰性计算（没人显式 set 过时）**不枚举可移动盘**：那是一次 PowerShell（秒级），

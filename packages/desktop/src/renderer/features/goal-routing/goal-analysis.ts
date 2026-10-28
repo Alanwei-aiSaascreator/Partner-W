@@ -105,7 +105,7 @@ export function parseGoalAnalysis(content: string): GoalAnalysisResult | null {
 }
 
 export function buildGoalAnalysisPrompt(profile: OnboardingProfile, modelIds: readonly string[]): string {
-  const header = `你是荣盈魔方的目标分析器。只分析用户主动填写的目标，不要声称已经查看电脑、文件或外部数据。
+  const header = `你是Partner-W的目标分析器。只分析用户主动填写的目标，不要声称已经查看电脑、文件或外部数据。
 
 用户常用场景：${profile.useCases.join('、') || '未选择'}
 用户目标：${profile.customGoal.trim()}

@@ -49,6 +49,7 @@ vi.mock('../src/renderer/lib/toast', () => ({
   toast: { success: vi.fn() },
 }));
 vi.mock('../src/renderer/layouts/LeftNav', () => ({ default: () => null }));
+vi.mock('../src/renderer/layouts/TopBar', () => ({ default: () => null }));
 vi.mock('../src/renderer/layouts/MainArea', () => ({
   default: ({ onboardingProfile }: { onboardingProfile: OnboardingProfile }) => (
     <div data-workspace-profile={onboardingProfile.userId} data-profile-nickname={onboardingProfile.nickname} />
@@ -278,6 +279,7 @@ it('keeps startup account A from replacing explicit login B while OTP is pending
         ok: true,
         result: { supabaseUrl: 'https://example.test', hasAnonKey: true },
       }),
+      saveProfile: vi.fn(async () => ({ ok: true })),
       commercialLocalSession: async () => {
         throw new Error('local session unavailable');
       },
@@ -369,6 +371,7 @@ function installEntryBridge(overrides: Record<string, unknown> = {}) {
     setWindowButtonVisibility: vi.fn(),
     isWorkspaceConfigured: async () => true,
     commercialGetConfig: async () => ({ ok: true, result: { supabaseUrl: 'https://example.test', hasAnonKey: true } }),
+    saveProfile: vi.fn(async () => ({ ok: true })),
     commercialLocalSession: async () => ({ ok: true, result: true }),
     commercialSession: vi.fn(async () => ({
       ok: true,

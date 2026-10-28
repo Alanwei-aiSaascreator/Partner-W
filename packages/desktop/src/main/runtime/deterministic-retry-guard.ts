@@ -80,7 +80,7 @@ export function retryGuardPolicyDir(stateDir: string): string {
  * ⚠️ 模板字符串纪律：这份 JS 里**不用** backtick 模板字面量、不写 `${`（外层就是模板
  *    字符串）；所有反斜杠转义（`\\u0000` / `\\p` 等）写成双反斜杠，落到插件源码里是单反斜杠。
  */
-export const RETRY_GUARD_PLUGIN_ENTRY = `// 荣盈魔方 · 确定性重复失败守卫（由应用生成，请勿手改）
+export const RETRY_GUARD_PLUGIN_ENTRY = `// Partner-W · 确定性重复失败守卫（由应用生成，请勿手改）
 //
 // 规则与边界见应用侧 runtime/deterministic-retry-guard.ts 的文件头注释。
 // 拦截记录只存在于本网关进程内存；作用域=(agent, session, run)，随 run 结束自然失效。
@@ -342,7 +342,7 @@ function beforeToolCall(event, ctx) {
 
 export default {
   id: '${RETRY_GUARD_PLUGIN_ID}',
-  name: '荣盈魔方·重复失败守卫',
+  name: 'Partner-W·重复失败守卫',
   description: '对确定类别的重复失败做执行前拦截（同参重复 / 同一提案换名重投），返回可行动的具名结果。',
   register(api) {
     api.on('before_tool_call', beforeToolCall, { priority: 100 });
@@ -355,7 +355,7 @@ export default {
 export const RETRY_GUARD_PLUGIN_MANIFEST = `${JSON.stringify(
   {
     id: RETRY_GUARD_PLUGIN_ID,
-    name: '荣盈魔方·重复失败守卫',
+    name: 'Partner-W·重复失败守卫',
     description: '对确定类别的重复失败做执行前拦截（同参重复 / 同一提案换名重投），返回可行动的具名结果。',
     activation: { onStartup: true },
     configSchema: { type: 'object', additionalProperties: false, properties: {} },

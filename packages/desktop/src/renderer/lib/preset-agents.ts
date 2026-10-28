@@ -248,7 +248,7 @@ function withCommonContract(roleSoul: string): string {
  * 让已发出的盘在下次启动时按版本标记自动升级（`needsPromptUpgrade`）。
  * ⚠️ 没标记的旧盘（标记机制之前）仍不碰 —— 用户手改的内容不能被覆盖。
  */
-export const PRESET_PROMPT_VERSION = '2026-10-18.1';
+export const PRESET_PROMPT_VERSION = '2026-10-27.1';
 
 const PROMPT_MARKER_RE = /\n?<!--\s*mofang-prompt:[^>]*-->\s*$/;
 

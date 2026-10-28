@@ -8,7 +8,6 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { activationErrorKey } from '@/lib/activation-errors';
 import { Button } from '@/components/ui/button';
-import GuideMascot, { type GuideMascotPose } from '@/components/GuideMascot';
 import { useUiStore } from '@/stores/uiStore';
 
 const RESEND_SECONDS = 60;
@@ -99,7 +98,6 @@ export default function Login({
   // 用户不登录也要能看到并安装新版本（打开的是 App 层 UpdateDialog）。
   const setUpdateDialogOpen = useUiStore((s) => s.setUpdateDialogOpen);
   const [agreed, setAgreed] = useState(false);
-  const [mascotPose, setMascotPose] = useState<GuideMascotPose>('idle');
   const codeInputRef = useRef<HTMLInputElement>(null);
   /**
    * 尝试序号：只有最新一次尝试的结果才准写界面。
@@ -127,7 +125,6 @@ export default function Login({
     setPhase('phone');
     setError('');
     setBusy(false);
-    setMascotPose('idle');
   }, [authenticatedAccount?.userId]);
   const lastEntryErrorCode = useRef<string>(undefined);
   useEffect(() => {
@@ -273,7 +270,6 @@ export default function Login({
     try {
       await onSignedIn(activationEnabled ? activationKey.trim() : undefined);
       if (seq !== attemptSeq.current) return;
-      setMascotPose('success');
     } catch (failure) {
       if (seq !== attemptSeq.current) return;
       const failureCode =
@@ -317,12 +313,14 @@ export default function Login({
         className="relative hidden min-h-screen w-1/2 overflow-hidden border-r border-[var(--border)] bg-[var(--surface-onboarding-accent)] px-12 pb-10 pt-16 lg:flex lg:flex-col"
       >
         <div className="absolute -left-24 top-24 h-72 w-72 rounded-full bg-[var(--accent-dim)] opacity-70 blur-3xl" />
-        <div className="absolute -right-24 bottom-10 h-64 w-64 rounded-full bg-[var(--danger-bg)] opacity-80 blur-3xl" />
+        <div className="absolute -right-24 bottom-10 h-64 w-64 rounded-full bg-[var(--brand-glow)] opacity-80 blur-3xl" />
 
         <div className="relative flex items-center gap-3">
           <img src={logo} alt="" className="h-11 w-11 rounded-xl" />
           <div>
-            <p className="type-section-title">{t('common.appName')}</p>
+            <p className="type-section-title bg-clip-text text-transparent [background-image:var(--brand-gradient)]">
+              {t('common.appName')}
+            </p>
             <p className="type-support mt-0.5 text-[var(--text-onboarding-muted)]">AI USB Workspace</p>
           </div>
         </div>
@@ -333,10 +331,6 @@ export default function Login({
             {t('login.brandSubline')}
           </p>
         </div>
-
-        <div data-guide-mascot className="relative mx-auto w-full max-w-sm">
-          <GuideMascot pose={mascotPose} />
-        </div>
       </section>
 
       <section
@@ -344,9 +338,6 @@ export default function Login({
         className="flex min-h-screen flex-1 items-center justify-center px-6 py-14 sm:px-12"
       >
         <motion.div {...motionPresets.slideUp} className="w-full max-w-md space-y-8">
-          <div data-guide-mascot className="mx-auto w-40 lg:hidden">
-            <GuideMascot pose={mascotPose} />
-          </div>
           <div className="flex flex-col items-center text-center space-y-3">
             <h1 className="type-section-title text-[var(--text-primary)]">
               {authenticated ? t('activation.title') : phase === 'phone' ? t('login.title') : t('login.codeTitle')}
@@ -386,8 +377,6 @@ export default function Login({
                   value={phone}
                   disabled={busy}
                   onChange={(e) => setPhone(normalizePhone(e.target.value))}
-                  onFocus={() => setMascotPose('phone')}
-                  onBlur={() => setMascotPose('idle')}
                   placeholder={t('login.phonePlaceholder')}
                   className={cn(inputClass, 'pl-18')}
                 />
@@ -405,8 +394,6 @@ export default function Login({
                   value={code}
                   disabled={busy}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  onFocus={() => setMascotPose('covering')}
-                  onBlur={() => setMascotPose('idle')}
                   placeholder={t('login.codePlaceholder')}
                   className={cn(inputClass, 'pl-10 tracking-[0.3em]')}
                 />

@@ -199,13 +199,7 @@ export default function EntryPreparation({
           repeat: reduceMotion || state.canContinue || state.hasError ? 0 : Infinity,
         }}
       >
-        <OpeningMedia
-          stopRequested={stopRequested}
-          failed={state.hasError}
-          reduceMotion={reduceMotion === true}
-          pose={state.canContinue ? 'success' : 'idle'}
-          label={t('common.appName')}
-        />
+        <OpeningMedia stopRequested={stopRequested} failed={state.hasError} reduceMotion={reduceMotion === true} />
       </motion.div>
       <div className="relative z-10 flex min-h-screen flex-col overflow-y-auto">
         <header className="p-5">

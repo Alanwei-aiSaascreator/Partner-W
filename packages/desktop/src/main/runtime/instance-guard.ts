@@ -99,17 +99,17 @@ export function readInstanceOwner(opts: {
  *    从"第二份根本起不来（有 .bat 解释）"变成了"第二份能开、但本地网关抢不到
  *    18789" —— 这个失败**必须说出来**：界面只会显示"连不上"，用户无从下手。
  *
- * ⚠️ 不许把"是另一份荣盈魔方占的"写成断言：18789 上也可能坐着别的程序。
+ * ⚠️ 不许把"是另一份Partner-W占的"写成断言：18789 上也可能坐着别的程序。
  */
 export function buildPortBusyCopy(opts: { port: number }): InstanceBusyCopy {
   return {
     title: '本机端口被占用',
-    message: `荣盈魔方要用本机的 ${opts.port} 端口跑自己的大脑（本地网关），这个端口现在被占着，所以这次没能把它启动起来。`,
+    message: `Partner-W要用本机的 ${opts.port} 端口跑自己的大脑（本地网关），这个端口现在被占着，所以这次没能把它启动起来。`,
     detail: [
-      '最可能是这台电脑上还开着另一份荣盈魔方（"装到电脑"的那份、或另一个 U 盘里的那份）—— 两份会抢同一个端口。',
+      '最可能是这台电脑上还开着另一份Partner-W（"装到电脑"的那份、或另一个 U 盘里的那份）—— 两份会抢同一个端口。',
       '',
       '请把那一份完全退出（托盘图标 → 右键 → 退出），再重新打开这一份。',
-      '如果不是荣盈魔方占着的，请检查有没有别的程序在用这个端口。',
+      '如果不是Partner-W占着的，请检查有没有别的程序在用这个端口。',
     ].join('\n'),
     button: '知道了',
   };
@@ -143,8 +143,8 @@ export function buildInstanceBusyCopy(opts: { owner: InstanceOwner | null; curre
   }
 
   return {
-    title: '荣盈魔方已经在运行',
-    message: '这台电脑上已经开着一份荣盈魔方了，所以这次没有重复打开。',
+    title: 'Partner-W已经在运行',
+    message: '这台电脑上已经开着一份Partner-W了，所以这次没有重复打开。',
     detail: lines.join('\n'),
     button: '知道了',
   };

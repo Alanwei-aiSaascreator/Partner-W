@@ -139,12 +139,12 @@ export function buildFeishuBootstrapScript(input: {
   const q = (value: string) => `'${value.replace(/'/g, "''")}'`;
   const parts: string[] = [
     `$ErrorActionPreference='Continue'`,
-    `$Host.UI.RawUI.WindowTitle='荣盈魔方 · 接入飞书'`,
+    `$Host.UI.RawUI.WindowTitle='Partner-W · 接入飞书'`,
     `$state=${q(input.stateDir)}`,
     `$node=${q(input.nodePath)}`,
     `$cli=${q(input.cliPath)}`,
     `$openclawDir=Split-Path $cli -Parent`,
-    `Write-Host '荣盈魔方 · 接入飞书'`,
+    `Write-Host 'Partner-W · 接入飞书'`,
     `Write-Host '----------------------------------------------'`,
     `Write-Host '这个窗口会准备飞书插件并拉起扫码登录，请用手机飞书扫码。'`,
   ];

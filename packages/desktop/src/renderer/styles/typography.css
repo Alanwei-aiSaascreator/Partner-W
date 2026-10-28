@@ -1,8 +1,13 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/noto-sans-sc';
 
 @theme {
-  --font-family-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  /* 2026-10-28 全局换字体：思源黑体（Noto Sans SC）优先 —— 中西文统一走它，
+     英文/数字观感随之一起换；Inter 保留作加载兜底，系统字体垫底。 */
+  --font-family-sans:
+    'Noto Sans SC Variable', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
+    system-ui, sans-serif;
   --font-family-mono: 'JetBrains Mono Variable', 'SF Mono', 'Fira Code', monospace;
   --font-size-2xs: 11px;
   --font-size-2xs--line-height: 16px;

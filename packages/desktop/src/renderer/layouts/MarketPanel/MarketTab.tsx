@@ -254,7 +254,7 @@ export default function MarketTab() {
                   key={row.id}
                   data-template={row.id}
                   onClick={() => void openDetail(row.id)}
-                  className="cursor-pointer rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4 transition-colors hover:border-[var(--border)]"
+                  className="cursor-pointer rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--border-accent)] hover:shadow-[var(--shadow-elevated)]"
                 >
                   <div className="mb-2 flex items-center gap-2">
                     <span className="type-section-title">{row.emoji}</span>
@@ -273,6 +273,7 @@ export default function MarketTab() {
                     </span>
                     <Button
                       size="sm"
+                      className="brand-action"
                       data-action="use-in-compass"
                       disabled={busy}
                       onClick={(event) => {

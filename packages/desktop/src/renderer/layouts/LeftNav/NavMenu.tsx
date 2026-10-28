@@ -237,7 +237,7 @@ export default function NavMenu({
           after?.();
         }}
         className={cn(
-          'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body transition-colors',
+          'titlebar-no-drag glow-focus relative flex w-full items-center rounded-lg text-left type-body transition-colors',
           collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
           item.disabled
             ? 'cursor-not-allowed text-[var(--text-muted)] opacity-60'
@@ -246,10 +246,16 @@ export default function NavMenu({
               : item.accent
                 ? 'text-[var(--accent)] hover:bg-[var(--accent-dim)]'
                 : active
-                ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+                  ? 'bg-[var(--state-selected)] font-semibold text-[var(--accent)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
         )}
       >
+        {active && (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full [background:var(--brand-gradient)]"
+          />
+        )}
         <Icon size={collapsed ? 18 : 15} className="flex-shrink-0" />
         <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{t(item.labelKey)}</span>
         {item.badge && (
@@ -294,7 +300,7 @@ export default function NavMenu({
       aria-label={collapsed ? t('leftNav.pages.more') : undefined}
       onClick={() => setMoreOpen((open) => !open)}
       className={cn(
-        'titlebar-no-drag glow-focus relative flex w-full items-center rounded-md text-left type-body transition-colors',
+        'titlebar-no-drag glow-focus relative flex w-full items-center rounded-lg text-left type-body transition-colors',
         collapsed ? 'justify-center py-2' : 'gap-2.5 px-2.5 py-1.5',
         moreOpen
           ? 'bg-[var(--state-selected)] text-[var(--text-primary)]'

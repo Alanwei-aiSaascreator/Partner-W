@@ -35,16 +35,16 @@
     --bg-elevated: #1f1f2c;
     --bg-input: var(--bg-primary);
 
-    --accent: #8088fb;
-    --accent-hover: #9097ff;
-    --accent-foreground: #0e0e18;
-    --accent-dim: rgba(128, 136, 251, 0.16);
-    --accent-soft: rgba(128, 136, 251, 0.1);
-    --accent-soft-hover: rgba(128, 136, 251, 0.18);
-    --brand-start: #a51ad1;
-    --brand-end: #ff6a2a;
-    --brand-gradient: linear-gradient(105deg, var(--brand-start), #e52378 58%, var(--brand-end));
-    --brand-glow: rgba(229, 35, 120, 0.22);
+    --accent: #4d9fff;
+    --accent-hover: #66adff;
+    --accent-foreground: #0b1220;
+    --accent-dim: rgba(77, 159, 255, 0.16);
+    --accent-soft: rgba(77, 159, 255, 0.1);
+    --accent-soft-hover: rgba(77, 159, 255, 0.18);
+    --brand-start: #3b82f6;
+    --brand-end: #fb923c;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #60a5fa 55%, var(--brand-end));
+    --brand-glow: rgba(249, 115, 22, 0.24);
 
     --text-primary: #f1f1f8;
     --text-secondary: #b0b0bf;
@@ -55,7 +55,7 @@
 
     --border: rgba(255, 255, 255, 0.08);
     --border-subtle: rgba(255, 255, 255, 0.05);
-    --border-accent: rgba(128, 136, 251, 0.3);
+    --border-accent: rgba(77, 159, 255, 0.3);
     --border-primary: var(--border);
     --border-hover: var(--border-accent);
 
@@ -78,8 +78,8 @@
      */
     --document-canvas: #ffffff;
 
-    --ring-accent: rgba(128, 136, 251, 0.4);
-    --glow-accent: rgba(128, 136, 251, 0.08);
+    --ring-accent: rgba(77, 159, 255, 0.4);
+    --glow-accent: rgba(77, 159, 255, 0.08);
 
     --elev-1: 0 0 0 0.5px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.25), 0 2px 3px rgba(0, 0, 0, 0.2);
     --elev-2:
@@ -132,16 +132,16 @@
     --glass-blur-heavy: 40px;
     --glass-saturate: 170%;
 
-    --glow-ring: 0 0 0 1px rgba(128, 136, 251, 0.45);
-    --glow-diffuse: 0 0 0 4px rgba(128, 136, 251, 0.12);
-    --glow-inset: inset 0 0 0 1px rgba(128, 136, 251, 0);
-    --glow-pulse-mid: rgba(128, 136, 251, 0.18);
+    --glow-ring: 0 0 0 1px rgba(77, 159, 255, 0.45);
+    --glow-diffuse: 0 0 0 4px rgba(77, 159, 255, 0.12);
+    --glow-inset: inset 0 0 0 1px rgba(77, 159, 255, 0);
+    --glow-pulse-mid: rgba(77, 159, 255, 0.18);
 
-    --tool-read: rgba(106, 169, 237, 0.9);
-    --tool-write: rgba(230, 179, 90, 0.9);
-    --tool-exec: rgba(128, 136, 251, 0.9);
-    --tool-think: rgba(186, 130, 240, 0.9);
-    --tool-web: rgba(80, 192, 210, 0.9);
+    --tool-read: rgba(96, 165, 250, 0.9);
+    --tool-write: rgba(251, 146, 60, 0.9);
+    --tool-exec: rgba(59, 130, 246, 0.9);
+    --tool-think: rgba(45, 212, 191, 0.9);
+    --tool-web: rgba(56, 189, 248, 0.9);
     --tool-default: rgba(160, 160, 176, 0.7);
   }
 
@@ -153,16 +153,16 @@
     --bg-elevated: #ffffff;
     --bg-input: var(--bg-primary);
 
-    --accent: #c51d78;
-    --accent-hover: #a81667;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
     --accent-foreground: #ffffff;
-    --accent-dim: rgba(197, 29, 120, 0.1);
-    --accent-soft: rgba(197, 29, 120, 0.07);
-    --accent-soft-hover: rgba(197, 29, 120, 0.13);
-    --brand-start: #a30fd0;
-    --brand-end: #ff6b2b;
-    --brand-gradient: linear-gradient(105deg, var(--brand-start), #e51d78 58%, var(--brand-end));
-    --brand-glow: rgba(229, 29, 120, 0.18);
+    --accent-dim: rgba(37, 99, 235, 0.1);
+    --accent-soft: rgba(37, 99, 235, 0.07);
+    --accent-soft-hover: rgba(37, 99, 235, 0.13);
+    --brand-start: #2563eb;
+    --brand-end: #f97316;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #3b82f6 55%, var(--brand-end));
+    --brand-glow: rgba(249, 115, 22, 0.2);
 
     --text-primary: #17171c;
     --text-secondary: #3a3a42;
@@ -173,7 +173,7 @@
 
     --border: rgba(23, 23, 28, 0.07);
     --border-subtle: rgba(23, 23, 28, 0.045);
-    --border-accent: rgba(197, 29, 120, 0.24);
+    --border-accent: rgba(37, 99, 235, 0.24);
     --border-primary: var(--border);
     --border-hover: var(--border-accent);
 
@@ -190,8 +190,8 @@
     /** 见深色块里的说明：两个主题里都是白的，网页按白纸写。 */
     --document-canvas: #ffffff;
 
-    --ring-accent: rgba(197, 29, 120, 0.3);
-    --glow-accent: rgba(197, 29, 120, 0.08);
+    --ring-accent: rgba(37, 99, 235, 0.3);
+    --glow-accent: rgba(37, 99, 235, 0.08);
 
     --elev-1: 0 0 0 0.5px rgba(23, 23, 28, 0.06), 0 1px 1px rgba(23, 23, 28, 0.03), 0 2px 3px rgba(23, 23, 28, 0.02);
     --elev-2:
@@ -244,16 +244,16 @@
     --glass-blur-heavy: 36px;
     --glass-saturate: 160%;
 
-    --glow-ring: 0 0 0 1px rgba(197, 29, 120, 0.34);
-    --glow-diffuse: 0 0 0 4px rgba(197, 29, 120, 0.1);
-    --glow-inset: inset 0 0 0 1px rgba(197, 29, 120, 0);
-    --glow-pulse-mid: rgba(197, 29, 120, 0.18);
+    --glow-ring: 0 0 0 1px rgba(37, 99, 235, 0.34);
+    --glow-diffuse: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    --glow-inset: inset 0 0 0 1px rgba(37, 99, 235, 0);
+    --glow-pulse-mid: rgba(37, 99, 235, 0.18);
 
-    --tool-read: rgba(47, 123, 209, 0.85);
-    --tool-write: rgba(196, 138, 24, 0.9);
-    --tool-exec: rgba(88, 96, 234, 0.85);
-    --tool-think: rgba(154, 85, 217, 0.85);
-    --tool-web: rgba(15, 148, 168, 0.85);
+    --tool-read: rgba(37, 99, 235, 0.85);
+    --tool-write: rgba(249, 115, 22, 0.9);
+    --tool-exec: rgba(29, 78, 216, 0.85);
+    --tool-think: rgba(13, 148, 136, 0.85);
+    --tool-web: rgba(3, 105, 161, 0.85);
     --tool-default: rgba(120, 120, 135, 0.7);
   }
 
@@ -727,30 +727,31 @@
    5.7.6 的复核）。类名与 spec 固定，组件只挂名、样式全在这里（gate 豁免文件）。
    ============================================================ */
 
-/* ---- 扫光文字（思考标题 / 工具运行状态共用；「正在进行」的统一视觉） ---- */
+/* ---- 扫光文字（思考标题 / 工具运行状态共用；「正在进行」的统一视觉） ----
+   性能：animation 只动 opacity（合成层动画，不触发每帧 paint）。
+   旧的 background-position 扫光 + color-mix + background-clip:text 会每帧重绘
+   渐变，会话里多条「进行中」条目并发时明显掉帧，故改为静态渐变 + 呼吸。 */
 .text-shimmer {
   background: linear-gradient(
     110deg,
     color-mix(in srgb, var(--text-primary) 26%, transparent) 0%,
-    color-mix(in srgb, var(--text-primary) 26%, transparent) 35%,
     color-mix(in srgb, var(--text-primary) 60%, transparent) 50%,
-    color-mix(in srgb, var(--text-primary) 26%, transparent) 65%,
     color-mix(in srgb, var(--text-primary) 26%, transparent) 100%
   );
-  background-size: 200% 100%;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
   width: fit-content;
-  animation: text-shimmer-sweep 2.2s linear infinite;
+  animation: text-shimmer-breathe 2s ease-in-out infinite;
 }
 
-@keyframes text-shimmer-sweep {
-  0% {
-    background-position: 200% 0;
+@keyframes text-shimmer-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
   }
-  to {
-    background-position: -200% 0;
+  50% {
+    opacity: 1;
   }
 }
 
@@ -1081,11 +1082,18 @@ button.tool-summary__trigger:hover {
   filter: drop-shadow(0 6px 14px rgba(160, 40, 110, 0.18));
 }
 @keyframes mascot-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mascot-pet img { animation: none; }
+  .mascot-pet img {
+    animation: none;
+  }
 }
 
 /* 桌面宠物小窗（2026-10-17）：整个页面透明；**整窗背景是拖拽区**，按钮/吉祥物是 nodrag。 */
@@ -1132,14 +1140,27 @@ body.pet-surface #root {
   animation: pet-eat 0.9s ease-in-out 1;
 }
 @keyframes pet-eat {
-  0% { transform: scale(1); }
-  25% { transform: scale(1.18) rotate(-6deg); }
-  50% { transform: scale(0.92) rotate(4deg); }
-  75% { transform: scale(1.08); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.18) rotate(-6deg);
+  }
+  50% {
+    transform: scale(0.92) rotate(4deg);
+  }
+  75% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pet-bob, .pet-eat { animation: none; }
+  .pet-bob,
+  .pet-eat {
+    animation: none;
+  }
 }
 
 /* 技能库分类卡（2026-10-17 设计稿）：四类渐变 + 一个中性「其他」。

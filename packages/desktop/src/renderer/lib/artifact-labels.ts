@@ -45,7 +45,7 @@ export function getArtifactLabel(artifact: Pick<Artifact, 'type' | 'mimeType' | 
  * 文件**身份**（界面标题 / 可访问名）—— 就是注册时的 `name`。
  *
  * ⭐ 2026-10-04 真机缺陷：FileCard / FilePreview / 搜索结果把**类型名**当身份显示 ——
- *    真实注册的视频「荣盈魔方测试.mp4」在界面上显示成「文件」。
+ *    真实注册的视频「Partner-W测试.mp4」在界面上显示成「文件」。
  *    类型名是**类型元信息**（`getArtifactLabel` 的用途），不是文件名。
  *
  * ⚠️ 只有注册名**确实为空**（历史遗留行）才回落到类型名：

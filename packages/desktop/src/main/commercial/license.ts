@@ -136,7 +136,7 @@ function fail<T = unknown>(error: unknown, errorCode: string): IpcResult<T> {
  * 一台新设备，名额（曾经只有 3）烧完后用户"卡里还有积分却进不去"。
  *
  * v2 只认 `ensureDeviceId()` —— 它存在**随盘**的运行数据里（便携版落在
- * `<卷根>\荣盈魔方-运行数据`），所以换电脑、换盘符、换 Windows 用户都不会变。
+ * `<卷根>\Partner-W-运行数据`），所以换电脑、换盘符、换 Windows 用户都不会变。
  */
 export function deviceFingerprint(): string {
   const stableId = ensureDeviceId();

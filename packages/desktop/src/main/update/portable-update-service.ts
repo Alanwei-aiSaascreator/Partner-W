@@ -74,7 +74,7 @@ export interface PortableUpdateServiceDeps {
   }) => Promise<{ programRoot: string }>;
   /**
    * 盘上现有程序目录的体积（空间预算的一项）。
-   * 注入点：真实实现是走一遍 `<盘根>\荣盈魔方\` 累加文件大小。
+   * 注入点：真实实现是走一遍 `<盘根>\Partner-W\` 累加文件大小。
    */
   measureProgramSize: () => Promise<number>;
   verifyTree: (input: { programRoot: string; fileManifest: PortableUpdateFileManifestV1 }) => Promise<void>;

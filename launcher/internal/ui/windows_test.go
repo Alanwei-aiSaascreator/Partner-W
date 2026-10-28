@@ -55,7 +55,7 @@ func newTestScreen(t *testing.T) *windowScreen {
 
 func showAndCheck(t *testing.T, screen *windowScreen) uintptr {
 	t.Helper()
-	withWatchdog(t, "Show", 5*time.Second, func() { screen.Show("荣盈魔方", "正在更新，请勿拔出 U 盘。") })
+	withWatchdog(t, "Show", 5*time.Second, func() { screen.Show("Partner-W", "正在更新，请勿拔出 U 盘。") })
 	handle := screen.handle
 	if handle == 0 {
 		t.Fatal("Show 之后窗口应存在")
@@ -166,7 +166,7 @@ func TestScreenLifecycleNeverBlocks(t *testing.T) {
 	withWatchdog(t, "Update before Show", 5*time.Second, func() { screen.Update("早到") })
 
 	first := showAndCheck(t, screen)
-	withWatchdog(t, "Show again", 5*time.Second, func() { screen.Show("荣盈魔方", "再来一次") })
+	withWatchdog(t, "Show again", 5*time.Second, func() { screen.Show("Partner-W", "再来一次") })
 	if screen.handle != first {
 		t.Fatal("重复 Show 不应重建窗口")
 	}
@@ -180,7 +180,7 @@ func TestScreenLifecycleNeverBlocks(t *testing.T) {
 	for cycle := 0; cycle < 30; cycle++ {
 		cycle := cycle
 		withWatchdog(t, fmt.Sprintf("cycle %d Show", cycle), 5*time.Second, func() {
-			screen.Show("荣盈魔方", "正在更新，请勿拔出 U 盘。")
+			screen.Show("Partner-W", "正在更新，请勿拔出 U 盘。")
 		})
 		if screen.handle == 0 {
 			t.Fatalf("cycle %d：Show 后窗口不存在", cycle)
@@ -191,7 +191,7 @@ func TestScreenLifecycleNeverBlocks(t *testing.T) {
 
 	// 非法文本路径：含 NUL ⇒ 文本转换失败 ⇒ 命令必须确定返回、不卡死；
 	// 窗口照常可用（新设计不依赖文案建窗），随后开关与更新都正常。
-	withWatchdog(t, "Show with invalid message", 5*time.Second, func() { screen.Show("荣盈魔方", "坏\x00消息") })
+	withWatchdog(t, "Show with invalid message", 5*time.Second, func() { screen.Show("Partner-W", "坏\x00消息") })
 	withWatchdog(t, "Update with invalid message", 5*time.Second, func() { screen.Update("坏\x00消息") })
 	withWatchdog(t, "Close after invalid message", 5*time.Second, func() { screen.Close() })
 	showAndCheck(t, screen)
@@ -211,7 +211,7 @@ func TestScreenConcurrentOpsDoNotDeadlock(t *testing.T) {
 				case 0:
 					screen.Update("并发更新")
 				case 1:
-					screen.Show("荣盈魔方", "并发 Show")
+					screen.Show("Partner-W", "并发 Show")
 				default:
 					screen.Update("并发 Update")
 				}
@@ -265,7 +265,7 @@ func TestScreenMultipleInstances(t *testing.T) {
 	for i, screen := range screens {
 		i, screen := i, screen
 		withWatchdog(t, fmt.Sprintf("screen %d Show", i), 5*time.Second, func() {
-			screen.Show("荣盈魔方", "多实例")
+			screen.Show("Partner-W", "多实例")
 		})
 	}
 	for i, screen := range screens {

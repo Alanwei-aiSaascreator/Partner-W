@@ -149,7 +149,7 @@ export interface ClaimedFile {
    * 核对存在性时额外尝试的拼写（带空格全名 / 逐级丢前导词的后缀）。
    *
    * ⭐ 抽取的语义**不变**（名字仍是正则抠出的那截）；宽松只发生在"到盘上找"这一步。
-   *    起因：产品自己的命名就带空格（`荣盈魔方 · AI桌面工作台-12ddb119.pptx`），
+   *    起因：产品自己的命名就带空格（`Partner-W · AI桌面工作台-12ddb119.pptx`），
    *    而抽取正则把空格当边界 ⇒ 只抠到尾巴 token ⇒ 拿半截名去查 ⇒ 误报 missing。
    */
   variants?: string[];
@@ -226,7 +226,7 @@ const ILLEGAL_FILE_NAME_CHARS_RE = /[\\/:*?"<>|\u0000-\u001f]/;
  *    都不是"这份回复产出了本地文件"的证据 —— 否则 `[官网](https://x/guide.html)` 会凭空
  *    报一条「说好的文件不在」，而"冤枉模型"正是这个守卫明确要避免的方向（见模块开头）。
  * ⚠️ 地址可能带 markdown 的 `"标题"` 与 `?query` / `#fragment`，先摘掉再取 basename。
- * ⚠️ **允许空格**：产品自己的成品名就带空格（`荣盈魔方 · AI桌面工作台-12ddb119.pptx`），
+ * ⚠️ **允许空格**：产品自己的成品名就带空格（`Partner-W · AI桌面工作台-12ddb119.pptx`），
  *    所以这里把 basename 原样送回扫描文本（抽取正则只抠到最后一个 token，带空格的全名由
  *    既有的候选拼写回扫 `buildClaimVariants` 还原 —— 与散文里那条路完全同一套）。
  */
@@ -346,16 +346,13 @@ function claimScanText(content: string): string {
  *    见 `TRAILING_FILE_EXTENSION_RE`，那是 r14 反例 `[report.docx](final).docx` 的判据。
  */
 function rewriteLinks(segment: string, insideCodeRegion: boolean): string {
-  return segment.replace(
-    MARKDOWN_LINK_RE,
-    (match: string, text: string, target: string, offset: number) => {
-      // ⭐ 紧接着的字符还在同一个文件名的扩展名里 ⇒ 这是**字面文件名**，不是链接。
-      if (TRAILING_FILE_EXTENSION_RE.test(segment.slice(offset + match.length))) return match;
-      const targetName = localLinkTargetFileName(target);
-      if (insideCodeRegion && !targetName && !FILE_NAME_IN_TEXT_RE.test(text)) return match;
-      return targetName ? `${text} ${targetName}` : text;
-    },
-  );
+  return segment.replace(MARKDOWN_LINK_RE, (match: string, text: string, target: string, offset: number) => {
+    // ⭐ 紧接着的字符还在同一个文件名的扩展名里 ⇒ 这是**字面文件名**，不是链接。
+    if (TRAILING_FILE_EXTENSION_RE.test(segment.slice(offset + match.length))) return match;
+    const targetName = localLinkTargetFileName(target);
+    if (insideCodeRegion && !targetName && !FILE_NAME_IN_TEXT_RE.test(text)) return match;
+    return targetName ? `${text} ${targetName}` : text;
+  });
 }
 
 /**
@@ -615,14 +612,14 @@ function lineClaimsFile(content: string, offset: number): boolean {
 
 /** 回扫的止步字符：行尾、句读标点、路径分隔符、代码/引号边界。 */
 const CLAIM_BACKSCAN_STOP_RE = /[\n，。；：！？,;:!?、（）()「」『』“”‘’`\\/]/;
-/** 回扫跨过 markdown 装饰符时先摘掉它们（`**荣盈魔方 · ` ⇒ `荣盈魔方 · `）。 */
+/** 回扫跨过 markdown 装饰符时先摘掉它们（`**Partner-W · ` ⇒ `Partner-W · `）。 */
 const CLAIM_MARKDOWN_NOISE_RE = /[*`"'<>]/g;
 
 /**
  * 给一个抽到的名字补「核对用拼写」。
  *
  * ⭐ 2026-10-03 场景一真机误报的修法（guard 报 missing 而文件真实存在）：
- *   产品自己生成的成品名就带空格——`荣盈魔方 · AI桌面工作台-12ddb119.pptx`。
+ *   产品自己生成的成品名就带空格——`Partner-W · AI桌面工作台-12ddb119.pptx`。
  *   抽取正则把空格当边界（那是"顿号列举不能拼成一条"的纪律），于是只抠到
  *   `AI桌面工作台-12ddb119.pptx`；再拿这半截名去盘上找 ⇒ 明明在，报"不在"。
  *   名字的抽取语义不动，只在这里补两种更宽的拼写供"找文件"用：

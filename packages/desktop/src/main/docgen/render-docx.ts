@@ -79,7 +79,7 @@ export async function renderDocx(request: DocgenDocxRequest): Promise<Buffer> {
   }
 
   const document = new Document({
-    creator: '荣盈魔方',
+    creator: 'Partner-W',
     title: request.title,
     styles: {
       default: {

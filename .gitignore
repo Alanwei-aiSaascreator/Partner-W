@@ -68,3 +68,6 @@ packages/desktop/dist/
 .mcp.json.backup.*
 .claude/settings.json
 .claude/settings.json.backup.*
+
+# 本地 MCP 配置（机器相关绝对路径，如根目录 mcp.json → D:/aoci/aoci.exe）
+mcp.json

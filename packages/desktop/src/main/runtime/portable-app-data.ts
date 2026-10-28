@@ -10,7 +10,7 @@
  *    两份共用一个 userData ⇒ 先开的那份活着时，双击 U 盘里那份**静默退出**
  *    （点了没反应）。这也正是交付包里那个 `.bat` 唯一在做的事（它拿 tasklist
  *    查一遍再给一句人话）。userData 分开之后，双份可以并存，`.bat` 就没有存在
- *    的理由了 —— 用户直接双击 `荣盈魔方\荣盈魔方.exe` 即可。
+ *    的理由了 —— 用户直接双击 `Partner-W\Partner-W.exe` 即可。
  * Runtime caches also follow portable application data. Portable launch never
  * selects the host cache after application-data preparation fails.
  *
@@ -40,16 +40,16 @@ import {
 import { RUNTIME_MANIFEST_FILE } from './locate.js';
 
 /**
- * 盘上运行时应用数据目录名（`<盘根>\荣盈魔方-运行数据\`）。
+ * 盘上运行时应用数据目录名（`<盘根>\Partner-W-运行数据\`）。
  *
- * ⚠️ **故意不放进** `荣盈魔方工作区\`：那里是用户的资料，会被文件索引/搜索扫到，
+ * ⚠️ **故意不放进** `Partner-W工作区\`：那里是用户的资料，会被文件索引/搜索扫到，
  *    而这里装的是 Chromium 缓存（上万个小文件）、日志与身份/登录配置。
- * ⚠️ **故意不放进** `荣盈魔方\`（程序目录）：便携版更新就是把这个目录整个换掉，
+ * ⚠️ **故意不放进** `Partner-W\`（程序目录）：便携版更新就是把这个目录整个换掉，
  *    数据放进去会被连带替换掉。换目录的真身在**随包启动器**里
  *    （`launcher/internal/update/swap.go`）——客户端侧不参与这次目录交换，
  *    原来那个 `update/portable-swap.ts` 是单文件时代的死代码，已于 2026-09-23 删除。
  */
-export const PORTABLE_APP_DATA_DIR_NAME = '荣盈魔方-运行数据';
+export const PORTABLE_APP_DATA_DIR_NAME = 'Partner-W-运行数据';
 
 /** 凭什么认为"这是盘上运行"。与 `PortableRunReason` 同名同义（便于日志对照）。 */
 export type PortableAppDataReason = 'delivery-layout' | 'removable-drive' | 'volume-marker' | 'workspace-marker';
@@ -86,7 +86,7 @@ function P(): typeof path.win32 {
   return process.platform === 'win32' ? path.win32 : path.posix;
 }
 
-/** 盘上应用数据目录 = `<盘根>\荣盈魔方-运行数据\`。 */
+/** 盘上应用数据目录 = `<盘根>\Partner-W-运行数据\`。 */
 export function portableAppDataPathFor(volumeRoot: string): string {
   const root = normalizeVolumeRoot(volumeRoot) ?? volumeRoot;
   return P().join(root, PORTABLE_APP_DATA_DIR_NAME);
@@ -118,7 +118,7 @@ function notPortable(volumeRoot: string | null): PortableAppDataDecision {
  * exe 推不出盘根                              ⇒ 不动
  * exe 就在系统盘上                            ⇒ 不动（连文件都不看）
  * 盘根有 openclaw-runtime-manifest.json       ⇒ 放盘里（volume-marker）
- * 盘里已有 荣盈魔方工作区\.clawwork-workspace.json ⇒ 放盘里（workspace-marker）
+ * 盘里已有 Partner-W工作区\.clawwork-workspace.json ⇒ 放盘里（workspace-marker）
  * exe 自己那份交付夹的形状（isDeliveryLayout）⇒ 放盘里（delivery-layout）
  * exe 的盘在可移动盘列表里                    ⇒ 放盘里（removable-drive）
  * 否则                                        ⇒ 不动
@@ -145,7 +145,7 @@ export function decidePortableAppData(input: PortableAppDataInput): PortableAppD
   if (!reason) return notPortable(volumeRoot);
 
   const target = portableAppDataPathFor(volumeRoot);
-  // 目标就是当前 userData（例如有人显式 `--user-data-dir=E:\荣盈魔方-运行数据`）
+  // 目标就是当前 userData（例如有人显式 `--user-data-dir=E:\Partner-W-运行数据`）
   // ⇒ 不必 setPath，但"这是盘上形态"这个结论仍然报出去（日志要能读明白）。
   if (samePath(target, input.defaultUserData)) return { target: null, volumeRoot, reason };
 

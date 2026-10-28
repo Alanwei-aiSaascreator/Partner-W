@@ -84,7 +84,7 @@ export function stateConfigPath(stateDir: string): string {
 /**
  * 便携版的 OpenClaw state 还要按**便携身份**隔离。
  *
- * 本机 runtime cache 的外层 scope 只区分 `E:\\荣盈魔方-运行数据` 这类路径；换一支
+ * 本机 runtime cache 的外层 scope 只区分 `E:\\Partner-W-运行数据` 这类路径；换一支
  * U 盘后盘符和目录可能完全相同。若直接共用 `<cache>/openclaw-state`，后一支盘会继承
  * 前一支盘的 provider key、会话和插件状态。token 是每支盘自己的稳定随机身份，取
  * SHA-256 的前 96 bit 作目录名既不泄露 token，也足够把一台机器上的几支盘隔开。

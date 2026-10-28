@@ -370,36 +370,18 @@ describe('任务模式 chip（输入框）', () => {
     unmount();
   });
 
-  it('⭐ 下拉三档都在：快速 / 智能（推荐）/ 深度', () => {
+  it('⭐ 2026-10-28（用户）：下拉不再有三档模式 —— 直接平铺自配模型（按端点/家族分组）', () => {
     const { container, unmount } = renderChatInput();
 
     const text = container.textContent ?? '';
-    expect(text).toContain('chatInput.mode.fast');
-    expect(text).toContain('chatInput.mode.smart');
-    expect(text).toContain('chatInput.mode.deep');
-    expect(text).toContain('chatInput.mode.recommended');
-    expect(text).toContain('chatInput.mode.advanced');
+    // 三档模式 + 「高级」包裹层都已从 composer 下拉移除（模式系统本身仍在：新任务默认 smart）。
+    expect(text, '快速档入口已移除').not.toContain('chatInput.mode.fast');
+    expect(text, '深度档入口已移除').not.toContain('chatInput.mode.deep');
+    expect(text, '「高级：指定模型」包裹层已移除').not.toContain('chatInput.mode.advanced');
+    // 模型照常可选（不是把整张表藏了）。
+    expect(text).toContain('GLM 5.3 Flash');
+    expect(text).toContain('Qwen 3.5 27B');
 
-    unmount();
-  });
-
-  it('⭐ 点「深度」⇒ 写 task.mode = deep', () => {
-    const { container, unmount } = renderChatInput();
-
-    clickByText(container, 'chatInput.mode.deep');
-
-    expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-1', { mode: 'deep' });
-    unmount();
-  });
-
-  it('点「快速」⇒ 写 task.mode = fast（不碰 model）', () => {
-    const { container, unmount } = renderChatInput();
-
-    clickByText(container, 'chatInput.mode.fast');
-
-    expect(mocks.taskState.updateTaskMetadata).toHaveBeenCalledWith('task-1', { mode: 'fast' });
-    const payload = mocks.taskState.updateTaskMetadata.mock.calls[0]![1] as Record<string, unknown>;
-    expect(payload.model).toBeUndefined();
     unmount();
   });
 
@@ -446,19 +428,6 @@ describe('任务模式 chip（输入框）', () => {
     const text = container.textContent ?? '';
     expect(text, '模式别名仍隐藏').not.toContain(ALIAS_MODEL_ID);
 
-    unmount();
-  });
-
-  it('待发态（还没建任务）点「深度」⇒ 写 pendingNewTask.mode', () => {
-    mocks.taskState.activeTaskId = null;
-    mocks.taskState.tasks = [];
-    mocks.taskState.pendingNewTask = { gatewayId: 'gw-1', agentId: 'main' };
-    const { container, unmount } = renderChatInput();
-
-    clickByText(container, 'chatInput.mode.deep');
-
-    expect(mocks.taskState.updatePending).toHaveBeenCalledWith({ mode: 'deep' });
-    expect(mocks.taskState.updateTaskMetadata).not.toHaveBeenCalled();
     unmount();
   });
 
@@ -585,7 +554,9 @@ describe('任务模式 chip（输入框）', () => {
       await flushVoiceCapabilities();
 
       // 麦克风 + 播报两个按钮都应存在、都置灰、都给出同一原因。
-      const disabledVoiceButtons = [...container.querySelectorAll('button[aria-label="voiceInput.unsupportedTooltip"]')];
+      const disabledVoiceButtons = [
+        ...container.querySelectorAll('button[aria-label="voiceInput.unsupportedTooltip"]'),
+      ];
       expect(disabledVoiceButtons).toHaveLength(2);
       for (const button of disabledVoiceButtons) expect((button as HTMLButtonElement).disabled).toBe(true);
 
@@ -618,7 +589,10 @@ describe('任务模式 chip（输入框）', () => {
           calls += 1;
           return calls === 1
             ? { ok: false as const, error: 'voice-unavailable' }
-            : { ok: true as const, result: { asr: true, tts: true, maxRecordingSeconds: 60, maxSpeechCharacters: 600 } };
+            : {
+                ok: true as const,
+                result: { asr: true, tts: true, maxRecordingSeconds: 60, maxSpeechCharacters: 600 },
+              };
         });
         const { container, unmount } = renderChatInput();
 

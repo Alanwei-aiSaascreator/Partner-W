@@ -35,7 +35,7 @@ export function createWorkspaceStartupDialogs(): WorkspaceStartupDialogs {
      * 找不到工作区。
      *
      * 多命中时**先让用户挑**：按钮就是候选路径本身（同时在 detail 里编号列一遍），
-     * 因为"两个 U 盘都有荣盈魔方工作区"这种情况，只有用户知道哪份是他的。
+     * 因为"两个 U 盘都有Partner-W工作区"这种情况，只有用户知道哪份是他的。
      */
     async askForMissingWorkspace({ recordedPath, candidates }): Promise<MissingWorkspaceChoice> {
       const buttons = [...candidates, BROWSE_LABEL, CREATE_LABEL, QUIT_LABEL];

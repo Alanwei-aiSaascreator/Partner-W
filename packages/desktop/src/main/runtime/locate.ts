@@ -94,10 +94,10 @@ export function candidateRuntimeRoots(opts: {
   if (opts.envDir) out.push(candidate(opts.envDir, 'env'));
   if (opts.configDir) out.push(candidate(opts.configDir, 'config'));
   for (const root of opts.devRoots ?? []) out.push(candidate(root, 'dev'));
-  for (const root of opts.drives ?? []) out.push(candidate(root, 'drive'));
-  // ⚠️ 位置是刻意的：**盘在 bundled 之前**。插着运行时盘时用盘上的那份
-  // （盘上通常比安装包里那份新），拔了盘才回落到随包那份。
+  // 本地部署优先：随包运行时在盘之前。安装版不带盘，直接回落随包那份；
+  // 仍保留盘候选以兼容便携形态，但不再优先。
   if (opts.bundledRoot) out.push(candidate(opts.bundledRoot, 'bundled'));
+  for (const root of opts.drives ?? []) out.push(candidate(root, 'drive'));
   if (opts.cacheRoot) out.push(candidate(opts.cacheRoot, 'cache'));
   return out;
 }
@@ -220,7 +220,7 @@ export function describeRuntimeSearch(opts: {
 
   if (opts.fallbackScanned) lines.push('盘符兜底扫描（Z: → D: 逐个探 marker）也没命中。');
 
-  lines.push('怎么办：插上出厂运行时盘（盘根要有该 manifest），或用 CLAWWORK_RUNTIME_DIR 指定运行时目录。');
+  lines.push('怎么办：请重新安装应用（安装包应内置运行时），或用 CLAWWORK_RUNTIME_DIR 指定运行时目录。');
   lines.push(
     '若这是刚装好的正式包，上面 bundled 那条本该命中 —— 不命中说明**安装包里没带运行时**（打包时 runtime-out/ 不存在）。',
   );

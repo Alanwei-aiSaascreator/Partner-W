@@ -16,10 +16,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { parseAgentIdFromSessionKey, type Message, type ToolCall } from '@clawwork/shared';
-import {
-  contextUsagePercent as computeContextUsagePercent,
-  resolveContextWindow,
-} from '@/lib/context-usage';
+import { contextUsagePercent as computeContextUsagePercent, resolveContextWindow } from '@/lib/context-usage';
 import type { AssistantIdentity } from './assistant-identity';
 import { useAssistantIdentityIndex } from './useAssistantIdentityIndex';
 import {
@@ -68,7 +65,7 @@ import GrowthPanel from '@/layouts/GrowthPanel';
 import IdentityCenter from '@/layouts/IdentityCenter';
 import SkillMarket from '@/layouts/SkillMarket';
 import ExpertsPanel from '@/layouts/ExpertsPanel';
-import MascotPet from '@/components/MascotPet';
+
 import TasksPanel from '@/layouts/TasksPanel';
 import KnowledgeBase from '@/layouts/KnowledgeBase';
 import DataTable, { type DataTableColumn } from '@/components/data-display/DataTable';
@@ -208,13 +205,15 @@ function ChatHeader({
   const { t } = useTranslation();
   const activeTask = useTaskStore((s) => s.tasks.find((task) => task.id === s.activeTaskId));
   const updateTaskTitle = useTaskStore((s) => s.updateTaskTitle);
+  const localMode = useCommercialStore((s) => s.localMode);
   const commercialOverview = useCommercialStore((s) => s.overview);
   const commercialStatus = useCommercialStore((s) => s.status);
   const loadCommercial = useCommercialStore((s) => s.load);
 
   useEffect(() => {
-    void loadCommercial();
-  }, [loadCommercial]);
+    // 私有化 / 开源版：本地模式没有商业额度，不必发一次必然失败的 Supabase 请求。
+    if (!localMode) void loadCommercial();
+  }, [localMode, loadCommercial]);
 
   const quotaMicros = commercialOverview?.license?.tokenQuotaMicros ?? 0;
   const usedMicros = commercialOverview?.license?.tokenUsedMicros ?? 0;
@@ -1011,7 +1010,10 @@ export function ChatContent({
       // 产物保存 ⇒ 远端结算通常紧接着发生；给服务端一点时间再拉额度。
       clearTimeout(timer);
       timer = setTimeout(() => {
-        void useCommercialStore.getState().refresh().catch(() => {});
+        void useCommercialStore
+          .getState()
+          .refresh()
+          .catch(() => {});
       }, 1500);
     });
     return () => {
@@ -1765,10 +1767,7 @@ export default function MainArea({
       ) : mainView === 'experts' ? (
         // 专家库（2026-10-16，第 24 行）：卡片只回传一句话，执行通道仍是对话那条既有的。
         <div className="flex-1 min-h-0">
-          <ExpertsPanel
-            onStartTask={handleStartExpertTask}
-            gatewayId={activeTask?.gatewayId ?? defaultGatewayId}
-          />
+          <ExpertsPanel onStartTask={handleStartExpertTask} gatewayId={activeTask?.gatewayId ?? defaultGatewayId} />
         </div>
       ) : mainView === 'identity' ? (
         <div className="flex-1 min-h-0">
@@ -1785,8 +1784,6 @@ export default function MainArea({
         //    切任务要重置的东西由 ChatContent 里监听 activeTaskId 的 effect 负责。
         //    回归测试：test/chat-send-stability.test.tsx
         <div className="relative flex flex-col flex-1 min-h-0">
-          {/* 灵宠（2026-10-17）：安静的品牌位，不参与业务；关掉后记住。 */}
-          <MascotPet />
           <ChatHeader
             onTogglePanel={onTogglePanel}
             messageLayout={messageLayout}

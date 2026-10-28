@@ -554,7 +554,7 @@ func (screen *windowScreen) paint(hwnd uintptr) {
 	procEllipse.Call(memDC, 24, 20, 34, 30)
 	procSelectObject.Call(memDC, oldPen2)
 	procSelectObject.Call(memDC, oldBrush2)
-	screen.drawText(memDC, "荣盈魔方", rect{42, 16, width - 24, 36}, screen.brandFont, colorBrand, dtLeft)
+	screen.drawText(memDC, "Partner-W", rect{42, 16, width - 24, 36}, screen.brandFont, colorBrand, dtLeft)
 
 	// 主文案 + 百分比
 	screen.drawText(memDC, screen.mainText, rect{24, 48, width - 120, 78}, screen.titleFont, colorTitle, dtLeft|dtSingleLine|dtVCenter|dtEndEllipsis|dtNoPrefix)

@@ -22,6 +22,18 @@ import { isModeAliasModelId, type ModelCatalogEntry } from '@clawwork/shared';
 export const RELAY_PROVIDER_ID = 'clawrouter';
 
 /**
+ * BYOK（私有化 / 开源版）provider。网关 `models.providers.byok` 列出的模型
+ * 与中转模型同权可选 —— 不认它的话，私有化部署里模型目录会被筛成空
+ * （界面永远显示"暂时没有可用模型"）。
+ */
+export const BYOK_PROVIDER_ID = 'byok';
+
+/** 某个 provider 是不是 BYOK 系的（`byok` 或 `byok-<id>`）—— 多端点后按端点分组用。 */
+export function isByokProviderId(provider: string | undefined): boolean {
+  return provider === BYOK_PROVIDER_ID || (provider != null && provider.startsWith(`${BYOK_PROVIDER_ID}-`));
+}
+
+/**
  * ⭐ 「用户能选的模型」= **唯一一把尺**（2026-10-12 统一，用户真机反馈
  * "设置里的模型下拉还有残留"）。四层收敛：
  *
@@ -98,7 +110,7 @@ export function sanitizedCatalogModels(models: readonly ModelCatalogEntry[]): Mo
 }
 
 /**
- * 只留下中转服务能提供的模型。
+ * 只留下**我们真正服务得了**的模型：中转（clawrouter）与 BYOK（byok）。
  *
  * **任何**用模型目录的地方都应该先过这一道 —— 下拉、当前模型标签、模型选择器……
  * 只在某一处过滤是个已犯过的错：下拉只列 clawrouter，但「当前模型」的标签
@@ -110,7 +122,9 @@ export function sanitizedCatalogModels(models: readonly ModelCatalogEntry[]): Mo
  * 调用方要按「空目录」处理，**不要**退回未过滤的全量目录。
  */
 export function relayModelsFrom(models: ModelCatalogEntry[]): ModelCatalogEntry[] {
-  return models.filter((m) => m.provider === RELAY_PROVIDER_ID);
+  // 2026-10-28 多端点：BYOK 每个端点一个 provider（`byok` 或 `byok-<id>`），
+  // 放行整个 BYOK 前缀，而不是只放行单个 `byok`。
+  return models.filter((m) => m.provider === RELAY_PROVIDER_ID || isByokProviderId(m.provider));
 }
 
 /**

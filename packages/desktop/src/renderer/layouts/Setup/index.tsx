@@ -69,7 +69,7 @@ export default function Setup({ onSetupComplete, initialStep = 'workspace' }: Se
   };
 
   /**
-   * 盘上形态（T-U1）：工作区已经由主进程**自动**设好（`<盘根>\荣盈魔方工作区`），
+   * 盘上形态（T-U1）：工作区已经由主进程**自动**设好（`<盘根>\Partner-W工作区`），
    * 数据库也开在那儿了 —— 首启不该再让用户选盘。
    *
    * ⚠️ 这个状态**不需要新 IPC**：判据就是"配置里已经有 workspacePath
@@ -226,11 +226,7 @@ export default function Setup({ onSetupComplete, initialStep = 'workspace' }: Se
           <div className="flex flex-col items-center text-center space-y-3">
             <div className="relative">
               <div className="absolute inset-0 scale-[2.5] rounded-full bg-[var(--accent)] opacity-[0.06] blur-2xl" />
-              <img
-                src={logo}
-                alt="Rongying Cube"
-                className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]"
-              />
+              <img src={logo} alt="Partner-W" className="relative w-16 h-16 rounded-2xl shadow-[var(--glow-accent)]" />
             </div>
             <h1 className="type-section-title text-[var(--text-primary)]">{t('setup.welcome')}</h1>
             <p className="type-body leading-relaxed text-[var(--text-muted)]">

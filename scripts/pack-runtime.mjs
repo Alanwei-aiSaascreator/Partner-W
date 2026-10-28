@@ -217,9 +217,14 @@ function countFiles(dir) {
 }
 
 function sevenZip() {
-  const candidates = ['C:/Program Files/7-Zip/7z.exe', 'C:/Program Files (x86)/7-Zip/7z.exe'];
+  const candidates = [
+    process.env.SEVEN_ZIP,
+    'C:/Program Files/7-Zip/7z.exe',
+    'C:/Program Files (x86)/7-Zip/7z.exe',
+    'C:/Program Files/NVIDIA Corporation/NVIDIA app/7z.exe',
+  ].filter(Boolean);
   const found = candidates.find((p) => fs.existsSync(p));
-  if (!found) throw new Error('找不到 7z.exe（装 7-Zip，或改 sevenZip() 里的候选路径）');
+  if (!found) throw new Error('找不到 7z.exe（装 7-Zip，或用 SEVEN_ZIP 指定，或改 sevenZip() 里的候选路径）');
   return found;
 }
 

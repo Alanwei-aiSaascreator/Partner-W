@@ -59,6 +59,58 @@ export interface CommercialConfig {
   paymentBaseUrl?: string;
 }
 
+/**
+ * BYOK（Bring Your Own Key）单个端点：一个 OpenAI 兼容中转站（url + key + 一组选中的模型）。
+ *
+ * 2026-10-28 用户需求：一个 key 一个 url 里往往有多个模型，且要支持**多个 url / 多个 key**
+ * 供客户选定 —— 从「单端点」升级成「多端点池」。
+ */
+export interface ByokEndpointConfig {
+  /** 稳定端点 id；同时是网关 provider id（`byok` 或 `byok-<id>`）。 */
+  id: string;
+  /** 端点显示名（客户识别用，如「公司中转站」「个人 key」）。 */
+  name: string;
+  /** OpenAI 兼容端点，如 `https://api.openai.com/v1`。 */
+  baseUrl: string;
+  /** 该端点的 API key。 */
+  apiKey: string;
+  /** 用户选中的模型 id 列表（如 `["gpt-4o", "gpt-4o-mini"]`）。 */
+  modelIds: string[];
+  /**
+   * 每个模型的推理功率档（model id → `low`/`medium`/`high`/`max`），缺省回落 `high`。
+   */
+  modelLevels?: Record<string, string>;
+}
+
+/**
+ * BYOK（Bring Your Own Key）模型服务配置：用户自配的**一组** OpenAI 兼容端点。
+ *
+ * 私有化 / 开源版的核心模型接入方式：不强制官方 relay，用户填自己的
+ * `baseUrl` + `apiKey` + 模型 id 列表，客户端把它写进网关 `models.providers.<endpointId>`。
+ *
+ * ⚠️ `apiKey` 是敏感凭据：读写走 `safeStorage` 加密（与网关 token 同一条链）。
+ */
+export interface ModelApiConfig {
+  /** 端点列表（每个端点一个 provider）。 */
+  endpoints: ByokEndpointConfig[];
+}
+
+/**
+ * 官方 API（relay 中继）的**用户手动配置**（私有化 / 开源版）。
+ *
+ * 商业版里 relay key 来自 Supabase `activate_license` RPC（登录 → 激活 → 下发 key）；
+ * 开源版移除了登录/激活，改用「用户直接填 relay key」。key 用于中继鉴权 + 计费，
+ * 与官网同价、不盈利。
+ *
+ * ⚠️ `key` 是敏感凭据：读写走 `safeStorage` 加密（与网关 token / BYOK apiKey 同一条链）。
+ */
+export interface RelayApiConfig {
+  /** 中转基址；缺省 = 生产默认（`RELAY_BASE_URL`）。 */
+  baseUrl?: string;
+  /** 中转 key（鉴权 / 计费）。 */
+  key: string;
+}
+
 export interface AppConfig {
   workspacePath: string;
   /**
@@ -141,6 +193,10 @@ export interface AppConfig {
    */
   webSearch?: boolean;
   commercial?: CommercialConfig;
+  /** BYOK 模型服务配置（私有化 / 开源版）。 */
+  modelApi?: ModelApiConfig;
+  /** 官方 API（relay 中继）的用户手动配置（私有化 / 开源版）。 */
+  relayApi?: RelayApiConfig;
 }
 
 function configFilePath(): string {
@@ -165,7 +221,7 @@ export function getPortableWorkspaceRoot(): string | null {
 }
 
 /**
- * 默认工作区：盘上运行 ⇒ `<盘根>\荣盈魔方工作区\`（用户不用选盘）；
+ * 默认工作区：盘上运行 ⇒ `<盘根>\Partner-W工作区\`（用户不用选盘）；
  * 否则维持 homedir 下的老默认值。
  */
 export function getDefaultWorkspacePath(): string {
@@ -218,6 +274,14 @@ function encryptGatewayCredentials(config: AppConfig): AppConfig {
   }
   clone.bootstrapToken = encryptField(clone.bootstrapToken);
   clone.password = encryptField(clone.password);
+  if (clone.modelApi) {
+    for (const endpoint of clone.modelApi.endpoints) {
+      endpoint.apiKey = encryptField(endpoint.apiKey) ?? '';
+    }
+  }
+  if (clone.relayApi) {
+    clone.relayApi.key = encryptField(clone.relayApi.key) ?? '';
+  }
   return clone;
 }
 
@@ -230,6 +294,14 @@ function decryptGatewayCredentials(config: AppConfig): AppConfig {
   }
   clone.bootstrapToken = decryptField(clone.bootstrapToken);
   clone.password = decryptField(clone.password);
+  if (clone.modelApi) {
+    for (const endpoint of clone.modelApi.endpoints) {
+      endpoint.apiKey = decryptField(endpoint.apiKey) ?? '';
+    }
+  }
+  if (clone.relayApi) {
+    clone.relayApi.key = decryptField(clone.relayApi.key) ?? '';
+  }
   return clone;
 }
 
@@ -263,7 +335,33 @@ function migrateConfigIfNeeded(config: AppConfig): AppConfig {
   if (!config.gateways) {
     config.gateways = [];
   }
+  migrateModelApiEndpoints(config);
   return config;
+}
+
+/**
+ * BYOK 单端点 → 多端点迁移（2026-10-28 用户需求）。
+ *
+ * 旧结构 `{ baseUrl, apiKey, modelIds, modelLevels }` 一次性转成
+ * `{ endpoints: [{ id: 'byok', name: 'Default', ... }] }`；`id: 'byok'` 保持旧的
+ * provider id，让网关里已写入的 `models.providers.byok` 无缝续用。
+ */
+function migrateModelApiEndpoints(config: AppConfig): void {
+  const modelApi = config.modelApi as unknown as (ModelApiConfig & Partial<ByokEndpointConfig>) | undefined;
+  if (!modelApi || Array.isArray(modelApi.endpoints)) return;
+  if (typeof modelApi.baseUrl !== 'string' || !Array.isArray(modelApi.modelIds)) return;
+  config.modelApi = {
+    endpoints: [
+      {
+        id: 'byok',
+        name: 'Default',
+        baseUrl: modelApi.baseUrl,
+        apiKey: modelApi.apiKey ?? '',
+        modelIds: modelApi.modelIds,
+        ...(modelApi.modelLevels ? { modelLevels: modelApi.modelLevels } : {}),
+      },
+    ],
+  };
 }
 
 export function readConfig(): AppConfig | null {
