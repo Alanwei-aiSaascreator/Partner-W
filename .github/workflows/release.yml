@@ -99,7 +99,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -245,7 +245,7 @@ jobs:
 
       - name: Setup pnpm
         if: env.MOFANG_PORTABLE_RELEASE_ENABLED == 'true'
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
