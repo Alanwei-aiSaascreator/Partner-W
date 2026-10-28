@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/TencentCloud/Octop",
+  "commit": "f79015b078c4d5d4c309a1bf6f3cd39ac06cc18f",
+  "sources": [
+    {
+      "path": "src/octop/infra/agents/experts/library/news-trend/skills/daily-hot-news/SKILL.md",
+      "sha256": "5b2d95d040f7b561f6d13eb8f5f942a8c7d3ee850007b43d8f96678b197fc250"
+    }
+  ],
+  "adaptedSha256": "d8a0039e89db9f99632fcbfdd4570c1a988604e3c8afe3976f063d0b80695272",
+  "license": "Apache-2.0",
+  "adapted": true,
+  "changes": [
+    "Chinese OpenClaw-compatible frontmatter",
+    "Workflow adaptation, not verbatim runtime integration",
+    "Use only currently available authorized tools",
+    "No publishing, dependency installation, paid calls or global memory mutation",
+    "Retain partner-w artifact verification contract"
+  ],
+  "runtimeDependenciesAdded": [],
+  "businessAcceptance": "NOT RUN"
+}

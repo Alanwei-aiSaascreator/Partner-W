@@ -1,0 +1,8 @@
+* @samzong
+
+/OWNERS @samzong
+/.github/** @samzong
+
+/packages/core/** @samzong
+/packages/desktop/** @samzong @HiddenPuppy @mvanhorn
+/packages/shared/** @samzong

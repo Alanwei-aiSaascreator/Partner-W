@@ -1,0 +1,328 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="./styles/typography.css" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        color-scheme: dark;
+        font-family: var(--font-family-sans);
+      }
+
+      :root,
+      :root[data-theme='dark'] {
+        --ql-surface: rgba(28, 28, 28, 0.82);
+        --ql-border: rgba(255, 255, 255, 0.08);
+        --ql-border-inset: rgba(255, 255, 255, 0.04);
+        --ql-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        --ql-text: #ffffff;
+        --ql-text-muted: rgba(255, 255, 255, 0.3);
+        --ql-meta: rgba(255, 255, 255, 0.18);
+        --ql-kbd-bg: rgba(255, 255, 255, 0.06);
+        --ql-kbd-border: rgba(255, 255, 255, 0.07);
+        --ql-kbd-text: rgba(255, 255, 255, 0.28);
+        --ql-divider: rgba(255, 255, 255, 0.06);
+        --ql-accent: rgba(15, 253, 13, 0.8);
+        --ql-accent-border: rgba(15, 253, 13, 0.3);
+        --ql-accent-inset: rgba(15, 253, 13, 0.1);
+        --ql-accent-glow: rgba(15, 253, 13, 0.06);
+      }
+
+      :root[data-theme='light'] {
+        --ql-surface: rgba(250, 250, 250, 0.88);
+        --ql-border: rgba(0, 0, 0, 0.08);
+        --ql-border-inset: rgba(255, 255, 255, 0.5);
+        --ql-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+        --ql-text: #111827;
+        --ql-text-muted: rgba(17, 24, 39, 0.4);
+        --ql-meta: rgba(17, 24, 39, 0.3);
+        --ql-kbd-bg: rgba(0, 0, 0, 0.04);
+        --ql-kbd-border: rgba(0, 0, 0, 0.08);
+        --ql-kbd-text: rgba(17, 24, 39, 0.55);
+        --ql-divider: rgba(0, 0, 0, 0.08);
+        --ql-accent: rgba(11, 138, 10, 0.9);
+        --ql-accent-border: rgba(11, 138, 10, 0.28);
+        --ql-accent-inset: rgba(11, 138, 10, 0.12);
+        --ql-accent-glow: rgba(11, 138, 10, 0.08);
+      }
+
+      .container {
+        display: flex;
+        align-items: center;
+        height: 56px;
+        padding: 0 16px;
+        background: var(--ql-surface);
+        border-radius: 14px;
+        border: 1px solid var(--ql-border);
+        margin: 8px;
+        -webkit-backdrop-filter: blur(40px) saturate(180%);
+        backdrop-filter: blur(40px) saturate(180%);
+        box-shadow:
+          var(--ql-shadow),
+          0 0 0 1px var(--ql-border-inset) inset;
+        opacity: 0;
+        transform: scale(0.97) translateY(-4px);
+        animation: slideIn 180ms ease-out forwards;
+        transition:
+          box-shadow 200ms ease,
+          border-color 200ms ease;
+      }
+
+      .container.sending {
+        border-color: var(--ql-accent-border);
+        box-shadow:
+          var(--ql-shadow),
+          0 0 0 1px var(--ql-accent-inset) inset,
+          0 0 24px var(--ql-accent-glow);
+      }
+
+      @keyframes slideIn {
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .container {
+          animation: none;
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      .icon {
+        width: 18px;
+        height: 18px;
+        margin-right: 12px;
+        flex-shrink: 0;
+        opacity: 0.6;
+        transition: opacity 200ms ease;
+      }
+
+      .container:focus-within .icon {
+        opacity: 1;
+      }
+
+      input {
+        flex: 1;
+        height: 100%;
+        background: transparent;
+        border: none;
+        outline: none;
+        color: var(--ql-text);
+        font-family: inherit;
+      }
+
+      input::placeholder {
+        color: var(--ql-text-muted);
+      }
+
+      .hints {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        margin-left: 12px;
+      }
+
+      .hint-group {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .hint-label {
+        color: var(--ql-meta);
+        margin-right: 2px;
+      }
+
+      kbd {
+        display: inline-block;
+        padding: 2px 5px;
+        font-family: inherit;
+        color: var(--ql-kbd-text);
+        background: var(--ql-kbd-bg);
+        border-radius: 4px;
+        border: 1px solid var(--ql-kbd-border);
+      }
+
+      .divider {
+        width: 1px;
+        height: 14px;
+        background: var(--ql-divider);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container" id="container">
+      <svg
+        class="icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="var(--ql-accent)"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <input
+        id="input"
+        class="type-body"
+        type="text"
+        placeholder="Ask anything..."
+        autofocus
+        spellcheck="false"
+        autocomplete="off"
+      />
+      <div class="hints">
+        <div class="hint-group" id="send-hint"></div>
+        <div class="divider"></div>
+        <div class="hint-group">
+          <kbd class="type-mono-data">Esc</kbd>
+        </div>
+      </div>
+    </div>
+    <script>
+      var input = document.getElementById('input');
+      var container = document.getElementById('container');
+      var sendHint = document.getElementById('send-hint');
+      var sendShortcut = 'enter';
+      var messages = {
+        en: { placeholder: 'Ask anything...' },
+        zh: { placeholder: '输入你的任务...' },
+        'zh-TW': { placeholder: '輸入你的任務...' },
+        ja: { placeholder: 'タスクを入力...' },
+        ko: { placeholder: '작업을 입력하세요...' },
+        pt: { placeholder: 'Descreva sua tarefa...' },
+        de: { placeholder: 'Beschreibe deine Aufgabe...' },
+        es: { placeholder: 'Describe tu tarea...' },
+        fr: { placeholder: 'Décrivez votre tâche...' },
+      };
+
+      function detectLocale() {
+        var raw = (navigator.language || 'en').toLowerCase();
+        if (raw === 'zh-tw' || raw === 'zh-hk' || raw === 'zh-hant' || raw.indexOf('zh-hant') === 0) return 'zh-TW';
+        if (raw.indexOf('zh') === 0) return 'zh';
+        var primary = raw.split('-')[0];
+        if (messages[primary]) return primary;
+        return 'en';
+      }
+
+      var locale = detectLocale();
+
+      function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
+      }
+
+      function resolveSystemTheme() {
+        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+
+      function makeKbd(text) {
+        var el = document.createElement('kbd');
+        el.className = 'type-mono-data';
+        el.textContent = text;
+        return el;
+      }
+
+      function applyLocale() {
+        input.placeholder = messages[locale].placeholder;
+      }
+
+      function updateHint() {
+        while (sendHint.firstChild) sendHint.removeChild(sendHint.firstChild);
+        var isMac = navigator.platform.indexOf('Mac') !== -1;
+        if (sendShortcut === 'cmdEnter') {
+          sendHint.appendChild(makeKbd(isMac ? '\u2318' : 'Ctrl'));
+          sendHint.appendChild(makeKbd('\u21B5'));
+        } else {
+          sendHint.appendChild(makeKbd('\u21B5'));
+        }
+      }
+
+      if (window.clawwork) {
+        Promise.all([window.clawwork.getQuickLaunchConfig(), window.clawwork.getSettings()]).then(function (results) {
+          var config = results[0];
+          var settings = results[1];
+          sendShortcut = config.sendShortcut || 'enter';
+          var theme = settings && settings.theme ? settings.theme : 'auto';
+          applyTheme(theme === 'auto' ? resolveSystemTheme() : theme);
+          if (settings && settings.language && messages[settings.language]) {
+            locale = settings.language;
+            applyLocale();
+          }
+          updateHint();
+        });
+      } else {
+        applyTheme(resolveSystemTheme());
+        updateHint();
+      }
+
+      applyLocale();
+
+      var mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      mediaQuery.addEventListener('change', function () {
+        if (!window.clawwork) {
+          applyTheme(resolveSystemTheme());
+          return;
+        }
+        window.clawwork.getSettings().then(function (settings) {
+          var theme = settings && settings.theme ? settings.theme : 'auto';
+          applyTheme(theme === 'auto' ? resolveSystemTheme() : theme);
+        });
+      });
+
+      function flashSend() {
+        container.classList.add('sending');
+        setTimeout(function () {
+          container.classList.remove('sending');
+        }, 300);
+      }
+
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (window.clawwork) window.clawwork.quickLaunchHide();
+          return;
+        }
+
+        var shouldSend = false;
+        if (sendShortcut === 'cmdEnter') {
+          shouldSend = e.key === 'Enter' && (e.metaKey || e.ctrlKey);
+        } else {
+          shouldSend = e.key === 'Enter' && !e.shiftKey;
+        }
+
+        if (shouldSend && input.value.trim()) {
+          e.preventDefault();
+          flashSend();
+          var msg = input.value.trim();
+          input.value = '';
+          setTimeout(function () {
+            if (window.clawwork) window.clawwork.quickLaunchSubmit(msg);
+          }, 120);
+        }
+      });
+
+      window.addEventListener('focus', function () {
+        container.style.animation = 'none';
+        void container.offsetHeight;
+        container.style.animation = '';
+        input.focus();
+        input.select();
+      });
+    </script>
+  </body>
+</html>

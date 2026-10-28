@@ -1,0 +1,92 @@
+{
+  "name": "clawwork",
+  "private": true,
+  "description": "OpenClaw desktop client with structured task management",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clawwork-ai/ClawWork.git"
+  },
+  "homepage": "https://clawwork-ai.github.io/ClawWork/",
+  "license": "Apache-2.0",
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "prepare": "husky",
+    "clean": "pnpm --filter @clawwork/desktop clean",
+    "dev": "pnpm --filter @clawwork/desktop dev",
+    "dev:website": "pnpm --filter @clawwork/website dev",
+    "dev:pwa": "pnpm --filter @clawwork/pwa dev",
+    "dev:slides": "pnpm --filter @clawwork/keynote dev",
+    "dev:slides:dev": "pnpm --filter @clawwork/keynote dev:dev",
+    "build": "pnpm -r build",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "check:ci-bot-security": "node scripts/check-ci-bot-security.mjs",
+    "check:renderer-copy": "node scripts/check-renderer-copy.mjs",
+    "check:ui-contract": "node scripts/check-ui-contract.mjs",
+    "typecheck": "pnpm --filter @clawwork/shared exec tsc -b && pnpm --filter @clawwork/core exec tsc -b && pnpm --filter @clawwork/pwa exec tsc --noEmit && pnpm --filter @clawwork/desktop exec tsc --noEmit && pnpm --filter @clawwork/website exec tsc --noEmit",
+    "typecheck:tests": "pnpm --filter @clawwork/shared exec tsc --noEmit -p tsconfig.test.json && pnpm --filter @clawwork/core exec tsc --noEmit -p tsconfig.test.json && pnpm --filter @clawwork/desktop exec tsc --noEmit -p tsconfig.test.json && pnpm --filter @clawwork/pwa exec tsc --noEmit -p tsconfig.test.json",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
+    "test:e2e": "playwright test --config=e2e/playwright.config.ts",
+    "test:e2e:smoke": "playwright test --config=e2e/playwright.config.ts --project=smoke",
+    "test:e2e:gateway": "playwright test --config=e2e/playwright.config.ts --project=gateway",
+    "test:e2e:packaged": "playwright test --config=e2e/playwright.config.ts --project=packaged",
+    "test:e2e:harness": "node --test e2e/helpers/temp-root.test.ts",
+    "test:e2e:unit": "node --test e2e/helpers/temp-root.test.ts e2e/packaged/provision.test.ts",
+    "test:e2e:ledger": "playwright test --config=e2e/playwright.config.ts --project=packaged profile-ledger",
+    "check:i18n": "node --test scripts/lib/i18n-usage.test.mjs && node scripts/check-i18n.mjs",
+    "check:udisk-delivery": "node --test scripts/lib/udisk-delivery.test.mjs scripts/lib/udisk-archive.test.mjs scripts/lib/udisk-diagnose.test.mjs",
+    "check:release-signatures": "node scripts/check-release-signatures.mjs",
+    "check:gateway-probe": "node --test scripts/lib/gateway-probe.test.mjs",
+    "udisk:delivery": "node scripts/udisk-delivery.mjs",
+    "gateway:probe": "node scripts/gateway-probe.mjs",
+    "check:dead-code": "knip",
+    "typecheck:e2e": "pnpm --filter @clawwork/desktop exec tsc --noEmit -p ../../e2e/tsconfig.json",
+    "release-notes": "node scripts/generate-release-notes.mjs",
+    "check": "pnpm check:ppt-template-deck && pnpm check:portable-launcher && pnpm check:portable-update-release && pnpm check:portable-feed-publish && pnpm check:runtime-video-contract && pnpm check:renderer-csp && pnpm lint && pnpm check:architecture && pnpm check:ci-bot-security && pnpm check:ui-contract && pnpm check:renderer-copy && pnpm check:i18n && pnpm check:udisk-delivery && pnpm check:gateway-probe && pnpm check:dead-code && pnpm format:check && pnpm typecheck && pnpm typecheck:tests && pnpm typecheck:e2e && pnpm test",
+    "udisk:archive": "node scripts/make-udisk-archive.mjs",
+    "build:portable-launcher": "node scripts/build-portable-launcher.mjs",
+    "udisk:assemble": "node scripts/assemble-udisk-delivery.mjs",
+    "update:portable-package": "node scripts/make-portable-update.mjs",
+    "check:portable-launcher": "go -C launcher test ./... -count=1",
+    "check:portable-update-release": "node --test scripts/lib/portable-launcher-build.test.mjs scripts/lib/portable-update-release.test.mjs scripts/lib/portable-update-ci.test.mjs scripts/lib/update-source-consistency.test.mjs",
+    "check:portable-feed-publish": "node --test scripts/lib/feed-publish.test.mjs scripts/lib/feed-publish-transport.test.mjs scripts/lib/feed-publish-cli.test.mjs",
+    "check:runtime-image-contract": "node scripts/check-runtime-image-contract.mjs",
+    "check:runtime-video-contract": "node --test scripts/lib/relay-video-runtime.test.mjs scripts/pack-runtime.test.mjs",
+    "check:renderer-csp": "node --test packages/desktop/scripts/lib/renderer-csp.test.mjs",
+    "check:ppt-template-deck": "pnpm --filter @clawwork/desktop exec vitest run test/template-deck.test.ts test/template-deck-font.test.ts test/template-deck-lifecycle.test.ts"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,mts,cts,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "**/i18n/locales/*.json": [
+      "node scripts/sort-i18n.mjs",
+      "prettier --write"
+    ],
+    "*.{json,yaml,yml,md,css,html}": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.58.2",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "globals": "^16.0.0",
+    "husky": "^9.0.0",
+    "knip": "^6.0.5",
+    "lint-staged": "^16.0.0",
+    "prettier": "^3.0.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

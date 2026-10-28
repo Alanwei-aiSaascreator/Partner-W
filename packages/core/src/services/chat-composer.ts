@@ -1,0 +1,867 @@
+import { resolvePerformerAgentName } from '@clawwork/shared';
+import type {
+  Message,
+  MessageAttachment,
+  IpcResult,
+  ErrorStage,
+  TaskRoom,
+  RoomStatus,
+  ChatDispatchReceipt,
+} from '@clawwork/shared';
+import type { GatewayTransportPort, ChatAttachment } from '../ports/gateway-transport.js';
+import { buildAppError, formatErrorForUser, formatErrorForToast } from './error-classify.js';
+import type { TranslateFn } from './error-classify.js';
+import { runManualCompaction } from './compaction-announce.js';
+import { describeSendRefusal } from './send-refusal-message.js';
+import { decidePermissionPatch } from './computer-access.js';
+import type { AppliedPermissionMap, AppliedPermissionRecord, ComputerAccessTier } from './computer-access.js';
+
+interface TaskRef {
+  id: string;
+  gatewayId: string;
+  sessionKey: string;
+  title: string;
+  /** 该任务当前用的模型 —— `/think` 要靠它判断档位支不支持。 */
+  model?: string;
+  ensemble?: boolean;
+  teamId?: string;
+}
+
+export interface ChatComposerDeps {
+  gateway: Pick<GatewayTransportPort, 'sendMessage' | 'abortChat' | 'patchSession'>;
+
+  getTaskStore: () => {
+    tasks: TaskRef[];
+    commitPendingTask: () => TaskRef;
+    updateTaskTitle: (id: string, title: string) => void;
+    updateTaskMetadata: (id: string, meta: { model?: string; modelProvider?: string; thinkingLevel?: string }) => void;
+  };
+
+  getMessageStore: () => {
+    addMessage: (
+      taskId: string,
+      role: 'user' | 'system',
+      content: string,
+      attachments?: MessageAttachment[],
+      options?: { persist?: boolean; sessionKey?: string },
+    ) => Message;
+    removeMessage: (taskId: string, messageId: string) => void;
+    setProcessing: (taskId: string, processing: boolean) => void;
+    /**
+     * 清掉"这一轮正在进行"的提示（`aborted` / `error` 收尾时与 `setProcessing(false)` 成对使用）。
+     * ⭐ 加它是因为：网关答 `aborted:false` 时**不会再发** `aborted` 事件，
+     * 那里没人收尾 ⇒ 界面永远停在"处理中"（见 `settleLocalStop`）。
+     */
+    clearActiveTurn: (sessionKey: string) => void;
+    clearMessages: (taskId: string) => void;
+    // ⭐ B8 统一出口要用的三个（压缩播报的记账与幂等）
+    announceCompactionOnce: (taskId: string, sessionKey: string, episode: number, text: string) => boolean;
+    beginCompactionEpisode: (sessionKey: string) => number;
+    ensureCompactionEpisode: (sessionKey: string) => number;
+  };
+
+  persistMessage: (msg: {
+    id: string;
+    taskId: string;
+    role: string;
+    content: string;
+    timestamp: string;
+    sessionKey?: string;
+    attachments?: unknown[];
+    toolCalls?: unknown[];
+  }) => Promise<unknown>;
+
+  markAbortedByUser: (taskId: string) => void;
+  beginDispatch?: (gatewayId: string, sessionKey: string) => symbol;
+  settleDispatch?: (ticket: symbol, receipt?: ChatDispatchReceipt, accepted?: boolean) => void;
+
+  compactSession: (gatewayId: string, sessionKey: string) => Promise<IpcResult>;
+  resetSession: (gatewayId: string, sessionKey: string, mode: string) => Promise<IpcResult>;
+
+  resolveImageRecipientModels?: (
+    gatewayId: string,
+    sessionKeys: string[],
+  ) => Promise<Array<{ sessionKey: string; model: string }> | null>;
+
+  getModelProvider?: (gatewayId: string, modelId: string) => string | undefined;
+
+  /**
+   * 某模型支持的思考档位（协议 id，顺序即默认优先级）。**拿不准时返回 undefined**。
+   *
+   * 为什么要这个：`presetThinking` 以前只挡了 `'off'`，**从不校验模型到底支不支持**，
+   * 于是任何无效档位都能直达网关，用户看到的是英文报错
+   * `thinkingLevel "adaptive" is not supported for clawrouter/qwen3.5-27b`。
+   *
+   * ⚠️ 必须能区分「确定不支持」（返回数组但不含该值）与「还不知道」（undefined）——
+   * 目录还没加载完就把用户选的档位悄悄改掉，比让他看一次报错更糟。
+   * 数据源与 `thinking-levels.ts` 的 `thinkingLevelsFor` 是同一份。
+   */
+  getSupportedThinkingLevels?: (gatewayId: string, modelId: string) => string[] | undefined;
+  /**
+   * 「电脑操控权限」两档（spec `2026-09-26-computer-access-two-tiers-design.md`）。
+   *
+   * ⚠️ **不注入 = 这个功能不存在**：发送链上一次 `permissionMode` 都不会发，
+   *    与 0.0.35 的行为**逐字节相同**。老宿主（如 pwa）没接这条 dep 是**合法状态**，
+   *    不是"忘了接"—— 所以这里用可选字段而不是必填。
+   */
+  computerAccess?: {
+    tier: () => ComputerAccessTier;
+    applied: () => AppliedPermissionMap;
+    /** ⚠️ **只在 patch 成功之后**才该被调用（失败记账 = 下次不补 = 永久哑掉）。 */
+    remember: (sessionKey: string, record: AppliedPermissionRecord) => void;
+  };
+
+  getRoomState?: (taskId: string) => TaskRoom | undefined;
+  setRoomStatus?: (taskId: string, status: RoomStatus) => void;
+
+  /**
+   * `agentId` → 展示名（宿主注入 —— core 不认识网关目录，也不该认识）。
+   *
+   * 用在给 conductor 那句「用户 @ 了谁」上（见 `resolveMentionNames`）。
+   * **拿不准就返回 `undefined`**：调用方会退回房间快照里的名字、再退回裸 agentId ——
+   * "取个名字"这件事绝不能影响发消息。
+   */
+  resolveAgentName?: (taskId: string, agentId: string) => string | undefined;
+
+  translate: TranslateFn;
+  onError?: (toast: { title: string; description: string }) => void;
+}
+
+export interface SendOptions {
+  content: string;
+  signal?: AbortSignal;
+  /**
+   * **只发给模型、不属于用户那句话**的背景（例如首轮那份 `<artifacts-index>`）。
+   *
+   * ⭐ 为什么必须与 `content` 分开：`content` 会被**存库**并**渲染在用户自己的气泡里**，
+   *    所以任何拼进 `content` 的注入文本都会**当成用户说过的话显示出来**。
+   *    2026-09-27 真机反馈就是这个：助手索引被拼进 `content`，于是每一轮的消息里
+   *    都顶着一大块 `<artifacts-index>…`，用户以为产品在往他嘴里塞东西。
+   *
+   * ⚠️ 只放**客户端自己加的背景**。用户主动 `@` 出来的引用（任务/产物/文件）
+   *    仍然是 `content` 的一部分 —— 那是他自己做的动作，看得到是对的。
+   */
+  contextPrefix?: string;
+  attachments?: ChatAttachment[];
+  messageAttachments?: MessageAttachment[];
+  /** Keep an optimistic user message in memory, but persist it only after gateway dispatch succeeds. */
+  deferUserMessageUntilSent?: boolean;
+  presetModel?: string;
+  presetThinking?: string;
+  titleHint?: string;
+  mentions?: string[];
+  mentionAll?: boolean;
+}
+
+const SEND_TIMEOUT_MS = 30_000;
+
+/**
+ * 决定这次到底该把哪个思考档位发给网关。返回 `null` = **不发**。
+ *
+ * 三种情形（顺序即优先级）：
+ *   1. 没选档位 / 选的是 `off` ⇒ 不发（保持既有行为：`off` 是默认态，不必 patch）
+ *   2. 拿不到该模型的能力（目录没加载完）⇒ **照发**，不自作主张替用户改档位
+ *   3. 拿得到但**确实不支持** ⇒ 回落到该模型声明的**第一档**（= 它的默认档位），
+ *      并且**只改状态、不插系统消息** —— 用户可能正在打字，插消息会打断他。
+ *      （与 `useChatSend` 里切模型时那条回落保持同一套语义）
+ *
+ * 为什么优先信任模型自己的声明而不是某个常量表：档位是**逐模型**的，
+ * 客户端写死的表迟早和网关漂开 —— `adaptive` 就是活证据。
+ */
+function resolveThinkingLevel(
+  deps: ChatComposerDeps,
+  gatewayId: string,
+  modelId: string | undefined,
+  requested: string,
+): 'ok' | 'unavailable' | { level: string } {
+  if (!modelId) return 'ok'; // 拿不到模型就无从校验，保持原样
+
+  const supported = deps.getSupportedThinkingLevels?.(gatewayId, modelId);
+  if (!supported) return 'ok'; // 「还不知道」≠「不支持」
+  if (supported.includes(requested)) return 'ok';
+
+  const fallback = supported[0];
+  if (!fallback || fallback === 'off') return 'unavailable'; // 该模型只有 off ⇒ 没档位可发
+  return { level: fallback };
+}
+
+/** `send` 路径：返回**实际该发的档位**，`null` = 这次不发 patch。 */
+function resolveSupportedThinking(
+  deps: ChatComposerDeps,
+  task: { gatewayId: string },
+  options: SendOptions,
+): string | null {
+  const requested = options.presetThinking;
+  if (!requested || requested === 'off') return null; // off 是默认态，不必 patch
+
+  const verdict = resolveThinkingLevel(deps, task.gatewayId, options.presetModel, requested);
+  if (verdict === 'unavailable') return null;
+  return verdict === 'ok' ? requested : verdict.level;
+}
+
+function resolveMentionTargets(
+  room: TaskRoom | undefined,
+  mentions: string[] | undefined,
+  mentionAll: boolean | undefined,
+): string[] {
+  if (!room || (!mentions?.length && !mentionAll)) return [];
+
+  if (mentionAll) {
+    return [room.conductorSessionKey, ...room.performers.map((p) => p.sessionKey)];
+  }
+
+  const targets: string[] = [];
+  for (const agentId of mentions!) {
+    const performer = room.performers.find((p) => p.agentId === agentId);
+    if (performer) targets.push(performer.sessionKey);
+  }
+  return targets;
+}
+
+/**
+ * ⛔ R8-04（2026-10-15 独立终审 P1）：这一轮附件里有没有图片。
+ *
+ * 只认 `mimeType` 前缀 —— 网关能接收的图像块一定带 `image/*` 声明，这是**真实派发边界**
+ * 上能拿到的最窄判据（core 不认识文件名后缀表，也不该认识）。与渲染层
+ * `classifyAttachmentFile(...) === 'image'` 同一口径的最小版。
+ */
+function hasImageAttachment(attachments: ChatAttachment[] | undefined): boolean {
+  return Boolean(attachments?.some((att) => att.mimeType.startsWith('image/')));
+}
+
+/**
+ * 「用户 @ 了谁」那句话里该写哪个名字（给 conductor 的那句通知）。
+ *
+ * 为什么不能直接 `mentions.join(', ')`：`mentions` 里是**裸 agentId**
+ * （`useChatSend` 传的就是 `agentMentions.map((a) => a.agentId)`）⇒ 模型看到的是
+ * `[User directed message to partner-w-tpl-78b62899: "…"]`。名字一直是有的
+ * （网关目录里就写着「爆款内容教练」，房间快照里还有一份），只是没往这句话里送 ——
+ * **人和模型看到的是两个名字**。这是 T-a7 同一家族的第**四**个面
+ * （前三个：消息头、团队页、`@` 选择器）。
+ *
+ * 优先级**不在这里重写** —— 交给 shared 的 `resolvePerformerAgentName`
+ * （目录 → 快照 → 裸 id）。宿主注入的 resolver 已经把"目录"那一层封好了。
+ *
+ * fail-soft：查名字**绝不能炸掉派活**（与 `room-store` 的 `snapshotAgentName` 同口径）——
+ * 与档位、模型那几处同一条原则：显示问题不许升级成发不出去。
+ */
+function resolveMentionNames(
+  deps: ChatComposerDeps,
+  taskId: string,
+  performers: TaskRoom['performers'],
+  mentions: string[] | undefined,
+): string[] {
+  return (mentions ?? []).map((agentId) => {
+    const performer = performers.find((p) => p.agentId === agentId);
+    let catalogName: string | undefined;
+    try {
+      catalogName = deps.resolveAgentName?.(taskId, agentId);
+    } catch (err) {
+      console.warn('[chat-composer] resolveAgentName failed:', err);
+    }
+    return resolvePerformerAgentName(performer, catalogName ? { name: catalogName } : undefined);
+  });
+}
+
+export function createChatComposer(deps: ChatComposerDeps) {
+  const responseWatches = new Map<string, { taskId: string; owner: symbol; timer?: ReturnType<typeof setTimeout> }>();
+  const pendingSendOwners = new Map<string, symbol>();
+
+  /**
+   * ⚠️ 2026-09-24：**别把拒绝的原因吞掉**。这里原来是一个裸的 `catch { return null }`，
+   *    调用方（`send`）于是只能一律报「助手无响应」—— 而「点名要的助手不在本机」是另一回事
+   *    （有确定的下一步：换一个助手）。独立复核指出这条 PWA 路径上两句话被压成了一句。
+   *    现在把异常原样带出去，由 `describeSendRefusal` 选话。
+   */
+  function resolveTask(taskId?: string): { task: TaskRef | null; error?: unknown } {
+    if (taskId) {
+      return { task: deps.getTaskStore().tasks.find((t) => t.id === taskId) ?? null };
+    }
+    try {
+      return { task: deps.getTaskStore().commitPendingTask() };
+    } catch (error) {
+      return { task: null, error };
+    }
+  }
+
+  function emitError(
+    taskId: string,
+    source: 'gateway' | 'local',
+    stage: ErrorStage,
+    rawMessage: string,
+    code?: string,
+    details?: Record<string, unknown>,
+    sessionKey?: string,
+  ): void {
+    const store = deps.getMessageStore();
+    const appError = buildAppError({ source, stage, rawMessage, code, details });
+    store.addMessage(taskId, 'system', formatErrorForUser(appError, deps.translate), undefined, { sessionKey });
+    const toast = formatErrorForToast(appError, deps.translate);
+    deps.onError?.(toast);
+  }
+
+  function clearSessionWatch(sessionKey: string): void {
+    const watch = responseWatches.get(sessionKey);
+    if (watch?.timer) clearTimeout(watch.timer);
+    responseWatches.delete(sessionKey);
+  }
+
+  function clearTimer(taskId: string): void {
+    for (const [sessionKey, watch] of responseWatches) {
+      if (watch.taskId === taskId) clearSessionWatch(sessionKey);
+    }
+  }
+
+  function notifyResponse(sessionKey: string): void {
+    deps.getMessageStore().setProcessing(sessionKey, false);
+    clearSessionWatch(sessionKey);
+  }
+
+  async function send(
+    taskId: string | undefined,
+    options: SendOptions,
+  ): Promise<{
+    ok: boolean;
+    taskId?: string;
+    partialFailure?: string;
+    dispatch?: ChatDispatchReceipt;
+    aborted?: true;
+  }> {
+    if (options.signal?.aborted) return { ok: false, ...(taskId ? { taskId } : {}), aborted: true };
+    const { task: resolvedTask, error: resolveError } = resolveTask(taskId);
+    if (!resolvedTask) {
+      deps.onError?.({
+        title: deps.translate('errors.stage.send'),
+        description: describeSendRefusal(resolveError, deps.translate),
+      });
+      return { ok: false };
+    }
+
+    const task = { ...resolvedTask };
+    const store = deps.getMessageStore();
+    const sendTracked = async (
+      sessionKey: string,
+      content: string,
+      attachments?: ChatAttachment[],
+      dispatchContext?: { userContent: string },
+    ) => {
+      const ticket = deps.beginDispatch?.(task.gatewayId, sessionKey);
+      let accepted = false;
+      let receipt: ChatDispatchReceipt | undefined;
+      try {
+        const result = await deps.gateway.sendMessage(
+          task.gatewayId,
+          sessionKey,
+          content,
+          attachments,
+          dispatchContext,
+        );
+        accepted = !result || result.ok;
+        const value = result?.ok ? result.result : undefined;
+        if (
+          value &&
+          typeof value === 'object' &&
+          'sessionKey' in value &&
+          value.sessionKey === sessionKey &&
+          'runId' in value &&
+          typeof value.runId === 'string' &&
+          value.runId.trim()
+        )
+          receipt = { sessionKey, runId: value.runId };
+        return result;
+      } finally {
+        if (ticket) deps.settleDispatch?.(ticket, receipt, accepted);
+      }
+    };
+    /**
+     * ⭐ **发给网关的文本 ≠ 存库/上屏的文本。**
+     *
+     * `contextPrefix` 是客户端加的背景（首轮产物索引），模型必须看见；
+     * 但它**不是用户说的话** —— 存库或显示就等于伪造用户发言。
+     * 所以：`content` 进 store 与落库，`gatewayContent` 只进 `sendMessage`。
+     * （见 `SendOptions.contextPrefix` 的说明。）
+     */
+    const gatewayContent = options.contextPrefix ? `${options.contextPrefix}\n\n${options.content}` : options.content;
+    const pendingUserMessage = store.addMessage(task.id, 'user', options.content, options.messageAttachments, {
+      persist: false,
+    });
+    const rollbackPendingUserMessage = () => {
+      if (options.deferUserMessageUntilSent) store.removeMessage(task.id, pendingUserMessage.id);
+    };
+    let processingSessionKeys: string[] = [];
+    const sendOwner = Symbol();
+    let submitted = false;
+    const cancelBeforeSubmission = () => {
+      store.removeMessage(task.id, pendingUserMessage.id);
+      for (const sessionKey of processingSessionKeys) {
+        if (pendingSendOwners.get(sessionKey) !== sendOwner) continue;
+        store.setProcessing(sessionKey, false);
+        store.clearActiveTurn(sessionKey);
+      }
+      return { ok: false, taskId: task.id, aborted: true as const };
+    };
+
+    if (!task.title && options.titleHint) {
+      const title = options.titleHint.slice(0, 30).replace(/\n/g, ' ').trim();
+      deps.getTaskStore().updateTaskTitle(task.id, title + (options.titleHint.length > 30 ? '\u2026' : ''));
+    }
+
+    try {
+      const room = task.ensemble && !task.teamId ? deps.getRoomState?.(task.id) : undefined;
+      const mentionTargets = resolveMentionTargets(room, options.mentions, options.mentionAll);
+      const isMentionSend = mentionTargets.length > 0;
+      if (isMentionSend && hasImageAttachment(options.attachments)) {
+        const rejectImages = () => {
+          rollbackPendingUserMessage();
+          emitError(
+            task.id,
+            'local',
+            'send',
+            deps.translate('chatInput.visionUnavailable'),
+            undefined,
+            undefined,
+            task.sessionKey,
+          );
+          return { ok: false, taskId: task.id };
+        };
+        try {
+          const recipients = await deps.resolveImageRecipientModels?.(task.gatewayId, mentionTargets);
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (
+            !recipients ||
+            recipients.length !== mentionTargets.length ||
+            mentionTargets.some(
+              (key) => recipients.filter((row) => row.sessionKey === key && row.model.trim()).length !== 1,
+            )
+          ) {
+            return rejectImages();
+          }
+          for (const recipient of recipients) {
+            const pinned = await deps.gateway.patchSession(task.gatewayId, recipient.sessionKey, {
+              model: recipient.model,
+            });
+            if (options.signal?.aborted) return cancelBeforeSubmission();
+            if (!pinned.ok) return rejectImages();
+          }
+          const confirmed = await deps.resolveImageRecipientModels?.(task.gatewayId, mentionTargets);
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (
+            !confirmed ||
+            confirmed.length !== recipients.length ||
+            recipients.some(
+              (recipient) =>
+                confirmed.filter((row) => row.sessionKey === recipient.sessionKey && row.model === recipient.model)
+                  .length !== 1,
+            )
+          ) {
+            return rejectImages();
+          }
+        } catch {
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          return rejectImages();
+        }
+      }
+      processingSessionKeys = isMentionSend ? mentionTargets : [task.sessionKey];
+      for (const sessionKey of processingSessionKeys) {
+        clearSessionWatch(sessionKey);
+        responseWatches.set(sessionKey, { taskId: task.id, owner: sendOwner });
+        pendingSendOwners.set(sessionKey, sendOwner);
+        store.setProcessing(sessionKey, true);
+      }
+      let acceptedMentionTargets = mentionTargets;
+      let partialFailure: string | undefined;
+      let dispatch: ChatDispatchReceipt | undefined;
+
+      if (!isMentionSend) {
+        if (options.presetModel) {
+          const modelRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
+            model: options.presetModel,
+          });
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (!modelRes.ok) {
+            rollbackPendingUserMessage();
+            if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
+            emitError(
+              task.id,
+              'gateway',
+              'send',
+              modelRes.error || deps.translate('errors.sendFailed'),
+              undefined,
+              undefined,
+              task.sessionKey,
+            );
+            return { ok: false, taskId: task.id };
+          }
+          deps.getTaskStore().updateTaskMetadata(task.id, {
+            model: options.presetModel,
+            modelProvider: deps.getModelProvider?.(task.gatewayId, options.presetModel),
+          });
+        }
+        // ⚠️ 用户**没**显式选模型时，任务级的那个也必须下发 —— 否则第一条消息一定跑
+        //    网关默认，而 composer 显示的是任务级的值，**界面在说谎**（2026-09-14 实机：
+        //    composer 显示 deepseek-v4-flash，消息徽章却是 QWEN3.5-27B）。
+        //    `chat.send` 不带模型（模型是**会话级**的），所以不钉就没人钉。
+        //
+        //    与上面 presetModel 的**关键差别**：这里**尽力而为**。用户没显式选过，
+        //    钉不上（模型下架/中转不提供）就照发 —— 跑网关默认，徽章会如实显示真实模型；
+        //    而"因为一个显示问题把消息卡住"是更坏的失败。
+        else if (task.model) {
+          const pinned = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { model: task.model });
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (!pinned?.ok) {
+            console.warn('[chat-composer] pin task model failed:', task.model, pinned?.error);
+          }
+        }
+        // ⚠️ 最后一道关，别再只挡 `'off'`。以前就是这里把无效档位放过去的：
+        //    用户/历史状态带着 `adaptive`，网关回英文 400，用户只看到一条看不懂的错。
+        const thinkingLevel = resolveSupportedThinking(deps, task, options);
+        if (thinkingLevel) {
+          const thinkingRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
+            thinkingLevel,
+          });
+          if (options.signal?.aborted) return cancelBeforeSubmission();
+          if (!thinkingRes.ok) {
+            rollbackPendingUserMessage();
+            if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
+            emitError(
+              task.id,
+              'gateway',
+              'send',
+              thinkingRes.error || deps.translate('errors.sendFailed'),
+              undefined,
+              undefined,
+              task.sessionKey,
+            );
+            return { ok: false, taskId: task.id };
+          }
+          deps.getTaskStore().updateTaskMetadata(task.id, { thinkingLevel });
+        }
+        // 「电脑操控权限」两档：开着的档位必须在你说得上话的每个会话里都成立（spec §2.5）。
+        // ⚠️ **尽力而为**：失败只 warn、绝不拦住发送（同上面 `task.model` 那条的成例）——
+        //    "因为一次权限补刀失败把用户的消息卡住"是更坏的失败。
+        if (deps.computerAccess) {
+          const mode = decidePermissionPatch({
+            tier: deps.computerAccess.tier(),
+            sessionKey: task.sessionKey,
+            applied: deps.computerAccess.applied(),
+          });
+          if (mode) {
+            const permissionRes = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, {
+              permissionMode: mode,
+            });
+            if (options.signal?.aborted) return cancelBeforeSubmission();
+            // ⚠️ **成功了才记账**：失败还记账 ⇒ 下次不补 ⇒ 永久哑掉（有测试按名钉住）。
+            if (permissionRes?.ok) {
+              deps.computerAccess.remember(task.sessionKey, { mode, gatewayId: task.gatewayId });
+            } else console.warn('[chat-composer] permission patch failed:', mode, permissionRes?.error);
+          }
+        }
+      }
+
+      if (options.signal?.aborted) return cancelBeforeSubmission();
+      submitted = true;
+      if (isMentionSend) {
+        const attachments = options.attachments?.length ? options.attachments : undefined;
+        const results = await Promise.allSettled(
+          mentionTargets.map((sk) => sendTracked(sk, gatewayContent, attachments, { userContent: options.content })),
+        );
+        acceptedMentionTargets = mentionTargets.filter((_, index) => {
+          const result = results[index];
+          return result.status === 'fulfilled' && (!result.value || result.value.ok);
+        });
+        const failures = results.flatMap((result) => {
+          if (result.status === 'rejected') return [String(result.reason)];
+          if (result.value && !result.value.ok) return [result.value.error ?? deps.translate('errors.sendFailed')];
+          return [];
+        });
+        for (const sessionKey of mentionTargets) {
+          if (!acceptedMentionTargets.includes(sessionKey) && pendingSendOwners.get(sessionKey) === sendOwner) {
+            store.setProcessing(sessionKey, false);
+          }
+        }
+        if (acceptedMentionTargets.length === 0) {
+          rollbackPendingUserMessage();
+          emitError(
+            task.id,
+            'gateway',
+            'send',
+            failures.join('; ') || deps.translate('errors.sendFailed'),
+            undefined,
+            undefined,
+            task.sessionKey,
+          );
+          return { ok: false, taskId: task.id };
+        }
+        if (failures.length > 0) partialFailure = failures.join('; ');
+
+        if (room && !mentionTargets.includes(room.conductorSessionKey) && !options.signal?.aborted) {
+          // 名字走目录优先（见 `resolveMentionNames`）。
+          // ⚠️ 这里**不再**有 `?? 'performers'` 那个兜底词：走到这一句时 `mentions` 一定非空
+          //    （`mentionAll` 那一支会把 conductor 自己也算进目标 ⇒ 上面的守卫已经返回），
+          //    而 `resolveMentionNames` 最差也会给出裸 agentId ⇒ 名字列表不可能为空。
+          const targetNames = resolveMentionNames(deps, task.id, room.performers, options.mentions).join(', ');
+          const preview = options.content.slice(0, 200);
+          sendTracked(room.conductorSessionKey, `[User directed message to ${targetNames}: "${preview}"]`).catch(
+            (err) => console.error('[chat-composer] conductor sendMessage failed:', err),
+          );
+        }
+      } else {
+        const result = await sendTracked(
+          task.sessionKey,
+          gatewayContent,
+          options.attachments?.length ? options.attachments : undefined,
+          { userContent: options.content },
+        );
+        if (result && !result.ok) {
+          rollbackPendingUserMessage();
+          if (pendingSendOwners.get(task.sessionKey) === sendOwner) store.setProcessing(task.sessionKey, false);
+          emitError(
+            task.id,
+            'gateway',
+            'send',
+            result.error || deps.translate('errors.sendFailed'),
+            result.errorCode,
+            result.errorDetails,
+            task.sessionKey,
+          );
+          return { ok: false, taskId: task.id };
+        }
+        const receipt = result?.ok ? result.result : undefined;
+        if (
+          receipt !== null &&
+          typeof receipt === 'object' &&
+          'sessionKey' in receipt &&
+          receipt.sessionKey === task.sessionKey &&
+          'runId' in receipt &&
+          typeof receipt.runId === 'string' &&
+          receipt.runId.trim().length > 0
+        ) {
+          dispatch = { sessionKey: receipt.sessionKey, runId: receipt.runId };
+        }
+      }
+
+      const watchKeys = isMentionSend ? acceptedMentionTargets : [task.sessionKey];
+      for (const sessionKey of watchKeys) {
+        const watch = responseWatches.get(sessionKey);
+        if (!watch || watch.owner !== sendOwner) continue;
+        watch.timer = setTimeout(() => {
+          if (responseWatches.get(sessionKey) !== watch) return;
+          clearSessionWatch(sessionKey);
+          store.setProcessing(sessionKey, false);
+          const appError = buildAppError({
+            source: 'gateway',
+            stage: 'lifecycle',
+            rawMessage: deps.translate('errors.agentNotResponding'),
+          });
+          deps
+            .getMessageStore()
+            .addMessage(task.id, 'system', formatErrorForUser(appError, deps.translate), undefined, {
+              sessionKey,
+            });
+        }, SEND_TIMEOUT_MS);
+      }
+
+      deps
+        .persistMessage({
+          id: pendingUserMessage.id,
+          taskId: pendingUserMessage.taskId,
+          role: pendingUserMessage.role,
+          content: pendingUserMessage.content,
+          timestamp: pendingUserMessage.timestamp,
+          sessionKey: task.sessionKey,
+          attachments: pendingUserMessage.attachments as unknown[] | undefined,
+          toolCalls: pendingUserMessage.toolCalls,
+        })
+        .catch((err) => console.error('[chat-composer] persistMessage failed:', err));
+
+      return {
+        ok: true,
+        taskId: task.id,
+        ...(partialFailure ? { partialFailure } : {}),
+        ...(dispatch ? { dispatch } : {}),
+      };
+    } catch (err) {
+      if (!submitted && options.signal?.aborted) return cancelBeforeSubmission();
+      rollbackPendingUserMessage();
+      for (const sessionKey of processingSessionKeys) {
+        if (pendingSendOwners.get(sessionKey) === sendOwner) store.setProcessing(sessionKey, false);
+      }
+      emitError(
+        task.id,
+        'local',
+        'send',
+        err instanceof Error ? err.message : String(err),
+        undefined,
+        undefined,
+        task.sessionKey,
+      );
+      return { ok: false, taskId: task.id };
+    } finally {
+      for (const sessionKey of processingSessionKeys) {
+        const watch = responseWatches.get(sessionKey);
+        if (watch?.owner === sendOwner && !watch.timer) clearSessionWatch(sessionKey);
+        if (pendingSendOwners.get(sessionKey) === sendOwner) pendingSendOwners.delete(sessionKey);
+      }
+    }
+  }
+
+  /**
+   * 网关对 `chat.abort` 的应答是 `{ ok: true, aborted: boolean, runIds: string[] }`。
+   *
+   * ⭐ **`aborted: false` 的意思是"没有任何可中止的 run"** —— 这种情况下网关
+   *    **不会再发** `aborted` 状态事件（没东西可中止），而界面的"处理中"
+   *    **只能靠那个事件清掉** ⇒ 症状是**永远转圈 + 停止按钮点了没反应**，
+   *    用户唯一的出路是杀掉应用。
+   *
+   *    2026-09-27 真机实测（U 盘上的一次工具自测，任务 `a0d6c691`）：
+   *    `chat.abort → {"ok":true,"aborted":false,"runIds":[]}`，
+   *    之后 `renderer.agent.thinking` 仍以约 1 条/秒继续，直到用户强杀进程。
+   *    同一份日志里 `lifecycle.start` 9 次、`lifecycle.end` 8 次 —— 有一个 run 没收尾。
+   *
+   * ⚠️ 判据取**显式的 `aborted === false`**，而不是"没看到 true"：
+   *    应答形状变了（缺字段、类型变了）时**退回旧行为**（继续等事件），
+   *    不凭猜测去清状态 —— 清早了会把还在跑的回合打断。
+   */
+  function abortedNothing(res: IpcResult): boolean {
+    const payload = res.result as { aborted?: unknown } | undefined;
+    return res.ok === true && payload !== undefined && payload.aborted === false;
+  }
+
+  /**
+   * 自己收尾：网关答"没东西可中止"时，本地把"处理中"清掉。
+   *
+   * ⚠️ 只在这条判据成立时调用 —— 正常情况下那个清理由 dispatcher 收到 `aborted` 事件时做
+   *    （见 `gateway-dispatcher.ts` 的 `state === 'aborted'` 分支），
+   *    这里补的正是"那条事件永远不会来"的那一格。
+   */
+  function settleLocalStop(sessionKey: string): void {
+    const store = deps.getMessageStore();
+    store.setProcessing(sessionKey, false);
+    store.clearActiveTurn(sessionKey);
+  }
+
+  async function abort(taskId: string): Promise<IpcResult | undefined> {
+    const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    deps.markAbortedByUser(taskId);
+    clearTimer(taskId);
+
+    if (!task.ensemble || !deps.getRoomState || !deps.setRoomStatus) {
+      const res = await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
+      if (abortedNothing(res)) settleLocalStop(task.sessionKey);
+      return res;
+    }
+
+    const room = deps.getRoomState(taskId);
+    if (!room || room.status !== 'active') {
+      const res = await deps.gateway.abortChat(task.gatewayId, task.sessionKey);
+      if (abortedNothing(res)) settleLocalStop(task.sessionKey);
+      return res;
+    }
+
+    deps.setRoomStatus(taskId, 'stopping');
+
+    const allKeys = new Set<string>();
+    allKeys.add(room.conductorSessionKey);
+    for (const p of room.performers) allKeys.add(p.sessionKey);
+
+    const keys = [...allKeys];
+    const results = await Promise.allSettled(keys.map((sk) => deps.gateway.abortChat(task.gatewayId, sk)));
+    // 协作那一侧由 `setRoomStatus('stopped')` 收房间的尾；但每一列会话自己的"处理中"
+    // 同样只靠 `aborted` 事件清 ⇒ 全都没东西可中止时，那几列会各自挂在转圈上。
+    for (const [i, r] of results.entries()) {
+      if (r.status === 'fulfilled' && abortedNothing(r.value)) settleLocalStop(keys[i]);
+    }
+
+    deps.setRoomStatus(taskId, 'stopped');
+  }
+
+  /** 统一出口的依赖（B8）：⚠️ 传取值函数而不是快照（兜底在定时器里跑）。 */
+  const compactionDeps = { getStore: () => deps.getMessageStore(), translate: deps.translate };
+
+  async function applySlashCommand(
+    taskId: string,
+    command: 'compact' | 'reset' | 'model' | 'think',
+    arg?: string,
+  ): Promise<{ ok: boolean; message?: string; error?: string }> {
+    const task = deps.getTaskStore().tasks.find((t) => t.id === taskId);
+    if (!task) return { ok: false };
+
+    const store = deps.getMessageStore();
+
+    switch (command) {
+      case 'compact': {
+        // ⭐ **不再在这里插消息了**（B8）：从前"RPC 被接受"就被当成了"压缩完成"。
+        //    现在只把网关的结论交给统一出口 —— **只认 `compacted === true`**；
+        //    若网关的 `sessions.changed` 先到，兜底那次会被幂等挡掉
+        //    （见 compaction-announce.ts 的三条硬规矩）。
+        //
+        // ⚠️ 2026-10-15（E1/C63 复核）：那次 RPC **由统一出口自己发**，它的返回值就是
+        //    "命令成功与否"（= RPC 的 `ok`，见 `runManualCompaction` 的契约）。
+        //    从前这里**另发了一次**只为拿 `ok` 当闸门，于是：
+        //      ① 一次手动压缩对网关发**两次** `sessions.compact`；
+        //      ② 统一出口拿到的是**第二次**的结论 —— 第一次真的 `compacted:true` 会被
+        //         第二次的 `{ok:true}`（没有 `compacted` 字段）盖掉 ⇒ 真压了也不通报，
+        //         用户点了一次 `/compact` 什么都看不到。
+        const ok = await runManualCompaction(
+          { ...compactionDeps, compactSession: (gw, sk) => deps.compactSession(gw, sk) },
+          { gatewayId: task.gatewayId, sessionKey: task.sessionKey, taskId },
+        );
+        return { ok };
+      }
+      case 'reset': {
+        const res = await deps.resetSession(task.gatewayId, task.sessionKey, 'reset');
+        if (res.ok) {
+          store.clearMessages(taskId);
+          const msg = deps.translate('session.contextReset');
+          store.addMessage(taskId, 'system', msg, undefined, { sessionKey: task.sessionKey });
+          return { ok: true, message: msg };
+        }
+        return { ok: false };
+      }
+      case 'model': {
+        if (!arg) return { ok: false };
+        const res = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { model: arg });
+        // 带上网关原文：调用方只看到 ok=false 的话，用户就只有一句「发送失败」，
+        // 分不清是模型不存在、档位不支持还是网络问题。见 gateway-error-message.ts。
+        if (!res.ok) return { ok: false, error: res.error };
+        deps.getTaskStore().updateTaskMetadata(taskId, {
+          model: arg,
+          modelProvider: deps.getModelProvider?.(task.gatewayId, arg),
+        });
+        return { ok: true };
+      }
+      case 'think': {
+        if (!arg) return { ok: false };
+        // ⚠️ `/think` 是**用户手打**的，等于把任意字符串直接送进网关。
+        //    以前这里一个字都没校验 —— `/think adaptive` 会照样发出去，
+        //    然后用户收到一条英文 400。`send` 那条路径已经收了，
+        //    这里不收就只是把同一个洞换个入口。
+        const verdict = resolveThinkingLevel(deps, task.gatewayId, task.model, arg);
+        if (verdict === 'unavailable') {
+          // 造一条**网关原话形状**的错误，好让既有的翻译器把它变成中文
+          // （`gateway-error-message.ts` 认这个格式，见那里的正则）。
+          return {
+            ok: false,
+            error: `thinkingLevel "${arg}" is not supported for ${task.model ?? 'this model'} (use off)`,
+          };
+        }
+        const level = verdict === 'ok' ? arg : verdict.level;
+        const res = await deps.gateway.patchSession(task.gatewayId, task.sessionKey, { thinkingLevel: level });
+        if (!res.ok) return { ok: false, error: res.error };
+        deps.getTaskStore().updateTaskMetadata(taskId, { thinkingLevel: level });
+        return { ok: true };
+      }
+    }
+  }
+
+  function dispose(): void {
+    for (const sessionKey of responseWatches.keys()) clearSessionWatch(sessionKey);
+    pendingSendOwners.clear();
+  }
+
+  return { send, abort, applySlashCommand, clearTimer, notifyResponse, dispose };
+}
+
+export type ChatComposer = ReturnType<typeof createChatComposer>;

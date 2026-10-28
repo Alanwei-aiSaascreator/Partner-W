@@ -1,0 +1,123 @@
+import { ipcMain } from 'electron';
+import type { IpcResult } from '@clawwork/shared';
+import { getCommercialClient } from '../commercial/client.js';
+import { trackEvent, trackOnSuccess } from '../analytics/reporter.js';
+
+/**
+ * 成长值 / 悬赏的 IPC。
+ *
+ * 与 `market-handlers.ts` 同构：复用 `commercial/client.ts` 那条已登录的 Supabase
+ * 会话，**鉴权、可见性、状态机一律由迁移 45/46/47 里的 definer RPC 判定**
+ * （`scripts/tests/bounty_growth.sql` 逐条钉过 75 条断言），这一层只负责
+ * 参数改名、异常收敛成错误码、绝不让异常穿透 IPC。
+ */
+
+interface RpcLike {
+  rpc: (fn: string, params?: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }>;
+}
+
+/** 只放行裸机器码；英文长句一律压成 unknown，免得顺着 toast 摆到用户面前。 */
+function rpcErrorCode(message: string | undefined): string {
+  const text = (message ?? '').trim();
+  if (!text) return 'unknown';
+  return /^[a-z][a-z0-9_]{0,63}$/.test(text) ? text : 'unknown';
+}
+
+async function callRpc<T>(
+  fn: string,
+  params: Record<string, unknown>,
+  map: (data: unknown) => T,
+): Promise<IpcResult<T>> {
+  const client = getCommercialClient() as RpcLike | null;
+  if (!client) return { ok: false, errorCode: 'not_authenticated' };
+
+  try {
+    const res = await client.rpc(fn, params);
+    if (res.error) return { ok: false, errorCode: rpcErrorCode(res.error.message) };
+    return { ok: true, result: map(res.data) };
+  } catch (error) {
+    console.error(`[growth] ${fn} failed:`, error);
+    return { ok: false, errorCode: 'network' };
+  }
+}
+
+const rows = (data: unknown): unknown[] => (Array.isArray(data) ? data : data == null ? [] : [data]);
+const firstRow = (data: unknown): unknown => rows(data)[0] ?? null;
+
+export function registerGrowthHandlers(): void {
+  // ── 成长值 ──────────────────────────────────────────────────────
+  ipcMain.handle('growth:summary', () => callRpc('growth_summary', {}, firstRow));
+
+  ipcMain.handle('growth:check-in', () =>
+    callRpc('growth_check_in', {}, firstRow).then((res) => {
+      // ⚠️ `growth_check_in` 是**幂等**的（迁移 46：靠唯一索引，撞了 do nothing）：
+      //    同一天再调一次仍返回 ok:true，但 `awarded = 0`。只有**真的新签到**才算一次
+      //    `daily_check_in` —— 否则重复调用（双开窗口 / 未来新调用方）会把看板刷高。
+      if (res.ok && Number((res.result as { awarded?: unknown } | null)?.awarded ?? 0) > 0) {
+        trackEvent('daily_check_in');
+      }
+      return res;
+    }),
+  );
+
+  ipcMain.handle('growth:history', (_e, payload?: { limit?: number; before?: string | null }) =>
+    callRpc('growth_history', { p_limit: payload?.limit ?? 50, p_before: payload?.before ?? null }, rows),
+  );
+
+  // ── 每日任务（迁移 065）───────────────────────────────────────────
+  //
+  // "今天做过某类动作吗"由**服务端**判定（读 `bounty_events`，append-only + 服务端写），
+  // 这一层只搬参数、收敛异常。⚠️ 客户端的 `done` 只用来决定**画不画按钮**，
+  // 能不能领一律以 `daily_task_claim` 的返回为准 —— 界面状态改了不算数。
+  ipcMain.handle('growth:task-list', () => callRpc('daily_task_list', {}, rows));
+
+  ipcMain.handle('growth:task-claim', (_e, payload: { task?: string }) =>
+    // ⚠️ **刻意不上报埋点**：事件名是**服务端 CHECK 的闭集**（迁移 48），加一个名字要连带
+    //    再推一条迁移；而领奖本身已经在服务端落了一行
+    //    `growth_entries (reason='daily_task')` —— 那才是权威、可查、带 user_id 的记录，
+    //    分析侧直接读它，比客户端自觉上报可靠。
+    //    ⚠️ 与之相对，签到那条走 `daily_check_in` 是因为它**早就**在闭集里了。
+    callRpc('daily_task_claim', { p_task: payload?.task ?? '' }, firstRow),
+  );
+
+  // ── 悬赏 ────────────────────────────────────────────────────────
+  ipcMain.handle('bounty:list', (_e, payload?: { status?: string | null }) =>
+    callRpc('bounty_list', { p_status: payload?.status ?? null }, rows),
+  );
+
+  ipcMain.handle('bounty:create', (_e, payload: { title?: string; description?: string; reward?: number }) =>
+    callRpc(
+      'bounty_create',
+      {
+        p_title: payload?.title ?? '',
+        p_description: payload?.description ?? '',
+        p_reward: payload?.reward ?? 50,
+      },
+      firstRow,
+    ).then((res) => trackOnSuccess(res, 'bounty_published')),
+  );
+
+  ipcMain.handle('bounty:claim', (_e, payload: { id?: string }) =>
+    callRpc('bounty_claim', { p_id: payload?.id ?? null }, () => null),
+  );
+
+  ipcMain.handle('bounty:release', (_e, payload: { id?: string }) =>
+    callRpc('bounty_release', { p_id: payload?.id ?? null }, () => null),
+  );
+
+  ipcMain.handle('bounty:submit', (_e, payload: { id?: string; note?: string }) =>
+    callRpc('bounty_submit', { p_id: payload?.id ?? null, p_note: payload?.note ?? '' }, () => null),
+  );
+
+  ipcMain.handle('bounty:accept', (_e, payload: { id?: string }) =>
+    callRpc('bounty_accept', { p_id: payload?.id ?? null }, () => null),
+  );
+
+  ipcMain.handle('bounty:reject', (_e, payload: { id?: string; note?: string }) =>
+    callRpc('bounty_reject', { p_id: payload?.id ?? null, p_note: payload?.note ?? '' }, () => null),
+  );
+
+  ipcMain.handle('bounty:cancel', (_e, payload: { id?: string }) =>
+    callRpc('bounty_cancel', { p_id: payload?.id ?? null }, () => null),
+  );
+}

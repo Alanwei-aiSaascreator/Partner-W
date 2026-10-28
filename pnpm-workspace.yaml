@@ -1,0 +1,37 @@
+packages:
+  - 'packages/shared'
+  - 'packages/core'
+  - 'packages/pwa'
+  - 'packages/desktop'
+  - 'keynote'
+  - 'website'
+allowBuilds:
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  # ⚠️ 这两个**故意是 false**（pnpm 装上后留了 "set this to true or false" 让人表态）：
+  #   · onnxruntime-node 的 postinstall 是去 NuGet 下**没随包的那部分二进制**
+  #     （主要是 CUDA EP，几百 MB）。CPU 版本来就随包，我们只用 CPU 推理 ——
+  #     2026-09-18 实测：拦住它，`@huggingface/transformers` 照样算得出向量
+  #     （3 条 25ms、语义区分正常）。放行只会白下几百 MB 并多开一个供应链口子。
+  #   · protobufjs 的构建只跟它自己的 CLI/typings 有关，运行时用不到。
+  onnxruntime-node: false
+  protobufjs: false
+  win-ca: true
+# ⚠️ `@types/node` 必须**只留一个版本**，否则整个 desktop 包的 typecheck 会红。
+#
+# 加 `pptx-automizer`（它带 `jszip`）时踩到的：
+#   `jszip/index.d.ts` 第一行是 `/// <reference types="node" />`。
+#   那条引用按 **jszip 自己的位置**去找 `@types/node` —— 于是它把 jszip 那一支的
+#   版本也拉进了这一次编译。树里本来就有五个版本（14/18/20/22/25，全是传递依赖），
+#   多进来一个就改写了"谁是赢家"：原来赢的是 25（`node:child_process` 解析到
+#   `@types/node@25.5.0`，正常），加进来 18 之后赢家变成 18 ——
+#   于是 `ChildProcess.once` 在 `update-handlers.ts` / `gateway-process.ts` /
+#   `launcher-version.ts` 里集体报 TS2339，而那三个文件一行都没改过。
+#
+# 实测确认过两件事，别再走回头路：
+#   · 只把 18 挪走**不解决问题** —— 会退到另一个版本，照样冲突；
+#   · 钉在 25.5.0 是**复现原本那份绿**（那一次生效的就是它），
+#     所以这是风险最小的取值，不是"顺手升级"。
+overrides:
+  '@types/node': 25.5.0

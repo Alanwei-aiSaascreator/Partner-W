@@ -1,0 +1,196 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/**
+ * 给**隔离 profile** 准备「已配置商业层 + 已登录」的初始状态。
+ *
+ * 为什么必须从开发机的既有 profile 取，而不是环境变量：
+ * 这里要的东西（会话、deviceId、卡密）都不在安装包里 —— 客户端能自带的只有
+ * 商业后端的**公共地址与 anon key**（`packages/shared/src/commercial.ts` 的读取期
+ * 默认值），而 `commercial:set-config` 这条 IPC 也没有界面调用方。也就是说
+ * provisioning 本来就是**带外**的，E2E 只能沿用同一套带外数据。
+ *
+ * ⚠️ 也正因为凭据现在是随包默认值，**这份 provision 会掩盖"干净机器"**：
+ *    打包态 E2E 全部注入 profile，测不到"什么都没有时屏幕上会不会出现登录页"
+ *    —— 2026-09-18 的 P0（干净机器没有登录界面）就是这么被每一场彩排盖住的。
+ *    那条链的回归靠 `packages/desktop/test/commercial-config-defaults.test.ts`
+ *    与 `commercial-client-defaults.test.ts`（真临时 profile、真读配置）。
+ *
+ * ## 会话为什么要连 `Local State` 一起拷
+ *
+ * `commercial-session.json` 是 `safeStorage`（Windows DPAPI）加密的，
+ * **解密的密钥存在 profile 的 `Local State` 里**。只拷密文、不拷 `Local State`，
+ * 换个 profile 就解不开，表现为"明明有会话却要重新登录"。
+ *
+ * ## 为什么要连 `deviceId` 一起拷
+ *
+ * 设备指纹 = `sha256(deviceId|hostname|platform|arch)`，而 `activate_license`
+ * 对**已知设备是幂等的**（只刷新 `last_seen_at`，不占激活名额）。
+ * 换一个新 deviceId 就等于**新设备** —— 会真的消耗一次激活名额（名额满了还会
+ * 按"最久没露面"腾位子）。E2E 用同一台机器，指纹就该是同一个。
+ *
+ * ⚠️ **密钥纪律**：本文件只做搬运与存在性判断，**绝不把任何 secret 打印或落进
+ * 报告**；断言一律用 has/长度，比对一律用 hash。
+ */
+
+export const DEV_PROFILE_DIR = path.join(os.homedir(), 'AppData', 'Roaming', '@clawwork', 'desktop');
+
+export interface CommercialProvision {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  licenseKey: string;
+  sessionFilePath: string;
+  localStoragePath: string;
+  deviceId: string;
+  /**
+   * Stage 2C 的 late-login E2E 专用：Supabase 控制台里配的**测试手机号**（E.164）
+   * 与它的**固定验证码**（Supabase 的 "Test phone numbers" 功能）。
+   *
+   * ⚠️ **只存在于本机 dev profile，绝不进仓库** —— `readDevProvision` 只读
+   * `%APPDATA%\@clawwork\desktop\clawwork-config.json`，仓库里没有任何一份拷贝。
+   * 缺了它，positive late-login 用例会 **skip 并写明
+   * "missing late-login E2E test account"**，**不会被当成 PASS**。
+   *
+   * 正式产品代码**不依赖**这两个字段（全仓只在 `e2e/packaged/` 里被读）。
+   */
+  testPhone?: string;
+  testOtp?: string;
+  /**
+   * Demo 主路径 E2E 专用：一张**专用的、未绑定的**测试卡（`gen-licenses.mjs` 产出）。
+   *
+   * ⚠️ 与 `testPhone` / `testOtp` **同一套纪律** —— 只存在于本机 dev profile，
+   * **绝不进仓库**；缺了就让用例 **skip 并写明原因**，绝不当成 PASS。
+   *
+   * ⚠️ 别填正式客户卡：第一次跑会把这张卡**永久绑到测试手机号账号的个人 org**
+   * （之后每次跑都是幂等的，不会重复占名额）。
+   *
+   * 正式产品代码**不依赖**这个字段（全仓只在 `e2e/packaged/` 里被读）。
+   */
+  testLicenseKey?: string;
+}
+
+/** 开发机 profile 是否具备可搬运的商业身份。不具备就返回 null（E2E 该 skip）。 */
+export function readDevProvision(): CommercialProvision | null {
+  const configPath = path.join(DEV_PROFILE_DIR, 'clawwork-config.json');
+  const sessionFilePath = path.join(DEV_PROFILE_DIR, 'commercial-session.json');
+  const localStoragePath = path.join(DEV_PROFILE_DIR, 'Local State');
+
+  if (!fs.existsSync(configPath) || !fs.existsSync(sessionFilePath) || !fs.existsSync(localStoragePath)) return null;
+
+  let cfg: {
+    deviceId?: string;
+    commercial?: {
+      supabaseUrl?: string;
+      supabaseAnonKey?: string;
+      licenseKey?: string;
+      testPhone?: string;
+      testOtp?: string;
+      testLicenseKey?: string;
+    };
+  };
+  try {
+    cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+
+  const { supabaseUrl, supabaseAnonKey, licenseKey, testPhone, testOtp, testLicenseKey } = cfg.commercial ?? {};
+  if (!supabaseUrl || !supabaseAnonKey || !licenseKey || !cfg.deviceId) return null;
+
+  return {
+    supabaseUrl,
+    supabaseAnonKey,
+    licenseKey,
+    sessionFilePath,
+    localStoragePath,
+    deviceId: cfg.deviceId,
+    // 可选：没配就是 undefined ⇒ positive late-login 用例 skip（见 late-login.spec.ts）
+    ...(testPhone && testOtp ? { testPhone, testOtp } : {}),
+    // 可选：没配就是 undefined ⇒ 真实激活彩排用例 skip（见 demo-main-path.spec.ts）
+    ...(testLicenseKey ? { testLicenseKey } : {}),
+  };
+}
+
+export interface ProvisionOptions {
+  /** 写进隔离 profile 的 workspace（必须是已存在的目录）。 */
+  workspacePath: string;
+  /** 覆盖 Supabase 地址 —— 用来模拟"商业后端不可得"。 */
+  supabaseUrlOverride?: string;
+  /** 不带会话文件 ⇒ 模拟"配了商业层但没登录"。 */
+  skipSession?: boolean;
+  /**
+   * 不写 `commercial.licenseKey` —— 让 App 起来时**名下没有卡**。
+   *
+   * 这是「真实激活」用例的地基：`provisionProfile()` 默认会把 dev profile 里
+   * 那张卡写进去，那样 App 一启动就已经是"已授权"，`ActivationSection` 直接渲染
+   * 已绑定态，**输入框根本不出现** —— 测的就不是激活了。
+   */
+  withoutLicenseKey?: boolean;
+}
+
+/**
+ * 把商业身份铺进隔离 profile。**只读开发机 profile**，一个字节都不改它。
+ *
+ * ⚠️ 调用前 userDataDir 必须已经存在。
+ */
+export function provisionProfile(userDataDir: string, p: CommercialProvision, opts: ProvisionOptions): void {
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.mkdirSync(opts.workspacePath, { recursive: true });
+
+  // safeStorage 的解密密钥（缺了会话就解不开）
+  fs.copyFileSync(p.localStoragePath, path.join(userDataDir, 'Local State'));
+
+  if (!opts.skipSession) {
+    fs.copyFileSync(p.sessionFilePath, path.join(userDataDir, 'commercial-session.json'));
+  }
+
+  const config = {
+    workspacePath: opts.workspacePath,
+    // ⚠️ 复用同一个 deviceId ⇒ 同一个设备指纹 ⇒ 激活 RPC 走幂等分支，不占名额
+    deviceId: p.deviceId,
+    commercial: {
+      supabaseUrl: opts.supabaseUrlOverride ?? p.supabaseUrl,
+      supabaseAnonKey: p.supabaseAnonKey,
+      // ⚠️ `withoutLicenseKey` 只少这一个字段。supabaseUrl / anonKey / deviceId
+      //    仍然照写 —— 客户端**没有内置** Supabase 地址（全仓只有
+      //    `config?.commercial?.supabaseUrl ?? ''` 一处读取，且 `commercial:set-config`
+      //    没有界面调用方），那是产品本身的带外配置，不是"绕过激活"。
+      //    licenseKey 是**唯一**一个能替代激活的东西，所以只收它。
+      ...(opts.withoutLicenseKey ? {} : { licenseKey: p.licenseKey }),
+    },
+    gateways: [],
+  };
+  fs.writeFileSync(path.join(userDataDir, 'clawwork-config.json'), JSON.stringify(config, null, 2));
+}
+
+/**
+ * 露出两头所需的最短长度。
+ *
+ * 11 = 中国大陆手机号的位数（`demo-main-path.spec.ts` 里那条
+ * `/^1[3-9]\d{9}$/` 也是 11 位）；带上 `+86` 是 14 位 —— 真实用例的两种形态
+ * 都在这条线以上，所以这个门槛**不改变任何真实号码的日志长相**。
+ *
+ * ⚠️ 短于它的一律全遮：固定的"前 3 后 2"在短号上会露掉大半
+ * （6 位会露 5 位、8 位露 5 位）—— 而本函数的**全部意义**就是不让手机号泄露。
+ */
+const MIN_LENGTH_FOR_PARTIAL_MASK = 11;
+
+/**
+ * 脱敏手机号：只留国家码与末 2 位。**日志**里要标识时只能用它。
+ *
+ * ⚠️ 两类去处的口径**不一样**，别混：
+ *
+ * - **日志**：允许用本函数的结果来标识（`+86****00`）—— 那是"标识"，不是"披露"。
+ * - **报告 / 产物 / 截图**：测试手机号**连脱敏都不给**，只给"配没配"。
+ *   它的信息量本来就只有"谁的电话"，脱敏后剩不下任何对报告有用的东西。
+ *
+ * （第二条原来写在 `describeProvision` 的 docblock 里。那个函数**从加进来那天起
+ * 就没被调用过**（`33493cc` 加入、2026-09-19 删除），规则挂在死代码上等于没挂
+ * —— 现在挪到真正执行遮蔽的这里。顺带：它还会把卡密的**前 3 位**放进报告，
+ * 与本文件顶部"绝不把任何 secret 落进报告"的纪律是冲突的。）
+ */
+export function maskPhone(phone: string): string {
+  if (phone.length < MIN_LENGTH_FOR_PARTIAL_MASK) return '***';
+  return `${phone.slice(0, 3)}****${phone.slice(-2)}`;
+}

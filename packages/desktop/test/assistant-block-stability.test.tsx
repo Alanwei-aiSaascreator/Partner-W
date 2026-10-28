@@ -1,0 +1,389 @@
+// @vitest-environment jsdom
+
+import { act, type ReactElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import type { Message } from '@clawwork/shared';
+import i18n from '../src/renderer/i18n';
+
+// 与 `chat-message-copy.test.tsx` 同款：framer-motion 换成"原样渲染"（只去掉动效），
+// 于是断言看到的就是产品里那棵树。`useReducedMotion` 必须给（`ThinkingIndicator` 用它）。
+vi.mock('framer-motion', async () => {
+  const React = await import('react');
+  const MOTION_ONLY = new Set([
+    'initial',
+    'animate',
+    'exit',
+    'transition',
+    'variants',
+    'whileHover',
+    'whileTap',
+    'whileInView',
+    'layout',
+    'layoutId',
+  ]);
+  // ⚠️ 每个 tag 只造**一个**组件：`motion.div` 每次访问都新建类型的话，React 每渲染一次都会
+  //    当成"换了组件"⇒ 整块卸载重建 —— 那这个测试文件量到的东西就全是脚手架自伤的假象。
+  const cache = new Map<string, unknown>();
+  const motion = new Proxy(
+    {},
+    {
+      get: (_target, tag: string) => {
+        const cached = cache.get(tag);
+        if (cached) return cached;
+        const component = React.forwardRef<HTMLElement, Record<string, unknown>>((props, ref) => {
+          const { children, ...rest } = props;
+          const clean = Object.fromEntries(Object.entries(rest).filter(([key]) => !MOTION_ONLY.has(key)));
+          return React.createElement(tag, { ...clean, ref }, children as React.ReactNode);
+        });
+        cache.set(tag, component);
+        return component;
+      },
+    },
+  );
+  return {
+    AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    motion,
+    useReducedMotion: () => false,
+  };
+});
+
+import AssistantBlock from '../src/renderer/components/AssistantBlock';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+function buildMessage(partial: Partial<Message>): Message {
+  return {
+    id: 'msg-1',
+    taskId: 'task-1',
+    role: 'assistant',
+    content: '',
+    artifacts: [],
+    toolCalls: [],
+    timestamp: '2026-09-20T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+const identity = { agentName: '内容助手', agentRoleLabel: '内容', localAvatarUrl: 'file:///avatar.png' };
+
+const cleanups: Array<() => void> = [];
+
+function render(ui: ReactElement): {
+  container: HTMLDivElement;
+  rerender: (next: ReactElement) => void;
+  unmount: () => void;
+} {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+  act(() => root.render(ui));
+  const unmount = () => {
+    act(() => root.unmount());
+    container.remove();
+  };
+  cleanups.push(unmount);
+  return { container, rerender: (next) => act(() => root.render(next)), unmount };
+}
+
+afterEach(() => {
+  while (cleanups.length > 0) cleanups.pop()?.();
+  document.body.innerHTML = '';
+});
+
+/**
+ * 2026-09-20 实机报障：「我发完要求，那个对话头像会消失一下，然后再给我反馈」。
+ *
+ * 三处报障归根到底都是**同一个助手块被卸载重建**（头像跟着换节点 ⇒ 肉眼就是"闪一下"）：
+ *   ① 等待 → 流式（T-a9/T-a11，已修）；② 流式 → 定稿（T-a12）；③ 定稿 → 收编成正式消息。
+ * 这条测试盯的是 `AssistantBlock` 自己：**状态换、身体换，块与头像不换**。
+ *
+ * ⚠️ 桩绿了不等于真身对（IPC 那次就是桩与真身各写一遍 → 假绿）—— 所以这里用**真身**组件
+ * （真头像、真定稿身体、真流式身体），只把动效换掉。
+ */
+describe('AssistantBlock：状态切换时块与头像不能被卸载重建', () => {
+  it('⭐ 等待（空流式）→ 有内容：块与头像都是同一个 DOM 节点，跳动点消失', () => {
+    const view = render(<AssistantBlock state="streaming" content="" toolCalls={[]} identity={identity} />);
+
+    const blockBefore = view.container.querySelector('[data-testid="assistant-block"]');
+    const avatarBefore = view.container.querySelector('[data-testid="message-avatar"]');
+    expect(blockBefore, '等待态就该有这一块（它就是"从头到尾那一个"）').not.toBeNull();
+    expect(avatarBefore, '头像在第一格').not.toBeNull();
+    expect(
+      view.container.querySelector('[data-testid="thinking-indicator"]'),
+      '什么都没到 ⇒ 显示跳动点',
+    ).not.toBeNull();
+
+    view.rerender(<AssistantBlock state="streaming" content="你好" toolCalls={[]} identity={identity} />);
+
+    expect(view.container.querySelector('[data-testid="assistant-block"]'), '整块必须是同一个节点').toBe(blockBefore);
+    expect(view.container.querySelector('[data-testid="message-avatar"]'), '头像必须是同一个节点').toBe(avatarBefore);
+    expect(view.container.querySelector('[data-testid="thinking-indicator"]'), '内容到了跳动点就该没了').toBeNull();
+    expect(view.container.textContent).toContain('你好');
+  });
+
+  it('⭐ 流式 → 定稿：块与头像还是同一个节点，换的只有身体', () => {
+    const view = render(<AssistantBlock state="streaming" content="正在写…" toolCalls={[]} identity={identity} />);
+
+    const blockBefore = view.container.querySelector('[data-testid="assistant-block"]');
+    const avatarBefore = view.container.querySelector('[data-testid="message-avatar"]');
+    expect(view.container.textContent).toContain('正在写…');
+
+    view.rerender(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({ content: '答好了', toolCalls: [] })}
+        identity={{ ...identity, modelLabel: 'DeepSeek V4 Flash', modelTitle: 'deepseek-v4-flash' }}
+      />,
+    );
+
+    // 判据（队列 T-a12 的原文）：定稿前后 `头像` 必须是同一个 DOM 节点。
+    expect(view.container.querySelector('[data-testid="assistant-block"]'), '整块必须是同一个节点').toBe(blockBefore);
+    expect(
+      view.container.querySelector('[data-testid="message-avatar"]'),
+      '头像必须是同一个节点 —— 换了就等于被卸载重建，用户看到的就是"闪一下"',
+    ).toBe(avatarBefore);
+    // 身体确实换了（否则"同一个节点"可能是"什么都没发生"这种假绿）
+    expect(view.container.textContent, '定稿正文要在').toContain('答好了');
+    expect(view.container.textContent, '流式那份该没了').not.toContain('正在写…');
+    expect(view.container.querySelector('[data-testid="model-badge"]')?.textContent, '定稿才拿得到模型来源').toBe(
+      'DeepSeek V4 Flash',
+    );
+  });
+
+  it('定稿 → 又一轮流式（同一会话继续问）：块与头像仍然是同一个节点', () => {
+    const view = render(
+      <AssistantBlock state="finalized" message={buildMessage({ content: '第一轮答案' })} identity={identity} />,
+    );
+    const blockBefore = view.container.querySelector('[data-testid="assistant-block"]');
+    const avatarBefore = view.container.querySelector('[data-testid="message-avatar"]');
+
+    view.rerender(<AssistantBlock state="streaming" content="" toolCalls={[]} identity={identity} />);
+
+    expect(view.container.querySelector('[data-testid="assistant-block"]')).toBe(blockBefore);
+    expect(view.container.querySelector('[data-testid="message-avatar"]')).toBe(avatarBefore);
+    expect(view.container.textContent).not.toContain('第一轮答案');
+  });
+
+  /*
+    ⚠️ 2026-10-08 有意反转（对话可视化改造 · Task 3）：下面两条原来的口径是
+    "思考内容绝不上屏"。用户明确要求**可折叠思考**（真实 WorkBuddy 形态：
+    live 展开扫光、done 收起一行「深度思考」、正文惰性挂载），因此按新语义改写。
+    保留的语义不变：「思考不是最终回答」（没有正文仍给可重试失败态）；
+    「未产出不能假成功」。反转过理由：旧断言曾是"隐藏推理"的实现细节，
+    现在产品决定把它作为可展开的推理过程暴露 —— 不是为了让断言好过而改断言。
+  */
+  it('⭐ 流式中（live）：思考折叠展开可见、标题扫光；有推理时不再叠跳动点', () => {
+    const rawThinking = 'We need inspect private chain-of-thought before answering.';
+    const view = render(
+      <AssistantBlock
+        state="streaming"
+        content=""
+        thinkingContent={rawThinking}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'thinking', revision: 1, thinkingSegment: 1 }}
+      />,
+    );
+
+    expect(view.container.textContent, 'live：推理正文可见（可折叠）').toContain(rawThinking);
+    const collapse = view.container.querySelector('[data-testid="thinking-collapse"]');
+    expect(collapse).not.toBeNull();
+    expect(collapse!.className).toContain('thinking-collapse--live');
+    expect(collapse!.querySelector('.thinking-collapse__title')!.className).toContain('text-shimmer');
+    expect(
+      view.container.querySelector('[data-testid="thinking-indicator"]'),
+      '思考折叠承担"在动"，不叠跳动点',
+    ).toBeNull();
+  });
+
+  it('⭐ R1 消费端：手动收起 → 旧思考快照随正文继续来 → 保持收起；工具后新思考 → 自动展开', () => {
+    const raw = '第一段推理';
+    // 流式 + live（段 1）：用户手动收起
+    const view = render(
+      <AssistantBlock
+        state="streaming"
+        content=""
+        thinkingContent={raw}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'thinking', revision: 1, thinkingSegment: 1 }}
+      />,
+    );
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    act(() => header?.click());
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]')!.className).toContain(
+      'thinking-collapse--collapsed',
+    );
+
+    // 正文开始增长，而旧思考快照被原样重发（R1 修好后：store 不会 bump 思考 ⇒ activity 仍是 output、段号仍 1）
+    view.rerender(
+      <AssistantBlock
+        state="streaming"
+        content="答案开始写了"
+        thinkingContent={raw}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'output', revision: 2, thinkingSegment: 1 }}
+      />,
+    );
+    let collapse = view.container.querySelector('[data-testid="thinking-collapse"]')!;
+    expect(collapse.className, '旧思考快照不得把相位拨回 live').toContain('thinking-collapse--done');
+    expect(collapse.className, '用户的手动收起必须保持').toContain('thinking-collapse--collapsed');
+
+    // 工具之后**真实的新一段思考**（段号 2、kind 回到 thinking）⇒ 自动重新展开
+    view.rerender(
+      <AssistantBlock
+        state="streaming"
+        content=""
+        thinkingContent={`${raw}\n第二段：换个思路`}
+        toolCalls={[]}
+        identity={identity}
+        activity={{ kind: 'thinking', revision: 3, thinkingSegment: 2 }}
+      />,
+    );
+    collapse = view.container.querySelector('[data-testid="thinking-collapse"]')!;
+    expect(collapse.className, '新段自动展开（复位折叠依据是段号）').toContain('thinking-collapse--expanded');
+  });
+
+  it('无活动元数据（旧路径/无来源）⇒ 静态降级：收起、正文不进 DOM（不从 props 猜顺序）', () => {
+    const rawThinking = 'We need inspect private chain-of-thought before answering.';
+    const view = render(
+      <AssistantBlock state="streaming" content="" thinkingContent={rawThinking} toolCalls={[]} identity={identity} />,
+    );
+
+    const collapse = view.container.querySelector('[data-testid="thinking-collapse"]');
+    expect(collapse).not.toBeNull();
+    expect(collapse!.className).toContain('thinking-collapse--done');
+    expect(collapse!.className).toContain('thinking-collapse--collapsed');
+    expect(view.container.textContent).not.toContain(rawThinking);
+    expect(view.container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
+  });
+
+  it('定稿消息：思考折叠收起、正文惰性（展开前不进 DOM；展开后可见）', () => {
+    const rawThinking = 'Hidden provider reasoning must stay hidden.';
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({ content: '给用户的答案', thinkingContent: rawThinking })}
+        identity={identity}
+      />,
+    );
+
+    expect(view.container.textContent).toContain('给用户的答案');
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]')).not.toBeNull();
+    expect(view.container.textContent, '收起态：正文不进 DOM（惰性挂载）').not.toContain(rawThinking);
+
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    expect(header).not.toBeNull();
+    act(() => header?.click());
+    expect(view.container.textContent, '展开后可查阅').toContain(rawThinking);
+  });
+
+  it('⭐ 只有思考却没有可见答案：定稿后停止转圈，明确失败并允许重试；思考可折叠查阅', () => {
+    const retry = vi.fn();
+    const rawThinking = 'Private reasoning exists, but no user-facing answer was produced.';
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({ content: '', thinkingContent: rawThinking })}
+        identity={identity}
+        onRetry={retry}
+      />,
+    );
+
+    expect(view.container.querySelector('[data-testid="thinking-indicator"]'), '定稿后绝不能继续显示进行中').toBeNull();
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="thinking-collapse"]'), '思考折叠在（可查阅）').not.toBeNull();
+    expect(view.container.textContent, '收起态惰性：正文不进 DOM').not.toContain(rawThinking);
+
+    const header = view.container.querySelector<HTMLButtonElement>('[data-testid="thinking-collapse-header"]');
+    act(() => header?.click());
+    expect(view.container.textContent, '展开后可见').toContain(rawThinking);
+
+    const button = view.container.querySelector<HTMLButtonElement>('[data-testid="assistant-empty-retry"]');
+    expect(button).not.toBeNull();
+    act(() => button?.click());
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a successful tool-only message without suggesting a duplicate retry', () => {
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({
+          toolCalls: [
+            {
+              id: 'video-1',
+              name: 'video_generate',
+              status: 'done',
+              result: 'Background task started',
+              startedAt: '2026-09-30T00:00:00.000Z',
+            },
+          ],
+        })}
+        identity={identity}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).toBeNull();
+    expect(view.container.querySelector('[data-testid="assistant-empty-retry"]')).toBeNull();
+    expect(view.container.textContent).toContain(i18n.t('toolActivity.completed', { count: 1 }));
+  });
+
+  it('keeps the actual tool failure visible for a tool-only message', () => {
+    const view = render(
+      <AssistantBlock
+        state="finalized"
+        message={buildMessage({
+          toolCalls: [
+            {
+              id: 'video-1',
+              name: 'video_generate',
+              status: 'error',
+              // ⚠️ 2026-10-08（pre19 验收）：未映射的**内核英文**现在会被兜底成产品文案，
+              //    这条钉的是"失败原因可见"，所以用可读原因（中文原样显示）。
+              result: '视频生成能力当前不可用',
+              startedAt: '2026-09-30T00:00:00.000Z',
+            },
+          ],
+        })}
+        identity={identity}
+      />,
+    );
+    expect(view.container.textContent).toContain(
+      i18n.t('chatMessage.toolCallSummaryWithErrors', { count: 1, errorCount: 1 }),
+    );
+    expect(view.container.textContent).toContain('视频生成能力当前不可用');
+    expect(view.container.querySelector('[data-testid="assistant-no-visible-answer"]')).toBeNull();
+  });
+});
+
+/**
+ * 整轮用时（2026-10-18 同事批次移植）。
+ *
+ * 网关的 `message.durationMs` 是**单条消息**生成时间（4 分 46 秒的一轮只报 0.4 秒），
+ * 所以界面用的是 core 本地量的整轮时长（`Message.durationMs`）。
+ * 老数据没有这个字段 ⇒ **不显示**，不拿 0 或估算值充数。
+ */
+describe('助手消息的整轮用时', () => {
+  it('⭐ 有 durationMs ⇒ 显示「用时 4 分 46 秒」', () => {
+    const message = buildMessage({ content: '答案', durationMs: 4 * 60_000 + 46_000 });
+    const view = render(<AssistantBlock state="finalized" message={message} identity={identity} />);
+    const el = view.container.querySelector('[data-testid="assistant-turn-duration"]');
+    expect(el?.textContent).toBe(i18n.t('chatMessage.turnDurationMinutesSeconds', { minutes: 4, seconds: 46 }));
+  });
+
+  it('⭐ 不足一分钟只报秒（不出现「0 分」）', () => {
+    const message = buildMessage({ content: '答案', durationMs: 8_400 });
+    const view = render(<AssistantBlock state="finalized" message={message} identity={identity} />);
+    const el = view.container.querySelector('[data-testid="assistant-turn-duration"]');
+    expect(el?.textContent).toBe(i18n.t('chatMessage.turnDurationSeconds', { seconds: 8 }));
+  });
+
+  it('没有 durationMs（历史行 / 老数据）⇒ 不渲染，不拿 0 充数', () => {
+    const message = buildMessage({ content: '答案' });
+    const view = render(<AssistantBlock state="finalized" message={message} identity={identity} />);
+    expect(view.container.querySelector('[data-testid="assistant-turn-duration"]')).toBeNull();
+  });
+});

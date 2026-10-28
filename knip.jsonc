@@ -1,0 +1,47 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.mjs", "scripts/**/*.ts", "e2e/**/*.spec.ts", "e2e/**/*.test.ts"],
+      "project": ["scripts/**/*.{mjs,ts}", "e2e/**/*.ts"],
+    },
+    "packages/shared": {},
+    "packages/core": {},
+    "packages/desktop": {
+      "entry": [
+        "src/main/entry.ts",
+        "src/main/slidegen/preflight-cli.ts",
+        "src/preload/index.ts",
+        "src/renderer/main.tsx",
+        "src/renderer/styles/design-tokens.ts",
+        "electron.vite.config.ts",
+        // `--repair` 修复工具的独立单页。knip 只认 TS/JS 入口，认不出
+        // `repair.html` 里 `<script src="./repair/main.tsx">` 引的这一个，
+        // 于是把它误报成"未使用文件"。它在 `electron.vite.config.ts` 里以
+        // `repair: resolve('src/renderer/repair.html')` 真实入包 —— 是入口，不能删；
+        // 这里显式登记，让 knip 把它（及其依赖 `features/repair/**`）当入口分析。
+        "src/renderer/repair/main.tsx",
+      ],
+      "project": ["src/**/*.{ts,tsx}"],
+      "paths": {
+        "@/*": ["src/renderer/*"],
+      },
+      "ignoreDependencies": [
+        "@fontsource-variable/inter",
+        "@fontsource-variable/jetbrains-mono",
+        "tailwindcss",
+        "autoprefixer",
+        "postcss",
+      ],
+    },
+    "packages/pwa": {
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "tailwindcss"],
+    },
+    "website": {},
+  },
+  "ignoreExportsUsedInFile": true,
+  "ignoreBinaries": ["go"],
+  "ignore": ["keynote/**", "packages/desktop/src/renderer/features/internal-beta/beta-service.ts"],
+  "exclude": ["unlisted"],
+}

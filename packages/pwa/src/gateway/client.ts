@@ -1,0 +1,761 @@
+import type {
+  GatewayReqFrame,
+  GatewayResFrame,
+  GatewayEventFrame,
+  GatewayConnectParams,
+  ChatAttachment,
+  DebugEvent,
+} from '@clawwork/shared';
+import {
+  HEARTBEAT_INTERVAL_MS,
+  RECONNECT_DELAY_MS,
+  MAX_RECONNECT_ATTEMPTS,
+  parseTaskIdFromSessionKey,
+  summarizePayload,
+} from '@clawwork/shared';
+import { buildDeviceConnectPayload } from './auth.js';
+import { PWA_MAX_PROTOCOL, PWA_MIN_PROTOCOL, PWA_OPERATOR_SCOPES, PWA_REQUIRED_PROTOCOL } from './scopes.js';
+import type { DeviceIdentity } from './device-identity.js';
+import type { GatewayAuth } from '@clawwork/shared';
+
+type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'authorization_pending';
+
+type PendingReq = {
+  resolve: (payload: Record<string, unknown>) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+  method: string;
+  startedAt: number;
+  requestId: string;
+  sessionKey?: string;
+  taskId?: string;
+};
+
+/**
+ * 审批副连接只转发这一族事件（与桌面端 `APPROVAL_CHANNEL_EVENTS` 同口径）。
+ *
+ * ⚠️ 不能转发全部：tick / health / chat / agent 是广播事件，两条连接都会收到，
+ * 全转发 = 渲染层每帧两遍。这条连接存在的唯一理由是收 `exec.approval.*` ——
+ * 主连接 caps=['tool-events'] 不满足引擎 `canDeliverApprovals(kind='exec')` 的
+ * 四选一（且自己发起的回合还会被 excludeConnId 跳过），所以必须另开一条
+ * caps=['exec-approvals'] 的副连接（照桌面端 APPROVAL_CHANNEL_CAPS 修法）。
+ *
+ * ⚠️ 刻意只加 `exec-approvals`，不加通用 `approvals` cap：那会让
+ * plugin.approval.* / openclaw.approval.* 也变成可投递，而手机端没接线，收到只会被丢掉。
+ */
+const APPROVAL_CHANNEL_EVENTS = new Set(['exec.approval.requested', 'exec.approval.resolved']);
+
+type BrowserGatewayClientConfig = {
+  id: string;
+  name: string;
+  url: string;
+  auth?: GatewayAuth;
+  identity: DeviceIdentity;
+  /** 手机端权限天花板；默认 PWA_OPERATOR_SCOPES（不含 admin / pairing）。 */
+  scopes?: readonly string[];
+  /**
+   * 审批副连接：hello 带 caps=['exec-approvals']，事件只放行 exec.approval.*。
+   * 与主连接同 id / 同 auth / 同 identity（网关按 connId 排除请求者，不按 client.id）。
+   */
+  approvalChannel?: boolean;
+  onEvent?: (data: { event: string; payload: Record<string, unknown>; gatewayId: string; seq?: number }) => void;
+  onStatus?: (data: {
+    gatewayId: string;
+    connected: boolean;
+    error?: string;
+    serverVersion?: string;
+    reconnectAttempt?: number;
+    maxAttempts?: number;
+    gaveUp?: boolean;
+  }) => void;
+  onPairingSuccess?: (gatewayId: string) => void;
+  reportDebugEvent?: (event: Partial<DebugEvent>) => void;
+  onTokenUpdate?: (gatewayId: string, token: string) => Promise<void>;
+};
+
+const REQ_TIMEOUT_MS = 15_000;
+const WS_CLOSE_POLICY_VIOLATION = 1008;
+
+export class BrowserGatewayClient {
+  private readonly gatewayId: string;
+  private readonly gatewayName: string;
+  private readonly url: string;
+  private readonly auth?: GatewayAuth;
+  private readonly identity: DeviceIdentity;
+  private readonly scopes: readonly string[];
+  private readonly approvalChannel: boolean;
+  private readonly onEvent?: BrowserGatewayClientConfig['onEvent'];
+  private readonly onStatus?: BrowserGatewayClientConfig['onStatus'];
+  private readonly onPairingSuccess?: BrowserGatewayClientConfig['onPairingSuccess'];
+  private readonly reportDebugEvent?: BrowserGatewayClientConfig['reportDebugEvent'];
+  private readonly onTokenUpdate?: BrowserGatewayClientConfig['onTokenUpdate'];
+
+  private ws: WebSocket | null = null;
+  private state: ConnectionState = 'disconnected';
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private pendingRequests = new Map<string, PendingReq>();
+  private destroyed = false;
+  private connectNonce = '';
+  private _serverVersion?: string;
+  private _lastError?: string;
+  private reqCounter = 0;
+  private deviceToken?: string;
+
+  constructor(config: BrowserGatewayClientConfig) {
+    this.gatewayId = config.id;
+    this.gatewayName = config.name;
+    this.url = config.url;
+    this.auth = config.auth;
+    this.identity = config.identity;
+    this.scopes = config.scopes ?? PWA_OPERATOR_SCOPES;
+    this.approvalChannel = config.approvalChannel === true;
+    this.deviceToken = config.auth?.deviceToken;
+    this.onEvent = config.onEvent;
+    this.onStatus = config.onStatus;
+    this.onPairingSuccess = config.onPairingSuccess;
+    this.reportDebugEvent = config.reportDebugEvent;
+    this.onTokenUpdate = config.onTokenUpdate;
+  }
+
+  get id(): string {
+    return this.gatewayId;
+  }
+
+  get name(): string {
+    return this.gatewayName;
+  }
+
+  get httpBase(): string {
+    const parsed = new URL(this.url);
+    const protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
+    return `${protocol}//${parsed.host}`;
+  }
+
+  get isConnected(): boolean {
+    return this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  get serverVersion(): string | undefined {
+    return this._serverVersion;
+  }
+
+  get lastError(): string | undefined {
+    return this._lastError;
+  }
+
+  connect(): void {
+    if (this.destroyed) return;
+    this.cleanup();
+    this._lastError = undefined;
+    this.state = 'connecting';
+
+    this.debug('gateway.connect.start', {
+      wsUrl: this.url,
+      attempt: this.reconnectAttempts + 1,
+    });
+
+    this.ws = new WebSocket(this.url);
+
+    this.ws.onopen = () => {
+      this.handleOpen();
+    };
+
+    this.ws.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        this.handleMessage(event.data);
+      }
+    };
+
+    this.ws.onclose = (event) => {
+      this.handleClose(event.code, event.reason);
+    };
+
+    this.ws.onerror = (event) => {
+      this.handleError(event);
+    };
+  }
+
+  reconnect(): void {
+    this.destroyed = false;
+    this.reconnectAttempts = 0;
+    this.connect();
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.cleanup();
+  }
+
+  sendReq(
+    method: string,
+    params: Record<string, unknown>,
+    meta?: { requestId?: string; sessionKey?: string; taskId?: string },
+  ): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        const err = new Error('not connected') as Error & { code?: string };
+        err.code = 'GATEWAY_NOT_CONNECTED';
+        this.debug('gateway.req.rejected.not-connected', {
+          method,
+          requestId: meta?.requestId,
+        });
+        reject(err);
+        return;
+      }
+
+      const id = this.nextReqId();
+      const requestId = meta?.requestId ?? id;
+      const frame: GatewayReqFrame = { type: 'req', id, method, params };
+      const startedAt = Date.now();
+
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        const durationMs = Date.now() - startedAt;
+        this.debug('gateway.req.timeout', {
+          method,
+          requestId,
+          wsFrameId: id,
+          durationMs,
+          sessionKey: meta?.sessionKey,
+          taskId: meta?.taskId,
+        });
+        const timeoutErr = new Error(`request timeout: ${method}`) as Error & {
+          code?: string;
+        };
+        timeoutErr.code = 'TIMEOUT';
+        reject(timeoutErr);
+      }, REQ_TIMEOUT_MS);
+
+      this.pendingRequests.set(id, {
+        resolve,
+        reject,
+        timer,
+        method,
+        startedAt,
+        requestId,
+        sessionKey: meta?.sessionKey,
+        taskId: meta?.taskId,
+      });
+
+      this.debug('gateway.req.sent', {
+        method,
+        requestId,
+        wsFrameId: id,
+        sessionKey: meta?.sessionKey,
+        taskId: meta?.taskId,
+        params: summarizePayload(params),
+      });
+
+      this.ws.send(JSON.stringify(frame));
+    });
+  }
+
+  // 公开：其他 store（如 questionStore 的 question.resolve/cancel）需要与
+  // 桌面端一致地带上 requestId + sessionKey + taskId 的会话元信息。
+  sessionMeta(sessionKey?: string | null) {
+    return {
+      requestId: this.nextReqId(),
+      sessionKey: sessionKey ?? undefined,
+      taskId: (sessionKey && parseTaskIdFromSessionKey(sessionKey)) || undefined,
+    };
+  }
+
+  async sendChatMessage(
+    sessionKey: string,
+    content: string,
+    attachments?: ChatAttachment[],
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {
+      sessionKey,
+      message: content,
+      idempotencyKey: crypto.randomUUID(),
+      deliver: false,
+    };
+    if (attachments?.length) {
+      params.attachments = attachments;
+    }
+    return this.sendReq('chat.send', params, this.sessionMeta(sessionKey));
+  }
+
+  async abortChat(sessionKey: string): Promise<void> {
+    await this.sendReq('chat.abort', { sessionKey }, this.sessionMeta(sessionKey));
+  }
+
+  async getChatHistory(sessionKey: string, limit = 50): Promise<Record<string, unknown>> {
+    return this.sendReq('chat.history', { sessionKey, limit }, this.sessionMeta(sessionKey));
+  }
+
+  async createSession(params: { key: string; agentId: string; message?: string }): Promise<Record<string, unknown>> {
+    return this.sendReq('sessions.create', params, { requestId: this.nextReqId() });
+  }
+
+  async deleteSession(sessionKey: string, deleteTranscript = true): Promise<Record<string, unknown>> {
+    return this.sendReq('sessions.delete', { key: sessionKey, deleteTranscript }, this.sessionMeta(sessionKey));
+  }
+
+  async listSessions(): Promise<Record<string, unknown>> {
+    return this.sendReq('sessions.list', {}, { requestId: this.nextReqId() });
+  }
+
+  async listModels(agentId?: string): Promise<Record<string, unknown>> {
+    return this.sendReq('models.list', agentId?.trim() ? { agentId: agentId.trim() } : {});
+  }
+
+  async listCommands(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    return this.sendReq('commands.list', params);
+  }
+
+  async listAgents(): Promise<Record<string, unknown>> {
+    return this.sendReq('agents.list', {});
+  }
+
+  async patchSession(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.sendReq('sessions.patch', params);
+  }
+
+  async getToolsCatalog(agentId?: string): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { includePlugins: true };
+    if (agentId) params.agentId = agentId;
+    return this.sendReq('tools.catalog', params);
+  }
+
+  async getEffectiveTools(sessionKey: string, agentId?: string): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { sessionKey };
+    if (agentId) params.agentId = agentId;
+    return this.sendReq('tools.effective', params);
+  }
+
+  async getSkillsStatus(agentId?: string): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {};
+    if (agentId) params.agentId = agentId;
+    return this.sendReq('skills.status', params);
+  }
+
+  async compactSession(sessionKey: string): Promise<Record<string, unknown>> {
+    return this.sendReq('sessions.compact', { key: sessionKey }, this.sessionMeta(sessionKey));
+  }
+
+  async resetSession(sessionKey: string, mode: string = 'reset'): Promise<Record<string, unknown>> {
+    return this.sendReq('sessions.reset', { key: sessionKey, reason: mode }, this.sessionMeta(sessionKey));
+  }
+
+  private handleOpen(): void {
+    this.debug('gateway.ws.open');
+  }
+
+  private handleMessage(data: string): void {
+    let frame: GatewayReqFrame | GatewayResFrame | GatewayEventFrame;
+    try {
+      frame = JSON.parse(data) as GatewayReqFrame | GatewayResFrame | GatewayEventFrame;
+    } catch {
+      this.debug('gateway.frame.invalid-json', { raw: data.slice(0, 200) });
+      return;
+    }
+
+    if (frame.type === 'event') {
+      const eventFrame = frame as GatewayEventFrame;
+      if (typeof eventFrame.event !== 'string' || !eventFrame.payload || typeof eventFrame.payload !== 'object') {
+        this.debug('gateway.frame.invalid-shape');
+        return;
+      }
+
+      if (eventFrame.event === 'connect.challenge') {
+        const nonce =
+          typeof (eventFrame.payload as Record<string, unknown>).nonce === 'string'
+            ? ((eventFrame.payload as Record<string, unknown>).nonce as string).trim()
+            : '';
+        if (!nonce) {
+          this.debug('gateway.challenge.invalid', {
+            payload: summarizePayload(eventFrame.payload),
+          });
+          this.ws?.close(WS_CLOSE_POLICY_VIOLATION, 'connect challenge missing nonce');
+          return;
+        }
+        this.connectNonce = nonce;
+        this.debug('gateway.challenge.received', { seq: eventFrame.seq });
+        this.handleChallenge(nonce);
+        return;
+      }
+
+      if (eventFrame.event === 'tick') {
+        return;
+      }
+
+      // 审批副连接只转发 exec.approval.*（其余都是广播事件，转发 = 每帧两遍）。
+      if (this.approvalChannel && !APPROVAL_CHANNEL_EVENTS.has(eventFrame.event)) {
+        return;
+      }
+
+      const payload = eventFrame.payload as Record<string, unknown>;
+      const sessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey : undefined;
+
+      this.debug('gateway.event.received', {
+        name: eventFrame.event,
+        seq: eventFrame.seq,
+        sessionKey,
+        payload: summarizePayload(payload),
+      });
+
+      this.onEvent?.({
+        gatewayId: this.gatewayId,
+        event: eventFrame.event,
+        payload,
+        seq: eventFrame.seq,
+      });
+      return;
+    }
+
+    if (frame.type === 'res') {
+      this.handleResponse(frame as GatewayResFrame);
+      return;
+    }
+  }
+
+  private handleChallenge(nonce: string): void {
+    this.state = 'authorization_pending';
+    const scopes = [...this.scopes];
+    const signatureToken =
+      this.auth && 'token' in this.auth
+        ? this.auth.token
+        : this.auth && 'bootstrapToken' in this.auth
+          ? this.auth.bootstrapToken
+          : null;
+
+    buildDeviceConnectPayload(this.identity, nonce, signatureToken ?? undefined, {
+      clientId: 'gateway-client',
+      clientMode: 'backend',
+      role: 'operator',
+      scopes,
+      platform: 'pwa',
+      deviceFamily: 'mobile',
+    })
+      .then((device) => {
+        const auth: Record<string, unknown> = this.auth ? { ...this.auth } : {};
+        if (this.deviceToken) {
+          auth.deviceToken = this.deviceToken;
+        }
+
+        const params: GatewayConnectParams = {
+          minProtocol: PWA_MIN_PROTOCOL,
+          maxProtocol: PWA_MAX_PROTOCOL,
+          client: {
+            id: 'gateway-client',
+            // 同一份身份（网关按 connId 排除请求者、不按 client.id 判四选一）；
+            // 后缀只为在网关的客户端列表里分得清。
+            displayName: this.approvalChannel ? 'ClawWork PWA (approvals)' : 'ClawWork PWA',
+            version: __APP_VERSION__,
+            platform: 'pwa',
+            mode: 'backend',
+            deviceFamily: 'mobile',
+          },
+          caps: this.approvalChannel ? ['exec-approvals'] : ['tool-events'],
+          auth: auth as GatewayConnectParams['auth'],
+          role: 'operator',
+          scopes,
+          device,
+        };
+
+        return this.sendReq('connect', params as unknown as Record<string, unknown>, {
+          requestId: 'connect-handshake',
+        });
+      })
+      .then((payload) => {
+        this.handleConnectResponse(payload);
+      })
+      .catch((err: Error & { details?: Record<string, unknown> }) => {
+        this._lastError = err.message;
+        this.debug('gateway.connect.failed', {
+          error: err.message,
+          errorCode: err.details?.code,
+        });
+        this.ws?.close(WS_CLOSE_POLICY_VIOLATION, 'auth failed');
+      });
+  }
+
+  private handleConnectResponse(payload: Record<string, unknown>): void {
+    const pType = payload['type'] as string | undefined;
+    if (pType === 'hello-ok') {
+      // 协议版本低于 4 = 电脑端太旧（方案 v1.1 §6.1）。字段缺失不拦（老网关未必发），
+      // 但只要报出来的版本过旧就必须断开：否则手机会在"以为连上"的状态里发错帧。
+      const negotiated = typeof payload['protocol'] === 'number' ? (payload['protocol'] as number) : undefined;
+      if (negotiated !== undefined && negotiated < PWA_REQUIRED_PROTOCOL) {
+        this._lastError = 'gateway protocol too old';
+        this.debug('gateway.connect.protocol.too-old', { protocol: negotiated });
+        this.ws?.close(WS_CLOSE_POLICY_VIOLATION, 'protocol too old');
+        return;
+      }
+
+      this.state = 'connected';
+      this.reconnectAttempts = 0;
+      this._lastError = undefined;
+
+      const server = payload['server'] as Record<string, unknown> | undefined;
+      const rawVersion = server?.['version'];
+      this._serverVersion = typeof rawVersion === 'string' ? rawVersion : undefined;
+
+      this.debug('gateway.connect.res.ok', {
+        serverVersion: this._serverVersion,
+      });
+
+      const auth = payload['auth'] as Record<string, unknown> | undefined;
+      if (auth) {
+        const token = auth['deviceToken'];
+        if (typeof token === 'string' && token) {
+          const hadDeviceToken = Boolean(this.deviceToken);
+          this.deviceToken = token;
+          this.onTokenUpdate?.(this.gatewayId, token).catch((err: unknown) => {
+            this.debug('gateway.auth.device-token.persist-error', {
+              error: err instanceof Error ? err.message : 'token persistence failed',
+            });
+          });
+          if (!hadDeviceToken) {
+            this.onPairingSuccess?.(this.gatewayId);
+          }
+        }
+      }
+
+      this.startHeartbeat();
+
+      /**
+       * ⚠️ 关键：订阅会话事件。
+       *
+       * 不订阅的话，网关虽然照常执行 `chat.send`，但**不会把 session/delta 推给这条连接** ——
+       * 真机表现就是"消息发出去了，回复永远不出来"（手机端 5 分钟没反应，桌面端正常）。
+       * 桌面壳在连接后第一件事就是发这条（`sessions.subscribe`），PWA 之前漏了。
+       *
+       * 审批副连接跳过：它只收 exec.approval.*，订阅会话是白收一堆被过滤掉的广播帧。
+       */
+      if (!this.approvalChannel) {
+        void this.sendReq('sessions.subscribe', {}, { requestId: 'sessions-subscribe' }).catch((err: unknown) => {
+          this.debug('gateway.sessions.subscribe.failed', {
+            error: err instanceof Error ? err.message : 'subscribe failed',
+          });
+        });
+      }
+
+      this.onStatus?.({
+        gatewayId: this.gatewayId,
+        connected: true,
+        serverVersion: this._serverVersion,
+      });
+    } else {
+      this.debug('gateway.connect.res.unexpected', {
+        payload: summarizePayload(payload),
+      });
+    }
+  }
+
+  private handleResponse(frame: GatewayResFrame): void {
+    const pending = this.pendingRequests.get(frame.id);
+    if (!pending) {
+      this.debug('gateway.res.unmatched', {
+        wsFrameId: frame.id,
+        ok: frame.ok,
+      });
+      return;
+    }
+
+    this.pendingRequests.delete(frame.id);
+    clearTimeout(pending.timer);
+    const durationMs = Date.now() - pending.startedAt;
+
+    if (frame.ok && frame.payload) {
+      this.debug('gateway.res.received', {
+        method: pending.method,
+        requestId: pending.requestId,
+        wsFrameId: frame.id,
+        sessionKey: pending.sessionKey,
+        taskId: pending.taskId,
+        durationMs,
+        ok: true,
+        payload: summarizePayload(frame.payload),
+      });
+      pending.resolve(frame.payload);
+    } else {
+      const errMsg = frame.error?.message ?? 'request failed';
+      this.debug('gateway.res.error', {
+        method: pending.method,
+        requestId: pending.requestId,
+        wsFrameId: frame.id,
+        sessionKey: pending.sessionKey,
+        taskId: pending.taskId,
+        durationMs,
+        ok: false,
+        errorMessage: errMsg,
+        errorCode: frame.error?.code,
+      });
+      const err = new Error(errMsg) as Error & {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      err.code = frame.error?.code;
+      if (frame.error?.details) {
+        err.details = frame.error.details;
+      }
+      pending.reject(err);
+    }
+  }
+
+  private handleClose(code: number, reason: string): void {
+    const error = this._lastError ?? (code === WS_CLOSE_POLICY_VIOLATION ? reason || 'policy violation' : undefined);
+
+    this.debug('gateway.ws.close', {
+      code,
+      reason,
+      pendingRequests: this.pendingRequests.size,
+    });
+
+    this.state = 'disconnected';
+    this._serverVersion = undefined;
+    this.stopHeartbeat();
+
+    this.onStatus?.({
+      gatewayId: this.gatewayId,
+      connected: false,
+      error,
+      reconnectAttempt: this.reconnectAttempts,
+      maxAttempts: MAX_RECONNECT_ATTEMPTS,
+    });
+
+    if (code === WS_CLOSE_POLICY_VIOLATION) return;
+    this.scheduleReconnect();
+  }
+
+  private handleError(err: Event): void {
+    this._lastError = 'WebSocket error';
+    this.debug('gateway.ws.error', {
+      type: err.type,
+    });
+    this.onStatus?.({
+      gatewayId: this.gatewayId,
+      connected: false,
+      error: 'WebSocket error',
+    });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.destroyed) return;
+    // 移动端不放弃：断线后一直按 5 秒重试（原逻辑 10 次后彻底放弃，用户只能杀 App）
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS * 20) {
+      this.debug('gateway.reconnect.give-up', {
+        attempts: this.reconnectAttempts,
+      });
+      this.onStatus?.({
+        gatewayId: this.gatewayId,
+        connected: false,
+        error: 'max reconnect attempts',
+        reconnectAttempt: this.reconnectAttempts,
+        maxAttempts: MAX_RECONNECT_ATTEMPTS,
+        gaveUp: true,
+      });
+      return;
+    }
+
+    /*
+     * ⚠️ 移动端退避必须短：原先是 1s/2s/4s/8s/16s/32s 指数退避，一次弱网抖动
+     *    （切后台、Wi-Fi/4G 切换、隧道空闲断开）就能让用户干等 30 秒以上 ——
+     *    真机现象就是"发了消息，半分钟才出字"。
+     *    现在：首次 300ms 立刻重连，之后最多 5 秒一次，且永不放弃（见下面 MAX 判断）。
+     */
+    const delay =
+      this.reconnectAttempts === 0
+        ? 300
+        : Math.min(500 * Math.pow(2, Math.min(this.reconnectAttempts, 4)), 5_000);
+    this.reconnectAttempts++;
+
+    this.debug('gateway.reconnect.scheduled', {
+      attempt: this.reconnectAttempts,
+      delay,
+    });
+
+    this.reconnectTimer = setTimeout(() => {
+      this.connect();
+    }, delay);
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.sendReq(
+          'health',
+          {},
+          {
+            requestId: `heartbeat-${Date.now()}`,
+          },
+        ).catch((err: unknown) => {
+          this.debug('gateway.heartbeat.failed', {
+            error: err instanceof Error ? err.message : 'heartbeat failed',
+          });
+        });
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private cleanup(): void {
+    this.stopHeartbeat();
+    this.connectNonce = '';
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    for (const [id, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
+      this.debug('gateway.req.cancelled.connection-closed', {
+        method: pending.method,
+        requestId: pending.requestId,
+        wsFrameId: id,
+        sessionKey: pending.sessionKey,
+        taskId: pending.taskId,
+      });
+      const closeErr = new Error('connection closed') as Error & {
+        code?: string;
+      };
+      closeErr.code = 'GATEWAY_CONNECTION_CLOSED';
+      pending.reject(closeErr);
+    }
+    this.pendingRequests.clear();
+
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      try {
+        if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.close();
+        }
+      } catch {
+        /* noop */
+      }
+      this.ws = null;
+    }
+
+    this.state = 'disconnected';
+  }
+
+  private debug(event: string, data?: Record<string, unknown>): void {
+    this.reportDebugEvent?.({
+      domain: 'gateway',
+      event,
+      gatewayId: this.gatewayId,
+      data,
+    });
+  }
+
+  private nextReqId(): string {
+    this.reqCounter++;
+    return `pwa-${this.reqCounter}-${Date.now().toString(36)}`;
+  }
+}

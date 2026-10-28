@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "license": "SIL-OFL-1.1",
+  "static": true,
+  "embedded": false,
+  "files": [
+    {
+      "file": "LICENSE.txt",
+      "source": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2/LICENSE.txt",
+      "commit": "a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2",
+      "bytes": 4463,
+      "gitBlob": "3ff0ccaba06857bf292ade9a50f16a0f02b3b8d4",
+      "sha256": "fcac737e761ec63dbfbdce11030a1780161920d80315edba9c8beff1c2bac5a2"
+    },
+    {
+      "file": "SourceHanSansSC-Bold.otf",
+      "source": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2/OTF/SimplifiedChinese/SourceHanSansSC-Bold.otf",
+      "commit": "a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2",
+      "bytes": 16963428,
+      "gitBlob": "3b33e77fce75424e20c90eb2feaa489e38ebe9d7",
+      "sha256": "df2b90f5bcc6d01dfc964cec5f6d535d6b6aebd26ed7fd79a9c1b3f2112fcb6b"
+    },
+    {
+      "file": "SourceHanSansSC-Regular.otf",
+      "source": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf",
+      "commit": "a4f7cf94edfb9d7ffbdfc4841de276358bd7e0f2",
+      "bytes": 16529832,
+      "gitBlob": "8113ad53da18b6a08b133c6c460ae1d818a0f865",
+      "sha256": "f1d8611151880c6c336aabeac4640ef434fa13cbfbf1ffe82d0a71b2a5637256"
+    }
+  ]
+}

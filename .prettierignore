@@ -1,0 +1,20 @@
+dist/
+out/
+coverage/
+artifacts/
+.claude/
+.codex/
+.serena/
+.opencode/
+pnpm-lock.yaml
+keynote/slides*.md
+*.db
+playwright-report/
+test-results/
+findings.md
+progress.md
+task_plan.md
+
+# User supplied slot-contract assets are byte-preserved and checked by SHA.
+packages/desktop/resources/pptx-templates/native-deck/detail.json
+packages/desktop/resources/pptx-templates/native-deck/content.example.json

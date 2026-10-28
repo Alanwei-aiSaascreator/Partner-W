@@ -1,0 +1,2719 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Partner-W · 登录到工作台交互预览</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --brand-deep: #090711;
+        --nav: #13131c;
+        --nav-raised: #1a1a25;
+        --paper: #ffffff;
+        --canvas: #f4f3ef;
+        --ink: #16131d;
+        --muted: #625d69;
+        --subtle: #777281;
+        --line: #e1dee5;
+        --line-strong: #cbc6d0;
+        --purple: #8d28df;
+        --pink: #e11a72;
+        --red: #ff3658;
+        --orange: #ff7a34;
+        --accent: #e11a72;
+        --accent-soft: #fff0f6;
+        --success: #168657;
+        --warning: #b96812;
+        --danger: #c83f50;
+        --brand-gradient: linear-gradient(96deg, #a319ba 0%, #e3197d 34%, #ff3658 66%, #ff7d34 100%);
+        --focus-ring: 0 0 0 3px rgb(225 26 114 / 18%);
+        --shadow: 0 8px 24px rgb(22 19 29 / 10%);
+        --z-float: 20;
+        --z-toast: 40;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        overflow-x: hidden;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          'PingFang SC',
+          'Microsoft YaHei',
+          sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible {
+        outline: none;
+        box-shadow: var(--focus-ring);
+      }
+
+      button:disabled,
+      input:disabled,
+      textarea:disabled {
+        cursor: not-allowed;
+        opacity: 0.58;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1,
+      h2,
+      h3 {
+        letter-spacing: -0.025em;
+        text-wrap: balance;
+      }
+
+      p {
+        text-wrap: pretty;
+      }
+
+      .screen {
+        display: none;
+        min-height: 100vh;
+      }
+
+      .screen.is-active {
+        display: flex;
+      }
+
+      .prototype-badge {
+        position: fixed;
+        z-index: var(--z-float);
+        right: 18px;
+        bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 32px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgb(19 19 28 / 90%);
+        color: #f5f3f6;
+        font-size: 12px;
+        box-shadow: var(--shadow);
+      }
+
+      .prototype-badge::before {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #35d394;
+        content: '';
+      }
+
+      .flow-jump {
+        position: fixed;
+        z-index: var(--z-float);
+        left: 18px;
+        bottom: 16px;
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 94%);
+        box-shadow: 0 4px 12px rgb(22 19 29 / 8%);
+      }
+
+      .flow-jump button {
+        min-width: 34px;
+        height: 28px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .flow-jump button:hover,
+      .flow-jump button.is-current {
+        background: var(--nav);
+        color: #fff;
+      }
+
+      .btn {
+        display: inline-flex;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 18px;
+        border: 0;
+        border-radius: 8px;
+        font-weight: 650;
+        transition:
+          transform 160ms cubic-bezier(0.16, 1, 0.3, 1),
+          filter 160ms ease,
+          background 160ms ease;
+      }
+
+      .btn:hover:not(:disabled) {
+        transform: translateY(-1px);
+        filter: brightness(1.03);
+      }
+
+      .btn-primary {
+        background: var(--brand-gradient);
+        color: #fff;
+      }
+
+      .btn-dark {
+        background: var(--nav);
+        color: #fff;
+      }
+
+      .btn-secondary {
+        border: 1px solid var(--line-strong);
+        background: var(--paper);
+        color: var(--ink);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .btn-small {
+        min-height: 32px;
+        padding: 0 12px;
+        font-size: 12px;
+      }
+
+      .auth-shell {
+        width: 100%;
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(460px, 44%) 1fr;
+        background: var(--paper);
+      }
+
+      .brand-panel {
+        position: relative;
+        min-height: 100vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        padding: 30px 52px 22px;
+        background: var(--brand-deep);
+        color: #fff;
+      }
+
+      .brand-panel::after {
+        position: absolute;
+        right: -12%;
+        bottom: 6%;
+        width: 58%;
+        height: 1px;
+        background: var(--brand-gradient);
+        box-shadow:
+          0 -110px 0 rgb(225 26 114 / 20%),
+          0 -220px 0 rgb(141 40 223 / 14%);
+        content: '';
+        transform: rotate(-18deg);
+      }
+
+      .brand-top,
+      .form-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+      }
+
+      .brand-mark {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border-radius: 10px;
+        background: var(--brand-gradient);
+        color: #fff;
+        font-size: 18px;
+      }
+
+      .brand-lockup strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .brand-lockup small {
+        color: #aaa4b3;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+      }
+
+      .device-state {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #c7c2ce;
+        font-size: 12px;
+      }
+
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #35d394;
+        box-shadow: 0 0 0 4px rgb(53 211 148 / 10%);
+      }
+
+      .brand-copy {
+        position: relative;
+        z-index: 1;
+        max-width: 600px;
+        margin-top: 7vh;
+      }
+
+      .brand-copy .kicker {
+        margin-bottom: 16px;
+        color: #ff8a5b;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+      }
+
+      .brand-copy h1 {
+        max-width: 570px;
+        margin-bottom: 18px;
+        font-size: clamp(38px, 4.2vw, 66px);
+        line-height: 1.08;
+        letter-spacing: -0.038em;
+      }
+
+      .brand-copy h1 span {
+        display: block;
+        margin-top: 5px;
+        color: #ff4d70;
+      }
+
+      .brand-copy > p {
+        max-width: 56ch;
+        color: #bdb7c5;
+        font-size: 15px;
+        line-height: 1.75;
+      }
+
+      .trust-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 24px;
+      }
+
+      .trust-list span {
+        padding: 7px 11px;
+        border: 1px solid #34293b;
+        border-radius: 999px;
+        color: #d1ccd7;
+        font-size: 11px;
+      }
+
+      .mascot-stage {
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        min-height: 250px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+      }
+
+      .mascot-stage::after {
+        position: absolute;
+        bottom: 10px;
+        width: 260px;
+        height: 44px;
+        border-radius: 50%;
+        background: rgb(225 26 114 / 15%);
+        filter: blur(18px);
+        content: '';
+      }
+
+      .mascot {
+        position: relative;
+        z-index: 1;
+        width: min(310px, 72%);
+        overflow: visible;
+        filter: drop-shadow(0 18px 20px rgb(0 0 0 / 30%));
+      }
+
+      #character,
+      .mascot-arm,
+      .cover-hand,
+      .face-eye,
+      .pupil {
+        transform-box: fill-box;
+        transform-origin: center;
+        transition:
+          transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+          opacity 150ms ease;
+      }
+
+      .cover-hand {
+        opacity: 0;
+      }
+
+      #cover-left {
+        transform: translate(-35px, 62px) rotate(-38deg) scale(0.6);
+      }
+
+      #cover-right {
+        transform: translate(35px, 62px) rotate(38deg) scale(0.6);
+      }
+
+      .mascot.mode-phone #character {
+        transform: translate(8px, -2px) rotate(1deg);
+      }
+
+      .mascot.mode-code .face-eye {
+        opacity: 0.08;
+      }
+
+      .mascot.mode-code #cover-left,
+      .mascot.mode-code #cover-right {
+        opacity: 1;
+        transform: translate(0, 0) rotate(0) scale(1);
+      }
+
+      .mascot.is-blinking .face-eye {
+        transform: scaleY(0.08);
+      }
+
+      .mascot.is-happy #character {
+        transform: translateY(-8px);
+      }
+
+      .mascot-caption {
+        position: absolute;
+        z-index: 2;
+        right: 10%;
+        bottom: 38%;
+        max-width: 180px;
+        padding: 8px 11px;
+        border-radius: 9px;
+        background: #fff;
+        color: #342c3a;
+        font-size: 11px;
+        box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+      }
+
+      .brand-foot {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 15px;
+        border-top: 1px solid #29222f;
+        color: #918a9c;
+        font-size: 10px;
+      }
+
+      .form-panel {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 28px 48px;
+        background: #fbfaf9;
+      }
+
+      .form-top {
+        color: var(--subtle);
+        font-size: 12px;
+      }
+
+      .security-note {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .form-wrap {
+        width: min(100%, 470px);
+        margin: auto;
+        padding: 42px 0 64px;
+      }
+
+      .form-icon {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        margin-bottom: 22px;
+        border: 1px solid #f0a6c7;
+        border-radius: 12px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 20px;
+      }
+
+      .form-wrap h2 {
+        margin-bottom: 8px;
+        font-size: 26px;
+        line-height: 1.25;
+      }
+
+      .form-lead {
+        margin-bottom: 28px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .field-group {
+        margin-bottom: 16px;
+      }
+
+      .field-label {
+        display: block;
+        margin-bottom: 7px;
+        color: #49434e;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .field {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: #fff;
+        transition:
+          border-color 150ms ease,
+          box-shadow 150ms ease;
+      }
+
+      .field:focus-within {
+        border-color: var(--accent);
+        box-shadow: var(--focus-ring);
+      }
+
+      .field-prefix {
+        flex: 0 0 auto;
+        padding: 0 13px 0 15px;
+        border-right: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      .field input {
+        min-width: 0;
+        flex: 1;
+        height: 46px;
+        border: 0;
+        outline: 0;
+        padding: 0 14px;
+        background: transparent;
+        color: var(--ink);
+      }
+
+      .field input::placeholder,
+      textarea::placeholder {
+        color: #706a76;
+        opacity: 1;
+      }
+
+      .field .inline-button {
+        height: 32px;
+        margin-right: 7px;
+        padding: 0 11px;
+        border: 0;
+        border-radius: 7px;
+        background: #f2eff3;
+        color: #4d4652;
+        font-size: 12px;
+      }
+
+      .helper-row {
+        min-height: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 7px;
+        color: var(--subtle);
+        font-size: 12px;
+      }
+
+      .helper-row .demo-code {
+        color: var(--accent);
+        font-weight: 650;
+      }
+
+      .form-error {
+        min-height: 20px;
+        margin: 4px 0 8px;
+        color: var(--danger);
+        font-size: 12px;
+      }
+
+      .agreement {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        margin: 20px 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .agreement input {
+        width: 16px;
+        height: 16px;
+        margin-top: 1px;
+        accent-color: var(--accent);
+      }
+
+      .agreement a {
+        color: var(--ink);
+      }
+
+      .full-width {
+        width: 100%;
+      }
+
+      .form-foot {
+        display: flex;
+        justify-content: center;
+        gap: 24px;
+        color: var(--subtle);
+        font-size: 11px;
+      }
+
+      .guided-shell {
+        width: 100%;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--canvas);
+      }
+
+      .guided-top {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 34px;
+        border-bottom: 1px solid var(--line);
+        background: #fff;
+      }
+
+      .guided-progress {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .guided-progress span {
+        width: 34px;
+        height: 4px;
+        border-radius: 999px;
+        background: #dedbe2;
+      }
+
+      .guided-progress span.is-done,
+      .guided-progress span.is-active {
+        background: var(--brand-gradient);
+      }
+
+      .guided-progress em {
+        margin-left: 5px;
+        color: var(--muted);
+        font-size: 12px;
+        font-style: normal;
+      }
+
+      .guided-body {
+        width: min(1120px, calc(100% - 48px));
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 44px;
+        align-items: center;
+        margin: 0 auto;
+        padding: 42px 0 70px;
+      }
+
+      .guided-content {
+        max-width: 760px;
+      }
+
+      .step-label {
+        margin-bottom: 10px;
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .guided-content h2 {
+        margin-bottom: 10px;
+        font-size: 30px;
+      }
+
+      .guided-content > p {
+        max-width: 60ch;
+        margin-bottom: 28px;
+        color: var(--muted);
+      }
+
+      .purpose-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .purpose-option {
+        min-height: 76px;
+        display: grid;
+        grid-template-columns: 38px 1fr 20px;
+        gap: 12px;
+        align-items: center;
+        padding: 13px 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--ink);
+        text-align: left;
+        transition:
+          border-color 150ms ease,
+          background 150ms ease,
+          transform 150ms ease;
+      }
+
+      .purpose-option:hover {
+        transform: translateY(-1px);
+        border-color: #d8aac0;
+      }
+
+      .purpose-option.is-selected {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .purpose-icon {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border-radius: 10px;
+        background: #f2eff3;
+        color: #4d4652;
+        font-size: 17px;
+      }
+
+      .purpose-option.is-selected .purpose-icon {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .purpose-option strong,
+      .purpose-option small {
+        display: block;
+      }
+
+      .purpose-option strong {
+        margin-bottom: 2px;
+        font-size: 14px;
+      }
+
+      .purpose-option small {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .purpose-check {
+        color: transparent;
+        font-weight: 800;
+      }
+
+      .purpose-option.is-selected .purpose-check {
+        color: var(--accent);
+      }
+
+      .guided-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 24px;
+      }
+
+      .recommendation {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .guide-mascot {
+        align-self: stretch;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        border-radius: 16px;
+        background: var(--nav);
+        color: #fff;
+      }
+
+      .guide-mascot .mascot {
+        width: 210px;
+      }
+
+      .guide-mascot p {
+        max-width: 22ch;
+        margin: 4px 24px 24px;
+        color: #c8c2ce;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .activation-box {
+        max-width: 650px;
+        padding: 26px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+      }
+
+      .activation-summary {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        margin: 20px 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--line);
+      }
+
+      .activation-summary div {
+        padding: 14px;
+        background: #faf9f8;
+      }
+
+      .activation-summary span,
+      .activation-summary strong {
+        display: block;
+      }
+
+      .activation-summary span {
+        color: var(--subtle);
+        font-size: 11px;
+      }
+
+      .activation-summary strong {
+        margin-top: 4px;
+      }
+
+      .workspace-shell {
+        width: 100%;
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 68px 242px minmax(0, 1fr);
+        background: var(--canvas);
+      }
+
+      .primary-nav {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 16px 9px;
+        background: var(--nav);
+        color: #d9d5dd;
+      }
+
+      .nav-logo {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        margin-bottom: 16px;
+        border-radius: 11px;
+        background: var(--brand-gradient);
+        color: #fff;
+        font-weight: 800;
+      }
+
+      .nav-button {
+        width: 48px;
+        min-height: 48px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #aaa4b2;
+        font-size: 10px;
+      }
+
+      .nav-button b {
+        font-size: 17px;
+        line-height: 1;
+      }
+
+      .nav-button:hover,
+      .nav-button.is-active {
+        background: #272733;
+        color: #fff;
+      }
+
+      .nav-spacer {
+        flex: 1;
+      }
+
+      .assistant-rail {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: #fbfaf7;
+      }
+
+      .rail-head {
+        height: 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .rail-head strong {
+        font-size: 15px;
+      }
+
+      .rail-search {
+        margin: 14px 12px 8px;
+      }
+
+      .rail-search input {
+        width: 100%;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0 10px;
+        background: #fff;
+        color: var(--ink);
+      }
+
+      .assistant-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        padding: 4px 8px;
+      }
+
+      .assistant-item {
+        min-height: 48px;
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr) 8px;
+        gap: 9px;
+        align-items: center;
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink);
+        text-align: left;
+      }
+
+      .assistant-item:hover,
+      .assistant-item.is-active {
+        background: #eceaee;
+      }
+
+      .assistant-avatar {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: #e8e5ea;
+        color: #403946;
+      }
+
+      .assistant-item.is-active .assistant-avatar {
+        background: var(--nav);
+        color: #fff;
+      }
+
+      .assistant-item strong,
+      .assistant-item small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .assistant-item strong {
+        font-size: 13px;
+      }
+
+      .assistant-item small {
+        color: var(--subtle);
+        font-size: 10px;
+      }
+
+      .assistant-state {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #b3aeb7;
+      }
+
+      .assistant-item.is-active .assistant-state {
+        background: #35b878;
+      }
+
+      .rail-foot {
+        margin-top: auto;
+        padding: 14px 16px 54px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .workspace-content {
+        min-width: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .workspace-topbar {
+        height: 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line);
+        background: rgb(255 255 255 / 88%);
+      }
+
+      .workspace-title {
+        min-width: 0;
+      }
+
+      .workspace-title strong,
+      .workspace-title small {
+        display: block;
+      }
+
+      .workspace-title strong {
+        font-size: 14px;
+      }
+
+      .workspace-title small {
+        color: var(--subtle);
+        font-size: 10px;
+      }
+
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .balance-chip,
+      .model-chip {
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: #39333d;
+        font-size: 12px;
+      }
+
+      .balance-chip strong {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .workspace-body {
+        min-height: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: auto;
+      }
+
+      .readiness-layout {
+        width: min(900px, calc(100% - 56px));
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 220px;
+        gap: 24px;
+        align-items: center;
+        margin: 0 auto;
+        padding: 30px 0 24px;
+      }
+
+      .readiness-card {
+        padding: 30px;
+        border-radius: 14px;
+        background: #fff;
+        box-shadow: var(--shadow);
+      }
+
+      .readiness-card .status-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .readiness-card h2 {
+        margin-bottom: 10px;
+        font-size: 25px;
+      }
+
+      .readiness-card > p {
+        max-width: 62ch;
+        color: var(--muted);
+      }
+
+      .readiness-track {
+        height: 9px;
+        overflow: hidden;
+        margin: 24px 0 10px;
+        border-radius: 999px;
+        background: #ece9ee;
+      }
+
+      .readiness-bar {
+        width: 8%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--brand-gradient);
+        transition: width 520ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .readiness-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 12px;
+      }
+
+      .readiness-meta span:first-child {
+        color: var(--muted);
+      }
+
+      .readiness-steps {
+        display: grid;
+        gap: 8px;
+        margin-top: 24px;
+      }
+
+      .readiness-step {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--subtle);
+        font-size: 12px;
+      }
+
+      .readiness-step i {
+        width: 18px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line-strong);
+        border-radius: 50%;
+        font-size: 10px;
+        font-style: normal;
+      }
+
+      .readiness-step.is-done {
+        color: var(--success);
+      }
+
+      .readiness-step.is-current {
+        color: var(--ink);
+        font-weight: 650;
+      }
+
+      .readiness-step.is-done i,
+      .readiness-step.is-current i {
+        border-color: currentColor;
+      }
+
+      .timeout-panel {
+        margin-top: 22px;
+        padding: 14px;
+        border-radius: 10px;
+        background: #fff7ec;
+        color: #65421c;
+        font-size: 12px;
+      }
+
+      .timeout-panel[hidden] {
+        display: none;
+      }
+
+      .timeout-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .loading-mascot {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .loading-mascot .mascot {
+        width: 190px;
+      }
+
+      .loading-mascot p {
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .demo-controls {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 20px 16px;
+      }
+
+      .disabled-composer,
+      .composer {
+        width: min(900px, calc(100% - 56px));
+        margin: 0 auto 52px;
+        border-radius: 16px;
+        background: #fff;
+      }
+
+      .disabled-composer {
+        padding: 16px 18px;
+        color: var(--subtle);
+        box-shadow: 0 4px 12px rgb(22 19 29 / 7%);
+      }
+
+      .assistant-welcome {
+        width: min(920px, calc(100% - 52px));
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin: 0 auto;
+        padding: 34px 0 20px;
+      }
+
+      .assistant-symbol {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        margin-bottom: 16px;
+        border-radius: 11px;
+        background: var(--nav);
+        color: #fff;
+        font-size: 18px;
+      }
+
+      .assistant-welcome h2 {
+        margin-bottom: 8px;
+        font-size: 28px;
+      }
+
+      .assistant-description {
+        max-width: 62ch;
+        margin-bottom: 24px;
+        color: var(--muted);
+      }
+
+      .prompt-label {
+        margin-bottom: 9px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .prompt-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 9px;
+      }
+
+      .prompt-button {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: #fff;
+        color: var(--ink);
+        text-align: left;
+      }
+
+      .prompt-button:hover {
+        border-color: #d3a4ba;
+        background: #fff8fb;
+      }
+
+      .task-thread {
+        width: min(900px, calc(100% - 56px));
+        margin: 0 auto;
+        padding: 26px 0 12px;
+      }
+
+      .user-bubble {
+        width: fit-content;
+        max-width: 70%;
+        margin-left: auto;
+        padding: 11px 14px;
+        border-radius: 12px 12px 3px 12px;
+        background: var(--nav);
+        color: #fff;
+      }
+
+      .assistant-response {
+        margin-top: 22px;
+      }
+
+      .response-head {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .response-head b {
+        color: var(--ink);
+      }
+
+      .tool-activity {
+        margin-bottom: 14px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+      }
+
+      .tool-activity summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 11px 13px;
+        cursor: pointer;
+        color: #48414d;
+        font-size: 12px;
+        list-style: none;
+      }
+
+      .tool-activity summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .tool-detail {
+        display: grid;
+        gap: 7px;
+        padding: 0 13px 12px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .result-content {
+        max-width: 72ch;
+        color: #312b34;
+        line-height: 1.75;
+      }
+
+      .result-content h3 {
+        margin: 20px 0 8px;
+        font-size: 16px;
+      }
+
+      .result-content ul {
+        padding-left: 20px;
+      }
+
+      .artifact-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 18px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+      }
+
+      .artifact-row strong,
+      .artifact-row small {
+        display: block;
+      }
+
+      .artifact-row small {
+        color: var(--muted);
+      }
+
+      .cost-row {
+        display: flex;
+        gap: 16px;
+        margin-top: 12px;
+        color: var(--subtle);
+        font-size: 11px;
+      }
+
+      .composer {
+        padding: 12px;
+        box-shadow: var(--shadow);
+      }
+
+      .composer textarea {
+        width: 100%;
+        min-height: 72px;
+        resize: none;
+        border: 0;
+        outline: 0;
+        padding: 4px 6px 8px;
+        background: transparent;
+        color: var(--ink);
+      }
+
+      .composer-tools {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .composer-tools select,
+      .composer-tools button {
+        height: 32px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0 10px;
+        background: #fff;
+        color: #39333e;
+        font-size: 12px;
+      }
+
+      .composer-tools .send-button {
+        width: 34px;
+        margin-left: auto;
+        border: 0;
+        background: var(--nav);
+        color: #fff;
+        font-size: 16px;
+      }
+
+      .usage-layout {
+        width: min(1040px, calc(100% - 56px));
+        margin: 0 auto;
+        padding: 34px 0 72px;
+      }
+
+      .usage-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 26px;
+      }
+
+      .usage-heading h2 {
+        margin-bottom: 5px;
+        font-size: 26px;
+      }
+
+      .usage-heading p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .usage-overview {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 16px;
+      }
+
+      .usage-main,
+      .usage-side {
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .remaining-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .remaining-number {
+        margin: 7px 0 18px;
+        font-size: 36px;
+        font-weight: 750;
+        letter-spacing: -0.035em;
+      }
+
+      .remaining-number small {
+        margin-left: 5px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 500;
+      }
+
+      .quota-track {
+        height: 10px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #ece9ee;
+      }
+
+      .quota-bar {
+        width: 83.37%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--brand-gradient);
+      }
+
+      .quota-caption {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        margin-top: 9px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .usage-side dl {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px 20px;
+        margin: 0;
+      }
+
+      .usage-side dt {
+        color: var(--muted);
+      }
+
+      .usage-side dd {
+        margin: 0;
+        font-weight: 650;
+      }
+
+      .ledger {
+        margin-top: 18px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+      }
+
+      .ledger-title {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        font-weight: 650;
+      }
+
+      .ledger table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      .ledger th,
+      .ledger td {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+      }
+
+      .ledger th {
+        background: #faf9f8;
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .ledger tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .usage-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 9px;
+        margin-top: 20px;
+      }
+
+      .toast {
+        position: fixed;
+        z-index: var(--z-toast);
+        top: 18px;
+        left: 50%;
+        min-width: 260px;
+        padding: 11px 14px;
+        border-radius: 9px;
+        background: var(--nav);
+        color: #fff;
+        font-size: 12px;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -10px);
+        transition:
+          opacity 180ms ease,
+          transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .toast.is-visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+
+      @media (max-width: 980px) {
+        .auth-shell {
+          grid-template-columns: 40% 1fr;
+        }
+
+        .brand-panel {
+          padding: 24px 28px 20px;
+        }
+
+        .brand-copy h1 {
+          font-size: 42px;
+        }
+
+        .brand-copy > p,
+        .trust-list {
+          display: none;
+        }
+
+        .form-panel {
+          padding: 24px 32px;
+        }
+
+        .guided-body {
+          grid-template-columns: minmax(0, 1fr) 220px;
+          gap: 24px;
+        }
+
+        .workspace-shell {
+          grid-template-columns: 58px 210px minmax(0, 1fr);
+        }
+
+        .readiness-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .loading-mascot {
+          display: none;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .flow-jump,
+        .prototype-badge {
+          display: none;
+        }
+
+        .auth-shell {
+          display: block;
+        }
+
+        .brand-panel {
+          min-height: 300px;
+        }
+
+        .brand-copy {
+          margin-top: 42px;
+        }
+
+        .mascot-stage,
+        .brand-foot {
+          display: none;
+        }
+
+        .form-panel {
+          min-height: auto;
+        }
+
+        .guided-body {
+          grid-template-columns: 1fr;
+        }
+
+        .guide-mascot {
+          display: none;
+        }
+
+        .purpose-list,
+        .prompt-list,
+        .usage-overview {
+          grid-template-columns: 1fr;
+        }
+
+        .workspace-shell {
+          grid-template-columns: 56px minmax(0, 1fr);
+        }
+
+        .assistant-rail {
+          display: none;
+        }
+
+        .workspace-topbar {
+          padding: 0 12px;
+        }
+
+        .top-actions .model-chip {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="prototype-badge">交互设计预览 · 数据均为模拟</div>
+    <div class="flow-jump" aria-label="原型页面快速跳转">
+      <button type="button" data-jump="login" title="登录">1</button>
+      <button type="button" data-jump="purpose" title="使用目的">2</button>
+      <button type="button" data-jump="activation" title="激活">3</button>
+      <button type="button" data-jump="workspace" title="准备服务">4</button>
+      <button type="button" data-jump="assistant" title="正式工作台">5</button>
+      <button type="button" data-jump="usage" title="剩余额度">6</button>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <main id="app">
+      <section class="screen is-active" id="screen-login" aria-labelledby="login-title">
+        <div class="auth-shell">
+          <aside class="brand-panel">
+            <div class="brand-top">
+              <div class="brand-lockup">
+                <span class="brand-mark">◇</span>
+                <div><strong>Partner-W</strong><small>PORTABLE AI WORKSPACE</small></div>
+              </div>
+              <div class="device-state"><i class="status-dot"></i>设备服务正常</div>
+            </div>
+
+            <div class="brand-copy">
+              <div class="kicker">ROYIN MAGIC CUBE · AI U-DISK</div>
+              <h1>让 AI 随身<span>插入设备，继续工作</span></h1>
+              <p>完成手机号验证后，进入你的 AI 工作台。选择要做的事，Partner-W会准备合适的助手和模型。</p>
+              <div class="trust-list">
+                <span>插入即用</span><span>本机工作</span><span>账号权益同步</span><span>端侧数据保护</span>
+              </div>
+            </div>
+
+            <div class="mascot-stage">
+              <svg class="mascot" id="mascot" viewBox="0 0 360 300" role="img" aria-label="Partner-W品牌角色">
+                <defs>
+                  <linearGradient id="mascot-edge" x1="0" y1="0" x2="1" y2="1">
+                    <stop stop-color="#8d28df" />
+                    <stop offset="0.52" stop-color="#ff3658" />
+                    <stop offset="1" stop-color="#ff7a34" />
+                  </linearGradient>
+                  <linearGradient id="mascot-hand" x1="0" y1="0" x2="1" y2="1">
+                    <stop stop-color="#ff9874" />
+                    <stop offset="1" stop-color="#ff4a6b" />
+                  </linearGradient>
+                </defs>
+                <g id="character">
+                  <path d="M180 25v30" stroke="#ff7a34" stroke-width="7" stroke-linecap="round" />
+                  <circle cx="180" cy="22" r="10" fill="#ff3658" />
+                  <rect
+                    x="84"
+                    y="55"
+                    width="192"
+                    height="208"
+                    rx="58"
+                    fill="#251634"
+                    stroke="url(#mascot-edge)"
+                    stroke-width="4"
+                  />
+                  <path d="M112 95h136" stroke="#463153" stroke-width="2" />
+                  <text
+                    x="180"
+                    y="87"
+                    fill="#9b8aa8"
+                    font-size="11"
+                    font-weight="700"
+                    text-anchor="middle"
+                    letter-spacing="2"
+                  >
+                    ROYIN
+                  </text>
+                  <g class="face-eye" id="eye-left">
+                    <ellipse cx="144" cy="150" rx="24" ry="28" fill="#fff" />
+                    <circle class="pupil" id="pupil-left" cx="144" cy="151" r="10" fill="#17101e" />
+                    <circle cx="140" cy="146" r="3" fill="#fff" />
+                  </g>
+                  <g class="face-eye" id="eye-right">
+                    <ellipse cx="216" cy="150" rx="24" ry="28" fill="#fff" />
+                    <circle class="pupil" id="pupil-right" cx="216" cy="151" r="10" fill="#17101e" />
+                    <circle cx="212" cy="146" r="3" fill="#fff" />
+                  </g>
+                  <ellipse cx="117" cy="196" rx="18" ry="8" fill="#e11a72" opacity="0.45" />
+                  <ellipse cx="243" cy="196" rx="18" ry="8" fill="#ff7a34" opacity="0.42" />
+                  <path d="M164 196q16 15 32 0" fill="none" stroke="#ff9874" stroke-width="5" stroke-linecap="round" />
+                  <g class="mascot-arm" id="arm-left">
+                    <path
+                      d="M102 205c-38 4-43 38-21 51"
+                      fill="none"
+                      stroke="#352243"
+                      stroke-width="18"
+                      stroke-linecap="round"
+                    />
+                    <circle cx="82" cy="255" r="14" fill="url(#mascot-hand)" />
+                  </g>
+                  <g class="mascot-arm" id="arm-right">
+                    <path
+                      d="M258 205c38 4 43 38 21 51"
+                      fill="none"
+                      stroke="#352243"
+                      stroke-width="18"
+                      stroke-linecap="round"
+                    />
+                    <circle cx="278" cy="255" r="14" fill="url(#mascot-hand)" />
+                  </g>
+                  <g class="cover-hand" id="cover-left">
+                    <ellipse cx="143" cy="151" rx="32" ry="28" fill="#352243" />
+                    <ellipse cx="143" cy="151" rx="16" ry="13" fill="url(#mascot-hand)" />
+                    <circle cx="131" cy="139" r="5" fill="#ff8a78" />
+                    <circle cx="143" cy="134" r="5" fill="#ff8a78" />
+                    <circle cx="155" cy="139" r="5" fill="#ff8a78" />
+                  </g>
+                  <g class="cover-hand" id="cover-right">
+                    <ellipse cx="217" cy="151" rx="32" ry="28" fill="#352243" />
+                    <ellipse cx="217" cy="151" rx="16" ry="13" fill="url(#mascot-hand)" />
+                    <circle cx="205" cy="139" r="5" fill="#ff8a78" />
+                    <circle cx="217" cy="134" r="5" fill="#ff8a78" />
+                    <circle cx="229" cy="139" r="5" fill="#ff8a78" />
+                  </g>
+                </g>
+              </svg>
+              <span class="mascot-caption" id="mascot-caption">我会陪你完成首次设置</span>
+            </div>
+
+            <div class="brand-foot"><span>AI U盘已就绪 · 等待验证</span><span>连接 · 创作 · 完成</span></div>
+          </aside>
+
+          <div class="form-panel">
+            <div class="form-top"><span>首次使用约 2 分钟</span><span class="security-note">♢ 安全验证</span></div>
+            <form class="form-wrap" id="login-form" novalidate>
+              <div class="form-icon">♙</div>
+              <h2 id="login-title">登录Partner-W</h2>
+              <p class="form-lead">验证手机号，连接你的 AI 工作台</p>
+
+              <div class="field-group">
+                <label class="field-label" for="login-phone">手机号码</label>
+                <div class="field">
+                  <span class="field-prefix">+86</span
+                  ><input
+                    id="login-phone"
+                    type="tel"
+                    inputmode="numeric"
+                    maxlength="11"
+                    autocomplete="tel"
+                    placeholder="输入 11 位手机号"
+                  />
+                </div>
+              </div>
+
+              <div class="field-group">
+                <label class="field-label" for="login-code">短信验证码</label>
+                <div class="field">
+                  <input
+                    id="login-code"
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="6"
+                    autocomplete="one-time-code"
+                    placeholder="输入 6 位验证码"
+                  /><button class="inline-button" id="send-code" type="button">获取验证码</button>
+                </div>
+                <div class="helper-row">
+                  <span>手机号仅用于登录与权益同步</span><span class="demo-code" id="demo-code-hint"></span>
+                </div>
+              </div>
+
+              <div class="form-error" id="login-error" role="alert"></div>
+              <label class="agreement"
+                ><input id="login-agreement" type="checkbox" /><span
+                  >我已阅读并同意 <a href="#">服务条款</a> 与 <a href="#">隐私政策</a></span
+                ></label
+              >
+              <button class="btn btn-primary full-width" type="submit">
+                登录并继续 <span aria-hidden="true">→</span>
+              </button>
+            </form>
+            <div class="form-foot"><span>端侧数据保护</span><span>账号权益同步</span><span>随时退出登录</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-purpose" aria-labelledby="purpose-title">
+        <div class="guided-shell">
+          <header class="guided-top">
+            <div class="brand-lockup">
+              <span class="brand-mark">◇</span>
+              <div><strong>Partner-W</strong><small>首次设置</small></div>
+            </div>
+            <div class="guided-progress">
+              <span class="is-done"></span><span class="is-active"></span><span></span><em>步骤 2 / 3</em>
+            </div>
+          </header>
+          <div class="guided-body">
+            <div class="guided-content">
+              <div class="step-label">让Partner-W更懂你</div>
+              <h2 id="purpose-title">你主要想用它做什么？</h2>
+              <p>以后可以随时修改，这只影响首次推荐的助手、任务和模型。</p>
+              <div class="purpose-list">
+                <button
+                  class="purpose-option is-selected"
+                  type="button"
+                  data-purpose="content"
+                  data-assistant="内容创作助手"
+                >
+                  <span class="purpose-icon">✎</span
+                  ><span><strong>内容创作</strong><small>选题、文案、脚本</small></span
+                  ><span class="purpose-check">✓</span>
+                </button>
+                <button class="purpose-option" type="button" data-purpose="commerce" data-assistant="电商运营助手">
+                  <span class="purpose-icon">▣</span
+                  ><span><strong>电商运营</strong><small>商品、活动、客服</small></span
+                  ><span class="purpose-check">✓</span>
+                </button>
+                <button class="purpose-option" type="button" data-purpose="life" data-assistant="生活家庭助手">
+                  <span class="purpose-icon">⌂</span
+                  ><span><strong>生活家庭</strong><small>规划、清单、日常事务</small></span
+                  ><span class="purpose-check">✓</span>
+                </button>
+                <button class="purpose-option" type="button" data-purpose="office" data-assistant="高效办公助手">
+                  <span class="purpose-icon">▤</span
+                  ><span><strong>高效办公</strong><small>文档、表格、会议</small></span
+                  ><span class="purpose-check">✓</span>
+                </button>
+                <button class="purpose-option" type="button" data-purpose="research" data-assistant="学习研究助手">
+                  <span class="purpose-icon">⌕</span
+                  ><span><strong>学习研究</strong><small>资料整理、分析、总结</small></span
+                  ><span class="purpose-check">✓</span>
+                </button>
+                <button class="purpose-option" type="button" data-purpose="video" data-assistant="拍摄剪辑助手">
+                  <span class="purpose-icon">▶</span
+                  ><span><strong>拍摄剪辑</strong><small>脚本、分镜、剪辑规划</small></span
+                  ><span class="purpose-check">✓</span>
+                </button>
+              </div>
+              <div class="guided-actions">
+                <span class="recommendation" id="purpose-recommendation">将优先为你准备内容创作助手</span
+                ><button class="btn btn-dark" id="purpose-next" type="button">保存用途并继续 →</button>
+              </div>
+            </div>
+            <aside class="guide-mascot">
+              <svg class="mascot" viewBox="0 0 360 300" aria-hidden="true"><use href="#character" /></svg>
+              <p id="purpose-mascot-copy">内容创作已选好，我会准备常用写作任务。</p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-activation" aria-labelledby="activation-title">
+        <div class="guided-shell">
+          <header class="guided-top">
+            <div class="brand-lockup">
+              <span class="brand-mark">◇</span>
+              <div><strong>Partner-W</strong><small>首次设置</small></div>
+            </div>
+            <div class="guided-progress">
+              <span class="is-done"></span><span class="is-done"></span><span class="is-active"></span
+              ><em>步骤 3 / 3</em>
+            </div>
+          </header>
+          <div class="guided-body">
+            <div class="guided-content">
+              <div class="step-label">绑定使用权益</div>
+              <h2 id="activation-title">激活你的Partner-W</h2>
+              <p>激活权益将绑定当前手机号。重启或换电脑登录后，可以继续使用剩余额度和最近任务。</p>
+              <div class="activation-box">
+                <div class="field-group">
+                  <label class="field-label" for="activation-code">激活码</label>
+                  <div class="field"><input id="activation-code" value="RYMF-2026-DEMO" spellcheck="false" /></div>
+                  <div class="helper-row"><span>演示激活码已自动填写</span><span>仅用于静态预览</span></div>
+                </div>
+                <div class="activation-summary">
+                  <div><span>激活后套餐</span><strong>基础体验版</strong></div>
+                  <div><span>初始剩余点数</span><strong>5,020 点</strong></div>
+                </div>
+                <div class="form-error" id="activation-error" role="alert"></div>
+                <div class="guided-actions">
+                  <button class="btn btn-ghost" type="button" data-back="purpose">返回修改用途</button
+                  ><button class="btn btn-primary" id="activation-submit" type="button">激活并进入工作台 →</button>
+                </div>
+              </div>
+            </div>
+            <aside class="guide-mascot">
+              <svg class="mascot is-happy" viewBox="0 0 360 300" aria-hidden="true"><use href="#character" /></svg>
+              <p>这是最后一步。激活完成后，工作台会立即打开。</p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-workspace" aria-labelledby="workspace-title">
+        <div class="workspace-shell">
+          <nav class="primary-nav" aria-label="主要导航">
+            <div class="nav-logo">◇</div>
+            <button class="nav-button is-active" type="button"><b>⌂</b><span>工作台</span></button
+            ><button class="nav-button" type="button"><b>▱</b><span>文件</span></button
+            ><button class="nav-button" type="button" data-jump="usage"><b>◫</b><span>用量</span></button>
+            <div class="nav-spacer"></div>
+            <button class="nav-button" type="button"><b>⚙</b><span>设置</span></button>
+          </nav>
+          <aside class="assistant-rail" aria-label="助手列表">
+            <div class="rail-head"><strong>我的助手</strong><span>＋</span></div>
+            <div class="rail-search"><input aria-label="搜索助手" placeholder="搜索助手" /></div>
+            <div class="assistant-list" data-assistant-list></div>
+            <div class="rail-foot">专业助手正在后台准备。你可以先浏览工作台结构。</div>
+          </aside>
+          <section class="workspace-content">
+            <header class="workspace-topbar">
+              <div class="workspace-title">
+                <strong id="workspace-title">罗盘助手</strong><small>工作台正在准备</small>
+              </div>
+              <div class="top-actions">
+                <span class="model-chip">模型 <b data-model-label>deepseek-v4-flash</b></span
+                ><button class="balance-chip" type="button" data-jump="usage">
+                  剩余 <strong data-remaining-value>5,020</strong> 点
+                </button>
+              </div>
+            </header>
+            <div class="workspace-body">
+              <div class="readiness-layout">
+                <div class="readiness-card">
+                  <div class="status-line">
+                    <i class="status-dot"></i><span id="readiness-label">连接 AI 服务</span>
+                  </div>
+                  <h2>正在准备你的 AI 工作台</h2>
+                  <p>主体已经可以浏览。默认模型和专业助手会在后台准备，完成后输入框将自动可用。</p>
+                  <div class="readiness-track" aria-label="工作台准备进度">
+                    <div class="readiness-bar" id="readiness-bar"></div>
+                  </div>
+                  <div class="readiness-meta">
+                    <span>当前阶段会自动继续</span><strong id="readiness-value">8%</strong>
+                  </div>
+                  <div class="readiness-steps" id="readiness-steps">
+                    <div class="readiness-step is-current"><i>1</i>连接 AI 服务</div>
+                    <div class="readiness-step"><i>2</i>准备默认模型</div>
+                    <div class="readiness-step"><i>3</i>加载专业助手</div>
+                    <div class="readiness-step"><i>4</i>工作台已就绪</div>
+                  </div>
+                  <div class="timeout-panel" id="timeout-panel" hidden>
+                    <strong>准备时间比预计更久</strong>
+                    <p>网络波动或首次设备初始化可能延长等待。你可以重新尝试，已完成的设置不会丢失。</p>
+                    <div class="timeout-actions">
+                      <button class="btn btn-primary btn-small" id="readiness-retry" type="button">重新尝试</button
+                      ><button class="btn btn-secondary btn-small" id="readiness-detail" type="button">查看详情</button>
+                    </div>
+                  </div>
+                </div>
+                <aside class="loading-mascot">
+                  <svg class="mascot" viewBox="0 0 360 300" aria-hidden="true"><use href="#character" /></svg>
+                  <p>我正在准备助手和默认模型，工作台已经可以浏览。</p>
+                </aside>
+              </div>
+              <div class="demo-controls">
+                <button class="btn btn-secondary btn-small" id="simulate-timeout" type="button">
+                  模拟等待超过 90 秒</button
+                ><button class="btn btn-ghost btn-small" id="skip-readiness" type="button">直接查看准备完成</button>
+              </div>
+              <div class="disabled-composer">服务准备好后，在这里描述你的任务…</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-assistant" aria-labelledby="assistant-title">
+        <div class="workspace-shell">
+          <nav class="primary-nav" aria-label="主要导航">
+            <div class="nav-logo">◇</div>
+            <button class="nav-button is-active" type="button"><b>⌂</b><span>工作台</span></button
+            ><button class="nav-button" type="button"><b>▱</b><span>文件</span></button
+            ><button class="nav-button" type="button" data-jump="usage"><b>◫</b><span>用量</span></button>
+            <div class="nav-spacer"></div>
+            <button class="nav-button" type="button"><b>⚙</b><span>设置</span></button>
+          </nav>
+          <aside class="assistant-rail" aria-label="助手列表">
+            <div class="rail-head"><strong>我的助手</strong><span>＋</span></div>
+            <div class="rail-search"><input aria-label="搜索助手" placeholder="搜索助手" /></div>
+            <div class="assistant-list" data-assistant-list></div>
+            <div class="rail-foot">助手只能处理你明确发送或授权的内容。</div>
+          </aside>
+          <section class="workspace-content">
+            <header class="workspace-topbar">
+              <div class="workspace-title">
+                <strong id="assistant-title">内容创作助手</strong
+                ><small id="assistant-subtitle">已就绪，可以开始任务</small>
+              </div>
+              <div class="top-actions">
+                <span class="model-chip">模型 <b data-model-label>deepseek-v4-flash</b></span
+                ><button class="balance-chip" type="button" data-jump="usage">
+                  剩余 <strong data-remaining-value>5,020</strong> 点
+                </button>
+              </div>
+            </header>
+            <div class="workspace-body" id="assistant-workspace-body">
+              <div class="assistant-welcome" id="assistant-welcome">
+                <div class="assistant-symbol" id="assistant-symbol">✎</div>
+                <h2 id="assistant-welcome-title">今天想创作什么？</h2>
+                <p class="assistant-description" id="assistant-description">
+                  从选题到成稿，完成文案、脚本与内容改写。不会替你发布内容，也不会访问未授权文件。
+                </p>
+                <div class="prompt-label">常用任务</div>
+                <div class="prompt-list" id="prompt-list"></div>
+              </div>
+              <div class="task-thread" id="task-thread" hidden>
+                <div class="user-bubble" id="user-task"></div>
+                <div class="assistant-response">
+                  <div class="response-head">
+                    <span class="assistant-avatar" id="response-avatar">✎</span
+                    ><b id="response-assistant">内容创作助手</b><span>·</span
+                    ><span data-model-label>deepseek-v4-flash</span>
+                  </div>
+                  <details class="tool-activity" open>
+                    <summary><span>✓ 已完成 3 个处理步骤</span><span>查看过程⌄</span></summary>
+                    <div class="tool-detail">
+                      <span>✓ 理解任务和目标</span><span>✓ 查看 2 个已授权资料</span><span>✓ 组织结果并检查格式</span>
+                    </div>
+                  </details>
+                  <div class="result-content" id="result-content"></div>
+                  <div class="artifact-row">
+                    <div>
+                      <strong id="artifact-name">内容方案.md</strong
+                      ><small id="artifact-path">已保存到演示工作区 / 结果</small>
+                    </div>
+                    <button class="btn btn-secondary btn-small" id="open-folder" type="button">打开结果位置</button>
+                  </div>
+                  <div class="cost-row">
+                    <span>模型：<b data-model-label>deepseek-v4-flash</b></span
+                    ><span>输入 1,248 Token</span><span>输出 862 Token</span><span>本次消耗 18 点</span>
+                  </div>
+                </div>
+              </div>
+              <form class="composer" id="task-form">
+                <textarea id="task-input" placeholder="描述你想完成的内容任务…"></textarea>
+                <div class="composer-tools">
+                  <button type="button">＋ 添加文件</button
+                  ><select id="model-select" aria-label="选择模型">
+                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                    <option value="qwen3.7-plus">qwen3.7-plus</option>
+                    <option value="kimi-k2.7">kimi-k2.7</option></select
+                  ><button type="button">标准思考⌄</button
+                  ><button class="send-button" type="submit" aria-label="发送任务">↑</button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-usage" aria-labelledby="usage-title">
+        <div class="workspace-shell">
+          <nav class="primary-nav" aria-label="主要导航">
+            <div class="nav-logo">◇</div>
+            <button class="nav-button" type="button" data-jump="assistant"><b>⌂</b><span>工作台</span></button
+            ><button class="nav-button" type="button"><b>▱</b><span>文件</span></button
+            ><button class="nav-button is-active" type="button"><b>◫</b><span>用量</span></button>
+            <div class="nav-spacer"></div>
+            <button class="nav-button" type="button"><b>⚙</b><span>设置</span></button>
+          </nav>
+          <aside class="assistant-rail" aria-label="账户导航">
+            <div class="rail-head"><strong>账户</strong></div>
+            <div class="assistant-list">
+              <button class="assistant-item is-active" type="button">
+                <span class="assistant-avatar">◫</span
+                ><span><strong>余额与用量</strong><small>剩余和本次消耗</small></span
+                ><span class="assistant-state"></span></button
+              ><button class="assistant-item" type="button">
+                <span class="assistant-avatar">≡</span><span><strong>使用记录</strong><small>按任务查看</small></span
+                ><span></span>
+              </button>
+            </div>
+            <div class="rail-foot">余额与账号同步，模型用量以实际记录为准。</div>
+          </aside>
+          <section class="workspace-content">
+            <header class="workspace-topbar">
+              <div class="workspace-title">
+                <strong id="usage-title">余额与用量</strong><small>展示剩余，而不是已使用</small>
+              </div>
+              <div class="top-actions">
+                <button class="btn btn-secondary btn-small" type="button" data-jump="assistant">返回工作台</button>
+              </div>
+            </header>
+            <div class="workspace-body">
+              <div class="usage-layout">
+                <div class="usage-heading">
+                  <div>
+                    <h2>本周期还可使用</h2>
+                    <p>每次任务完成后会自动更新。</p>
+                  </div>
+                  <span class="device-state" style="color: var(--success)"><i class="status-dot"></i>权益状态正常</span>
+                </div>
+                <div class="usage-overview">
+                  <div class="usage-main">
+                    <div class="remaining-label">剩余点数</div>
+                    <div class="remaining-number"><span data-remaining-value>5,002</span><small>点</small></div>
+                    <div class="quota-track"><div class="quota-bar" id="quota-bar"></div></div>
+                    <div class="quota-caption"><span>本周期还可使用 83%</span><span>总额度 6,000 点</span></div>
+                  </div>
+                  <div class="usage-side">
+                    <dl>
+                      <dt>本次消耗</dt>
+                      <dd>18 点</dd>
+                      <dt>执行模型</dt>
+                      <dd data-model-label>deepseek-v4-flash</dd>
+                      <dt>输入 Token</dt>
+                      <dd>1,248</dd>
+                      <dt>输出 Token</dt>
+                      <dd>862</dd>
+                    </dl>
+                  </div>
+                </div>
+                <div class="ledger">
+                  <div class="ledger-title">最近使用记录</div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>任务</th>
+                        <th>助手</th>
+                        <th>模型</th>
+                        <th>Token</th>
+                        <th>变动</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td id="ledger-task">生成内容方案</td>
+                        <td id="ledger-assistant">内容创作助手</td>
+                        <td data-model-label>deepseek-v4-flash</td>
+                        <td>2,110</td>
+                        <td>−18 点</td>
+                      </tr>
+                      <tr>
+                        <td>激活权益</td>
+                        <td>系统</td>
+                        <td>无</td>
+                        <td>无</td>
+                        <td>+5,020 点</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="usage-actions">
+                  <button class="btn btn-secondary" id="replay-flow" type="button">重新体验完整流程</button
+                  ><button class="btn btn-dark" type="button" data-jump="assistant">继续上次任务 →</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        phone: '',
+        demoCode: '',
+        purpose: 'content',
+        activationCode: 'RYMF-2026-DEMO',
+        model: 'deepseek-v4-flash',
+        remaining: 5020,
+        loadingRun: 0,
+        taskComplete: false,
+      };
+
+      const assistants = {
+        compass: {
+          name: '罗盘助手',
+          short: '罗盘助手',
+          symbol: '◇',
+          headline: '今天想完成什么？',
+          description: '描述目标，我会帮你选择合适的助手和模型。',
+          placeholder: '描述你的任务，我会帮你选择合适的助手…',
+          prompts: ['整理电脑文件', '写一份活动方案', '分析一组资料', '规划本周任务'],
+        },
+        content: {
+          name: '内容创作助手',
+          short: '内容创作',
+          symbol: '✎',
+          headline: '今天想创作什么？',
+          description: '从选题到成稿，完成文案、脚本与内容改写。不会替你发布内容，也不会访问未授权文件。',
+          placeholder: '描述你想完成的内容任务…',
+          prompts: ['写短视频开头', '生成公众号提纲', '改写产品故事', '拆解一个选题'],
+        },
+        commerce: {
+          name: '电商运营助手',
+          short: '电商运营',
+          symbol: '▣',
+          headline: '今天要推进哪项经营任务？',
+          description: '围绕商品、活动和客户沟通推进经营任务。不会直接改价或操作店铺。',
+          placeholder: '描述商品、活动或客户问题…',
+          prompts: ['生成商品卖点', '设计促销活动', '整理差评原因', '写客服回复'],
+        },
+        life: {
+          name: '生活家庭助手',
+          short: '生活家庭',
+          symbol: '⌂',
+          headline: '今天要安排哪件生活事务？',
+          description: '把出行、采购、家庭计划和日常事务整理清楚。',
+          placeholder: '描述你要规划的生活事务…',
+          prompts: ['制定旅行计划', '生成一周菜单', '整理采购清单', '规划家庭预算'],
+        },
+        office: {
+          name: '高效办公助手',
+          short: '高效办公',
+          symbol: '▤',
+          headline: '今天要处理哪项工作？',
+          description: '处理文档、会议、表格和工作汇报，输出可继续编辑的结果。',
+          placeholder: '描述文档、表格或会议任务…',
+          prompts: ['整理会议纪要', '生成周报', '分析表格', '润色邮件'],
+        },
+        research: {
+          name: '学习研究助手',
+          short: '学习研究',
+          symbol: '⌕',
+          headline: '今天要研究什么？',
+          description: '梳理资料、比较观点并形成可验证的结论。',
+          placeholder: '描述课题或需要整理的资料…',
+          prompts: ['总结一份论文', '制作学习计划', '对比两个观点', '整理研究笔记'],
+        },
+        video: {
+          name: '拍摄剪辑助手',
+          short: '拍摄剪辑',
+          symbol: '▶',
+          headline: '今天要拍摄或剪辑什么？',
+          description: '完成脚本、分镜、镜头清单与剪辑节奏设计。',
+          placeholder: '描述视频主题、时长和发布平台…',
+          prompts: ['生成拍摄脚本', '制作分镜表', '整理镜头清单', '优化剪辑节奏'],
+        },
+      };
+
+      const purposeMascotCopy = {
+        content: '内容创作已选好，我会准备常用写作任务。',
+        commerce: '电商运营已选好，我会准备商品和活动任务。',
+        life: '生活家庭已选好，我会准备规划与清单任务。',
+        office: '高效办公已选好，我会准备文档与表格任务。',
+        research: '学习研究已选好，我会准备资料分析任务。',
+        video: '拍摄剪辑已选好，我会准备脚本与分镜任务。',
+      };
+
+      const mascot = document.querySelector('#mascot');
+      const pupils = [...document.querySelectorAll('#mascot .pupil')];
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const loginPhone = document.querySelector('#login-phone');
+      const loginCode = document.querySelector('#login-code');
+      const loginError = document.querySelector('#login-error');
+      const toast = document.querySelector('#toast');
+      let toastTimer;
+
+      function notify(message) {
+        toast.textContent = message;
+        toast.classList.add('is-visible');
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => toast.classList.remove('is-visible'), 1800);
+      }
+
+      function showScreen(name) {
+        document
+          .querySelectorAll('.screen')
+          .forEach((screen) => screen.classList.toggle('is-active', screen.id === `screen-${name}`));
+        document
+          .querySelectorAll('[data-jump]')
+          .forEach((button) => button.classList.toggle('is-current', button.dataset.jump === name));
+        window.scrollTo({ top: 0, behavior: reduceMotion.matches ? 'auto' : 'smooth' });
+        if (name === 'workspace') runReadiness();
+        if (name === 'assistant') renderAssistant(state.purpose);
+        if (name === 'usage') renderUsage();
+      }
+
+      function trackPointer(event) {
+        if (reduceMotion.matches || !mascot || !mascot.closest('.is-active') || mascot.classList.contains('mode-code'))
+          return;
+        const rect = mascot.getBoundingClientRect();
+        const dx = Math.max(-1, Math.min(1, (event.clientX - (rect.left + rect.width / 2)) / 260));
+        const dy = Math.max(-1, Math.min(1, (event.clientY - (rect.top + rect.height / 2)) / 220));
+        for (const pupil of pupils) pupil.style.transform = `translate(${dx * 7}px, ${dy * 6}px)`;
+      }
+
+      window.addEventListener('pointermove', trackPointer, { passive: true });
+      loginPhone.addEventListener('focus', () => {
+        mascot.classList.add('mode-phone');
+        document.querySelector('#mascot-caption').textContent = '输入手机号，我来检查格式';
+      });
+      loginPhone.addEventListener('blur', () => mascot.classList.remove('mode-phone'));
+      loginCode.addEventListener('focus', () => {
+        mascot.classList.add('mode-code');
+        document.querySelector('#mascot-caption').textContent = '验证码是隐私，我不看';
+      });
+      loginCode.addEventListener('blur', () => {
+        mascot.classList.remove('mode-code');
+        document.querySelector('#mascot-caption').textContent = '验证码填好后就可以继续';
+      });
+
+      function scheduleBlink() {
+        window.setTimeout(
+          () => {
+            if (!reduceMotion.matches && !mascot.classList.contains('mode-code')) {
+              mascot.classList.add('is-blinking');
+              window.setTimeout(() => mascot.classList.remove('is-blinking'), 110);
+            }
+            scheduleBlink();
+          },
+          2600 + Math.random() * 2800,
+        );
+      }
+      scheduleBlink();
+
+      function phoneIsValid() {
+        return /^1\d{10}$/.test(loginPhone.value.trim());
+      }
+
+      function issueDemoCode() {
+        loginError.textContent = '';
+        if (!phoneIsValid()) {
+          loginError.textContent = '请输入正确的 11 位手机号';
+          loginPhone.focus();
+          return;
+        }
+        state.demoCode = String(Math.floor(100000 + Math.random() * 900000));
+        loginCode.value = state.demoCode;
+        document.querySelector('#demo-code-hint').textContent = `演示验证码：${state.demoCode}`;
+        document.querySelector('#send-code').textContent = '59 秒后重发';
+        notify('演示验证码已生成并自动填入');
+        loginCode.focus();
+      }
+
+      document.querySelector('#send-code').addEventListener('click', issueDemoCode);
+      document.querySelector('#login-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        loginError.textContent = '';
+        if (!phoneIsValid()) {
+          loginError.textContent = '请输入正确的 11 位手机号';
+          loginPhone.focus();
+          return;
+        }
+        if (!/^\d{6}$/.test(loginCode.value.trim())) {
+          loginError.textContent = '请先获取并输入 6 位验证码';
+          loginCode.focus();
+          return;
+        }
+        if (state.demoCode && loginCode.value.trim() !== state.demoCode) {
+          loginError.textContent = '验证码不正确，请使用页面生成的演示验证码';
+          loginCode.focus();
+          return;
+        }
+        if (!document.querySelector('#login-agreement').checked) {
+          loginError.textContent = '请先阅读并同意服务条款与隐私政策';
+          return;
+        }
+        state.phone = loginPhone.value.trim();
+        mascot.classList.add('is-happy');
+        notify('验证成功，正在进入首次设置');
+        window.setTimeout(() => showScreen('purpose'), 420);
+      });
+
+      function choosePurpose(button) {
+        state.purpose = button.dataset.purpose;
+        document
+          .querySelectorAll('[data-purpose]')
+          .forEach((item) => item.classList.toggle('is-selected', item === button));
+        document.querySelector('#purpose-recommendation').textContent = `将优先为你准备${button.dataset.assistant}`;
+        document.querySelector('#purpose-mascot-copy').textContent = purposeMascotCopy[state.purpose];
+      }
+
+      document
+        .querySelectorAll('[data-purpose]')
+        .forEach((button) => button.addEventListener('click', () => choosePurpose(button)));
+      document.querySelector('#purpose-next').addEventListener('click', () => showScreen('activation'));
+      document
+        .querySelectorAll('[data-back]')
+        .forEach((button) => button.addEventListener('click', () => showScreen(button.dataset.back)));
+      document.querySelector('#activation-submit').addEventListener('click', () => {
+        const code = document.querySelector('#activation-code').value.trim();
+        const error = document.querySelector('#activation-error');
+        error.textContent = '';
+        if (!code) {
+          error.textContent = '请输入激活码，演示可使用 RYMF-2026-DEMO';
+          document.querySelector('#activation-code').focus();
+          return;
+        }
+        state.activationCode = code;
+        notify('激活成功，工作台已打开');
+        window.setTimeout(() => showScreen('workspace'), 350);
+      });
+
+      const readinessSteps = [
+        { label: '连接 AI 服务', progress: 22 },
+        { label: '准备默认模型', progress: 48 },
+        { label: '加载专业助手', progress: 76 },
+        { label: '工作台已就绪', progress: 100 },
+      ];
+
+      function updateReadiness(index) {
+        const step = readinessSteps[index];
+        document.querySelector('#readiness-label').textContent = step.label;
+        document.querySelector('#readiness-value').textContent = `${step.progress}%`;
+        document.querySelector('#readiness-bar').style.width = `${step.progress}%`;
+        [...document.querySelectorAll('#readiness-steps .readiness-step')].forEach((row, rowIndex) => {
+          row.classList.toggle('is-done', rowIndex < index || (step.progress === 100 && rowIndex === index));
+          row.classList.toggle('is-current', rowIndex === index && step.progress < 100);
+          row.querySelector('i').textContent =
+            rowIndex < index || (step.progress === 100 && rowIndex === index) ? '✓' : String(rowIndex + 1);
+        });
+      }
+
+      function runReadiness() {
+        const run = ++state.loadingRun;
+        document.querySelector('#timeout-panel').hidden = true;
+        readinessSteps.forEach((step, index) => {
+          window.setTimeout(
+            () => {
+              if (
+                run !== state.loadingRun ||
+                !document.querySelector('#screen-workspace').classList.contains('is-active')
+              )
+                return;
+              updateReadiness(index);
+              if (step.progress === 100)
+                window.setTimeout(() => {
+                  if (run === state.loadingRun) showScreen('assistant');
+                }, 650);
+            },
+            index * 900 + 120,
+          );
+        });
+      }
+
+      function showTimeout() {
+        state.loadingRun += 1;
+        document.querySelector('#timeout-panel').hidden = false;
+        document.querySelector('#readiness-label').textContent = '需要你的确认';
+        document.querySelector('#readiness-value').textContent = '48%';
+        document.querySelector('#readiness-bar').style.width = '48%';
+      }
+
+      document.querySelector('#simulate-timeout').addEventListener('click', showTimeout);
+      document.querySelector('#readiness-retry').addEventListener('click', runReadiness);
+      document
+        .querySelector('#readiness-detail')
+        .addEventListener('click', () => notify('检查结果：网络可用，默认模型准备时间较长'));
+      document.querySelector('#skip-readiness').addEventListener('click', () => {
+        state.loadingRun += 1;
+        updateReadiness(3);
+        window.setTimeout(() => showScreen('assistant'), 350);
+      });
+
+      function assistantRows(activeKey) {
+        return Object.entries(assistants)
+          .map(
+            ([key, assistant]) =>
+              `<button class="assistant-item ${key === activeKey ? 'is-active' : ''}" type="button" data-assistant-key="${key}"><span class="assistant-avatar">${assistant.symbol}</span><span><strong>${assistant.short}</strong><small>${key === activeKey ? '当前助手' : '选择进入'}</small></span><span class="assistant-state"></span></button>`,
+          )
+          .join('');
+      }
+
+      function bindAssistantRows() {
+        document.querySelectorAll('[data-assistant-key]').forEach((button) =>
+          button.addEventListener('click', () => {
+            state.purpose = button.dataset.assistantKey;
+            renderAssistant(state.purpose);
+          }),
+        );
+      }
+
+      function renderAssistant(key) {
+        const assistant = assistants[key] || assistants.compass;
+        document.querySelectorAll('[data-assistant-list]').forEach((list) => {
+          list.innerHTML = assistantRows(key);
+        });
+        bindAssistantRows();
+        document.querySelector('#assistant-title').textContent = assistant.name;
+        document.querySelector('#assistant-welcome-title').textContent = assistant.headline;
+        document.querySelector('#assistant-description').textContent = assistant.description;
+        document.querySelector('#assistant-symbol').textContent = assistant.symbol;
+        document.querySelector('#task-input').placeholder = assistant.placeholder;
+        document.querySelector('#prompt-list').innerHTML = assistant.prompts
+          .map(
+            (prompt) =>
+              `<button class="prompt-button" type="button" data-prompt="${prompt}"><span>${prompt}</span><span>→</span></button>`,
+          )
+          .join('');
+        document.querySelectorAll('[data-prompt]').forEach((button) =>
+          button.addEventListener('click', () => {
+            document.querySelector('#task-input').value = button.dataset.prompt;
+            document.querySelector('#task-input').focus();
+          }),
+        );
+        document.querySelector('#assistant-welcome').hidden = false;
+        document.querySelector('#task-thread').hidden = true;
+        state.taskComplete = false;
+      }
+
+      function syncModel() {
+        document.querySelectorAll('[data-model-label]').forEach((label) => {
+          label.textContent = state.model;
+        });
+      }
+
+      function syncRemaining() {
+        document.querySelectorAll('[data-remaining-value]').forEach((value) => {
+          value.textContent = state.remaining.toLocaleString('zh-CN');
+        });
+      }
+
+      document.querySelector('#model-select').addEventListener('change', (event) => {
+        state.model = event.target.value;
+        syncModel();
+        notify(`已切换到 ${state.model}`);
+      });
+
+      document.querySelector('#task-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const input = document.querySelector('#task-input');
+        const task = input.value.trim();
+        if (!task) {
+          notify('请先描述任务，或选择一个常用任务');
+          input.focus();
+          return;
+        }
+        const assistant = assistants[state.purpose] || assistants.compass;
+        document.querySelector('#assistant-welcome').hidden = true;
+        document.querySelector('#task-thread').hidden = false;
+        document.querySelector('#user-task').textContent = task;
+        document.querySelector('#response-avatar').textContent = assistant.symbol;
+        document.querySelector('#response-assistant').textContent = assistant.name;
+        document.querySelector('#result-content').innerHTML =
+          `<p>我已经根据“${task}”整理了一份可继续修改的方案。</p><h3>建议结构</h3><ul><li>先明确目标对象和要解决的问题。</li><li>把核心信息压缩成三个可执行重点。</li><li>最后补充时间、负责人和检查标准。</li></ul><p>这是一份交互预览结果。真实产品会根据你提供的资料生成对应内容。</p>`;
+        document.querySelector('#artifact-name').textContent = `${assistant.short}方案.md`;
+        state.remaining = 5002;
+        syncRemaining();
+        state.taskComplete = true;
+        syncModel();
+        document
+          .querySelector('#task-thread')
+          .scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
+      });
+
+      document
+        .querySelector('#open-folder')
+        .addEventListener('click', () => notify('演示：真实产品将在资源管理器中打开结果位置'));
+
+      function renderUsage() {
+        const assistant = assistants[state.purpose] || assistants.compass;
+        syncRemaining();
+        document.querySelector('#ledger-task').textContent = state.taskComplete
+          ? document.querySelector('#user-task').textContent
+          : '首次体验任务';
+        document.querySelector('#ledger-assistant').textContent = assistant.name;
+        document.querySelector('#quota-bar').style.width = `${Math.min(100, (state.remaining / 6000) * 100)}%`;
+        syncModel();
+      }
+
+      function resetFlow() {
+        state.demoCode = '';
+        state.purpose = 'content';
+        state.model = 'deepseek-v4-flash';
+        state.remaining = 5020;
+        state.taskComplete = false;
+        state.loadingRun += 1;
+        loginPhone.value = '13800138000';
+        loginCode.value = '';
+        document.querySelector('#demo-code-hint').textContent = '';
+        document.querySelector('#send-code').textContent = '获取验证码';
+        document.querySelector('#login-agreement').checked = false;
+        document.querySelector('#model-select').value = state.model;
+        document.querySelector('#task-input').value = '';
+        choosePurpose(document.querySelector('[data-purpose="content"]'));
+        syncModel();
+        renderUsage();
+        showScreen('login');
+      }
+
+      document.querySelector('#replay-flow').addEventListener('click', resetFlow);
+      document
+        .querySelectorAll('[data-jump]')
+        .forEach((button) => button.addEventListener('click', () => showScreen(button.dataset.jump)));
+
+      loginPhone.value = '13800138000';
+      document.querySelectorAll('[data-assistant-list]').forEach((list) => {
+        list.innerHTML = assistantRows('content');
+      });
+      bindAssistantRows();
+      syncModel();
+      renderUsage();
+      showScreen('login');
+    </script>
+  </body>
+</html>

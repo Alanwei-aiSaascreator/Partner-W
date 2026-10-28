@@ -1,0 +1,126 @@
+<script setup lang="ts">
+import { t, type I18nText, type Tone } from '../composables/i18n';
+
+const guards: { cmd: string; desc: I18nText; tone: Tone }[] = [
+  {
+    cmd: 'knip',
+    desc: {
+      en: 'Dead-code + unused-export scan wired into check and CI',
+      zh: '死代码/无引用导出扫描接入 check 与 CI',
+    },
+    tone: 'red',
+  },
+  {
+    cmd: 'test:coverage',
+    desc: {
+      en: 'Vitest coverage included in CI test stage',
+      zh: 'Vitest 覆盖率纳入 CI 测试环节',
+    },
+    tone: 'purple',
+  },
+  {
+    cmd: 'check:architecture',
+    desc: {
+      en: 'Session key via buildSessionKey() only',
+      zh: '会话 Key 必须走 buildSessionKey()',
+    },
+    tone: 'red',
+  },
+  {
+    cmd: 'check:ui-contract',
+    desc: {
+      en: 'Colors, fonts, spacing via design tokens',
+      zh: '颜色/字号/间距全走 design token',
+    },
+    tone: 'green',
+  },
+  {
+    cmd: 'check:renderer-copy',
+    desc: {
+      en: 'No hardcoded copy in renderer',
+      zh: '渲染层禁止硬编码文案',
+    },
+    tone: 'cyan',
+  },
+  {
+    cmd: 'check:i18n',
+    desc: {
+      en: '8-lang key parity + HTML drift check',
+      zh: '8 语言 key 对齐 + HTML 漂移检查',
+    },
+    tone: 'purple',
+  },
+  {
+    cmd: 'no-restricted-imports',
+    desc: {
+      en: 'Renderer banned: electron/fs/ws/node:*',
+      zh: '渲染层禁 electron/fs/ws/node:*',
+    },
+    tone: 'yellow',
+  },
+  {
+    cmd: 'TypeScript strict',
+    desc: {
+      en: 'any → error, full strict typecheck',
+      zh: 'any → error，全包 typecheck',
+    },
+    tone: 'green',
+  },
+];
+
+const pipeline: { stage: string; desc: I18nText; tone: Tone }[] = [
+  {
+    stage: 'Pre-commit',
+    desc: {
+      en: 'Husky: lint-staged + arch check',
+      zh: 'Husky: lint-staged + 架构检查',
+    },
+    tone: 'green',
+  },
+  {
+    stage: 'PR Check',
+    desc: {
+      en: '8 quality gates + coverage tests + 3-platform build',
+      zh: '8 项质量门 + coverage 测试 + 3 平台构建',
+    },
+    tone: 'cyan',
+  },
+  {
+    stage: 'E2E',
+    desc: {
+      en: 'Playwright: Smoke + Gateway (Docker)',
+      zh: 'Playwright: Smoke + Gateway (Docker)',
+    },
+    tone: 'purple',
+  },
+  {
+    stage: 'Release',
+    desc: {
+      en: 'Version verify → Sign → Notarize → Publish',
+      zh: '版本校验 → 签名 → 公证 → 发布',
+    },
+    tone: 'yellow',
+  },
+];
+</script>
+
+<template>
+  <div class="cw-split--media items-stretch mt-4">
+    <div class="flex flex-col gap-2">
+      <div v-for="g in guards" :key="g.cmd" class="cw-guard-row" :data-tone="g.tone">
+        <span class="cw-guard-cmd">{{ g.cmd }}</span>
+        <span class="cw-guard-desc">{{ t(g.desc) }}</span>
+      </div>
+    </div>
+
+    <div class="cw-pipeline">
+      <div v-for="(p, i) in pipeline" :key="p.stage" class="cw-pipeline-step" :data-tone="p.tone">
+        <span class="cw-pipeline-num">{{ i + 1 }}</span>
+        <div class="cw-pipeline-body">
+          <strong class="cw-pipeline-stage">{{ p.stage }}</strong>
+          <span class="cw-pipeline-desc">{{ t(p.desc) }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

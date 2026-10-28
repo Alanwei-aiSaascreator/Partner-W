@@ -1,0 +1,783 @@
+# 客户端自动更新「补洞」账本（2026-09-23）
+
+范围：用户已拍的**方案 C 第一步 —— 补洞**（纯客户端代码 + 两处 CI 配置）。
+基线：`0bec688b`（客户端产品主线）。分支：`fix/portable-update-gaps`。
+
+⛔ 本账本里**没有**任何打包、发布、更新源上传、服务器动作。四道授权门一道未开。
+
+## 0. 交付清单（8 刀）
+
+| #     | 提交                  | 一句话                                                                                                             |
+| ----- | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| ⑤     | `21e4c559`            | 删掉客户端侧死代码 `portable-swap.ts`（351 行，零生产引用）+ 修注释指针                                            |
+| ①     | `02cd290c`            | 空公钥在**构建期**硬失败（下载期/打包期两道），不再静默注入空串                                                    |
+| ②     | `0c26dbac`            | `minLauncherVersion` 改比**盘上启动器的真版本**（`--version` 探测），不再比硬编码 `'1.0.0'`                        |
+| 新增⑤ | `0aa532e2`            | 拆开 `PARTNERW_LAUNCHER_VERSION` / `PARTNERW_MIN_LAUNCHER_VERSION`；两侧缺失即硬失败；加「同一量多来源」一致性门禁 |
+| ③     | `08f3e162`            | 空间预算接进下载**与**解压两条写盘路径；失败带上「需要多少/剩多少」                                                |
+| ④     | `f64a2def`            | 启动时清理崩溃残留的 PREPARE 垃圾（`recoverPortablePrepare` 以前生产零调用）                                       |
+| 新增④ | `dec5ca84`            | 失败出口**分类**（六类 + 可重试性 + 下一步），新增三个错误码                                                       |
+| ⑥     | （只登记不改，见 §7） | 频道名 `beta → internal` 与 `allowPrerelease` 不可达：**判为不是缺陷**                                             |
+
+门禁总读数见 §9，**终值见 §11（§9 的读数已被它取代 —— 那条根因是错的）**。
+**未做/未验清单见 §10 —— 那一节是这份账本里最该看的。**
+
+## 1. ⑤ 死代码 `portable-swap.ts`（`21e4c559`）
+
+**判据**：产品代码零 import ⇒ 删除。
+
+**零引用证明**（命令与真实输出）：
+
+```
+$ grep -rn "from '.*portable-swap\|require(.*portable-swap" packages/ e2e/ scripts/
+packages/desktop/test/portable-update-swap.test.ts:11:
+  } from '../src/main/update/portable-swap.js';
+```
+
+唯一命中是它**自己的单测**。真身在 `launcher/internal/update/swap.go`（`Recover` 在 `:92`）。
+
+**读数**
+
+|        | 测试文件                    | 测试                                       |
+| ------ | --------------------------- | ------------------------------------------ |
+| before | 3 failed / 279 passed (282) | 21 failed / 2901 passed / 2 skipped (2924) |
+| after  | 3 failed / 278 passed (281) | 21 failed / 2884 passed / 2 skipped (2907) |
+
+差 -1 文件 / -17 测试 = 被删的那份单测；无新增失败。`pnpm typecheck` exit 0。
+
+顺手修掉 `main/runtime/portable-app-data.ts:48-49` 里指向该文件名的注释（否则是指向不存在文件的指针）。
+
+## 2. ① 空公钥必须构建期失败（`02cd290c`）
+
+**事实**：`electron.vite.config.ts:9-11` 用 `JSON.stringify(process.env.PARTNERW_UPDATE_PUBLIC_KEY_B64 ?? '')`
+⇒ 缺变量注入空串、构建静默通过；运行期在 `portable-manifest.ts:31-40` 解码失败抛
+`signature-invalid`。**CI 的 `release` job 通 job 没有这个变量**（只有 `portable-update-release`
+在 `:216` 写它）⇒ 今天发出去的安装器公钥就是空的。
+
+**挂点选择与「为什么不误伤 dev/测试」的证据**
+
+选**两处**，都不是 define 处：
+
+1. `build` / `build:win` / `build:mac` / `build:mac:x64` / `build:linux` 的**前置**（`--require-env`）：秒级失败。
+2. `electron-builder.yml` 的 `beforePack`（改成组合钩子 `scripts/before-pack.cjs`，同时挂运行时门禁与公钥门禁）：
+   **查真产物** `out/main/index.js` 里到底有没有那把钥匙 —— 只有这一处能证明"真注进去了"。
+
+**否掉 define 处的理由（有实测依据）**：`electron-vite@3.1.0` 里
+`build` 传 `'build'`（`dist/chunks/lib-B57e7lYt.mjs:19`）、`dev` 传 `'serve'`（`lib-PoOhNRXw.mjs:16`），
+所以按 `command` 能挡住 dev —— **但 e2e/CI 冒烟构建走的就是 `electron-vite build`**
+（`.github/workflows/e2e.yml:108,151` 直接 exec 它，本来没有钥匙也不需要）。
+在 define 处抛会把 e2e 一起打掉。而这两个挂点只覆盖**会产出安装包的路**：
+`electron-vite dev`、单测、e2e **都不经过**（`grep -n electron-builder .github/workflows/e2e.yml` 无命中）。
+
+**判据**与 Go 的 `decodePublicKey`（`launcher/cmd/partner-w-launcher/main.go:74-91`）**逐条对齐**：
+非空 → base64 能解 → 是 PKIX/SPKI DER → 是 **Ed25519**。四条缺一即失败。
+
+**读数**
+
+- RED（先写测试、模块不存在）：`Test Files 1 failed (1)  Tests  no tests`（`Cannot find module '../scripts/require-update-public-key.cjs'`）
+- GREEN：`vitest run test/update-public-key-packaging-gate.test.ts test/runtime-packaging-gate.test.ts` → **2 files / 28 tests passed**
+- CLI 端到端：
+  - 无变量 → RC=1（中文报错说"空公钥包"并点名变量）
+  - 空串 → RC=1
+  - 真 Ed25519 SPKI → RC=0
+
+**变异读数**（锚点命中数均为 1、打印被改 hunk、逐字节还原）
+
+| 变异 | 改动                                                                              | 读数                 |
+| ---- | --------------------------------------------------------------------------------- | -------------------- |
+| A    | `if (problems.length === 0) return null;` → `if (true) return null;`              | 5 failed / 13 passed |
+| B    | `if (keyBase64.length === 0 \|\| !source.includes(keyBase64)) {` → `if (false) {` | 2 failed / 16 passed |
+| C    | yml `beforePack: …` → `# beforePack: …`（注释掉）                                 | 2 failed / 26 passed |
+
+**顺带修的第三处调用方**：`pr-check.yml` 的 `build` job 会 `pnpm build` + Linux 冒烟打包，
+所以给它加了「现生成一把一次性 Ed25519 公钥」的步骤（同文件 `:349` 的启动器 job 已有同样先例）。
+
+⚠️ **`release.yml` 的 `release` job 我加了缺失的 `PARTNERW_UPDATE_PUBLIC_KEY_B64`**（见 §4）。
+
+## 3. ② `minLauncherVersion` 假门（`0c26dbac`）
+
+**事实**：`update-handlers.ts:27-28` 的 `LAUNCHER_PROTOCOL_VERSION = '1.0.0'` 被当启动器版本传给服务，
+`portable-manifest.ts:137-139` 拿它比 `manifest.minLauncherVersion` ⇒ 比的是**我们编出来的数字**。
+真值通道一直存在：`launcher/cmd/partner-w-launcher/main.go:52-54` 收 `--version`、`:133-136` 打 `deps.version`。
+
+**方向验证**（这条决定"换成真值会不会把升级墙掉"）：发布侧
+`scripts/make-portable-update.mjs:55` 把 `minLauncherVersion` 设成**同一个** `PARTNERW_LAUNCHER_VERSION`
+（release.yml:217 = `${RELEASE_TAG#v}`），所以两侧本是同一条版本线；硬编码 `'1.0.0'`
+只是**恰好 >= 真实版本**而蒙过去。⚠️ 这条也正是「新增⑤」要拆变量的原因。
+
+**探测失败的明确出口**：`probeLauncherVersion` **永不抛**，返回 `{kind:'unavailable', reason}`；
+服务收 `launcherVersion: string | null`，`null` ⇒ **不取清单、直接拒绝**。绝不退回任何版本号。
+
+**读数**
+
+- RED（服务侧）：`Tests 2 failed | 18 passed (20)`，实际收到
+  `"errorCode": "manifest-invalid"` —— 它**去了网络**并把锅甩给清单。
+- RED（模块不存在）：`Test Files 1 failed (1)  Tests no tests`
+- GREEN：launcher-version 16 passed；service 20 passed；ipc 6 passed
+
+**变异读数**
+
+| 变异 | 改动                                                                                                          | 读数                 |
+| ---- | ------------------------------------------------------------------------------------------------------------- | -------------------- |
+| D    | 服务 `if (launcherVersion === null) {` → `if (false) {`                                                       | 2 failed / 18 passed |
+| E    | `parseSemanticVersion(trimmed);` → `void trimmed;`                                                            | 6 failed / 10 passed |
+| F    | handlers `launcherVersion: probe.kind === 'version' ? probe.version : null,` → `'1.0.0',`                     | 2 failed / 14 passed |
+| G    | `if (portableInitialization !== null) return portableInitialization;` → `if (true) return Promise.resolve();` | 1 failed / 5 passed  |
+
+**`pnpm check` 抓到一处按文件跑漏掉的缺陷**（这条是"门禁不能省"的实证）：
+
+```
+$ pnpm typecheck:tests
+test/portable-update-launcher-version.test.ts(69,30): error TS2493:
+  Tuple type '[]' of length '0' has no element at index '0'.
+```
+
+`vi.fn(async () => …)` 把 `mock.calls` 推成 `[]` ⇒ `calls[0][0]` 不可索引。改成显式收集数组后
+`typecheck:tests` exit 0、文件仍 16/16。`pnpm typecheck`（非 test）**不编译 `test/**`\*\*，所以只有门禁能发现。
+
+**一处既有测试的适配**：`portable-update-ipc.test.ts` 的装配现在是异步的（多了一次 `--version` 探测），
+状态断言改为 `vi.waitFor` 等它落定；**断言内容一字未改**，且变异 G 证明"等"没有把它变成不会失败的测试。
+
+## 4. 新增⑤ 变量纠偏 + 同一量多来源（`0aa532e2`）
+
+**事实**：同一个变量名承载两个量 —— runbook 第 3 步（`:51`）是"**启动器自己的版本**"、
+第 5 步（`:74`）是"**manifest 的 `minLauncherVersion`**"。后果具体：
+`PARTNERW_LAUNCHER_VERSION` = `${RELEASE_TAG#v}` ⇒ 0.0.28 那次会把门槛写成 0.0.28，
+而**盘上那把启动器永远是上一版**（便携更新**从不换启动器**：`Partner-W启动器.exe` 在
+`FORBIDDEN_NAMES` 里，只由人工基础包更换）⇒ 验收目标 0.0.27 → 0.0.28 会被
+`launcher-incompatible` 挡死。
+
+**改法**：`PARTNERW_MIN_LAUNCHER_VERSION`（新，**无默认值**，缺失即硬失败）承载 manifest 门槛；
+`PARTNERW_LAUNCHER_VERSION` 只留给启动器自身版本。另加校验：**门槛比本次要发的启动器还新**也硬失败
+（那等于要求一个还不存在的启动器）。
+
+**同一量多来源的扫描结论**
+
+| 量           | 来源                                                                                                                                                          | 处理                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| feed URL     | `auto-updater.ts:88`（定义）、`electron-builder.yml:13`、`feed-publish.mjs` 的 `PUBLIC_BASE_URL`、`release.yml` 的 `PARTNERW_UPDATE_BASE_URL` 与 `--base-url` | 跨 TS/yml/脚本/workflow，**收敛不了** ⇒ 加一致性门禁 `scripts/lib/update-source-consistency.test.mjs`（7 条） |
+| 启动器版本   | `PARTNERW_LAUNCHER_VERSION`（ldflags）、release tag、客户端探测                                                                                               | **已收敛**：ldflags 与探测读同一把 exe 的同一行；manifest 门槛已拆走                                          |
+| 状态文件路径 | `update-handlers.ts` 拼过一次、启动恢复也要拼                                                                                                                 | **已收敛**到 `portableUpdateStateFilePath()`（见 §6）                                                         |
+
+⚠️ **`release.yml` 那处改动只在 GitHub Actions 路径下才有意义**（2026-09-23 晚按用户裁决更正）：
+我在 `portable-update-release` job 里为 `PARTNERW_MIN_LAUNCHER_VERSION` 接了仓库变量
+`vars.PARTNERW_MIN_LAUNCHER_VERSION`（值 = 当前基础包里那把启动器，0.0.27 基础包 ⇒ `0.0.27`），
+缺了该 job 会硬失败并点名变量。
+
+**但用户已拍「走手工发布」（方案 A）** ⇒ 这条**不是**前置：
+
+- 手工路径（本手册 11 步）在发布 shell 里 `$env:PARTNERW_MIN_LAUNCHER_VERSION='0.0.27'` 即可，**不需要建任何 GitHub 变量**；
+- 而 GitHub Actions 那条路**今天跑不了** —— 本项目代码只在 **Gitee**（`origin` = `diguade/partner-w-desktop`），
+  GitHub 上只配了**别人的公开上游**当 `upstream`（`clawwork-ai/clawwork`，public、非 fork、无本项目代码）；
+  在那个仓上建变量既无权限、也会把发布指向别人的仓库。
+- ⇒ 我先前把它写成"需要你在 GitHub 上建"是**多余的**（见 §13）。runbook 的「适用范围」已加上两条路径的划定。
+
+**读数**
+
+- RED（三条新 CLI 用例，改动前）：
+  - `✖ the CLI refuses to sign when PARTNERW_MIN_LAUNCHER_VERSION is missing`
+  - `✖ the manifest minimum comes from PARTNERW_MIN_LAUNCHER_VERSION, not from PARTNERW_LAUNCHER_VERSION`
+    → `actual: '0.0.28'  expected: '0.0.27'`（它真的取了启动器那个版本）
+  - `✖ the CLI refuses a minimum newer than the launcher this release ships`
+- GREEN：`ℹ tests 16  ℹ pass 16  ℹ fail 0`；一致性门禁 7 passed；`pnpm check:portable-update-release` RC=0
+
+**变异读数**
+
+| 变异 | 改动                                                                                       | 读数                                       |
+| ---- | ------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| H    | `const raw = env.PARTNERW_MIN_LAUNCHER_VERSION;` → `… \|\| env.PARTNERW_LAUNCHER_VERSION;` | 1 failed（"refuses to sign when missing"） |
+| I    | yml `url:` → `https://updates.example.invalid/updates/`                                    | 1 failed（发布源一致性）                   |
+| J    | runbook 第 5 步 `$env:PARTNERW_MIN_LAUNCHER_VERSION` → `$env:PARTNERW_LAUNCHER_VERSION`    | 1 failed（runbook 漂移）                   |
+
+⚠️ **我自己在这里栽过一次**：第一轮 RED 里既有的 CLI 用例也红了，我差点读成"我的改动打破了它"。
+真因是我**没 export Go 的 PATH**，而那条用例结尾会 `go -C launcher test`。
+⇒ 该命令里的 `export PATH="/d/go-toolchain/go/bin:$PATH"` 是**命令的一部分**，不是可选项。
+
+## 5. ③ 空间预算没接线（`08f3e162`）
+
+**事实**：`calculatePortableSpaceBudget`（`portable-package.ts`）**生产零调用**；
+下载侧只比 `available < expectedSize`（= **zip 大小**）；解压侧**完全没有检查** ——
+而真正吃空间的是解压后的整棵程序树。
+
+**接法**
+
+- 下载：`packageSize + expandedSize + currentProgramSize + 64 MiB`
+- 解压：`expandedSize + 64 MiB`（那一刻包已在盘上占着、现有程序也还在原处，重复算就是双计）
+- 展开体积**只能**从签名过的 `portable-files.json` 算（`sumExpandedBytes`）：
+  ⛔ manifest 键集被三层冻死（TS 精确键集 / Go `DisallowUnknownFields` / 签名负载逐键枚举），
+  加 `expandedSize` 会让**已出厂的启动器**验签失败。
+- 因此文件清单**提前到下载之前取**（不发相位，界面停在 `available`；副作用是坏清单在花掉一次大下载之前就失败）。
+- 解压前先 `mkdir(temporaryRoot)` **再** `statfs`：`statfs` 一个不存在的路径会抛 ENOENT
+  （既不是"空间不足"、也跟这份包无关）。
+
+**读数**
+
+- RED（服务侧）：`Tests 2 failed | 21 passed (23)`，两条都是 `requiredFreeBytes` 缺席
+- RED（包侧，把判定退回 zip 大小）：`Tests 3 failed | 26 passed (29)`
+- GREEN：`Tests 47 passed (47)`
+
+**变异读数**
+
+| 变异 | 改动                                                                                  | 读数                 |
+| ---- | ------------------------------------------------------------------------------------- | -------------------- |
+| K    | `available < input.requiredFreeBytes` → `available < input.expectedSize`              | 3 failed / 26 passed |
+| L    | 解压预检 `await assertFreeBytes({` → `if (false) await assertFreeBytes({`             | 1 failed / 28 passed |
+| M    | 服务 `requiredFreeBytes: downloadBudget,` → `requiredFreeBytes: current.packageSize,` | 1 failed / 22 passed |
+| N    | `if (detail !== undefined) this.detail = detail;` → `this.detail = detail;`           | 7 failed             |
+
+**门禁又抓到两处**（都不是我发现的）：`pnpm typecheck:tests` 报了
+`portable-update-release-integration.test.ts`（`requiredFreeBytes` 现在必填）；
+全量测试报了失败对象的**形状**断言 —— 这逼出一个真问题：
+普通字段声明在 ES2022 类字段语义下**照样发出一个 `undefined` 自有属性**，
+于是 `Object.keys(error)` 从 `['code','name']` 变成 `['code','detail','name']`。
+改法是 `declare readonly detail?`（只声明类型、不产生字段）+ 有才赋。
+既有断言**未放宽**，另加一条"空间失败只多带两个数字"的按名测试。
+
+## 6. ④ 崩溃恢复没接线（`f64a2def`）
+
+**事实**：`recoverPortablePrepare` **生产零调用**。崩在下载/解压中途会留下
+`.Partner-W更新/download/<txn>/`（几百 MB 包）与 `staged/<txn>/`（解压了一半的树），
+而下次更新用新 transactionId ⇒ 永不回收。
+
+**挂点**：`runUpdaterStartupHousekeeping()`（`main/auto-updater.ts`，由 `main/index.ts:422`
+在 `prepareWorkspaceAtStartup` 之后调用 —— 与它旁边两条清理同源：都要靠工作区准备阶段写下的
+`getPortableWorkspaceRoot()` 分辨"这是不是盘上运行"）。
+
+**两条硬约束（各有按名测试）**
+
+1. **非便携态一律不动手**（`portableRoot === null` ⇒ `skipped-not-portable`）。
+2. **绝不抛**：失败收成 `{kind:'failed', reason}`，调用方写 warn 级调试日志（吞掉但不静默）。
+
+**刻意不碰 `ready`**：只回收四个 PREPARE 相位；`applying`/`awaiting-health` 归启动器的
+`Recover`（`swap.go:92`），而 `ready` 是"已验完、就等重启换目录"的成果，删掉等于白扔用户的下载。
+
+顺带把状态文件路径收敛到 `portableUpdateStateFilePath()`（以前 `update-handlers.ts` 另拼一次）。
+
+**读数**
+
+- RED（函数不存在）：`Tests 6 failed | 19 passed (25)`
+- GREEN：state 25 + auto-updater 23 + ipc 6 = 52 passed
+
+**变异读数**
+
+| 变异 | 改动                                                                                                | 读数                       |
+| ---- | --------------------------------------------------------------------------------------------------- | -------------------------- |
+| O    | `void recoverInterruptedPortablePrepare();` → 注释掉                                                | 1 failed（**装配点**那条） |
+| P    | `if (input.portableRoot === null) return { kind: 'skipped-not-portable' };` → `if (false) …`        | 1 failed / 24 passed       |
+| Q    | `if (!PREPARE_PHASES.includes(input.transaction.phase)) return false;` → `if (false) return false;` | 2 failed / 23 passed       |
+
+变异 O 是这一刀的要害：它证明的不再是"函数写好了、也有测试"，
+而是"**启动序列真的把它带起来了**" —— 原缺陷正是"逻辑在、没人调"。
+
+## 7. ⑥ 频道名 `beta → internal`：**判为不是缺陷，只登记不改**
+
+- `portableChannel()` 把应用侧的 `beta` 映射到 `internal` **feed 目录**，
+  这**就是**盘上形态下"要不要预发布"的等价决定（已安装侧才用 `autoUpdater.allowPrerelease`）。
+- `auto-updater.ts:267` 的 `autoUpdater.allowPrerelease = …` 在便携分支（`:250` 提前 return）
+  之后 ⇒ 盘上形态执行不到。这**不是**漏掉的设置：便携路径根本不用 electron-updater
+  （`:249` 的注释就是"签名的整目录清单才是真相源，electron-updater 在这里没有立足点"），
+  给一个用不上的库设开关没有意义。所以**不改**。
+- 残留观察（**未改**）：若 `portable === true` 而 `portableService === null`，代码会**穿透**到
+  electron-updater 那条在盘上"没有立足点"的分支。⑧ 之后该分支更难到达
+  （`launcher-unavailable` 也会把服务挂上），但"根目录在装配时恒为 null ⇒ 首次检查才装配"
+  这个时序没动。**登记为观察项，不作为缺陷处理。**
+
+## 8. 新增④ 失败出口分类（`dec5ca84`）
+
+`renderer/features/internal-beta/update-errors.ts` 里两张并行的 Record 合成**一张表**，
+每条错误码带 `{category, retryable, action, text}`：
+
+| 类别         | 错误码                                                                                              | 可重试             | 下一步                               |
+| ------------ | --------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------ |
+| `no-update`  | `update-not-published`、`cancelled`                                                                 | 是                 | 说"当前频道暂无更新"（**不是错误**） |
+| `network`    | `network`、`feed-response`、`package-integrity`                                                     | 是                 | 稍后再试                             |
+| `untrusted`  | `signature-invalid`、`manifest-invalid`、`unsupported-policy`（+`archive-unsafe`/`file-integrity`） | 否（后两者可重试） | 重新获取完整交付包                   |
+| `space`      | `disk-space`                                                                                        | 是                 | 先说清"需要多少/剩多少"              |
+| `launcher`   | `launcher-incompatible`、`launcher-unavailable`                                                     | 否                 | 换**完整基础包**                     |
+| `filesystem` | `volume-readonly`、`filesystem-error`、`file-in-use`、`rollback-failed`                             | 见 §8 注           | 与空间不足分开                       |
+
+**新增三个错误码及其行为**
+
+1. `update-not-published`：feed 的 `<channel>/manifest.json` 返回 **404** ⇒ 服务落回 **idle**
+   （不是 error），且**不设 permanentError**（新版本发布后下一次 check 必须能看见）。
+   这就是现在的真实状态：Codex 已核 `/updates/stable/manifest.json` 与
+   `/updates/internal/manifest.json` **都是 404** ⇒ 文案与文档**不许**把远程源描述成"已可用"。
+2. `launcher-unavailable`：探测失败以前被报成 `launcher-incompatible`（"版本太旧"），
+   而那是**我们没做过的比较**；"没认出配套启动器"（缺失/不是我们的/只换了客户端留下旧启动器）
+   是另一回事，也正是基础包规则要拦的交付形态。判为**永久失败**（再点也没用）。
+   ⚠️ 这条**改了 ② 已提交的对外错误码**（`launcher-incompatible` → `launcher-unavailable`），
+   同时把「真版本比清单要求的旧」保留为 `launcher-incompatible` —— 两者语义不同，各有测试。
+3. `filesystem-error`：`mapFileSystemFailure` 的兜底以前是 `archive-unsafe`
+   （"更新包里有不安全的内容"）—— 那是在**冤枉这份包**：写失败、exFAT 命名限制、
+   半途断电残留都会落到兜底。现在兜底是 `filesystem-error`，**与空间不足分开**
+   （清空间解决不了写失败）。
+
+**另修一条真缺陷**：盘上那条链失败时给渲染进程的是**错误码**，而 `describeUpdateError`
+是按 electron-updater 的英文原文写的 ⇒ 错误码一路落到 `default` ⇒
+用户看到"下载更新没完成，请稍后重试"，**`launcher-unavailable` 那种明确不该重试的也被建议重试**
+（分类就白做了）。现在整串命中错误码即交给分类文案；英文原文照旧走原路径（精确整串匹配）。
+
+**读数**
+
+- RED（分类表不存在）：`Tests 18 failed | 28 passed (46)`
+- GREEN：errors 50 passed；service 26 passed；package 44 passed
+
+**变异读数**
+
+| 变异 | 改动                                                                                | 读数                 |
+| ---- | ----------------------------------------------------------------------------------- | -------------------- |
+| R    | `disk-space` 的 `category: 'space'` → `'filesystem'`                                | 2 failed / 44 passed |
+| S    | `if (typeof required !== 'number' \|\| …) return null;` → `if (true) return null;`  | 1 failed / 45 passed |
+| T    | 服务 `if (code === 'update-not-published') {` → `if (false) {`                      | 1 failed / 25 passed |
+| U    | `return new PortableUpdateFailure('filesystem-error');` → `return unsafeArchive();` | 7 failed             |
+
+**两处断言的调整（均刻意、且比看上去更窄）**
+
+- `rollback-failed` 判**不可重试**：它的文案本来就是"别拔盘、别删文件、找技术支持"，
+  标成"可重试"会与它旁边那句话矛盾。**先写错的是我的测试**，不是表。
+- `describeUpdateError('cancelled', …)` 现在给分类表那句（"已取消更新，当前版本可以继续使用。"）。
+  断言改成检查**意图**（这不是错误）而不是逐字串。
+
+## 9. 门禁总读数
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"      # 第一步就是 Go
+$ pnpm check
+```
+
+| 时点                      | 结果                                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| 第 2 刀后（首次跑全门禁） | **RC=1**：`typecheck:tests` 报 `TS2493`（见 §3）——修好后通过 |
+| 第 5 刀后                 | 待补：见 §9.1                                                |
+
+桌面端全量测试（`packages/desktop`）：
+
+| 时点                            | 文件                        | 测试                           |
+| ------------------------------- | --------------------------- | ------------------------------ |
+| 基线 `0bec688b`（未改任何代码） | 3 failed / 279 passed (282) | 21 failed / 2901 passed (2924) |
+| 最后一刀后                      | 3 failed / 280 passed (283) | 21 failed / 2979 passed (3002) |
+
+**那 3 个失败文件是环境性的、与本次改动无关**：
+`artifact-reconcile` / `context-source-service` / `db-context-sources`
+**都**因 `better-sqlite3@12.6.2` **编不过 Node 26**（v8 移除了 `PropertyCallbackInfo::This`，
+实测 `error C2039`）而加载不到原生绑定。基线（未改动时）就同样红。详见 §10。
+
+### 9.1 最终 `pnpm check` 读数
+
+见 §9.1。
+
+## 10. 未做 / 未验清单（**明说，不默认成立**）
+
+1. ~~**`pnpm check` 在本机不可能全绿**~~ ⇒ ⛔ **这条根因是错的，见 §11**：真因是我自己的
+   `pnpm install --ignore-scripts` 跳过了后置的 `electron-builder install-app-deps`，
+   原生模块从没按 **Electron 的 ABI** 编过。跑一条 `install-app-deps` 后全门禁 **RC=0**、
+   桌面端 **3000 passed / 0 failed**。Node 26 不是障碍，也不需要换成 Node 20。
+2. **没有任何真机验证**：全部读数来自单测 / 纯函数门禁 / 假注入（`statfs`、`startLauncher`）。
+   U 盘便携态、真实 `Partner-W启动器.exe --version` 探测、真实解压、真实换目录**一次都没跑过**。
+   ⇒ ② 的"探测真实启动器"目前只有注入桩 + 一次"用 node 冒充启动器"的真 spawn 测试。
+3. **`launcher-version.ts` 的真 spawn 只测到"能拿到 stdout 且严格 semver 拒掉 `v26.…`"**；
+   没有用**真正的启动器二进制**跑过 `--version`（那要打包，越界）。
+4. ~~**`release.yml` 的两处配置需要你确认**~~ ⇒ ⛔ **2026-09-23 晚按用户裁决（走手工发布）作废，
+   两条都已不构成前置**，见 §13：
+   - `PARTNERW_UPDATE_PUBLIC_KEY_B64` 在 `release` job 的可见性（仓库级 vs 环境级）—— **只在 GitHub Actions
+     路径下才是问题**；手工路径在发布 shell 里 export 即可（我确实无法从仓库判断存储范围，这条 UNVERIFIED 保持）。
+   - `vars.PARTNERW_MIN_LAUNCHER_VERSION` —— 同上，手工路径不读它。
+5. **公钥/私钥配对没有被证明**：裁决要求"证明私钥与该公钥配对"，我**没有做**（需要真密钥，越界）。
+   代码侧只保证两侧内嵌同一把、且都必须是非空 Ed25519 SPKI。
+6. **0.0.27 基础包本身没有构建、没有装配、没有真机换盘**。
+   "0.0.27 → 0.0.28 自动升级"这条验收链**一次都没跑过**（需要打包 + 更新源，两道都越界）。
+7. ~~**空间预算的"数字上屏"没做**~~ ⇒ ✅ **2026-09-23 已做，提交 `ec62b749`**。
+   原来的读数比上面写的更差：两个面板都只把 `message` 字符串递进翻译层、**从没传过那两个数字**；
+   而盘上那条链的失败是**发布出来的状态**（不抛异常到渲染进程）⇒ `errorMessage` 压根没被设过，
+   关于页实际渲染出来的是「更新失败：」后面**空着**（红测第一次的读数字符串就是
+   `…settings.updateError:settings.checkForUpdates…`，冒号后为空）。
+   现在：新增渲染侧**唯一入口** `describeUpdateErrorFromState(raw, operation, portable)` ——
+   **相位是 error 且错误码认得出 ⇒ 以公开状态为准**（带两个数字）；认不出 / 没状态则退回老路，
+   与 `asPortableErrorCode` 同一口径。关于页改成存**原始报错 + 操作**、渲染时才翻译
+   （以前存翻译结果，等于把公开状态挡在门外）；内测中心同样走这条缝。
+   读数：桌面端 3000 → **3007 passed / 2 skipped / 0 failed**（新增 5 条单测 + 关于页 1 条 + 内测中心 1 条）；
+   两处渲染点各自的变异（把 `portable` 位置换成 `null`）**只红自己那条**
+   （关于页 1 failed | 8 passed；内测中心 1 failed | 7 passed），还原逐字节相同（sha256）、`pnpm check` **RC=0**。
+   ⚠️ 仍未上屏的：安装态（electron-updater）那条链**本来就没有字节数**（那里没有空间预算逻辑），不是漏。
+8. **public feed 现在不可用**（`stable/manifest.json`、`internal/manifest.json` 都 404，
+   `latest.yml` 还指向 0.0.23）。我**没有**把它描述成可用；`update-not-published` 这条分类
+   就是照这个事实写的。
+9. **没有改 `.gitignore`、没有降断言、没有打包、没有连任何服务器**。
+10. ⑧ 的 `launcher-unavailable` 复用而非新增了 UI 动作（`replace-package`），
+    因此**没有**动 i18n 文案体系；如果将来要求单独文案，那是一次独立的改动。
+
+### 9.1 门禁终值（**已被 §11 取代 —— 那是错的读数**）
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=1
+```
+
+**前面 16 步全部 exit 0**（`pnpm check` 是 `&&` 串联，能走到最后一步就是证据）：
+
+| 步骤                                                                                                                                                                                                             | 读数                                                                             |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `check:portable-launcher`（Go）                                                                                                                                                                                  | `ok partner-w/portable-launcher/{cmd/partner-w-launcher,internal/update}`        |
+| `check:portable-update-release`（4 个文件）                                                                                                                                                                      | `tests 39 / pass 39 / fail 0`（13 build + 16 release + 3 ci + **7 新增一致性**） |
+| `check:portable-feed-publish`                                                                                                                                                                                    | `tests 249 / pass 249 / fail 0`                                                  |
+| `lint` / `check:architecture` / `check:ci-bot-security` / `check:ui-contract` / `check:renderer-copy` / `check:i18n` / `check:udisk-delivery` / `check:gateway-probe` / `check:dead-code`(knip) / `format:check` | 全部通过                                                                         |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                                                                                                                                                                | 三步 exit 0                                                                      |
+| `test`（最后一步）                                                                                                                                                                                               | **失败** —— 见下                                                                 |
+
+`pnpm -r test`：`@clawwork/core` 38 files passed、`@clawwork/pwa` 4 files passed、
+`@clawwork/desktop` **`Test Files 3 failed | 280 passed (283)`** / `Tests 21 failed | 2979 passed | 2 skipped (3002)`。
+
+那 3 个文件是 `artifact-reconcile` / `context-source-service` / `db-context-sources`，
+**全部**因 `better-sqlite3@12.6.2` 与 Node 26 源级不兼容而加载不到原生绑定（§10 第 1 条）。
+它们在**基线 `0bec688b`、我未改任何代码时**就是同样的 3 红。
+
+⚠️ **读日志的一条纪律**（我在本轮里差点误读）：`node --test` 会把**每个 bundle 的汇总**
+依次打出来，末尾那个数字属于**最后跑的 bundle**。我第一轮读到的 `tests 249`
+属于 `check:portable-feed-publish`，不是 portable-update-release 那个 bundle；
+只看 tail 会把它当成后者的读数。⇒ 数测试总量要**按 bundle 定位**，别读 tail。
+
+## 11. ⛔ 更正：上面那条"环境性失败"的根因是错的（2026-09-23 晚）
+
+**我先前说的**：那 3 个红文件（`artifact-reconcile` / `context-source-service` /
+`db-context-sources`）因 `better-sqlite3@12.6.2` **编不过 Node 26** 而加载不到原生绑定，
+"本机不可能全绿"。
+
+**真相**：**是我自己的安装方式自伤。** 我为了绕开一次 `better-sqlite3` 编译失败，
+用了 `pnpm install --frozen-lockfile --ignore-scripts` —— 那会跳过仓库自己的
+`packages/desktop` 后置脚本 `postinstall: electron-builder install-app-deps`，
+于是原生模块**从未按 Electron 的 ABI 编译**。
+
+而这条链的绑定**必须是 Electron 的 ABI**：那 3 个文件会 **fork Electron** 去探数据库
+（`ELECTRON_RUN_AS_NODE="1"`，见 asar 包装器），所以加载绑定的是 Electron 34（ABI 132），
+不是跑测试的那个 Node。绑定缺席 ⇒ 子进程退出 1 ⇒ `ERR_DLOPEN_FAILED`。
+我先前用"在 Node 26 下 `require('better-sqlite3')` 报 ABI 147 vs 132"当证据 ——
+**那个诊断本身就对错了对象**：它测的是"Node 能不能加载 Electron 的绑定"，
+而真正要回答的是"Electron 能不能加载"。
+
+**一条命令就修好**：
+
+```
+$ cd packages/desktop && ./node_modules/.bin/electron-builder install-app-deps
+  • completed installing native dependencies        (RC=0)
+```
+
+修完后那 3 个文件：`Test Files 3 passed (3) / Tests 23 passed (23)`。
+
+**全门禁终值（RC=0，取代 §9.1）**
+
+| 步骤                                                                          | 读数                                                                                                  |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `check:portable-launcher`（Go）                                               | ok（`cmd/partner-w-launcher`、`internal/update`）                                                     |
+| `check:portable-update-release`（4 文件）                                     | `tests 39 / pass 39 / fail 0`                                                                         |
+| `check:portable-feed-publish`（3 文件）                                       | `tests 249 / pass 249 / fail 0`                                                                       |
+| `lint` / `architecture` / `ci-bot-security` / `ui-contract` / `renderer-copy` | 通过（exit 0）                                                                                        |
+| `check:i18n`                                                                  | `tests 8 / pass 8`                                                                                    |
+| `check:udisk-delivery`                                                        | `tests 48 / pass 48`                                                                                  |
+| `check:gateway-probe`                                                         | `tests 25 / pass 25`                                                                                  |
+| `check:dead-code`（knip） / `format:check`（prettier）                        | 通过                                                                                                  |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                             | 三步 exit 0                                                                                           |
+| `pnpm -r test`                                                                | shared `124 passed`、core `655 passed`、pwa `61 passed`、**desktop `3000 passed / 2 skipped (3002)`** |
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=0
+```
+
+**为什么没有改提交信息**：错根因写在 `21e4c559` / `02cd290c` / `0c26dbac` / `0aa532e2` /
+`08f3e162` / `f64a2def` / `dec5ca84` 七个提交的正文里（"better-sqlite3 cannot compile
+against Node 26"）。**重写它们会换掉你已核实的 8 个 SHA** —— 代价大于收益。
+⇒ **本文件的 §11 是这条的正确性基准**；提交正文里那句话按本条更正读。
+
+**另一件要说清的事**：我为了做"CI 一致的 Node 20"这一步，下载了
+`node-v20.20.2-win-x64` 到**系统临时目录**（`%TEMP%\node20\`，不在仓库里）。
+事后证明**不需要**：真因与 Node 版本无关。那份解压件留在临时目录，未使用、未进仓库。
+
+**教训（归到已有的那类）**：这是「先验你自己的验证脚本」家族的又一例 ——
+**把"我的环境自伤"读成了"产品的环境限制"**。具体形状：
+① 我用 `--ignore-scripts` 省事 ⇒ 跳过一个**必需的**后置步骤；
+② 出红之后我用**另一个工具**（裸 `node-gyp` + 裸 `require`）去诊断，
+而它测的不是产品真正用的那条路（fork Electron）；
+③ 两次读数都"自洽"（ABI 数字确实不匹配），于是我把一个**可修的环境问题**
+写成了"本机不可能全绿"，还写进了 7 个提交。
+正确的做法是：门禁报红时，先问"**产品自己是怎么准备这个原生的**"（读 `postinstall`），
+而不是自己另造一条准备路径。
+
+## 12. 合并态独立复验（`a67d872f`，2026-09-23 二轮）
+
+本账本的 §11 是我这条线的终值（`3890628c`）。此后分支上又落了**四个不是我提交的**改动
+（并行的更新线接着我的提交往下做）：`2e1c1888`、`db9b64d7`、`ec62b749`、`a67d872f`。
+
+**我做的独立复验**：在 `a67d872f` 上重跑整道门禁（不是引用他们的读数）。
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=0
+```
+
+| 步骤                                                                                  | 读数                                                                                             |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `go -C launcher test`                                                                 | ok                                                                                               |
+| `check:portable-update-release`                                                       | `tests 39 / pass 39 / fail 0`                                                                    |
+| `check:portable-feed-publish`                                                         | `tests 249 / pass 249 / fail 0`                                                                  |
+| `check:i18n` / `check:udisk-delivery` / `check:gateway-probe`                         | `8` / `48` / `25`，全 pass                                                                       |
+| lint / architecture / ci-bot-security / ui-contract / renderer-copy / knip / prettier | 通过                                                                                             |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                                     | exit 0                                                                                           |
+| `pnpm -r test`                                                                        | shared `124`、core `655`、pwa `61`、**desktop `283 files / 3007 passed / 2 skipped / 0 failed`** |
+
+**我复核了他们改我的两处**（只读）：
+
+- `2e1c1888`：纯注释/文档，抓的是**我留下的真问题** —— `0c26dbac`（②）的 docblock 里
+  "发布侧门槛取同一个 `PARTNERW_LAUNCHER_VERSION`"在我自己的 `0aa532e2`（新增⑤）拆变量后
+  **就不再成立**，还引了已变成注释的 `make-portable-update.mjs:55`。没有放松任何断言。
+- `ec62b749`：新增渲染侧**唯一入口** `describeUpdateErrorFromState(raw, operation, portable)`，
+  分层为 `FromState`（相位 error 且码认得出 ⇒ 以公开状态为准，带两个数字）→
+  `describeUpdateError`（整串错误码）→ `describePortableError`，共用我加的 `asPortableErrorCode`
+  与同一张分类表。**没有与我的实现重复**，也没有第二套判据。
+
+## 13. 发布路径裁决（方案 A）+ GitHub/Gitee 盘查（2026-09-23 晚）
+
+**用户裁决：走方案 A —— 手工发布 + Gitee，不建任何 GitHub 变量/仓库。**
+⇒ §4 与 §10 第 4 条里"需要你在 GitHub 上建仓库变量"的说法**作废**：只有 GitHub Actions 那条路才读它，
+而那条路今天跑不了。手工路径的全部要求是发布 shell 里的 `export`。
+
+**盘查读数（只读，绕全局代理）**
+
+| 远端                                             | 是什么                                                                      | 有本项目代码吗                                                                                  |
+| ------------------------------------------------ | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `upstream` = `github.com/clawwork-ai/clawwork`   | **别人的公开上游产品仓**（`gh api` 实测 `fork=false`、`visibility=public`） | **没有**。只有上游自己的分支（`copilot/*`、`dependabot/*`、`fix/issue-*`、`fix/3xx-*`、`main`） |
+| `origin` = `gitee.com/diguade/partner-w-desktop` | 本项目代码的唯一来源                                                        | 全部在这                                                                                        |
+
+在用户 GitHub 账号（`Digua520`）下按 `partner-w|clawwork|compass|partner-w` 搜过 **100 个仓库**：**无本项目仓**。
+⇒ **两边不重叠、不会互相打架**（商业代码也没外流到公开仓）；代价是 GitHub 上没有任何备份位。
+
+**Gitee 侧逐分支对平**
+
+| 分支                                      | 本地       | Gitee      | 实情                                                 |
+| ----------------------------------------- | ---------- | ---------- | ---------------------------------------------------- |
+| `main`                                    | `2906e773` | 一致       | ✓                                                    |
+| `fix/portable-update-gaps`                | `54f93be8` | 一致       | ✓                                                    |
+| `fix/stats-scope-labels` / `build-0.0.23` | —          | 一致       | ✓                                                    |
+| `fix/local-credential-exposure`           | `c7a4a4fe` | `0bec688b` | **领先 1 条**（`c7a4a4fe docs(memory)`），**非分叉** |
+| `feat/local-file-artifact-loop`           | `92c1f482` | —          | **未推**                                             |
+| `backup/internal-beta-ui-20260916`        | `e2433c83` | —          | **未推**（备份分支，可能故意）                       |
+
+**⚠️ 配置层隐患（比上面三条更值得修，未修）**：`remote.origin.fetch` 只写了**三条显式 refspec**
+（`main` + `feat/demo-main-path` + `feat/stage3b-demo-polish`），**没有通配**
+⇒ `git fetch origin` 不会为其它分支建远端引用 ⇒ `git status` / `git branch -vv` 对大部分分支
+**不显示追踪关系**，看起来像"没推"。这很可能是我先前误判"哪些分支未推"的来源之一。
+**已做**：给 `fix/portable-update-gaps` 配上推送追踪（配置式，
+`branch.<name>.remote/merge`；`git push --dry-run` → `Everything up-to-date` 证明裸 `push` 已有依据）。
+**未做**（等用户再拍）：改通配 refspec、推那 3 个未推分支（推别人的线需其同意）。
+
+## 14. 尖端全门禁（`31ca93cb`）——把"绿在旧 SHA"升级成"绿在尖端"
+
+§11 的绿是在 `3890628c`、§12 的复验是在 `a67d872f`。此后分支上还有**三个文档提交**
+（`54f93be8`、`627b6107`，以及并行线的 `31ca93cb`），**它们都没被全门禁覆盖过**。
+其中两个动过 runbook 第 5 步附近，而 `update-source-consistency.test.mjs`
+**会解析第 5 步那段文本**（`/### 5\.[\s\S]*?(?=\n### 6\.)/`，断言含 `PARTNERW_MIN_LAUNCHER_VERSION`
+且不含 `$env:PARTNERW_LAUNCHER_VERSION`）⇒ 文档改动**不是**门禁的免疫区，必须在尖端复跑。
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ pnpm check
+PNPM_CHECK_RC=0
+```
+
+| 步骤                                                                                  | 读数                                                                                             |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `go -C launcher test`                                                                 | ok                                                                                               |
+| `check:portable-update-release`（4 文件，含一致性门禁）                               | `tests 39 / pass 39 / fail 0`                                                                    |
+| `check:portable-feed-publish`                                                         | `tests 249 / pass 249 / fail 0`                                                                  |
+| `check:i18n` / `check:udisk-delivery` / `check:gateway-probe`                         | `8` / `48` / `25`，全 pass                                                                       |
+| lint / architecture / ci-bot-security / ui-contract / renderer-copy / knip / prettier | 通过                                                                                             |
+| `typecheck` / `typecheck:tests` / `typecheck:e2e`                                     | exit 0                                                                                           |
+| `pnpm -r test`                                                                        | shared `124`、core `655`、pwa `61`、**desktop `283 files / 3007 passed / 2 skipped / 0 failed`** |
+
+⇒ **代码与文档阶段的结论现在可以写成"尖端全绿"**（`31ca93cb`，RC=0），
+不再是"绿在某个更早的 SHA 上"。
+
+## 15. 0.0.27 基础包：已构建并逐项核验（2026-09-23 晚，用户「开工」后）
+
+**版本前置**：`packages/desktop/package.json` 0.0.26 → **0.0.27**（提交 `0d02a477`；否则客户端自报 0.0.26，
+基础包就不是裁决要的那个 0.0.27，验收语义也错）。升级后 `check:portable-update-release` RC=0、
+`check:udisk-delivery` RC=0、`prettier --check .` 干净。
+
+**构建位**：`D:\p4-rel`（本仓的 worktree；`runtime-out` 在，打包门禁必需；lockfile 与我的提交**完全一致**
+⇒ 依赖可复用，未重装）。切到 `0d02a477`（游离态，避免与我的 worktree 争同一分支）。
+
+**构建命令与结果**
+
+```
+$ export PATH="/d/go-toolchain/go/bin:$PATH"
+$ export PARTNERW_UPDATE_PUBLIC_KEY_B64='MCowBQYDK2VwAyEACBeiQuFzi8RoEWwaqRiEgC9jiPVX5kvtf8ai8kt2wQA='
+$ pnpm --filter @clawwork/desktop build && pnpm --filter @clawwork/desktop exec electron-builder --win --x64 --dir --publish never
+BUILD_RC=0
+$ PARTNERW_LAUNCHER_VERSION=0.0.27 pnpm build:portable-launcher   → artifacts/Partner-W启动器.exe 4,400,128 B
+$ pnpm udisk:assemble -- --app-dir packages/desktop/dist/win-unpacked --launcher artifacts/Partner-W启动器.exe --out <temp>
+  → 装配成功（装配器**自带审计**通过，失败会抛）
+```
+
+**两道 `beforePack` 门禁都真的跑了**（日志原文）：
+
+```
+[require-bundled-runtime] 随包运行时已就位（extraResources 静态源 4 项全部存在）
+[require-update-public-key] 内嵌更新公钥已就位，且已确认注入到了主进程产物里
+```
+
+**⭐ 这次构建把两条"只有单测"的结论换成了真产物证据**
+
+| 结论                   | 以前的证据                               | 现在的证据（真产物）                                                                                                                      |
+| ---------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| ① 空公钥必须构建期失败 | 单测 + CLI + 0.0.26 出厂 asar **0 命中** | 出厂 `app.asar` **公钥 2 命中**；交付夹内那份 asar 同样 **2 命中**                                                                        |
+| ② 启动器版本探测通道   | 注入桩 + 用 node 冒充启动器（真 spawn）  | **真身** `artifacts/Partner-W启动器.exe --version` → 逐字节 `0.0.27\n`（`od -c` 7 字节，无 CR、无多余文字），exit 0；严格 semver 解析接受 |
+| 版本自报               | —                                        | 交付夹内 `app.asar` 的 `package.json` 读出 **version = 0.0.27**；启动器 `--version` = 0.0.27                                              |
+| PE 头                  | —                                        | `MZ`（runbook 第 3 步要求）                                                                                                               |
+| 单一信任根             | —                                        | 交付夹启动器内嵌公钥 = 0.0.26 交付里那把（`…CBeiQuFzi8…`），两侧同一把                                                                    |
+
+⇒ ② 的"真 spawn"只证到 spawn 管道；现在是**真二进制 + 真输出字节**，缺口补齐。
+⚠️ 仍未做的合成验证：用**我的探测函数**直接问这个真二进制（Node 的类型剥离不支持
+`./x.js`→`./x.ts` 的相对重映射，做不到就**不为它往仓库塞临时测试文件**）。缺口只剩"两半各自验过、没合成跑过一次"。
+
+**交付夹（当前在临时目录，未落任何正式位置）**
+
+```
+C:\Users\29315\AppData\Local\Temp\partner-w-udisk-0.0.27\
+  使用说明.txt (825 B) / Partner-W\ / Partner-W启动器.exe (4,400,128 B)
+  781 MB / 194 文件   （对照 0.0.26 交付夹 781 MB / 196 文件）
+```
+
+**⛔ 两个未闭合项（都不是我能单方面决定的）**
+
+1. **信任根待你确认**：我用的是 **0.0.26 交付里那把正式公钥**
+   （`MCowBQYDK2VwAyEACBeiQuFzi8RoEWwaqRiEgC9jiPVX5kvtf8ai8kt2wQA=`），理由是它是**唯一在案的正式钥匙**
+   （仓库 `launcher/testdata` 那把是测试夹具；`ryu-drive-profile` 那把它推出来的公钥是
+   `…wzaqh6un…`，与更新签名无关 —— 都比较过）。若你其实要用另一把，**客户端需重建一次**。
+2. **更新签名的私钥不在本机** ⇒ **0.0.28 的签名更新做不出来，"私钥与公钥配对"也证不了**
+   ⇒ 裁决第 3 条与"真盘 0.0.27 → 0.0.28"这条验收**无法开始**。
+   已按名与按内容搜过 `D:\p4-rel`、`Partner-W生成outpu`、`Desktop`、`Documents`、`%TEMP%`，
+   无 `PARTNERW_UPDATE_SIGNING_KEY_FILE`，环境变量也未设。
+   需要你给**路径**（PKCS#8 PEM，仓库外）。拿到后我能：签出 0.0.28 更新；并**在不回显任何私钥材料的前提下**
+   从私钥推出公钥、与启动器内嵌那把比对 ⇒ 配对证明。
+
+**没有做**：上传（internal/stable 都没碰）、生产更新源、NSIS 安装器（本次只要 `--dir`）、代码签名（无证书，已跳过）、
+真机 U 盘、（真正的）0.0.28 更新。
+
+## 16. 重建：改回规范构建口径，交付夹与 0.0.26 逐项对齐（2026-09-23 深夜，用户「补齐，重建」后）
+
+用户那句「补齐，重建」是**两件事、两个仓库**：补齐 = 后端 relay catalog
+（提交 `fe4776d`，已推 Gitee，**未部署**）；重建 = 本节。
+§15 那次构建用的是 `--dir`，**口径不对** —— 这一节是它的更正，也**取代**它那份交付夹。
+
+**为什么 `--dir` 不算数**：0.0.26 交付夹的 app 目录来自 `pnpm build:win`（含 nsis 目标），
+它比 `--dir` 多留两件文件在 app 目录里 —— `resources/app-update.yml`（111 B）与
+`resources/elevate.exe`（107520 B）。`--dir` 那版两件都没有，于是与 0.0.26 差 2 个文件（194 vs 196）。
+这两件不是噪音：`app-update.yml` 是 electron-updater 的输入，而且**我们自己的代码在读它**
+（`auto-updater.ts` 的 `updaterCacheDir()` 读 `updaterCacheDirName` 算更新缓存目录；
+读不到就兜底返回 `null`，**不抛**）。盘上运行根本不走那条路（`checkForUpdatesViaUpdater()`
+在便携分支直接进我们自己的清单），但交付夹的形状应当与 0.0.26 可比 ⇒ 按规范口径重打。
+
+**重建读数**
+
+```
+$ export PARTNERW_UPDATE_PUBLIC_KEY_B64='MCowBQYDK2VwAyEACBeiQuFzi8RoEWwaqRiEgC9jiPVX5kvtf8ai8kt2wQA='
+$ pnpm build:win     → BUILDWIN_RC=0
+  产出：dist/Partner-W-0.0.27-win-x64.exe（NSIS 安装器，+ latest.yml/blockmap；都不进交付夹）+ win-unpacked/
+$ PARTNERW_LAUNCHER_VERSION=0.0.27 pnpm build:portable-launcher → artifacts/Partner-W启动器.exe 4,400,128 B
+$ pnpm udisk:assemble -- --app-dir packages/desktop/dist/win-unpacked \
+    --launcher artifacts/Partner-W启动器.exe --out <新的空 temp>   → ASSEMBLE_RC=0
+```
+
+- 两次构建（`--dir` 与 `build:win`）的 **`app.asar` 逐字节相同**：
+  sha256 `f093ac25b80d59ead94f15fbff6e1b415828579197234f1e23551d4f3d7168da`
+  ⇒ 口径差异**只在附属文件**，不在程序内容里。
+- 新 `resources/app-update.yml` 与 0.0.26 那份**逐字节相同**（feed 仍指 `https://api.rongyinghudong.com/updates/`）。
+- 交付夹 vs 0.0.26 的**差集：196 vs 196、无增无减**，只有两处内容不同 ——
+  `Partner-W/resources/app.asar`（103,231,026 → 103,270,778 B）与 `使用说明.txt`。
+
+**说明书**：装配器自带的是通用短模板（825 B，没有变更日志/签名提示/充值未验证提示）；
+0.0.26 那份 4340 B 是**版本专属、装配后另写**的，仓库里没有。
+本次按同一形状另写了 0.0.27 版（**5232 B**，UTF-8 BOM + CRLF，与 0.0.26 同格式），审计判据
+`readmeProblems()` = **0 条**。变更日志只写有据可查的：本分支五刀（六类分类 / 空间数值 /
+崩溃恢复 / 启动器版本门 / 构建期公钥闸门）、`09d770cf` 的"分步"文案（出货 asar 内**命中 2**）、
+服务端输出上限**已上线的那部分**（不把未部署的补齐算进去）、联网搜索（`83c40616`，只
+qwen-plus / qwen-turbo）。
+⚠️ 说明书仍**不在仓库里**（与 0.0.26 同处理）⇒ 下一版要再写一遍；要固化得单独拍。
+
+**独立复验（不看装配器自己的结论 —— 自己驱动 `auditDelivery()`）**
+
+| 读数         | 值                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| 交付夹审计   | **0 findings**                                                                                                                    |
+| 交付夹       | **196 文件 / 818,465,802 B = 0.762 GiB**（0.0.26 = 196 文件 / 0.76 GiB）                                                          |
+| 启动器       | `--version` = `0.0.27`、`MZ`、sha256 `1e7ae931c6e7fc6304f08200bc7fa314d2a6321230df75e9a4eeea22c470d2c0`（与 `artifacts/` 同一份） |
+| 交付夹 asar  | sha256 `f093ac25…68da`（与 dist 相同）；公钥 2 命中；`enable_search` 在；`分步` 在；`当前频道暂无更新` 在                         |
+| `resources/` | app-update.yml / app.asar / app.asar.unpacked / elevate.exe / icon.png / kb-model / our-skills / runtime（与 0.0.26 逐项同）      |
+
+**位置**：`C:\Users\29315\AppData\Local\Temp\partner-w-udisk-0.0.27-final\`（仍在临时目录；
+落正式位置要用户拍）。
+⚠️ §15 里那个 `…\partner-w-udisk-0.0.27\`（194 文件）**已被本节取代**，不要再发那一份。
+
+**仍未闭合**：§15 的两条（信任根待确认、签名私钥不在本机）**一条都没变**；新增一条 ——
+后端 `fe4776d`（补齐 4 个模型的输出上限）**已提交并推 Gitee，未部署**，部署要单独一句授权。
+
+## 17. 0.0.28 便携更新包：构建 + 签名（2026-09-23 深夜，用户拍「做最小 0.0.28」后）
+
+用户在三选一里选了**最小 0.0.28**：基线仍是本分支，只 bump 版本号 + 构建 + 签 **internal** 更新包；
+**不碰 feed、不发布、不打包基础包**。这一节取代 §15 末尾那句「（真正的）0.0.28 更新」。
+
+**版本提交 `6e716a65`**（本分支，`7bf7c5aa` 之上；只改 `packages/desktop/package.json` 一行 → `0.0.28`）。
+`pnpm check` **RC=0**（desktop 283 文件 / 3012 passed / 2 skipped），`git diff --check` RC=0。
+
+**构建位 = `D:\p4-rel`**（短路径喂 NSIS；该工作树当时在 `83c40616`，与本分支尖端**只差本节之前那份文档**：
+`git diff --stat 83c40616 7bf7c5aa` = 1 file，且 `-- packages/` 为空 ⇒ 代码等价）。
+⚠️ **命令是 `pnpm --filter @clawwork/desktop build:win`**：`build:win` 定义在 **`packages/desktop/package.json`**，
+**根 `package.json` 没有这个名字**（根只有 `build` / `build:portable-launcher`）—— 只写 `pnpm build:win`
+会 `Command "build:win" not found`（本节实测撞过一次，白跑一轮）。该脚本 =
+`require-update-public-key.cjs --require-env && electron-vite build && electron-builder --win --x64`
+（**没有 `--dir`** ⇒ 出 nsis 目标，才有 `app-update.yml` + `elevate.exe`）。`BUILDWIN_RC=0`。
+构建前把上一轮的 `dist/win-unpacked`（= 0.0.27 出货那份，asar 103,270,778 B 对得上）**改名到
+`win-unpacked-prev-0.0.27`**，免得文件清单走到陈旧文件上。
+
+**程序目录对齐（独立驱动，不看工具自述）**：新 `win-unpacked` 与 0.0.27 交付夹的 `Partner-W/`
+**同为 194 文件、集合完全相同**，逐文件 sha256 比 ⇒ **只有两件内容不同**：
+
+| 文件                 | 0.0.27        | 0.0.28         | 说明                        |
+| -------------------- | ------------- | -------------- | --------------------------- |
+| `resources/app.asar` | 103,270,778 B | 同尺寸、哈希变 | 只差版本字符串（等长）      |
+| `Partner-W.exe`      | 190,558,208 B | 同尺寸、哈希变 | 内嵌 asar 完整性 + 版本资源 |
+
+出货 asar 读数：`0.0.28` **2 命中**、`0.0.27` **0 命中**、内嵌更新公钥 **2 命中**。
+
+**签名**（`make-portable-update.mjs`，`SIGN_RC=0`）：`PARTNERW_MIN_LAUNCHER_VERSION=0.0.27`
+（**不是 0.0.28** —— 便携更新不换启动器，盘上那把是 0.0.27）、
+`PARTNERW_UPDATE_SIGNING_KEY_FILE=D:/partner-w-update-keys/partner-w-update-signing-key.pem`、
+公钥 `…CBeiQuFzi8…`。产物落
+`C:\Users\29315\AppData\Local\Temp\partner-w-update-0.0.28\`：
+
+```
+portable.zip          398,563,032 B   sha256 cb906b3197db7651c996eeb62ee370b64b06025ea0056545f144ffaaaf165d03
+portable-files.json        29,123 B   194 条
+manifest.json                 529 B
+```
+
+**独立复核（我自己的规范化器 + 自己的 Ed25519 校验；公钥从出货启动器二进制里当场取，不读记录文件）**：
+
+- `launcher_key_candidates` **恰好 1 个**，指纹 `DB3F22C46767C4EF…`（= keyId `partner-w-update-2026A`）；
+- 清单键 = **10 个签名字段 + `signature`**，无多余无缺失；
+- `version=0.0.28` · `channel=internal` · **`minLauncherVersion=0.0.27`** · `schemaVersion=1` · `mandatory=false`；
+- `packageSize` / `packageSha256` 与磁盘上的 zip **逐个相符**；`packageUrl` = 预期的 internal URL；
+- `fileManifestSha256` 由**重新规范化**后的文件清单重算后相符；194 条里**无**启动器、说明书、更新状态目录、数据目录；
+- 规范化载荷 426 B，**签名对启动器内嵌那把公钥验过**；
+- 结论 `VERDICT=INDEPENDENT_VERIFY_OK`（fails=0）。
+
+**门禁**：`check:portable-update-release` **39/39 RC=0** ·
+`packages/desktop/test/portable-update-release-integration.test.ts` **1 passed RC=0** ·
+`go -C launcher test ./...` **两个包都 ok RC=0**。
+
+**客户端侧那道门的判据**（本人复核，不是转述）：`portable-manifest.ts:165`
+`if (compareSemanticVersions(input.launcherVersion, manifest.minLauncherVersion) < 0)`
+⇒ **相等即通过**，所以盘上 0.0.27 的启动器会接受这份 0.0.28 更新。
+
+**没有做**：feed 上传（internal/stable 都没碰）、生产更新源、NSIS 基础包、真盘验收、代码签名（无证书）。

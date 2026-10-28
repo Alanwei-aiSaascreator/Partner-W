@@ -1,0 +1,110 @@
+{
+  "agents": {
+    "empty": "No hay agentes disponibles",
+    "selectTitle": "Seleccionar agente"
+  },
+  "app": {
+    "error": "Algo salió mal",
+    "loading": "Cargando...",
+    "name": "ClawWork",
+    "paired": "Dispositivo móvil emparejado",
+    "reload": "Recargar"
+  },
+  "chat": {
+    "abortButton": "Detener",
+    "assistant": "Asistente",
+    "assistantMessage": "Mensaje del asistente",
+    "authorizationPending": "Esperando autorización...",
+    "emptyState": "Selecciona una tarea o crea una nueva",
+    "inputPlaceholder": "Escribe un mensaje...",
+    "mainArea": "Chat",
+    "sendButton": "Enviar",
+    "systemMessage": "Mensaje del sistema",
+    "thinking": "Pensando...",
+    "userMessage": "Tu mensaje",
+    "virtualizedList": "Historial de chat"
+  },
+  "debugLog": {
+    "clearLog": "Borrar registro",
+    "close": "Cerrar",
+    "copyLog": "Copiar registro",
+    "empty": "Sin eventos aún",
+    "reconnect": "Reconectar",
+    "title": "Registro del gateway"
+  },
+  "drawer": {
+    "closeButton": "Cerrar menú",
+    "menuButton": "Abrir menú",
+    "newTaskButton": "Nueva tarea",
+    "search": "Buscar",
+    "settings": "Configuración",
+    "signOut": "Cerrar sesión",
+    "signOutConfirm": "¿Cerrar sesión? Se eliminarán todos los datos locales.",
+    "title": "Panel de navegación"
+  },
+  "errors": {
+    "agentMissing": "Ese asistente no está en este equipo. Elige otro y vuelve a enviar.",
+    "agentNotResponding": "El agente no responde",
+    "failed": "Fallido",
+    "requestFailed": "Solicitud fallida",
+    "sendFailed": "Envío fallido",
+    "serverAborted": "Tarea interrumpida por el servidor",
+    "stage": {
+      "final": "Finalizar",
+      "lifecycle": "Agente",
+      "persist": "Persistir",
+      "send": "Enviar",
+      "stream": "Stream",
+      "sync": "Sincronizar"
+    },
+    "unknown": "Error desconocido"
+  },
+  "gateway": {
+    "connected": "Conectado",
+    "connecting": "Conectando...",
+    "disconnected": "Desconectado",
+    "statusLabel": "Estado de conexión del gateway"
+  },
+  "pairing": {
+    "cameraError": "Acceso a la cámara denegado",
+    "cancelButton": "Cancelar",
+    "instruction": "Después de escanear, aprueba este dispositivo en el escritorio.",
+    "invalidQr": "Código QR no válido",
+    "loadingCamera": "Iniciando cámara...",
+    "scanButton": "Escanear código QR",
+    "scannerUnsupported": "Escáner QR no soportado en este navegador",
+    "subtitle": "Escanea el código QR que aparece en tu app de escritorio",
+    "videoError": "No se pudo iniciar la cámara"
+  },
+  "qrScanner": {
+    "scanFrameLabel": "Área de escaneo QR",
+    "videoLabel": "Visor de cámara para escaneo QR"
+  },
+  "settings": {
+    "applyUpdate": "Actualización disponible — toca para instalar",
+    "checking": "Comprobando...",
+    "checkUpdate": "Buscar actualizaciones",
+    "darkMode": "Modo oscuro",
+    "language": "Idioma",
+    "lightMode": "Modo claro",
+    "updateFailed": "Error al buscar actualizaciones",
+    "updateUnavailable": "Actualizaciones no disponibles",
+    "upToDate": "Ya está actualizado",
+    "version": "Versión {{version}}"
+  },
+  "shell": {
+    "reconnect": "Reconectar"
+  },
+  "tasks": {
+    "empty": "Sin tareas aún",
+    "navigationLabel": "Lista de tareas",
+    "newTask": "Nueva tarea",
+    "older": "Anterior",
+    "thisWeek": "Esta semana",
+    "today": "Hoy",
+    "yesterday": "Ayer"
+  },
+  "tools": {
+    "emptyDetails": "Sin detalles disponibles"
+  }
+}

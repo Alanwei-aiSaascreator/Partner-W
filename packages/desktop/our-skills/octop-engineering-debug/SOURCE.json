@@ -1,0 +1,35 @@
+{
+  "repository": "https://github.com/TencentCloud/Octop",
+  "commit": "f79015b078c4d5d4c309a1bf6f3cd39ac06cc18f",
+  "adaptedSha256": "1647ea85646d41e66d1f55a6ff1afbee5ef850a6d477c98f8cb431bccf4a9048",
+  "license": "Apache-2.0",
+  "sources": [
+    {
+      "path": "src/octop/infra/agents/experts/library/engineering/skills/debug/SKILL.md",
+      "sha256": "4d0ea5092ceea252141bf654ae38825be9aac742ad97efb23fb564b4652b925f"
+    },
+    {
+      "path": "src/octop/infra/agents/experts/library/engineering/manifest.json",
+      "sha256": "5f2aaaa33da279c18d4ea0a92c7339b7abd4ec77a7d497a682042df176a9ca48"
+    },
+    {
+      "path": "src/octop/infra/agents/experts/library/LICENSE",
+      "sha256": "1b1689d7864727a02a2682067f9c5328c891518db0a513663ef5a949052bd40b"
+    }
+  ],
+  "originalSource": {
+    "plugin": "engineering",
+    "repository": "https://github.com/anthropics/knowledge-work-plugins",
+    "basis": "Octop engineering/manifest.json source type/plugin; original URL retained as provenance, not a pinned upstream commit",
+    "type": "knowledge-work-plugins",
+    "url": "https://github.com/anthropics/knowledge-work-plugins/tree/main/engineering"
+  },
+  "modified": true,
+  "modifications": [
+    "中文frontmatter与正文；metadata.openclaw.skillKey使用目录一致ASCII键",
+    "保留原技能实质流程与输出结构，移除slash-command、参数占位与悬空CONNECTORS引用",
+    "不假定外部平台连接；权限不扩张，发布部署生产处置与通知仅建议清单或草稿",
+    "沿用现有文件校验、artifact登记与可打开合同；标明未验证项",
+    "逐字节保留专家库Apache-2.0许可；技能正文显著标注Modified / Adapted"
+  ]
+}

@@ -1,0 +1,178 @@
+[
+  {
+    "role": "user",
+    "content": "<response-language>\nDefault response language: Simplified Chinese.\nUse this language for replies and visible text in generated pages, documents, and presentations, including titles, headings, labels, and explanations.\nIf the user explicitly requests another language or a translation, that request takes priority for the requested content.\nPreserve code, identifiers, proper names, and quoted source text unless translation is requested. Do not translate protocol keys or tool arguments that require exact identifiers.\n</response-language>\n\n请生成一个5秒、480p、16:9的小视频，使用 xai/grok-imagine-video。只调用一次 video_generate，完成后给出视频文件。",
+    "timestamp": 1790711628672,
+    "idempotencyKey": "6c0b1c10-3e13-4d84-aa0b-8db0f6ab60ef:user",
+    "__openclaw": {
+      "senderIsOwner": true,
+      "id": "af064120-6657-4ebf-a45b-f96c56c1b042",
+      "idempotencyKey": "6c0b1c10-3e13-4d84-aa0b-8db0f6ab60ef:user",
+      "recordTimestampMs": 1790711629673,
+      "transcriptPosition": {
+        "source": "qa-transcript",
+        "rawSeq": 1
+      },
+      "seq": 1
+    }
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "toolCall",
+        "id": "qa-video-call-1",
+        "name": "video_generate",
+        "arguments": {
+          "prompt": "A blue square moving slowly on a white background, no text.",
+          "model": "xai/grok-imagine-video",
+          "durationSeconds": 5,
+          "resolution": "480P",
+          "aspectRatio": "16:9",
+          "filename": "qa-contract-video.mp4",
+          "timeoutMs": 120000
+        }
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "qa-local",
+    "model": "qa-local-model",
+    "usage": {
+      "input": 30,
+      "output": 30,
+      "totalTokens": 60,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1790711633323,
+    "responseId": "qa-completion-1",
+    "__openclaw": {
+      "runId": "6c0b1c10-3e13-4d84-aa0b-8db0f6ab60ef",
+      "id": "4c228292-0e1e-4322-8a87-b7cf5f0b55e2",
+      "recordTimestampMs": 1790711633425,
+      "transcriptPosition": {
+        "source": "qa-transcript",
+        "rawSeq": 4
+      },
+      "seq": 2
+    }
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "qa-video-call-1",
+    "toolName": "video_generate",
+    "content": [
+      {
+        "type": "text",
+        "text": "Background task started for video generation (eaebdb9c-f6e3-46cb-94a9-fa3e2718eff8). Do not call video_generate again for this request. Wait for the completion event; the completion agent will send the finished video here when it's ready."
+      }
+    ],
+    "isError": false,
+    "timestamp": 1790711635897,
+    "__openclaw": {
+      "runId": "6c0b1c10-3e13-4d84-aa0b-8db0f6ab60ef",
+      "id": "e25b4b6a-731e-440a-b093-5c72ea2ba607",
+      "recordTimestampMs": 1790711635898,
+      "transcriptPosition": {
+        "source": "qa-transcript",
+        "rawSeq": 5
+      },
+      "seq": 3
+    }
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "视频已生成。"
+      }
+    ],
+    "api": "openai-completions",
+    "provider": "qa-local",
+    "model": "qa-local-model",
+    "usage": {
+      "input": 30,
+      "output": 30,
+      "totalTokens": 60,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "stop",
+    "timestamp": 1790711651919,
+    "responseId": "qa-completion-2",
+    "__openclaw": {
+      "runId": "video_generate:eaebdb9c-f6e3-46cb-94a9-fa3e2718eff8:ok:agent-loop",
+      "id": "4600e03e-d5ff-4651-b00e-4b381b8ee158",
+      "recordTimestampMs": 1790711651972,
+      "transcriptPosition": {
+        "source": "qa-transcript",
+        "rawSeq": 10
+      },
+      "seq": 5
+    }
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "video",
+        "artifactId": "artifact_managed_media_qa-video-1",
+        "url": "/api/chat/media/outgoing/agent%3Amain%3Aclawwork%3Atask%3Atask-1/qa-video-1/full",
+        "openUrl": "/api/chat/media/outgoing/agent%3Amain%3Aclawwork%3Atask%3Atask-1/qa-video-1/full",
+        "fileName": "qa-contract-video.mp4",
+        "mimeType": "video/mp4",
+        "playback": "native",
+        "sizeBytes": 6186,
+        "durationMs": 5000,
+        "width": 854,
+        "height": 480
+      }
+    ],
+    "api": "openclaw-transcript",
+    "provider": "openclaw",
+    "model": "delivery-mirror",
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "totalTokens": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+      }
+    },
+    "stopReason": "stop",
+    "timestamp": 1790711652313,
+    "idempotencyKey": "video_generate:eaebdb9c-f6e3-46cb-94a9-fa3e2718eff8:ok:agent-loop:generated-media-transcript",
+    "__openclaw": {
+      "id": "1dd9a552-88b2-47be-89b7-aabec0a2d1c9",
+      "idempotencyKey": "video_generate:eaebdb9c-f6e3-46cb-94a9-fa3e2718eff8:ok:agent-loop:generated-media-transcript",
+      "recordTimestampMs": 1790711652317,
+      "transcriptPosition": {
+        "source": "qa-transcript",
+        "rawSeq": 11
+      },
+      "seq": 6
+    }
+  }
+]

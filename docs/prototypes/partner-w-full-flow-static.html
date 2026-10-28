@@ -1,0 +1,1779 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Partner-W · 全流程静态原型</title>
+    <style>
+      :root {
+        --bg: #f4f3ef;
+        --panel: #fbfaf7;
+        --surface: #ffffff;
+        --surface-2: #efeee9;
+        --ink: #17171c;
+        --muted: #666773;
+        --line: #deddd7;
+        --accent: #5860ea;
+        --accent-soft: #e9eaff;
+        --success: #197a4d;
+        --success-soft: #e4f4eb;
+        --warning: #a46812;
+        --warning-soft: #fff2d6;
+        --danger: #b64952;
+        --shadow: 0 18px 55px rgba(28, 29, 39, 0.13);
+        --radius: 12px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #e8e8ed;
+        color: var(--ink);
+        font-family: Inter, 'Microsoft YaHei', system-ui, sans-serif;
+      }
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      .prototype-bar {
+        height: 52px;
+        padding: 0 18px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: #15151d;
+        color: #f1f1f8;
+        position: sticky;
+        top: 0;
+        z-index: 50;
+      }
+      .prototype-bar strong {
+        font-size: 14px;
+      }
+      .prototype-bar span {
+        font-size: 12px;
+        color: #aeb0bd;
+      }
+      .flow-tabs {
+        display: flex;
+        gap: 4px;
+        margin-left: auto;
+        overflow-x: auto;
+      }
+      .flow-tab {
+        border: 0;
+        color: #b9bac5;
+        background: transparent;
+        padding: 8px 10px;
+        border-radius: 7px;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+      .flow-tab:hover {
+        background: #292936;
+        color: white;
+      }
+      .flow-tab.active {
+        background: #8088fb;
+        color: #111118;
+        font-weight: 700;
+      }
+      .viewport {
+        width: min(1440px, calc(100vw - 32px));
+        height: min(820px, calc(100vh - 76px));
+        min-height: 680px;
+        margin: 12px auto;
+        background: var(--bg);
+        border: 1px solid #d4d4db;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        position: relative;
+      }
+      .screen {
+        display: none;
+        width: 100%;
+        height: 100%;
+      }
+      .screen.active {
+        display: flex;
+      }
+      .brand-mark {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        border-radius: 11px;
+        color: white;
+        background: #1a1a25;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .brand-lockup h1 {
+        margin: 0;
+        font-size: 17px;
+      }
+      .brand-lockup p {
+        margin: 2px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .primary {
+        border: 0;
+        background: var(--accent);
+        color: white;
+        min-height: 40px;
+        padding: 0 18px;
+        border-radius: 8px;
+        font-weight: 650;
+      }
+      .primary:hover {
+        background: #4952dd;
+      }
+      .secondary {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink);
+        min-height: 40px;
+        padding: 0 16px;
+        border-radius: 8px;
+      }
+      .text-button {
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+        padding: 8px;
+      }
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+      .field label {
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .field input,
+      .field textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: white;
+        min-height: 44px;
+        border-radius: 8px;
+        padding: 10px 12px;
+        outline: 0;
+        color: var(--ink);
+      }
+      .field input:focus,
+      .field textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(88, 96, 234, 0.13);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .small {
+        font-size: 12px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 12px;
+        background: var(--surface-2);
+        color: var(--muted);
+      }
+      .pill.success {
+        background: var(--success-soft);
+        color: var(--success);
+      }
+      .pill.accent {
+        background: var(--accent-soft);
+        color: #3f46c7;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #9a9ca7;
+      }
+      .dot.live {
+        background: #22a665;
+        box-shadow: 0 0 0 4px rgba(34, 166, 101, 0.12);
+      }
+      .auth-screen {
+        align-items: stretch;
+        background: var(--panel);
+      }
+      .auth-story {
+        width: 45%;
+        background: #17171f;
+        color: #f3f3f7;
+        padding: 62px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .auth-story .brand-mark {
+        background: #8088fb;
+        color: #17171f;
+      }
+      .auth-story h2 {
+        max-width: 460px;
+        margin: 0 0 18px;
+        font-size: 38px;
+        line-height: 1.2;
+        letter-spacing: -0.035em;
+      }
+      .auth-story p {
+        color: #b9bac5;
+        line-height: 1.8;
+        max-width: 460px;
+      }
+      .auth-points {
+        display: grid;
+        gap: 14px;
+        margin-top: 36px;
+      }
+      .auth-point {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        color: #d7d7df;
+        font-size: 14px;
+      }
+      .auth-point b {
+        display: grid;
+        place-items: center;
+        flex: 0 0 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #292936;
+        color: #9ca2ff;
+      }
+      .auth-form-wrap {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 60px;
+      }
+      .auth-form {
+        width: 420px;
+      }
+      .auth-form h2 {
+        margin: 34px 0 8px;
+        font-size: 28px;
+        letter-spacing: -0.025em;
+      }
+      .auth-form .sub {
+        margin: 0 0 30px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .phone-row {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 8px;
+      }
+      .country {
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 8px;
+        padding: 0 12px;
+      }
+      .code-row {
+        display: grid;
+        grid-template-columns: 1fr 116px;
+        gap: 8px;
+      }
+      .auth-actions {
+        display: grid;
+        gap: 10px;
+        margin-top: 24px;
+      }
+      .purpose-screen,
+      .activation-screen {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 44px;
+        background: var(--bg);
+      }
+      .purpose-screen.active,
+      .activation-screen.active {
+        display: flex;
+      }
+      .wizard {
+        width: min(920px, 100%);
+      }
+      .wizard-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 26px;
+      }
+      .wizard-head h2 {
+        margin: 0;
+        font-size: 28px;
+      }
+      .wizard-head p {
+        margin: 7px 0 0;
+        color: var(--muted);
+      }
+      .step-count {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .purpose-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .purpose-card {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        border-radius: 12px;
+        padding: 18px;
+        min-height: 132px;
+        text-align: left;
+        position: relative;
+      }
+      .purpose-card:hover,
+      .purpose-card.selected {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(88, 96, 234, 0.11);
+      }
+      .purpose-card.selected::after {
+        content: '✓';
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: white;
+        display: grid;
+        place-items: center;
+      }
+      .purpose-card i {
+        font-style: normal;
+        font-size: 23px;
+      }
+      .purpose-card h3 {
+        margin: 12px 0 4px;
+        font-size: 15px;
+      }
+      .purpose-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .wizard-foot {
+        display: flex;
+        align-items: end;
+        gap: 16px;
+        margin-top: 18px;
+      }
+      .wizard-foot .field {
+        flex: 1;
+      }
+      .activation-card {
+        width: 620px;
+        padding: 32px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--surface);
+        box-shadow: 0 16px 45px rgba(35, 35, 45, 0.08);
+      }
+      .activation-card h2 {
+        margin: 24px 0 8px;
+        font-size: 26px;
+      }
+      .activation-card > p {
+        color: var(--muted);
+        line-height: 1.65;
+      }
+      .license-code {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin: 25px 0 15px;
+      }
+      .license-code span {
+        height: 54px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        background: #f7f7f4;
+        border-radius: 8px;
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+      }
+      .activation-note {
+        display: flex;
+        gap: 10px;
+        background: var(--accent-soft);
+        color: #3e438f;
+        padding: 13px;
+        border-radius: 9px;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .shell {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-columns: 58px 226px 1fr;
+        background: var(--bg);
+      }
+      .global-rail {
+        background: #17171f;
+        color: #b9bac5;
+        padding: 13px 8px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+      .global-rail .brand-mark {
+        width: 40px;
+        height: 40px;
+        background: #8088fb;
+        color: #17171f;
+        margin-bottom: 12px;
+      }
+      .rail-button {
+        width: 42px;
+        min-height: 47px;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: #aaaab6;
+        display: grid;
+        place-items: center;
+        gap: 2px;
+        font-size: 10px;
+      }
+      .rail-button b {
+        font-size: 18px;
+        font-weight: 500;
+      }
+      .rail-button:hover,
+      .rail-button.active {
+        background: #292936;
+        color: #f1f1f8;
+      }
+      .rail-spacer {
+        flex: 1;
+      }
+      .assistant-rail {
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .assistant-head {
+        padding: 14px 12px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+      .assistant-head strong {
+        display: block;
+        margin-bottom: 10px;
+      }
+      .search {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 8px;
+        padding: 9px 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .assistant-list {
+        padding: 8px;
+        overflow: auto;
+      }
+      .assistant-item {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        border-radius: 9px;
+        padding: 9px;
+        display: grid;
+        grid-template-columns: 34px 1fr auto;
+        align-items: center;
+        gap: 9px;
+        text-align: left;
+      }
+      .assistant-item:hover,
+      .assistant-item.active {
+        background: #e9e8e2;
+      }
+      .avatar {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        background: #e5e6ff;
+        font-size: 18px;
+      }
+      .assistant-item strong {
+        display: block;
+        font-size: 13px;
+      }
+      .assistant-item small {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .assistant-bottom {
+        margin-top: auto;
+        padding: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .balance-mini {
+        border-radius: 9px;
+        background: white;
+        border: 1px solid var(--line);
+        padding: 10px;
+      }
+      .balance-mini .row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+      }
+      .mini-bar {
+        height: 5px;
+        margin-top: 8px;
+        border-radius: 999px;
+        background: #e5e4df;
+        overflow: hidden;
+      }
+      .mini-bar span {
+        display: block;
+        width: 74%;
+        height: 100%;
+        background: var(--accent);
+      }
+      .workspace {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+      }
+      .workspace-top {
+        height: 58px;
+        border-bottom: 1px solid var(--line);
+        padding: 0 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .workspace-top h2 {
+        margin: 0;
+        font-size: 15px;
+      }
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .icon-button {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 8px;
+        color: var(--muted);
+      }
+      .workspace-body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+      }
+      .loading-workspace {
+        padding: 26px;
+        display: grid;
+        gap: 18px;
+      }
+      .welcome-line h2 {
+        margin: 0 0 7px;
+        font-size: 22px;
+      }
+      .welcome-line p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .inline-setup {
+        border: 1px solid #cbccef;
+        background: #f8f8ff;
+        border-radius: 14px;
+        padding: 22px;
+      }
+      .inline-setup-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .inline-setup h3 {
+        margin: 0 0 7px;
+        font-size: 17px;
+      }
+      .inline-setup p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .big-progress {
+        height: 10px;
+        border-radius: 999px;
+        background: #e4e4ee;
+        overflow: hidden;
+        margin: 22px 0 12px;
+      }
+      .big-progress span {
+        display: block;
+        width: 68%;
+        height: 100%;
+        background: var(--accent);
+      }
+      .setup-steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+      .setup-step {
+        border-top: 1px solid #dcdcf0;
+        padding-top: 12px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .setup-step b {
+        display: block;
+        color: var(--ink);
+        margin-bottom: 3px;
+      }
+      .setup-step.done b {
+        color: var(--success);
+      }
+      .skeleton-grid {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 16px;
+      }
+      .skeleton-panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 18px;
+      }
+      .skeleton-line {
+        height: 12px;
+        background: #ecebe7;
+        border-radius: 6px;
+        margin-bottom: 10px;
+      }
+      .skeleton-line.short {
+        width: 58%;
+      }
+      .file-setup {
+        padding: 24px;
+        max-width: 1060px;
+        margin: auto;
+      }
+      .file-setup h2 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      .file-setup > p {
+        margin: 0 0 20px;
+        color: var(--muted);
+      }
+      .scope-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        background: #edf5f0;
+        border: 1px solid #cfe1d6;
+        border-radius: 11px;
+        padding: 14px 16px;
+      }
+      .scope-banner strong {
+        display: block;
+        font-size: 14px;
+        color: #165c3c;
+      }
+      .scope-banner span {
+        color: #49715e;
+        font-size: 12px;
+      }
+      .folder-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .folder {
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 11px;
+        padding: 16px;
+      }
+      .folder .folder-icon {
+        font-size: 24px;
+      }
+      .folder h3 {
+        margin: 10px 0 4px;
+        font-size: 14px;
+      }
+      .folder p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .folder .folder-state {
+        margin-top: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .recent-files {
+        margin-top: 22px;
+      }
+      .recent-files h3 {
+        font-size: 14px;
+      }
+      .file-row {
+        display: grid;
+        grid-template-columns: 28px 1fr 100px 80px;
+        align-items: center;
+        min-height: 46px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .file-row .path {
+        color: var(--muted);
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .assistant-intro {
+        padding: 24px 28px 130px;
+        max-width: 1040px;
+      }
+      .assistant-identity {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .assistant-identity .avatar {
+        width: 48px;
+        height: 48px;
+        font-size: 25px;
+      }
+      .assistant-identity h2 {
+        margin: 0 0 4px;
+        font-size: 21px;
+      }
+      .assistant-identity p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .guide-panel {
+        margin-top: 20px;
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+      .guide-panel h3 {
+        margin: 0 0 12px;
+        font-size: 15px;
+      }
+      .quick-tasks {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+      .quick-task {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 10px;
+        padding: 15px;
+        text-align: left;
+      }
+      .quick-task:hover {
+        border-color: var(--accent);
+      }
+      .quick-task strong {
+        display: block;
+        font-size: 13px;
+        margin-bottom: 5px;
+      }
+      .quick-task span {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .capability-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .capability {
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .composer {
+        position: absolute;
+        left: 284px;
+        right: 0;
+        bottom: 0;
+        padding: 16px 24px 20px;
+        background: linear-gradient(to bottom, rgba(255, 255, 255, 0), white 26%);
+      }
+      .composer-box {
+        border: 1px solid #cacbd2;
+        border-radius: 18px;
+        background: white;
+        padding: 12px;
+        box-shadow: 0 12px 30px rgba(22, 22, 30, 0.11);
+      }
+      .composer-box textarea {
+        border: 0;
+        outline: 0;
+        width: 100%;
+        resize: none;
+        min-height: 50px;
+        color: var(--ink);
+      }
+      .composer-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .tool-chip {
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12px;
+        color: var(--ink);
+      }
+      .composer-tools .send {
+        margin-left: auto;
+        width: 34px;
+        height: 34px;
+        border: 0;
+        border-radius: 9px;
+        background: var(--accent);
+        color: white;
+      }
+      .chat {
+        padding: 22px 28px 140px;
+        max-width: 1050px;
+      }
+      .message {
+        margin: 0 0 24px;
+      }
+      .message.user {
+        display: flex;
+        justify-content: flex-end;
+      }
+      .message.user .bubble {
+        max-width: 70%;
+        background: var(--accent-soft);
+        padding: 12px 15px;
+        border-radius: 14px 14px 4px 14px;
+        line-height: 1.6;
+        font-size: 13px;
+      }
+      .assistant-message-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 650;
+        margin-bottom: 10px;
+      }
+      .assistant-message-head .avatar {
+        width: 28px;
+        height: 28px;
+        font-size: 15px;
+      }
+      .assistant-message {
+        padding-left: 36px;
+        font-size: 13px;
+        line-height: 1.75;
+      }
+      .assistant-message h3 {
+        font-size: 15px;
+        margin: 18px 0 7px;
+      }
+      .assistant-message ol {
+        padding-left: 20px;
+      }
+      .model-proof {
+        margin-top: 14px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .tool-call {
+        margin: 12px 0;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 11px 13px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+      }
+      .tool-call b {
+        color: var(--success);
+      }
+      .result-file {
+        margin-top: 14px;
+        border: 1px solid #cadccd;
+        background: #f7fcf9;
+        border-radius: 10px;
+        padding: 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .result-file .file-badge {
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        background: #dff2e6;
+        color: var(--success);
+        display: grid;
+        place-items: center;
+      }
+      .result-file strong {
+        display: block;
+        font-size: 13px;
+      }
+      .result-file span {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .result-file button {
+        margin-left: auto;
+      }
+      .usage-page {
+        padding: 24px;
+        overflow: auto;
+      }
+      .usage-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .usage-head h2 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      .usage-head p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .balance-hero {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: 1.3fr 0.7fr;
+        gap: 16px;
+      }
+      .balance-card,
+      .cost-card {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 12px;
+        padding: 20px;
+      }
+      .balance-value {
+        font-size: 31px;
+        font-weight: 730;
+        margin: 9px 0 18px;
+      }
+      .balance-value small {
+        font-size: 13px;
+        color: var(--muted);
+        font-weight: 500;
+      }
+      .remaining-bar {
+        height: 12px;
+        background: #dddcd6;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .remaining-bar span {
+        width: 74%;
+        height: 100%;
+        display: block;
+        background: var(--accent);
+      }
+      .balance-scale {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .cost-card .cost {
+        font-size: 24px;
+        font-weight: 700;
+        margin: 16px 0 8px;
+      }
+      .usage-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 15px;
+      }
+      .stat span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .stat strong {
+        display: block;
+        margin-top: 6px;
+        font-size: 17px;
+      }
+      .ledger {
+        margin-top: 20px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .ledger-head,
+      .ledger-row {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 0.8fr 0.8fr 1fr;
+        align-items: center;
+        min-height: 48px;
+        padding: 0 15px;
+        font-size: 12px;
+      }
+      .ledger-head {
+        background: var(--surface-2);
+        color: var(--muted);
+        font-weight: 650;
+      }
+      .ledger-row {
+        border-top: 1px solid var(--line);
+      }
+      .ledger-row .negative {
+        color: var(--danger);
+      }
+      .done-page {
+        padding: 40px;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+      }
+      .done-card {
+        width: min(760px, 100%);
+        text-align: center;
+      }
+      .done-check {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--success-soft);
+        color: var(--success);
+        font-size: 34px;
+      }
+      .done-card h2 {
+        margin: 0 0 10px;
+        font-size: 28px;
+      }
+      .done-card > p {
+        margin: 0 auto 24px;
+        color: var(--muted);
+        line-height: 1.7;
+        max-width: 580px;
+      }
+      .resume-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        text-align: left;
+        margin: 24px 0;
+      }
+      .resume-item {
+        border-top: 2px solid var(--line);
+        padding: 14px 4px;
+      }
+      .resume-item b {
+        display: block;
+        font-size: 13px;
+      }
+      .resume-item span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      @media (max-width: 1000px) {
+        .viewport {
+          width: 100vw;
+          height: calc(100vh - 52px);
+          margin: 0;
+          border: 0;
+        }
+        .auth-story {
+          display: none;
+        }
+        .shell {
+          grid-template-columns: 58px 210px 1fr;
+        }
+        .folder-grid,
+        .purpose-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .composer {
+          left: 268px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="prototype-bar">
+      <strong>Partner-W · 全流程静态原型</strong>
+      <span>仅展示界面，无真实登录、文件读取、模型调用或支付</span>
+      <nav class="flow-tabs" aria-label="原型流程">
+        <button class="flow-tab active" data-screen="login">1 登录</button>
+        <button class="flow-tab" data-screen="purpose">2 用途</button>
+        <button class="flow-tab" data-screen="activation">3 激活</button>
+        <button class="flow-tab" data-screen="loading">4 快速进入</button>
+        <button class="flow-tab" data-screen="files">5 本机文件</button>
+        <button class="flow-tab" data-screen="assistant">6 助手引导</button>
+        <button class="flow-tab" data-screen="chat">7 真实任务</button>
+        <button class="flow-tab" data-screen="usage">8 剩余额度</button>
+        <button class="flow-tab" data-screen="done">9 再次使用</button>
+      </nav>
+    </header>
+
+    <main class="viewport">
+      <section class="screen auth-screen active" id="login">
+        <div class="auth-story">
+          <div class="brand-lockup">
+            <div class="brand-mark">RY</div>
+            <div>
+              <h1>Partner-W</h1>
+              <p style="color: #aeb0bd">把想法变成可交付的结果</p>
+            </div>
+          </div>
+          <div>
+            <h2>第一次使用 AI，也知道下一步做什么。</h2>
+            <p>
+              登录后，我们会根据你的用途准备常用助手。你可以处理文档、分析资料、生成内容，也能在明确授权后查看电脑里的文件。
+            </p>
+            <div class="auth-points">
+              <div class="auth-point"><b>1</b><span>选择你最常做的事情</span></div>
+              <div class="auth-point"><b>2</b><span>输入随产品提供的激活码</span></div>
+              <div class="auth-point"><b>3</b><span>三分钟内完成第一次真实任务</span></div>
+            </div>
+          </div>
+          <p class="small">你的账号、余额和使用权限会跟随手机号保存。</p>
+        </div>
+        <div class="auth-form-wrap">
+          <div class="auth-form">
+            <div class="brand-lockup">
+              <div class="brand-mark">RY</div>
+              <div>
+                <h1>Partner-W</h1>
+                <p>Windows 智能工作台</p>
+              </div>
+            </div>
+            <h2>手机号登录</h2>
+            <p class="sub">新用户和老用户都从这里进入。我们只用手机号确认账号归属。</p>
+            <div class="field">
+              <label>手机号</label>
+              <div class="phone-row"><button class="country">+86⌄</button><input value="138 7264 9315" /></div>
+            </div>
+            <div class="field" style="margin-top: 14px">
+              <label>验证码</label>
+              <div class="code-row"><input value="482915" /><button class="secondary">重新获取 42s</button></div>
+            </div>
+            <div class="auth-actions">
+              <button class="primary next" data-next="purpose">登录并继续</button
+              ><span class="small muted">继续即表示你同意服务条款和隐私说明</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen purpose-screen" id="purpose">
+        <div class="wizard">
+          <div class="wizard-head">
+            <div>
+              <h2>你主要想用Partner-W做什么？</h2>
+              <p>可以多选，我们会据此排列助手和推荐任务。</p>
+            </div>
+            <div class="step-count">首次设置 1 / 2</div>
+          </div>
+          <div class="purpose-grid">
+            <button class="purpose-card selected">
+              <i>✦</i>
+              <h3>内容创作</h3>
+              <p>短视频脚本、标题、文章、发布文案</p>
+            </button>
+            <button class="purpose-card selected">
+              <i>▣</i>
+              <h3>拍摄剪辑</h3>
+              <p>镜头清单、口播结构、剪辑建议</p>
+            </button>
+            <button class="purpose-card">
+              <i>▤</i>
+              <h3>高效办公</h3>
+              <p>文档、表格、汇报、会议整理</p>
+            </button>
+            <button class="purpose-card">
+              <i>◇</i>
+              <h3>电商运营</h3>
+              <p>商品卖点、客服话术、活动策划</p>
+            </button>
+            <button class="purpose-card">
+              <i>◎</i>
+              <h3>学习研究</h3>
+              <p>资料梳理、对比分析、学习计划</p>
+            </button>
+            <button class="purpose-card">
+              <i>⌂</i>
+              <h3>生活家庭</h3>
+              <p>旅行、日程、家庭计划与实用建议</p>
+            </button>
+          </div>
+          <div class="wizard-foot">
+            <div class="field">
+              <label>还有什么特别想完成？</label><input value="我想把产品资料快速做成短视频脚本和拍摄清单" />
+            </div>
+            <button class="primary next" data-next="activation">保存用途</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen activation-screen" id="activation">
+        <div class="activation-card">
+          <div class="brand-lockup">
+            <div class="brand-mark">RY</div>
+            <div>
+              <h1>激活Partner-W</h1>
+              <p>首次设置 2 / 2</p>
+            </div>
+          </div>
+          <h2>输入你的激活码</h2>
+          <p>激活成功后，权益会绑定到当前手机号。以后换电脑登录同一账号也能继续使用。</p>
+          <div class="license-code"><span>RY26</span><span>9KM4</span><span>7XQ2</span><span>DEMO</span></div>
+          <div class="activation-note">
+            <b>✓</b><span>演示激活码已识别：含 50,000 点模型额度，支持 1 个账号使用。</span>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px">
+            <button class="secondary next" data-next="purpose">返回修改用途</button
+            ><button class="primary next" data-next="loading">激活并进入</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="loading">
+        <div class="shell">
+          <aside class="global-rail">
+            <div class="brand-mark">RY</div>
+            <button class="rail-button active"><b>✦</b>首页</button><button class="rail-button"><b>◉</b>助手</button
+            ><button class="rail-button"><b>▤</b>文件</button><button class="rail-button"><b>◫</b>用量</button>
+            <div class="rail-spacer"></div>
+            <button class="rail-button"><b>⚙</b>设置</button>
+          </aside>
+          <aside class="assistant-rail">
+            <div class="assistant-head">
+              <strong>常用助手</strong>
+              <div class="search">⌕ 搜索助手</div>
+            </div>
+            <div class="assistant-list">
+              <button class="assistant-item active">
+                <span class="avatar">✦</span><span><strong>罗盘助手</strong><small>正在准备</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">✍</span><span><strong>内容创作</strong><small>已就绪</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">▣</span><span><strong>拍摄剪辑</strong><small>已就绪</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">▤</span><span><strong>高效办公</strong><small>准备中</small></span
+                ><span class="dot"></span>
+              </button>
+            </div>
+            <div class="assistant-bottom">
+              <div class="balance-mini">
+                <div class="row"><span>剩余额度</span><strong>37,240</strong></div>
+                <div class="mini-bar"><span></span></div>
+              </div>
+            </div>
+          </aside>
+          <section class="workspace">
+            <header class="workspace-top">
+              <h2>上午好，林先生</h2>
+              <div class="top-actions">
+                <span class="pill success"><span class="dot live"></span>账号已激活</span
+                ><button class="icon-button">?</button>
+              </div>
+            </header>
+            <div class="workspace-body loading-workspace">
+              <div class="welcome-line">
+                <h2>你的工作台已经可以查看</h2>
+                <p>AI 对话还在准备，你可以先了解助手和本机文件范围。</p>
+              </div>
+              <div class="inline-setup">
+                <div class="inline-setup-head">
+                  <div>
+                    <h3>正在准备 AI 对话</h3>
+                    <p>正在获取可用模型，完成后输入框会自动解锁。</p>
+                  </div>
+                  <strong>68%</strong>
+                </div>
+                <div class="big-progress"><span></span></div>
+                <div class="setup-steps">
+                  <div class="setup-step done"><b>✓ AI 服务已启动</b>本机网关连接正常</div>
+                  <div class="setup-step"><b>● 正在获取模型</b>默认使用 DeepSeek V4 Flash</div>
+                  <div class="setup-step done"><b>✓ 助手 6 / 6</b>常用助手已准备完成</div>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px">
+                  <span class="small muted">如果超过 90 秒，可检查网络并重新尝试。</span
+                  ><button class="secondary">重新尝试</button>
+                </div>
+              </div>
+              <div class="skeleton-grid">
+                <div class="skeleton-panel">
+                  <div class="skeleton-line short"></div>
+                  <div class="skeleton-line"></div>
+                  <div class="skeleton-line"></div>
+                  <div class="skeleton-line short"></div>
+                </div>
+                <div class="skeleton-panel">
+                  <div class="skeleton-line short"></div>
+                  <div class="skeleton-line"></div>
+                  <div class="skeleton-line short"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="files">
+        <div class="shell">
+          <aside class="global-rail">
+            <div class="brand-mark">RY</div>
+            <button class="rail-button"><b>✦</b>首页</button><button class="rail-button"><b>◉</b>助手</button
+            ><button class="rail-button active"><b>▤</b>文件</button><button class="rail-button"><b>◫</b>用量</button>
+            <div class="rail-spacer"></div>
+            <button class="rail-button"><b>⚙</b>设置</button>
+          </aside>
+          <aside class="assistant-rail">
+            <div class="assistant-head">
+              <strong>本机文件</strong>
+              <div class="search">⌕ 搜索已授权文件</div>
+            </div>
+            <div class="assistant-list">
+              <button class="assistant-item active">
+                <span class="avatar">▤</span><span><strong>授权范围</strong><small>3 个文件夹</small></span></button
+              ><button class="assistant-item">
+                <span class="avatar">◷</span><span><strong>最近使用</strong><small>12 个文件</small></span></button
+              ><button class="assistant-item">
+                <span class="avatar">＋</span><span><strong>添加文件夹</strong><small>选择新的范围</small></span>
+              </button>
+            </div>
+            <div class="assistant-bottom"><p class="small muted">助手只能读取你明确允许的文件夹。</p></div>
+          </aside>
+          <section class="workspace">
+            <header class="workspace-top">
+              <h2>本机文件范围</h2>
+              <div class="top-actions"><button class="secondary">＋ 添加文件夹</button></div>
+            </header>
+            <div class="workspace-body file-setup">
+              <h2>允许助手处理哪些文件？</h2>
+              <p>这里不是扫描整台电脑。只有你选择的文件夹会进入可用范围。</p>
+              <div class="scope-banner">
+                <div><strong>隐私边界已开启</strong><span>删除授权后，助手会立即失去该文件夹的访问范围。</span></div>
+                <span class="pill success">✓ 仅本机保存</span>
+              </div>
+              <div class="folder-grid">
+                <div class="folder">
+                  <span class="folder-icon">📁</span>
+                  <h3>桌面</h3>
+                  <p>C:\Users\Lin\Desktop</p>
+                  <div class="folder-state">
+                    <span class="pill success">已授权</span><button class="text-button">移除</button>
+                  </div>
+                </div>
+                <div class="folder">
+                  <span class="folder-icon">📁</span>
+                  <h3>产品资料</h3>
+                  <p>D:\工作资料\Partner-W</p>
+                  <div class="folder-state">
+                    <span class="pill success">已授权</span><button class="text-button">移除</button>
+                  </div>
+                </div>
+                <div class="folder">
+                  <span class="folder-icon">📁</span>
+                  <h3>视频素材</h3>
+                  <p>E:\短视频\素材库</p>
+                  <div class="folder-state">
+                    <span class="pill success">已授权</span><button class="text-button">移除</button>
+                  </div>
+                </div>
+              </div>
+              <div class="recent-files">
+                <h3>最近可用文件</h3>
+                <div class="file-row">
+                  <span>▤</span><strong>新品资料.docx</strong><span class="path">产品资料\9 月新品</span
+                  ><span>刚刚</span>
+                </div>
+                <div class="file-row">
+                  <span>▧</span><strong>核心卖点.xlsx</strong><span class="path">产品资料\市场</span
+                  ><span>12 分钟前</span>
+                </div>
+                <div class="file-row">
+                  <span>▻</span><strong>产品展示.mp4</strong><span class="path">视频素材\原片</span><span>昨天</span>
+                </div>
+              </div>
+              <div style="display: flex; justify-content: flex-end; margin-top: 20px">
+                <button class="primary next" data-next="assistant">范围正确，选择助手</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="assistant">
+        <div class="shell">
+          <aside class="global-rail">
+            <div class="brand-mark">RY</div>
+            <button class="rail-button"><b>✦</b>首页</button><button class="rail-button active"><b>◉</b>助手</button
+            ><button class="rail-button"><b>▤</b>文件</button><button class="rail-button"><b>◫</b>用量</button>
+            <div class="rail-spacer"></div>
+            <button class="rail-button"><b>⚙</b>设置</button>
+          </aside>
+          <aside class="assistant-rail">
+            <div class="assistant-head">
+              <strong>常用助手 · 6</strong>
+              <div class="search">⌕ 搜索助手</div>
+            </div>
+            <div class="assistant-list">
+              <button class="assistant-item">
+                <span class="avatar">✦</span><span><strong>罗盘助手</strong><small>综合任务</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">✍</span><span><strong>内容创作</strong><small>文案与脚本</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item active">
+                <span class="avatar">▣</span><span><strong>拍摄剪辑</strong><small>镜头与剪辑</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">▤</span><span><strong>高效办公</strong><small>文档与表格</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">◇</span><span><strong>电商运营</strong><small>商品与活动</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">◎</span><span><strong>学习研究</strong><small>资料与分析</small></span
+                ><span class="dot live"></span>
+              </button>
+            </div>
+            <div class="assistant-bottom">
+              <div class="balance-mini">
+                <div class="row"><span>剩余额度</span><strong>37,240</strong></div>
+                <div class="mini-bar"><span></span></div>
+              </div>
+            </div>
+          </aside>
+          <section class="workspace">
+            <header class="workspace-top">
+              <h2>拍摄剪辑助手</h2>
+              <div class="top-actions">
+                <span class="pill success"><span class="dot live"></span>已就绪</span
+                ><button class="icon-button">•••</button>
+              </div>
+            </header>
+            <div class="workspace-body assistant-intro">
+              <div class="assistant-identity">
+                <span class="avatar">▣</span>
+                <div>
+                  <h2>拍摄剪辑助手</h2>
+                  <p>把产品资料变成能直接开拍的脚本、镜头清单和剪辑结构。</p>
+                </div>
+              </div>
+              <div class="guide-panel">
+                <h3>第一次可以从这里开始</h3>
+                <div class="quick-tasks">
+                  <button class="quick-task next" data-next="chat">
+                    <strong>根据产品资料生成 60 秒脚本</strong
+                    ><span>读取已授权资料，输出口播、画面和节奏。</span></button
+                  ><button class="quick-task">
+                    <strong>把现有文案拆成镜头清单</strong><span>按镜号、景别、台词、时长和素材整理。</span></button
+                  ><button class="quick-task">
+                    <strong>诊断一条视频为什么留不住人</strong><span>分析开头、节奏、信息密度和转场。</span></button
+                  ><button class="quick-task">
+                    <strong>生成拍摄当天的执行清单</strong><span>整理人员、设备、场景、道具和顺序。</span>
+                  </button>
+                </div>
+              </div>
+              <div class="guide-panel">
+                <h3>这个助手可以使用</h3>
+                <div class="capability-row">
+                  <span class="capability">▤ 读取授权文件</span><span class="capability">▣ 分析图片与视频</span
+                  ><span class="capability">✦ 生成脚本文档</span><span class="capability">⌕ 联网查找资料</span>
+                </div>
+              </div>
+              <div class="guide-panel">
+                <span class="pill accent">默认模型：DeepSeek V4 Flash</span>
+                <p class="small muted">模型选择器、实际调用和回复标签会保持一致。</p>
+              </div>
+            </div>
+            <div class="composer">
+              <div class="composer-box">
+                <textarea placeholder="描述你想拍什么，或直接引用已授权文件…"></textarea>
+                <div class="composer-tools">
+                  <button class="tool-chip">＋ 文件</button><button class="tool-chip">DeepSeek V4 Flash⌄</button
+                  ><button class="tool-chip">标准思考⌄</button><button class="send">↑</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="chat">
+        <div class="shell">
+          <aside class="global-rail">
+            <div class="brand-mark">RY</div>
+            <button class="rail-button"><b>✦</b>首页</button><button class="rail-button active"><b>◉</b>助手</button
+            ><button class="rail-button"><b>▤</b>文件</button><button class="rail-button"><b>◫</b>用量</button>
+            <div class="rail-spacer"></div>
+            <button class="rail-button"><b>⚙</b>设置</button>
+          </aside>
+          <aside class="assistant-rail">
+            <div class="assistant-head">
+              <strong>拍摄剪辑</strong>
+              <div class="search">⌕ 搜索任务</div>
+            </div>
+            <div class="assistant-list">
+              <button class="assistant-item active">
+                <span class="avatar">▣</span><span><strong>9 月新品短视频</strong><small>刚刚完成</small></span
+                ><span class="dot live"></span></button
+              ><button class="assistant-item">
+                <span class="avatar">▣</span><span><strong>门店采访脚本</strong><small>昨天</small></span></button
+              ><button class="assistant-item">
+                <span class="avatar">▣</span><span><strong>直播切片方案</strong><small>9 月 13 日</small></span>
+              </button>
+            </div>
+            <div class="assistant-bottom">
+              <div class="balance-mini">
+                <div class="row"><span>剩余额度</span><strong>37,108</strong></div>
+                <div class="mini-bar"><span style="width: 73.7%"></span></div>
+              </div>
+            </div>
+          </aside>
+          <section class="workspace">
+            <header class="workspace-top">
+              <h2>9 月新品短视频</h2>
+              <div class="top-actions">
+                <span class="pill success">✓ 已完成</span><button class="icon-button">•••</button>
+              </div>
+            </header>
+            <div class="workspace-body chat">
+              <div class="message user">
+                <div class="bubble">
+                  请读取“新品资料.docx”和“核心卖点.xlsx”，帮我做一条 60 秒新品短视频脚本，要有前 3
+                  秒钩子、镜头清单和发布文案。
+                </div>
+              </div>
+              <div class="message">
+                <div class="assistant-message-head"><span class="avatar">▣</span>拍摄剪辑助手</div>
+                <div class="assistant-message">
+                  <div class="tool-call"><b>✓</b><span>已读取 2 个授权文件：新品资料.docx、核心卖点.xlsx</span></div>
+                  <p>资料已整理完成。建议把“30 秒完成安装”作为第一卖点，前 3 秒直接展示安装前后的反差。</p>
+                  <h3>60 秒视频结构</h3>
+                  <ol>
+                    <li><b>0–3 秒：</b>镜头快速切换，字幕“还在为安装折腾半小时？”</li>
+                    <li><b>4–15 秒：</b>展示开箱和核心部件，口播说明无需专业工具。</li>
+                    <li><b>16–38 秒：</b>三步安装实拍，每一步配大字提示。</li>
+                    <li><b>39–52 秒：</b>展示使用前后对比，并补充表格中的三项核心参数。</li>
+                    <li><b>53–60 秒：</b>产品全景和行动提示。</li>
+                  </ol>
+                  <div class="result-file">
+                    <span class="file-badge">DOC</span>
+                    <div><strong>9月新品_60秒短视频执行稿.docx</strong><span>已保存到：桌面\Partner-W成果</span></div>
+                    <button class="secondary">打开文件夹</button>
+                  </div>
+                  <div class="model-proof">
+                    <span class="pill accent">DeepSeek V4 Flash</span
+                    ><span>输入 1,248 · 输出 862 Tokens · 消耗 132 点</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="composer">
+              <div class="composer-box">
+                <textarea>把前 3 秒再改得更有冲突感…</textarea>
+                <div class="composer-tools">
+                  <button class="tool-chip">＋ 文件</button><button class="tool-chip">DeepSeek V4 Flash⌄</button
+                  ><button class="tool-chip">标准思考⌄</button><button class="send">↑</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="usage">
+        <div class="shell">
+          <aside class="global-rail">
+            <div class="brand-mark">RY</div>
+            <button class="rail-button"><b>✦</b>首页</button><button class="rail-button"><b>◉</b>助手</button
+            ><button class="rail-button"><b>▤</b>文件</button><button class="rail-button active"><b>◫</b>用量</button>
+            <div class="rail-spacer"></div>
+            <button class="rail-button"><b>⚙</b>设置</button>
+          </aside>
+          <aside class="assistant-rail">
+            <div class="assistant-head"><strong>账户</strong></div>
+            <div class="assistant-list">
+              <button class="assistant-item active">
+                <span class="avatar">◫</span><span><strong>余额与用量</strong><small>账户范围</small></span></button
+              ><button class="assistant-item">
+                <span class="avatar">↻</span><span><strong>充值记录</strong><small>3 条记录</small></span></button
+              ><button class="assistant-item">
+                <span class="avatar">⌁</span><span><strong>兑换激活码</strong><small>增加使用额度</small></span>
+              </button>
+            </div>
+          </aside>
+          <section class="workspace">
+            <header class="workspace-top">
+              <h2>余额与用量</h2>
+              <div class="top-actions">
+                <button class="secondary">兑换激活码</button><button class="primary">充值额度</button>
+              </div>
+            </header>
+            <div class="workspace-body usage-page">
+              <div class="usage-head">
+                <div>
+                  <h2>账户使用概览</h2>
+                  <p>进度条始终表示剩余，不再显示已用方向。</p>
+                </div>
+                <span class="pill success">数据已更新</span>
+              </div>
+              <div class="balance-hero">
+                <div class="balance-card">
+                  <span class="small muted">剩余额度</span>
+                  <div class="balance-value">37,108 <small>点</small></div>
+                  <div class="remaining-bar" role="progressbar" aria-label="剩余额度 74%"><span></span></div>
+                  <div class="balance-scale"><span>剩余 74%</span><span>总额度 50,000 点</span></div>
+                </div>
+                <div class="cost-card">
+                  <span class="small muted">刚才这次任务</span>
+                  <div class="cost">−132 点</div>
+                  <span class="pill accent">DeepSeek V4 Flash</span>
+                  <p class="small muted">输入 1,248 · 输出 862 Tokens</p>
+                </div>
+              </div>
+              <div class="usage-stats">
+                <div class="stat"><span>本月完成任务</span><strong>18</strong></div>
+                <div class="stat"><span>本月已使用</span><strong>2,892 点</strong></div>
+                <div class="stat"><span>最常用助手</span><strong>拍摄剪辑</strong></div>
+              </div>
+              <div class="ledger">
+                <div class="ledger-head">
+                  <span>时间 / 任务</span><span>模型</span><span>输入</span><span>输出</span><span>额度变化</span>
+                </div>
+                <div class="ledger-row">
+                  <span>刚刚 · 9 月新品短视频</span><span>DeepSeek V4 Flash</span><span>1,248</span><span>862</span
+                  ><span class="negative">−132 点</span>
+                </div>
+                <div class="ledger-row">
+                  <span>今天 10:24 · 标题优化</span><span>DeepSeek V4 Flash</span><span>526</span><span>218</span
+                  ><span class="negative">−41 点</span>
+                </div>
+                <div class="ledger-row">
+                  <span>昨天 · 市场资料摘要</span><span>Qwen 3.5 Plus</span><span>3,842</span><span>1,106</span
+                  ><span class="negative">−286 点</span>
+                </div>
+                <div class="ledger-row">
+                  <span>9 月 12 日 · 激活赠送</span><span>—</span><span>—</span><span>—</span
+                  ><span style="color: var(--success)">+50,000 点</span>
+                </div>
+              </div>
+              <div style="display: flex; justify-content: flex-end; margin-top: 18px">
+                <button class="primary next" data-next="done">查看再次登录体验</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen done-page" id="done">
+        <div class="done-card">
+          <div class="done-check">✓</div>
+          <h2>关闭后，下次从这里继续</h2>
+          <p>
+            手机号账号保存权益和余额，本机保存已授权文件范围。换电脑登录后仍有使用权限，再选择新电脑允许访问的文件夹即可。
+          </p>
+          <div class="resume-grid">
+            <div class="resume-item"><b>账号权益</b><span>跟随手机号，可换电脑恢复</span></div>
+            <div class="resume-item"><b>任务与助手</b><span>恢复最近使用状态</span></div>
+            <div class="resume-item"><b>本机文件权限</b><span>每台电脑单独确认，避免越权</span></div>
+          </div>
+          <div style="display: flex; justify-content: center; gap: 10px">
+            <button class="secondary next" data-next="login">重新看完整流程</button
+            ><button class="primary next" data-next="assistant">继续上次任务</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const tabs = [...document.querySelectorAll('.flow-tab')];
+      const screens = [...document.querySelectorAll('.screen')];
+      function showScreen(id) {
+        screens.forEach((screen) => screen.classList.toggle('active', screen.id === id));
+        tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.screen === id));
+      }
+      tabs.forEach((tab) => tab.addEventListener('click', () => showScreen(tab.dataset.screen)));
+      document
+        .querySelectorAll('.next')
+        .forEach((button) => button.addEventListener('click', () => showScreen(button.dataset.next)));
+      document
+        .querySelectorAll('.purpose-card')
+        .forEach((card) => card.addEventListener('click', () => card.classList.toggle('selected')));
+    </script>
+  </body>
+</html>

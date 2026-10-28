@@ -1,0 +1,314 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const handleMap = new Map<string, (...args: unknown[]) => unknown>();
+const getWorkspacePathMock = vi.fn<() => string | null>(() => null);
+const autoExtractArtifactsMock = vi.fn();
+const runMock = vi.fn();
+const conflictRunMock = vi.fn();
+// ⚠️ 形参**不能省**：`vi.fn(() => …)` 的参数表是空的 ⇒ `mock.calls` 被推成 `[][]`，
+// 于是 `calls.at(-1)?.[0]` 触发 TS2493（"Tuple type '[]' of length '0' has no element at index '0'"）。
+// 声明成它真实收到的那一个 config 对象，调用记录才有正确的类型。
+const onConflictDoUpdateMock = vi.fn((_values: Record<string, unknown>) => ({ run: conflictRunMock }));
+const valuesMock = vi.fn(() => ({ onConflictDoUpdate: onConflictDoUpdateMock, run: runMock }));
+const insertMock = vi.fn(() => ({ values: valuesMock }));
+const selectGetMock = vi.fn<() => { sk?: string; id?: string }>(() => ({ sk: 'agent:main:clawwork:task:task-1' }));
+const selectWhereMock = vi.fn(() => ({ get: selectGetMock }));
+const selectFromMock = vi.fn(() => ({ where: selectWhereMock }));
+const selectMock = vi.fn((fields?: Record<string, unknown>) => {
+  if (fields && 'taskId' in fields && 'sessionKey' in fields && 'role' in fields) {
+    return { from: () => ({ where: () => ({ get: () => undefined }) }) };
+  }
+  return { from: selectFromMock };
+});
+const getDbMock = vi.fn(() => ({ insert: insertMock, select: selectMock }));
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+      handleMap.set(channel, handler);
+    }),
+  },
+}));
+
+vi.mock('../src/main/workspace/config.js', () => ({
+  getWorkspacePath: getWorkspacePathMock,
+}));
+
+vi.mock('../src/main/artifact/auto-extract.js', () => ({
+  autoExtractArtifacts: autoExtractArtifactsMock,
+}));
+
+vi.mock('../src/main/db/index.js', () => ({
+  getDb: getDbMock,
+  isDbReady: vi.fn(() => true),
+  // V3-artifact（2026-10-14）：交付操作捕获路径会经 ownership 门读 getSqlite ——
+  // 本档不涉库上下文（null 两端相等 ⇒ 归属门放行，与其它套件同款桩）。
+  getSqlite: vi.fn(() => null),
+}));
+
+describe('registerDataHandlers', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    handleMap.clear();
+    getWorkspacePathMock.mockReturnValue(null);
+    autoExtractArtifactsMock.mockReset();
+    runMock.mockReset();
+    conflictRunMock.mockReset();
+    selectGetMock.mockReset();
+    selectGetMock.mockReturnValue({ sk: 'agent:main:clawwork:task:task-1' });
+    onConflictDoUpdateMock.mockClear();
+    valuesMock.mockClear();
+    insertMock.mockClear();
+    getDbMock.mockClear();
+  });
+
+  it('deduplicates repeated message inserts for the same logical message', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    conflictRunMock.mockImplementation(() => undefined);
+
+    const payload = {
+      id: 'msg-1',
+      taskId: 'task-1',
+      role: 'assistant',
+      content: 'same reply',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, payload)).toEqual({ ok: true });
+    expect(createMessage?.({}, { ...payload, id: 'msg-2' })).toEqual({ ok: true });
+
+    expect(conflictRunMock).toHaveBeenCalledTimes(2);
+    expect(autoExtractArtifactsMock).not.toHaveBeenCalled();
+  });
+
+  it('updates toolCalls when persisting the same logical message again', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    const payload = {
+      id: 'msg-tool-1',
+      taskId: 'task-1',
+      role: 'assistant',
+      content: 'CPU info',
+      timestamp: '2026-03-16T00:00:01.000Z',
+      toolCalls: [{ id: 'exec-1', name: 'exec', status: 'running' }],
+    };
+
+    expect(createMessage?.({}, payload)).toEqual({ ok: true });
+    expect(
+      createMessage?.(
+        {},
+        {
+          ...payload,
+          id: 'msg-tool-2',
+          toolCalls: [{ id: 'exec-1', name: 'exec', status: 'done', result: 'uname -a' }],
+        },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(onConflictDoUpdateMock).toHaveBeenCalledTimes(2);
+    expect(onConflictDoUpdateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: expect.anything(),
+        set: expect.objectContaining({
+          toolCalls: JSON.stringify([{ id: 'exec-1', name: 'exec', status: 'done', result: 'uname -a' }]),
+        }),
+      }),
+    );
+  });
+
+  it('⭐ 整轮用时：定稿写入 duration_ms，后续中途 upsert 不覆盖已结算的值', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    const base = {
+      id: 'msg-dur-1',
+      taskId: 'task-1',
+      role: 'assistant',
+      content: '答案',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, { ...base, durationMs: 286_000 })).toEqual({ ok: true });
+    expect(valuesMock).toHaveBeenLastCalledWith(expect.objectContaining({ durationMs: 286_000 }));
+
+    // 同一逻辑消息的**中途** upsert（工具快照）拿不到用时 ⇒ set 里不许出现该键，
+    // 否则会把定稿那一刻结算的值按 `?? null` 抹掉。
+    expect(createMessage?.({}, { ...base, id: 'msg-dur-2' })).toEqual({ ok: true });
+    const lastSet = onConflictDoUpdateMock.mock.calls.at(-1)?.[0]?.set as Record<string, unknown>;
+    expect(lastSet).not.toHaveProperty('durationMs');
+    // 插入本身没有值 ⇒ 显式 NULL（老行/缺起算点），不是 undefined（drizzle 会忽略）。
+    expect(valuesMock).toHaveBeenLastCalledWith(expect.objectContaining({ durationMs: null }));
+  });
+
+  it('auto-extracts assistant image attachments even when content is empty', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    getWorkspacePathMock.mockReturnValue('/workspace');
+    autoExtractArtifactsMock.mockResolvedValue(undefined);
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    const attachments = [
+      {
+        fileName: 'result.png',
+        dataUrl: 'file:///Users/x/.openclaw/media/result.png',
+        mimeType: 'image/png',
+        sourcePath: '/Users/x/.openclaw/media/result.png',
+      },
+    ];
+
+    expect(
+      createMessage?.(
+        {},
+        {
+          id: 'msg-image-1',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '',
+          timestamp: '2026-03-16T00:00:01.000Z',
+          attachments,
+        },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(autoExtractArtifactsMock).toHaveBeenCalledWith({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'msg-image-1',
+      content: '',
+      attachments,
+      gatewayHttpBase: undefined,
+      resolveMediaDownload: expect.any(Function),
+      onActivity: expect.any(Function),
+    });
+  });
+
+  it('auto-extracts using the persisted message id after logical upsert', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    getWorkspacePathMock.mockReturnValue('/workspace');
+    autoExtractArtifactsMock.mockResolvedValue(undefined);
+    selectGetMock.mockReturnValueOnce({ id: 'existing-msg-1' });
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    expect(
+      createMessage?.(
+        {},
+        {
+          id: 'incoming-msg-2',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: 'done',
+          timestamp: '2026-03-16T00:00:01.000Z',
+          sessionKey: 'agent:main:clawwork:task:task-1',
+        },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(autoExtractArtifactsMock).toHaveBeenCalledWith({
+      workspacePath: '/workspace',
+      taskId: 'task-1',
+      messageId: 'existing-msg-1',
+      content: 'done',
+      attachments: undefined,
+      gatewayHttpBase: undefined,
+      resolveMediaDownload: expect.any(Function),
+      onActivity: expect.any(Function),
+    });
+  });
+
+  // 消息级 model（「这条回复实际是谁生成的」）。白名单式写入，漏一处就静默丢字段。
+  it('persists the per-message model on first write', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    expect(
+      createMessage?.(
+        {},
+        {
+          id: 'msg-model-1',
+          taskId: 'task-1',
+          role: 'assistant',
+          content: '收到',
+          timestamp: '2026-03-16T00:00:01.000Z',
+          model: 'glm-4.7',
+        },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(valuesMock).toHaveBeenCalledWith(expect.objectContaining({ model: 'glm-4.7' }));
+  });
+
+  // ⚠️ 工具调用/推理的中途 upsert **不带** model（那几条写入路径拿不到它）。
+  // 若这里写成 `model: msg.model ?? null`，第二次写就会把已落库的模型抹成 NULL，
+  // 表现是「重载后徽章消失、而库里那条记录其实曾经有过」。
+  it('keeps the stored model when a later upsert omits it', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    expect(createMessage).toBeTypeOf('function');
+
+    const base = {
+      taskId: 'task-1',
+      role: 'assistant',
+      content: '收到',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, { ...base, id: 'msg-model-a', model: 'glm-4.7' })).toEqual({ ok: true });
+    expect(
+      createMessage?.({}, { ...base, id: 'msg-model-b', toolCalls: [{ id: 'exec-1', name: 'exec', status: 'done' }] }),
+    ).toEqual({ ok: true });
+
+    const lastSet = onConflictDoUpdateMock.mock.calls.at(-1)?.[0]?.set as Record<string, unknown>;
+    expect(lastSet).not.toHaveProperty('model');
+    expect(lastSet).toHaveProperty('toolCalls');
+  });
+
+  it('overwrites the stored model when the incoming write carries one', async () => {
+    const { registerDataHandlers } = await import('../src/main/ipc/data-handlers.js');
+
+    registerDataHandlers();
+
+    const createMessage = handleMap.get('data:create-message');
+    const base = {
+      id: 'msg-model-c',
+      taskId: 'task-1',
+      role: 'assistant',
+      content: '收到',
+      timestamp: '2026-03-16T00:00:01.000Z',
+    };
+
+    expect(createMessage?.({}, { ...base, model: 'glm-4.7' })).toEqual({ ok: true });
+    expect(createMessage?.({}, { ...base, model: 'qwen-turbo' })).toEqual({ ok: true });
+
+    expect(onConflictDoUpdateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ set: expect.objectContaining({ model: 'qwen-turbo' }) }),
+    );
+  });
+});

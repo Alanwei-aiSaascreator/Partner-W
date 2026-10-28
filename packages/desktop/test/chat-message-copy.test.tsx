@@ -1,0 +1,161 @@
+// @vitest-environment jsdom
+
+import { act, type ReactElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Message } from '@clawwork/shared';
+import '../src/renderer/i18n';
+import ChatMessage from '../src/renderer/components/ChatMessage';
+// 流式那一格现在是 `AssistantBlock` 的 `state="streaming"`（`StreamingMessage` 已并入）。
+import AssistantBlock from '../src/renderer/components/AssistantBlock';
+
+vi.mock('framer-motion', async () => {
+  const React = await import('react');
+
+  const motion = new Proxy(
+    {},
+    {
+      get: (_target, tag: string) =>
+        React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(({ children, ...props }, ref) =>
+          React.createElement(tag, { ...props, ref }, children),
+        ),
+    },
+  );
+
+  return {
+    AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    motion,
+  };
+});
+
+function buildMessage(partial: Partial<Message>): Message {
+  return {
+    id: 'msg-1',
+    taskId: 'task-1',
+    role: 'assistant',
+    content: '',
+    artifacts: [],
+    toolCalls: [],
+    timestamp: '2026-03-13T00:00:00.000Z',
+    ...partial,
+  };
+}
+
+function render(ui: ReactElement): { container: HTMLDivElement; unmount: () => void } {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+
+  act(() => {
+    root.render(ui);
+  });
+
+  return {
+    container,
+    unmount: () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
+}
+
+const cleanups: Array<() => void> = [];
+
+describe('chat message copy actions', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  afterEach(() => {
+    while (cleanups.length > 0) {
+      cleanups.pop()?.();
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('shows a copy button for assistant messages and copies the full message', async () => {
+    const message = buildMessage({
+      content: 'Alpha\n\n```ts\nconst value = 1;\n```',
+    });
+
+    const { container, unmount } = render(<ChatMessage message={message} />);
+    cleanups.push(unmount);
+
+    const button = container.querySelector('button[aria-label="Copy message"]');
+
+    expect(button).not.toBeNull();
+
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(window.navigator.clipboard.writeText).toHaveBeenCalledWith(message.content);
+  });
+
+  it('shows a copy button for user messages and copies the full message', async () => {
+    const message = buildMessage({
+      role: 'user',
+      content: 'local draft',
+    });
+
+    const { container, unmount } = render(<ChatMessage message={message} />);
+    cleanups.push(unmount);
+
+    const button = container.querySelector('button[aria-label="Copy message"]');
+
+    expect(button).not.toBeNull();
+
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(window.navigator.clipboard.writeText).toHaveBeenCalledWith(message.content);
+  });
+
+  it('keeps pasted multiline user text left-aligned inside the right-aligned bubble', () => {
+    const message = buildMessage({
+      role: 'user',
+      content: 'Codex model usage\n\n- current model: `gpt-5.5`\n- total: **$16.92**',
+    });
+
+    const { container, unmount } = render(<ChatMessage message={message} />);
+    cleanups.push(unmount);
+
+    const messageColumn = container.querySelector('.text-right');
+    const bubble = messageColumn?.querySelector('.inline-block');
+
+    expect(messageColumn).not.toBeNull();
+    expect(bubble?.className).toContain('text-left');
+  });
+
+  it('shows a copy button for fenced code blocks and copies only the code', async () => {
+    const { container, unmount } = render(
+      <AssistantBlock
+        state="streaming"
+        content={'```ts\nconst alpha = 1;\nconst beta = alpha + 1;\n```'}
+        identity={{ agentName: '助手' }}
+      />,
+    );
+    cleanups.push(unmount);
+
+    const button = container.querySelector('button[aria-label="Copy code"]');
+
+    expect(button).not.toBeNull();
+
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(window.navigator.clipboard.writeText).toHaveBeenCalledWith('const alpha = 1;\nconst beta = alpha + 1;');
+  });
+});

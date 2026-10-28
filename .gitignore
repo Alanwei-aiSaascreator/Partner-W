@@ -1,0 +1,73 @@
+node_modules
+dist/
+out/
+*.db
+*.sqlite
+.env
+.env.local
+.DS_Store
+*.log
+
+# Build artifacts
+artifacts/
+*.tsbuildinfo
+*.dmg
+*.exe
+
+# 出厂运行时打包产物（scripts/pack-runtime.mjs 的输出）。
+# 单个包 100MB+，是发布物不是源码 —— 别让它进仓库。
+runtime-out/
+
+# Python
+__pycache__/
+*.pyc
+
+# npm (project uses pnpm)
+package-lock.json
+
+# Local AI tooling
+.claude/settings.local.json
+.impeccable.md
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.cursor/
+
+# OS
+Thumbs.db
+
+# test
+test-results/
+playwright-report/
+coverage/
+.worktrees/
+
+# 打包态 E2E 的截图证据（每次跑都会重新生成，别把二进制塞进仓库）
+packages/desktop/e2e-artifacts/
+packages/desktop/our-skills/deck-layout/scripts/preflight.cjs
+
+# 测试临时产物（node 编译缓存，非源码）
+packages/desktop/.pptx-header-test-red-suite/
+
+# ── 手机端构建产物（2026-10-22：App 打包物与网页构建不进仓库）──
+packages/pwa/dist-app/
+packages/pwa/dist/
+packages/pwa/android/app/build/
+packages/pwa/android/.gradle/
+packages/pwa/android/.cxx/
+packages/pwa/android/app/.cxx/
+packages/pwa/android/local.properties
+packages/pwa/android/build/
+packages/desktop/dist/
+
+# AOCI agent host integration (machine-bound; do not commit)
+.mcp.json
+.mcp.json.backup.*
+.claude/settings.json
+.claude/settings.json.backup.*
+
+# 本地 MCP 配置（机器相关绝对路径，如根目录 mcp.json → D:/aoci/aoci.exe）
+mcp.json

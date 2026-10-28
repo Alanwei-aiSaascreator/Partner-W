@@ -1,0 +1,522 @@
+import { DOCGEN_FORMATS, type DocgenFormat } from '@clawwork/shared';
+
+/**
+ * 文档生成的**请求契约**（助手写、客户端读）。
+ *
+ * ## 为什么是这个方向
+ *
+ * 助手跑在随包运行时里，而运行时**没有** pptx/docx/xlsx 生成库、也没有 npm/python
+ * （出厂包 35047 个文件里搜 pptx/pptxgenjs/officegen/exceljs/python-pptx/libreoffice 全 0；
+ * 对照串 node_modules 37119 命中 ⇒ 探针有效）。而随包 Node 在
+ * `deployed/<key>/node/node.exe`、**不一定在 PATH 上** ⇒ 也不能让助手跑脚本。
+ *
+ * 所以分工是：**助手负责"想"，客户端负责"排"** ——
+ * 助手把它想要的内容写成这个 schema 的 JSON，客户端主进程（完整 Node、库随 App 打包）
+ * 渲染成真文件，写回任务目录。产物面板本来就会扫任务目录，于是**不需要新 UI**。
+ * 详见 `docs/superpowers/specs/2026-09-24-local-docgen-design.md`。
+ *
+ * ⚠️ 这个文件只做**解析与校验**，不碰文件系统、不碰任何生成库 ——
+ * 于是它可以被穷举测试，而"排版"那部分坏掉时能被立刻定位到另一层。
+ *
+ * ## 三种 kind 共用一套规则
+ *
+ * | kind   | 内容字段 | 一格/一条对应什么 |
+ * | ------ | -------- | ----------------- |
+ * | pptx   | `slides[{title,bullets,notes}]` | 一页 |
+ * | docx   | `sections[{heading?,paragraphs,bullets}]` | 一个小节 |
+ * | xlsx   | `sheets[{name,rows[][]}]` | 一张工作表 |
+ *
+ * `title` 三种都必填 —— 它同时是**文件名**的词干（见 `DOCGEN_OUTPUT_BY_KIND`）。
+ *
+ * ⚠️ 校验的松紧是**按后果**定的，不是按洁癖：
+ *  - 空串/空行**丢掉**（模型爱补空行，为此整份失败不值得）；
+ *  - 但**整份一个字都没有**要拒（那会产出空白文件，用户只会以为我们坏了）；
+ *  - 表格里违反 Excel 硬限制的（表名 >31 字、重复、含 `[]:*?/\`）要拒 ——
+ *    否则用户打开时看到的是「文件需要修复」，而那是**我们**生成的文件。
+ */
+/**
+ * 支持的四种格式。加第五种时：这里 + `DOCGEN_OUTPUT_BY_KIND` + 渲染层分发。
+ *
+ * ⚠️ **不在这里另写一份字面量**：格式集合的真源是 shared 的 `DOCGEN_FORMATS`
+ *    （理由见 `docgen-failure.ts` —— 那个集合要跨 IPC 边界）。在这里抄一份，
+ *    就会出现"契约层认第五种格式、界面报不出它的名字"这种两边各自漂移的错。
+ */
+export const DOCGEN_KINDS = DOCGEN_FORMATS;
+export type DocgenKind = DocgenFormat;
+
+/**
+ * kind ⇒ 产物的扩展名与"标题空了用什么名字"。
+ *
+ * 放在契约层的理由：扩展名是 **kind 的函数**，让落盘层自己拼 `.docx` 会出现
+ * "schema 说是 pptx、文件名是 .docx"这类两边各自漂移的错。
+ */
+export const DOCGEN_OUTPUT_BY_KIND: Readonly<Record<DocgenKind, { extension: string; fallbackStem: string }>> =
+  Object.freeze({
+    pptx: { extension: '.pptx', fallbackStem: '演示文稿' },
+    docx: { extension: '.docx', fallbackStem: '文档' },
+    xlsx: { extension: '.xlsx', fallbackStem: '表格' },
+    pdf: { extension: '.pdf', fallbackStem: '文档' },
+  });
+
+export interface DocgenSlide {
+  /** 页标题。 */
+  title: string;
+  /** 要点列表（可为空 —— 例如纯标题的分隔页）。 */
+  bullets: string[];
+  /** 备注（讲者备注），可空。 */
+  notes?: string;
+}
+
+/**
+ * pptx 请求有**两种形态**，靠 `template` 字段区分：
+ *
+ *  · **模板填充**（`template: 'business-deck-v4'` + `slides[{templateId,data}]`）
+ *    —— 填进设计师做好的模板页，样式一个字节都不改。**推荐走这条**。
+ *  · **现画**（`slides[{title,bullets,notes}]`，没有 `template`）
+ *    —— pptxgenjs 从坐标上画。保底用：模板覆盖不到的版式才走它。
+ *    效果上限低（它只有画矩形和文本框的能力），但没有它就没有"任意内容都能出片"。
+ *
+ * ⚠️ 两条路的 `slides` 元素形状不同，所以下面用 `deck` 而不是把两者塞进同一个字段 ——
+ *    塞在一起的话，读代码的人分不清"这一页是模板页还是现画页"，
+ *    而那个判断恰恰决定走哪条渲染路。
+ */
+export interface DocgenPptxRequest {
+  kind: 'pptx';
+  /** 演示标题（封面用）。**现画那条路**用它当封面标题。 */
+  title: string;
+  /** 副标题（封面用），可空。 */
+  subtitle?: string;
+  /** 现画那条路的页。模板填充时是空数组。 */
+  slides: DocgenSlide[];
+  /**
+   * 模板填充那条路的**原始**输入（`{template?, slides:[{templateId,data}]}`）。
+   * 有它 ⇒ 走模板；没有 ⇒ 走现画。
+   *
+   * ⚠️ 这里是 `unknown` 而不是解析好的形状，是**故意的**：
+   *    模板那条路的四类拒绝（页不认识 / 字段不认识 / 字段缺了 / 值太长）
+   *    都必须带着**模型写的那个名字**回到界面上。而契约层这一关的错误出口是
+   *    一句 `string`，到了 `generate.ts` 会被统一压成 `{code:'request-invalid'}` ——
+   *    名字就丢了，助手只能看到"你的请求不合法"。
+   *    ⇒ 完整的目录校验放在**渲染阶段**做（`pptx-template/render.ts`），
+   *      那里的失败出口是 `DocgenFailure`，四类拒绝能原样上去。
+   *      这一层只做最浅的一层形状检查（是不是数组、是不是非空）。
+   */
+  rawTemplateDeck?: unknown;
+}
+
+export interface DocgenSection {
+  /** 小标题，可空（正文里夹一段没有标题的段落是正常的）。 */
+  heading?: string;
+  /** 自然段，一段一条。 */
+  paragraphs: string[];
+  /** 要点列表。 */
+  bullets: string[];
+}
+
+export interface DocgenDocxRequest {
+  kind: 'docx';
+  /** 文档标题。 */
+  title: string;
+  sections: DocgenSection[];
+}
+
+/**
+ * PDF：**与 docx 同构**（标题 + 小节）。
+ *
+ * ⚠️ 刻意不做成"助手直接写 HTML"：那等于把"外来 HTML 进打印窗口"变成常规路径，
+ *    而越界时"整份拒"的判据也没法定义。结构化内容 + 我们自己的模板，模板是唯一真源。
+ */
+export interface DocgenPdfRequest {
+  kind: 'pdf';
+  /** 文档标题（封面抬头 + 文件名）。 */
+  title: string;
+  sections: DocgenSection[];
+}
+
+/** 单元格：文本 / 数字 / 布尔。**数字保持数字**，否则用户在 Excel 里没法求和。 */
+export type DocgenCell = string | number | boolean;
+
+export interface DocgenSheet {
+  /** 工作表名（Excel 硬限制：≤31 字、不含 `[]:*?/\`、不与其他表重名）。 */
+  name: string;
+  /** 一行一条记录，一个单元一个值。 */
+  rows: DocgenCell[][];
+}
+
+export interface DocgenXlsxRequest {
+  kind: 'xlsx';
+  /** 表格标题（文件名用）。 */
+  title: string;
+  sheets: DocgenSheet[];
+}
+
+export type DocgenRequest = DocgenPptxRequest | DocgenDocxRequest | DocgenXlsxRequest | DocgenPdfRequest;
+
+export type DocgenParseResult = { ok: true; request: DocgenRequest } | { ok: false; error: string };
+
+/**
+ * 上限：既是防手滑，也是防"助手把整篇文档塞进一个字段"。
+ *
+ * ⚠️ pptx 那四个是 P1 定下的，**一个都不许动**（技能里也是照这些数写的）。
+ */
+export const DOCGEN_LIMITS = Object.freeze({
+  // ── pptx（P1）────────────────────────────────────────────────────────
+  maxSlides: 60,
+  maxBulletsPerSlide: 12,
+  maxTitleChars: 120,
+  maxBulletChars: 300,
+  maxNotesChars: 2000,
+  // ── docx ─────────────────────────────────────────────────────────────
+  maxSections: 40,
+  maxParagraphsPerSection: 60,
+  maxBulletsPerSection: 40,
+  maxHeadingChars: 120,
+  maxParagraphChars: 2000,
+  // ── xlsx ─────────────────────────────────────────────────────────────
+  maxSheets: 12,
+  maxRowsPerSheet: 2000,
+  maxColumnsPerSheet: 50,
+  maxSheetNameChars: 31,
+  maxCellChars: 1000,
+});
+
+/** Excel 对工作表名的硬限制：这几个字符出现在名字里，文件会被判"需要修复"。 */
+const SHEET_NAME_FORBIDDEN = ['[', ']', ':', '*', '?', '/', '\\'];
+
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/** 取"第几项"的前缀（`sections[2].paragraphs` ⇒ `sections[2]`）。 */
+function parentPath(where: string): string {
+  const cut = where.lastIndexOf('.');
+  return cut === -1 ? where : where.slice(0, cut);
+}
+
+interface StringListOptions {
+  /** 字段路径，例如 `slides[0].bullets` —— 报错里逐字带上，助手才知道改哪。 */
+  where: string;
+  /** 报错文案里的量词（`a bullet` / `a paragraph`）。 */
+  noun: string;
+  maxItems: number;
+  maxChars: number;
+}
+
+/**
+ * 一串文本（要点 / 自然段）：空串丢掉、超量或超长报错。
+ *
+ * 抽出来是因为 pptx 的 `bullets` 与 docx 的 `paragraphs`/`bullets` 是同一条规则；
+ * 报错文案与 P1 逐字相同（`slides[0] has a bullet longer than 300 characters`）。
+ */
+function parseStringList(
+  raw: unknown,
+  options: StringListOptions,
+): { ok: true; items: string[] } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, items: [] };
+  if (!Array.isArray(raw)) return { ok: false, error: `${options.where} must be an array` };
+  // ⚠️ 数量按**原样条数**算（含空串）—— 与 P1 的 pptx 逐字一致，别改成"丢完再数"。
+  if (raw.length > options.maxItems) {
+    return { ok: false, error: `${options.where} exceeds ${options.maxItems}` };
+  }
+  const kept: string[] = [];
+  for (const item of raw) {
+    const text = asTrimmedString(item);
+    // ⚠️ 空串直接丢（不是报错）：模型偶尔会补一个空行，为此整份失败不值得。
+    if (!text) continue;
+    if (text.length > options.maxChars) {
+      return {
+        ok: false,
+        error: `${parentPath(options.where)} has a ${options.noun} longer than ${options.maxChars} characters`,
+      };
+    }
+    kept.push(text);
+  }
+  return { ok: true, items: kept };
+}
+
+function parseTitle(raw: unknown): { ok: true; title: string } | { ok: false; error: string } {
+  const title = asTrimmedString(raw);
+  if (!title) return { ok: false, error: 'title is required' };
+  if (title.length > DOCGEN_LIMITS.maxTitleChars) {
+    return { ok: false, error: `title exceeds ${DOCGEN_LIMITS.maxTitleChars} characters` };
+  }
+  return { ok: true, title };
+}
+
+function parsePptx(input: Record<string, unknown>, title: string): DocgenParseResult {
+  const rawSlides = input.slides;
+  if (!Array.isArray(rawSlides)) return { ok: false, error: 'slides must be an array' };
+  if (rawSlides.length === 0) return { ok: false, error: 'slides must not be empty' };
+  if (rawSlides.length > DOCGEN_LIMITS.maxSlides) {
+    return { ok: false, error: `slides exceeds ${DOCGEN_LIMITS.maxSlides}` };
+  }
+
+  // 模板填充那条路：`template` 字段在场就走它。
+  // ⚠️ 这一层**不做目录校验**（见 `DocgenPptxRequest.rawTemplateDeck` 的说明）：
+  //    只确认形状是"一个非空的 slides 数组"，完整的白名单检查在渲染阶段。
+  if (input.template !== undefined) {
+    const subtitle = asTrimmedString(input.subtitle) ?? undefined;
+    return {
+      ok: true,
+      request: {
+        kind: 'pptx',
+        title,
+        ...(subtitle ? { subtitle } : {}),
+        slides: [],
+        rawTemplateDeck: { template: input.template, slides: rawSlides },
+      },
+    };
+  }
+
+  const slides: DocgenSlide[] = [];
+  for (let i = 0; i < rawSlides.length; i += 1) {
+    const where = `slides[${i}]`;
+    const rawSlide = rawSlides[i];
+    if (rawSlide === null || typeof rawSlide !== 'object' || Array.isArray(rawSlide)) {
+      return { ok: false, error: `${where} must be an object` };
+    }
+    const slide = rawSlide as Record<string, unknown>;
+
+    const slideTitle = asTrimmedString(slide.title);
+    if (!slideTitle) return { ok: false, error: `${where}.title is required` };
+    if (slideTitle.length > DOCGEN_LIMITS.maxTitleChars) {
+      return { ok: false, error: `${where}.title exceeds ${DOCGEN_LIMITS.maxTitleChars} characters` };
+    }
+
+    const bullets = parseStringList(slide.bullets, {
+      where: `${where}.bullets`,
+      noun: 'bullet',
+      maxItems: DOCGEN_LIMITS.maxBulletsPerSlide,
+      maxChars: DOCGEN_LIMITS.maxBulletChars,
+    });
+    if (!bullets.ok) return { ok: false, error: bullets.error };
+
+    let notes: string | undefined;
+    if (slide.notes !== undefined && slide.notes !== null) {
+      const trimmed = asTrimmedString(slide.notes);
+      if (trimmed && trimmed.length > DOCGEN_LIMITS.maxNotesChars) {
+        return { ok: false, error: `${where}.notes exceeds ${DOCGEN_LIMITS.maxNotesChars} characters` };
+      }
+      notes = trimmed ?? undefined;
+    }
+
+    slides.push(
+      notes ? { title: slideTitle, bullets: bullets.items, notes } : { title: slideTitle, bullets: bullets.items },
+    );
+  }
+
+  const subtitle = asTrimmedString(input.subtitle) ?? undefined;
+  if (subtitle && subtitle.length > DOCGEN_LIMITS.maxTitleChars) {
+    return { ok: false, error: `subtitle exceeds ${DOCGEN_LIMITS.maxTitleChars} characters` };
+  }
+
+  return { ok: true, request: subtitle ? { kind: 'pptx', title, subtitle, slides } : { kind: 'pptx', title, slides } };
+}
+
+/**
+ * `sections` 形状的校验（docx 与 pdf **共用一份**）。
+ *
+ * ⚠️ 共用的理由：两种格式的内容模型就是同一个（小标题/段落/要点），
+ *    各写一份必然漂移 —— 而漂移的表现是"同一份内容，存成 Word 能过、存成 PDF 报错"。
+ */
+function parseSections(input: Record<string, unknown>, title: string, kind: 'docx' | 'pdf'): DocgenParseResult {
+  const rawSections = input.sections;
+  if (!Array.isArray(rawSections)) return { ok: false, error: 'sections must be an array' };
+  if (rawSections.length === 0) return { ok: false, error: 'sections must not be empty' };
+  if (rawSections.length > DOCGEN_LIMITS.maxSections) {
+    return { ok: false, error: `sections exceeds ${DOCGEN_LIMITS.maxSections}` };
+  }
+
+  const sections: DocgenSection[] = [];
+  let hasContent = false;
+  for (let i = 0; i < rawSections.length; i += 1) {
+    const where = `sections[${i}]`;
+    const rawSection = rawSections[i];
+    if (rawSection === null || typeof rawSection !== 'object' || Array.isArray(rawSection)) {
+      return { ok: false, error: `${where} must be an object` };
+    }
+    const section = rawSection as Record<string, unknown>;
+
+    const heading = asTrimmedString(section.heading);
+    if (heading && heading.length > DOCGEN_LIMITS.maxHeadingChars) {
+      return { ok: false, error: `${where}.heading exceeds ${DOCGEN_LIMITS.maxHeadingChars} characters` };
+    }
+
+    const paragraphs = parseStringList(section.paragraphs, {
+      where: `${where}.paragraphs`,
+      noun: 'paragraph',
+      maxItems: DOCGEN_LIMITS.maxParagraphsPerSection,
+      maxChars: DOCGEN_LIMITS.maxParagraphChars,
+    });
+    if (!paragraphs.ok) return { ok: false, error: paragraphs.error };
+
+    const bullets = parseStringList(section.bullets, {
+      where: `${where}.bullets`,
+      noun: 'bullet',
+      maxItems: DOCGEN_LIMITS.maxBulletsPerSection,
+      maxChars: DOCGEN_LIMITS.maxBulletChars,
+    });
+    if (!bullets.ok) return { ok: false, error: bullets.error };
+
+    if (heading || paragraphs.items.length > 0 || bullets.items.length > 0) hasContent = true;
+    sections.push(
+      heading
+        ? { heading, paragraphs: paragraphs.items, bullets: bullets.items }
+        : { paragraphs: paragraphs.items, bullets: bullets.items },
+    );
+  }
+
+  // 全是空小节 ⇒ 会渲染出一份空白文档。宁可整份失败（日志里有原因、助手能重发）。
+  if (!hasContent) return { ok: false, error: 'sections have no content' };
+  return kind === 'pdf'
+    ? { ok: true, request: { kind: 'pdf', title, sections } }
+    : { ok: true, request: { kind: 'docx', title, sections } };
+}
+
+function parseSheetName(raw: unknown, where: string): { ok: true; name: string } | { ok: false; error: string } {
+  const name = asTrimmedString(raw);
+  if (!name) return { ok: false, error: `${where}.name is required` };
+  if (name.length > DOCGEN_LIMITS.maxSheetNameChars) {
+    return { ok: false, error: `${where}.name exceeds ${DOCGEN_LIMITS.maxSheetNameChars} characters` };
+  }
+  const forbidden = SHEET_NAME_FORBIDDEN.find((ch) => name.includes(ch));
+  if (forbidden) {
+    return { ok: false, error: `${where}.name contains "${forbidden}" which Excel does not allow in a sheet name` };
+  }
+  return { ok: true, name };
+}
+
+function parseSheetRows(
+  raw: unknown,
+  where: string,
+): { ok: true; rows: DocgenCell[][]; nonEmptyRows: number } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, rows: [], nonEmptyRows: 0 };
+  if (!Array.isArray(raw)) return { ok: false, error: `${where}.rows must be an array` };
+  if (raw.length > DOCGEN_LIMITS.maxRowsPerSheet) {
+    return { ok: false, error: `${where}.rows exceeds ${DOCGEN_LIMITS.maxRowsPerSheet}` };
+  }
+
+  const rows: DocgenCell[][] = [];
+  let nonEmptyRows = 0;
+  for (let r = 0; r < raw.length; r += 1) {
+    const rawRow = raw[r];
+    if (!Array.isArray(rawRow)) return { ok: false, error: `${where}.rows[${r}] must be an array` };
+    if (rawRow.length > DOCGEN_LIMITS.maxColumnsPerSheet) {
+      return { ok: false, error: `${where}.rows[${r}] exceeds ${DOCGEN_LIMITS.maxColumnsPerSheet} cells` };
+    }
+
+    const cells: DocgenCell[] = [];
+    for (let c = 0; c < rawRow.length; c += 1) {
+      const cell = rawRow[c];
+      // null / undefined = 留空（JSON 里表达"这格没有值"的常规写法）。
+      if (cell === null || cell === undefined) {
+        cells.push('');
+        continue;
+      }
+      if (typeof cell === 'string') {
+        const text = cell.trim();
+        if (text.length > DOCGEN_LIMITS.maxCellChars) {
+          return { ok: false, error: `${where}.rows[${r}][${c}] exceeds ${DOCGEN_LIMITS.maxCellChars} characters` };
+        }
+        cells.push(text);
+        continue;
+      }
+      if (typeof cell === 'number') {
+        // NaN / Infinity 写进 xlsx 是坏值（而且 JSON 本身也表达不了）⇒ 拒。
+        if (!Number.isFinite(cell)) {
+          return { ok: false, error: `${where}.rows[${r}][${c}] must be a finite number` };
+        }
+        cells.push(cell);
+        continue;
+      }
+      if (typeof cell === 'boolean') {
+        cells.push(cell);
+        continue;
+      }
+      return { ok: false, error: `${where}.rows[${r}][${c}] must be a string, number or boolean` };
+    }
+
+    // ⚠️ 空行丢掉：判断"空"必须是**逐格比空串**，不能用真值判断 ——
+    //    `0` 与 `false` 都是合法内容，误丢会把用户的数字吃掉。
+    if (cells.every((cell) => cell === '')) continue;
+    nonEmptyRows += 1;
+    rows.push(cells);
+  }
+
+  return { ok: true, rows, nonEmptyRows };
+}
+
+function parseXlsx(input: Record<string, unknown>, title: string): DocgenParseResult {
+  const rawSheets = input.sheets;
+  if (!Array.isArray(rawSheets)) return { ok: false, error: 'sheets must be an array' };
+  if (rawSheets.length === 0) return { ok: false, error: 'sheets must not be empty' };
+  if (rawSheets.length > DOCGEN_LIMITS.maxSheets) {
+    return { ok: false, error: `sheets exceeds ${DOCGEN_LIMITS.maxSheets}` };
+  }
+
+  const sheets: DocgenSheet[] = [];
+  const seenNames = new Set<string>();
+  let totalRows = 0;
+  for (let i = 0; i < rawSheets.length; i += 1) {
+    const where = `sheets[${i}]`;
+    const rawSheet = rawSheets[i];
+    if (rawSheet === null || typeof rawSheet !== 'object' || Array.isArray(rawSheet)) {
+      return { ok: false, error: `${where} must be an object` };
+    }
+    const sheet = rawSheet as Record<string, unknown>;
+
+    const name = parseSheetName(sheet.name, where);
+    if (!name.ok) return { ok: false, error: name.error };
+    // Excel 判重不区分大小写（Sheet1 与 sheet1 会撞），这里也照它的规矩。
+    const nameKey = name.name.toLowerCase();
+    if (seenNames.has(nameKey)) {
+      return { ok: false, error: `duplicate sheet name "${name.name}"` };
+    }
+    seenNames.add(nameKey);
+
+    const rows = parseSheetRows(sheet.rows, where);
+    if (!rows.ok) return { ok: false, error: rows.error };
+    totalRows += rows.nonEmptyRows;
+
+    sheets.push({ name: name.name, rows: rows.rows });
+  }
+
+  // 一格都没有 ⇒ 会渲染出一份空表（连表头都没有），比失败更让人困惑。
+  if (totalRows === 0) return { ok: false, error: 'sheets have no content' };
+  return { ok: true, request: { kind: 'xlsx', title, sheets } };
+}
+
+/**
+ * 解析并校验请求。
+ *
+ * 认不出来一律**返回错误而不是猜**：这个函数的下游是要写进用户工作区的文件，
+ * "猜一个能跑的形状"会让用户拿到一份内容不对的文档，比直接失败更糟。
+ */
+export function parseDocgenRequest(raw: unknown): DocgenParseResult {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, error: 'request must be a JSON object' };
+  }
+  const input = raw as Record<string, unknown>;
+
+  const kind = asTrimmedString(input.kind);
+  if (!kind) return { ok: false, error: 'kind is required' };
+  if (!(DOCGEN_KINDS as readonly string[]).includes(kind)) {
+    return { ok: false, error: `unsupported kind "${kind}" (only: ${DOCGEN_KINDS.join(', ')})` };
+  }
+
+  const title = parseTitle(input.title);
+  if (!title.ok) return { ok: false, error: title.error };
+
+  switch (kind as DocgenKind) {
+    case 'pptx':
+      return parsePptx(input, title.title);
+    case 'docx':
+      return parseSections(input, title.title, 'docx');
+    case 'pdf':
+      return parseSections(input, title.title, 'pdf');
+    case 'xlsx':
+      return parseXlsx(input, title.title);
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "agents": {
+    "empty": "Keine Agenten verfügbar",
+    "selectTitle": "Agent auswählen"
+  },
+  "app": {
+    "error": "Ein Fehler ist aufgetreten",
+    "loading": "Laden...",
+    "name": "ClawWork",
+    "paired": "Mobilgerät gekoppelt",
+    "reload": "Neu laden"
+  },
+  "chat": {
+    "abortButton": "Stopp",
+    "assistant": "Assistent",
+    "assistantMessage": "Assistenznachricht",
+    "authorizationPending": "Warte auf Autorisierung...",
+    "emptyState": "Aufgabe auswählen oder neue erstellen",
+    "inputPlaceholder": "Nachricht eingeben...",
+    "mainArea": "Chat",
+    "sendButton": "Senden",
+    "systemMessage": "Systemnachricht",
+    "thinking": "Denke nach...",
+    "userMessage": "Ihre Nachricht",
+    "virtualizedList": "Chatverlauf"
+  },
+  "debugLog": {
+    "clearLog": "Protokoll löschen",
+    "close": "Schließen",
+    "copyLog": "Protokoll kopieren",
+    "empty": "Noch keine Ereignisse",
+    "reconnect": "Neu verbinden",
+    "title": "Gateway-Protokoll"
+  },
+  "drawer": {
+    "closeButton": "Menü schließen",
+    "menuButton": "Menü öffnen",
+    "newTaskButton": "Neue Aufgabe",
+    "search": "Suchen",
+    "settings": "Einstellungen",
+    "signOut": "Abmelden",
+    "signOutConfirm": "Abmelden? Alle lokalen Daten werden gelöscht.",
+    "title": "Navigationsmenü"
+  },
+  "errors": {
+    "agentMissing": "Dieser Assistent ist auf diesem Computer nicht vorhanden. Wähle einen anderen und sende erneut.",
+    "agentNotResponding": "Agent antwortet nicht",
+    "failed": "Fehlgeschlagen",
+    "requestFailed": "Anfrage fehlgeschlagen",
+    "sendFailed": "Senden fehlgeschlagen",
+    "serverAborted": "Aufgabe vom Server abgebrochen",
+    "stage": {
+      "final": "Abschluss",
+      "lifecycle": "Agent",
+      "persist": "Speichern",
+      "send": "Senden",
+      "stream": "Stream",
+      "sync": "Sync"
+    },
+    "unknown": "Unbekannter Fehler"
+  },
+  "gateway": {
+    "connected": "Verbunden",
+    "connecting": "Verbinde...",
+    "disconnected": "Getrennt",
+    "statusLabel": "Gateway-Verbindungsstatus"
+  },
+  "pairing": {
+    "cameraError": "Kamerazugriff verweigert",
+    "cancelButton": "Abbrechen",
+    "instruction": "Nach dem Scannen genehmigen Sie dieses Gerät auf dem Desktop.",
+    "invalidQr": "Ungültiger QR-Code",
+    "loadingCamera": "Kamera wird gestartet...",
+    "scanButton": "QR-Code scannen",
+    "scannerUnsupported": "QR-Scanner wird in diesem Browser nicht unterstützt",
+    "subtitle": "Scannen Sie den QR-Code auf Ihrer Desktop-App",
+    "videoError": "Kamera konnte nicht gestartet werden"
+  },
+  "qrScanner": {
+    "scanFrameLabel": "QR-Code-Scanbereich",
+    "videoLabel": "Kamerasucher für QR-Code-Scan"
+  },
+  "settings": {
+    "applyUpdate": "Update verfügbar — zum Installieren tippen",
+    "checking": "Wird geprüft...",
+    "checkUpdate": "Nach Updates suchen",
+    "darkMode": "Dunkelmodus",
+    "language": "Sprache",
+    "lightMode": "Hellmodus",
+    "updateFailed": "Update-Prüfung fehlgeschlagen",
+    "updateUnavailable": "Updates nicht verfügbar",
+    "upToDate": "Bereits aktuell",
+    "version": "Version {{version}}"
+  },
+  "shell": {
+    "reconnect": "Neu verbinden"
+  },
+  "tasks": {
+    "empty": "Noch keine Aufgaben",
+    "navigationLabel": "Aufgabenliste",
+    "newTask": "Neue Aufgabe",
+    "older": "Älter",
+    "thisWeek": "Diese Woche",
+    "today": "Heute",
+    "yesterday": "Gestern"
+  },
+  "tools": {
+    "emptyDetails": "Keine Details verfügbar"
+  }
+}

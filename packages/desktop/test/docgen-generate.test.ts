@@ -1,0 +1,653 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setWorkspaceDatabaseOwner } from '../src/main/workspace/scope.js';
+import yauzl from 'yauzl';
+import { extractCodeBlocksFromMarkdown } from '../src/main/artifact/extract';
+
+/**
+ * 「助手出内容、客户端排版」这条链的端到端那一层：**消息 → 真文件 → 产物**（三种格式）。
+ *
+ * 走的是客户端既有的产物通道（`saveArtifactFromBuffer`：写任务目录 + 写库），
+ * 所以不需要新 UI 也不需要新事件 —— 用户在下一条消息的产物里就能看到它。
+ */
+
+const mocks = vi.hoisted(() => ({
+  insertValues: vi.fn(() => ({ onConflictDoNothing: vi.fn(() => ({ returning: vi.fn(async () => []) })) })),
+  saveArtifactFromBuffer: vi.fn(),
+}));
+
+// 这一层只验"内容 → 文件"与"有没有交给产物通道"，DB 与界面各自有自己的测试。
+vi.mock('../src/main/artifact/save.js', () => ({
+  saveArtifactFromBuffer: mocks.saveArtifactFromBuffer,
+  detectMimeType: () => 'application/octet-stream',
+}));
+
+const { documentFileNameFor, generateDocumentsFromMessage } = await import('../src/main/docgen/generate.js');
+
+function unzipNames(buffer: Buffer): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
+      if (err || !zipfile) return reject(err ?? new Error('no zipfile'));
+      const names: string[] = [];
+      zipfile.on('entry', (entry: yauzl.Entry) => {
+        names.push(entry.fileName);
+        zipfile.readEntry();
+      });
+      zipfile.on('end', () => resolve(names));
+      zipfile.on('error', reject);
+      zipfile.readEntry();
+    });
+  });
+}
+
+function docgenBlock(body: unknown | string): string {
+  const json = typeof body === 'string' ? body : JSON.stringify(body);
+  return ['好的，我来做。', '', '```docgen', json, '```', '', '已经放到你的产物里了。'].join('\n');
+}
+
+const PPTX = {
+  kind: 'pptx',
+  title: '内测汇报',
+  subtitle: '2026-09-24',
+  slides: [{ title: '本周进展', bullets: ['方案已出'] }],
+};
+
+const DOCX = {
+  kind: 'docx',
+  title: '内测报告',
+  sections: [{ heading: '一、背景', paragraphs: ['本轮补齐了三种格式。'], bullets: ['要点'] }],
+};
+
+const XLSX = {
+  kind: 'xlsx',
+  title: '九月台账',
+  sheets: [{ name: '汇总', rows: [['产品', 1200]] }],
+};
+
+let workspacePath = '';
+const taskId = 'task-1';
+const messageId = 'msg-1';
+
+beforeEach(() => {
+  setWorkspaceDatabaseOwner({});
+  workspacePath = mkdtempSync(join(tmpdir(), 'clawwork-docgen-gen-'));
+  mocks.saveArtifactFromBuffer.mockReset();
+  mocks.saveArtifactFromBuffer.mockImplementation(async (params: { fileName: string; buffer: Buffer }) => ({
+    id: 'artifact-1',
+    taskId,
+    messageId,
+    type: 'file',
+    name: params.fileName,
+    size: params.buffer.length,
+  }));
+});
+afterEach(() => rmSync(workspacePath, { recursive: true, force: true }));
+
+function savedParams(index: number): { fileName: string; buffer: Buffer; sourceKey?: string } {
+  return mocks.saveArtifactFromBuffer.mock.calls[index]?.[0] as { fileName: string; buffer: Buffer };
+}
+
+describe('extractDocgenBlocks（经 generateDocumentsFromMessage 间接验）', () => {
+  it('没有 docgen 块 ⇒ 什么都不做（普通回复不该触发文件生成）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: '今天天气不错，要不要看看别的？',
+    });
+    expect(result).toEqual({ saved: [], failed: [] });
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 有 docgen 块 ⇒ 生成真 pptx 并交给产物通道', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+    });
+
+    expect(result.saved).toHaveLength(1);
+    expect(result.failed).toEqual([]);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+    expect(await unzipNames(savedParams(0).buffer), '产出的不是合法 pptx').toContain('ppt/presentation.xml');
+  });
+
+  it('⭐ docx 块 ⇒ 生成真 docx（扩展名与容器都对）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(DOCX),
+    });
+    expect(result.failed).toEqual([]);
+    expect(savedParams(0).fileName).toBe('内测报告.docx');
+    expect(await unzipNames(savedParams(0).buffer)).toContain('word/document.xml');
+  });
+
+  it('⭐ xlsx 块 ⇒ 生成真 xlsx（扩展名与容器都对）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(XLSX),
+    });
+    expect(result.failed).toEqual([]);
+    expect(savedParams(0).fileName).toBe('九月台账.xlsx');
+    expect(await unzipNames(savedParams(0).buffer)).toContain('xl/workbook.xml');
+  });
+
+  it('⭐ 一段回复里三种格式混着来 ⇒ 三份都出得来，各是各的扩展名', async () => {
+    const content = [docgenBlock(PPTX), '', docgenBlock(DOCX), '', docgenBlock(XLSX)].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(3);
+    expect([savedParams(0).fileName, savedParams(1).fileName, savedParams(2).fileName]).toEqual([
+      '内测汇报.pptx',
+      '内测报告.docx',
+      '九月台账.xlsx',
+    ]);
+  });
+
+  it('围栏语言必须**恰好**是 docgen —— `json` 的块不算', async () => {
+    const content = ['```json', JSON.stringify(PPTX), '```'].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+    expect(result.saved).toEqual([]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('大小写与尾随空格容忍（模型会写 ```Docgen ）', async () => {
+    const content = ['```Docgen ', JSON.stringify(PPTX), '```'].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+    expect(result.saved).toHaveLength(1);
+  });
+
+  it('JSON 坏了 ⇒ 记账、不抛、不存文件', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock('{ 不是 json'),
+    });
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 回复打开了 docgen 围栏却没有闭合 ⇒ 明确记一条 request-invalid', async () => {
+    const content = ['```DocGen', JSON.stringify(PPTX)].join('\n');
+
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ JSON 字符串内的裸英文双引号只修复一次，修复后仍走 schema 并生成文件', async () => {
+    const broken = JSON.stringify(PPTX).replace('"方案已出"', '"点击"仍要运行""');
+    expect(() => JSON.parse(broken), '样例必须先是真实的非法 JSON').toThrow();
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(broken),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+  });
+
+  it('⭐ 模型漏掉字符串开引号时做窄修复：`"title": 🤖 我是谁？"` 仍生成真 PPTX', async () => {
+    const broken = JSON.stringify(PPTX, null, 2).replace('"title": "本周进展"', '"title": 🤖 我是谁？"');
+    expect(() => JSON.parse(broken), '真机样例必须先是非法 JSON').toThrow();
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(broken),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(1);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+    expect(await unzipNames(savedParams(0).buffer), '受限修复后产出的必须是真 PPTX').toContain('ppt/presentation.xml');
+  });
+
+  it('缺逗号等结构错误不得被“裸引号修复”放过', async () => {
+    const structurallyBroken = '{"kind":"pptx" "title":"t","slides":[{"title":"x","bullets":["y"]}]}';
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(structurallyBroken),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+  });
+
+  it('⭐ 数组相邻字符串缺逗号不得被修成一条合并后的正文', async () => {
+    const structurallyBroken = '{"kind":"pptx","title":"t","slides":[{"title":"x","bullets":["first" "second"]}]}';
+    expect(() => JSON.parse(structurallyBroken), '样例必须是缺逗号的非法 JSON').toThrow();
+
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(structurallyBroken),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('schema 不合法（缺 slides）⇒ 记账', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'pptx', title: 't' }),
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ 2026-09-26：这条原来拿 `pdf` 当"不认识的 kind" —— 而 pdf 从这一版起**认得**了，
+  //    于是它走了真渲染路径、报的是"缺 sections"。换成一个真的不存在的 kind，
+  //    这条测的才是它本来要测的东西（认不出 ⇒ 记账，而不是硬猜一个格式）。
+  it('不认识的 kind（csv）⇒ 记账，而不是硬猜一个格式', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'csv', title: 't', rows: [] }),
+    });
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'request-invalid' }]);
+  });
+
+  it('两份块 ⇒ 存两份，且一份坏不影响另一份', async () => {
+    const content = [docgenBlock(PPTX), '', docgenBlock('{ 坏的'), '', docgenBlock({ ...PPTX, title: '第二份' })].join(
+      '\n',
+    );
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+    expect(result.saved).toHaveLength(2);
+    expect(result.failed).toHaveLength(1);
+  });
+
+  it('产物通道失败 ⇒ 记账，不抛（消息收尾路径上不能炸）', async () => {
+    mocks.saveArtifactFromBuffer.mockRejectedValueOnce(new Error('disk full'));
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+    });
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'render-failed', format: 'pptx' }]);
+  });
+
+  it('⭐ sourceKey 认得出"同一份内容"（产物通道按它去重，重放不会存出第二份）', async () => {
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    const first = savedParams(0).sourceKey ?? '';
+    expect(first).toMatch(/^docgen:/);
+    expect(savedParams(1).sourceKey, '同样的内容两次，去重键应当相同').toBe(first);
+  });
+
+  it('⭐ 内容不同 ⇒ 去重键不同（原来只带"标题+页数"，两份不同内容会互相顶掉）', async () => {
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ ...PPTX, slides: [{ title: '本周进展', bullets: ['改了一个字'] }] }),
+    });
+    expect(savedParams(1).sourceKey).not.toBe(savedParams(0).sourceKey);
+  });
+
+  it('⭐ 不同 kind 的同名内容 ⇒ 去重键不同（pptx 不该顶掉 docx）', async () => {
+    await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content: docgenBlock(PPTX) });
+    await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'docx', title: '内测汇报', sections: [{ paragraphs: ['x'] }] }),
+    });
+    expect(savedParams(0).sourceKey).toContain('pptx');
+    expect(savedParams(1).sourceKey).toContain('docx');
+  });
+});
+
+describe('readable pagination and invalid-layout artifact isolation', () => {
+  const maxBullet = (): string => '内'.repeat(300);
+
+  const overflowingDeck = (slideCount = 1): unknown => ({
+    kind: 'pptx',
+    title: '内测汇报',
+    slides: Array.from({ length: slideCount }, (_, i) => ({
+      title: `第 ${i + 1} 部分`,
+      bullets: Array.from({ length: 12 }, () => maxBullet()),
+    })),
+  });
+
+  it('saves maximum legal body content as one paginated artifact', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(overflowingDeck()),
+    });
+    expect(result.saved).toHaveLength(1);
+    expect(result.failed).toEqual([]);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(1);
+    const names = await unzipNames(savedParams(0).buffer);
+    expect(names.filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length).toBeGreaterThan(2);
+  });
+
+  it('页号是**改起来最省事**的那个口径：slides 里从 1 数（封面不算）', async () => {
+    // 前两页正常、第三页爆掉 —— 这样"page"到底数的是 3 还是 2 才有区分度。
+    // （如果三页都爆，page=1 无论按哪种口径都对，这条就白写了。）
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({
+        kind: 'pptx',
+        title: '内测汇报',
+        slides: [
+          { title: '第一页', bullets: ['一条'] },
+          { title: '第二页', bullets: ['一条'] },
+          { title: '\u6807'.repeat(120), bullets: [] },
+        ],
+      }),
+    });
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({ code: 'presentation-page-title-overflow', format: 'pptx', page: 3 });
+    expect(result.saved).toEqual([]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('页标题过长 ⇒ 报"标题过长"，并带上**真的能放下的字数**', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({ kind: 'pptx', title: '内测汇报', slides: [{ title: '标'.repeat(120), bullets: [] }] }),
+    });
+    expect(result.saved).toEqual([]);
+    const failure = result.failed[0];
+    // 显式收窄到那一条：`maxChars` 只在这个 variant 上存在，靠 `toMatchObject` 是收窄不了的
+    if (failure?.code !== 'presentation-page-title-overflow') throw new Error(`没被判成标题过长：${failure?.code}`);
+    expect(failure).toMatchObject({ format: 'pptx', page: 1 });
+    expect(failure.maxChars, '提示里那句"控制在 N 字以内"必须是个真数').toBeGreaterThan(0);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 好坏混合：好文件照样保存，坏的那份单独失败且**没有产物**', async () => {
+    const content = [
+      docgenBlock({ ...PPTX, title: '好的那份' }),
+      '',
+      docgenBlock({
+        kind: 'pptx',
+        title: '\u5185\u6d4b\u6c47\u62a5',
+        slides: [{ title: '\u6807'.repeat(120), bullets: [] }],
+      }),
+      '',
+      docgenBlock({ ...DOCX, title: '好的另一份' }),
+    ].join('\n');
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+
+    expect(result.saved.map((a) => a.name)).toEqual(['好的那份.pptx', '好的另一份.docx']);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({ code: 'presentation-page-title-overflow', format: 'pptx', page: 1 });
+    // 坏的那份**从来没进过产物通道** —— 不是"存了再删"
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
+    const names = mocks.saveArtifactFromBuffer.mock.calls.map((call) => (call[0] as { fileName: string }).fileName);
+    expect(names).not.toContain('内测汇报.pptx');
+  });
+
+  it('docx / xlsx 不受 pptx 那套版面判定影响（判定只活在 pptx 上）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({
+        kind: 'xlsx',
+        title: '台账',
+        sheets: [{ name: '汇总', rows: Array.from({ length: 300 }, (_, i) => ['内'.repeat(900), i]) }],
+      }),
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+  });
+});
+
+describe('documentFileNameFor', () => {
+  it('用标题做文件名，扩展名跟着 kind 走', () => {
+    expect(documentFileNameFor('内测汇报', 'pptx')).toBe('内测汇报.pptx');
+    expect(documentFileNameFor('内测汇报', 'docx')).toBe('内测汇报.docx');
+    expect(documentFileNameFor('内测汇报', 'xlsx')).toBe('内测汇报.xlsx');
+  });
+
+  it('去掉 Windows 不允许的字符，但**保留空格与连字符**', () => {
+    expect(documentFileNameFor('A/B: C*D?', 'docx')).toBe('A B C D.docx');
+    expect(documentFileNameFor('内测汇报 - 第一期', 'pptx')).toBe('内测汇报 - 第一期.pptx');
+  });
+
+  it('空标题/全是非法字符 ⇒ 退回该格式的稳定名字', () => {
+    expect(documentFileNameFor('   ', 'pptx')).toBe('演示文稿.pptx');
+    expect(documentFileNameFor('///', 'docx')).toBe('文档.docx');
+    expect(documentFileNameFor('', 'xlsx')).toBe('表格.xlsx');
+  });
+
+  it('超长标题被截断（Windows 路径长度）—— 三种格式一样长', () => {
+    for (const [kind, suffix] of [
+      ['pptx', '.pptx'],
+      ['docx', '.docx'],
+      ['xlsx', '.xlsx'],
+    ] as const) {
+      const name = documentFileNameFor('长'.repeat(200), kind);
+      expect(name.endsWith(suffix), kind).toBe(true);
+      expect(name.length, kind).toBeLessThanOrEqual(65);
+    }
+  });
+
+  /**
+   * ⭐ BUG-042-a（2026-10-08 亲验必炸）：标题里的**连续点**会原样进文件名，而落盘层
+   *    （`workspace/safe-name.ts`）把含 `..` 的名字当路径逃逸**无条件 throw** ⇒
+   *    整份文档报 `render-failed`、一个文件都不出。判据：产出名里没有 `..`。
+   *    ⚠️ 单个点必须保留 —— `v1.2 报告` 是正常标题。
+   */
+  it('⭐ 标题里的连续点不进化成 `..`（单个点照旧保留）', () => {
+    expect(documentFileNameFor('关于...的说明', 'docx')).toBe('关于·的说明.docx');
+    expect(documentFileNameFor('第1..3章', 'xlsx')).toBe('第1·3章.xlsx');
+    expect(documentFileNameFor('v1.2 报告', 'docx')).toBe('v1.2 报告.docx');
+  });
+});
+
+describe('docgen 块不会被当成代码产物（否则用户会看到一份 JSON 噪音）', () => {
+  it('extractCodeBlocksFromMarkdown 跳过 docgen 围栏（三种 kind 都跳）', () => {
+    const content = [
+      '```docgen',
+      JSON.stringify(PPTX),
+      '```',
+      '',
+      '```docgen',
+      JSON.stringify(DOCX),
+      '```',
+      '',
+      '```docgen',
+      JSON.stringify(XLSX),
+      '```',
+      '',
+      // ⚠️ 这一段必须有**扩展名**（或超过 10 行）：既有的抽取规则会跳过
+      //    "短且没有扩展名"的块（那是行内代码片段，不是产物）。夹具踩过一次。
+      '```app.ts',
+      'const a = 1;',
+      '```',
+    ].join('\n');
+    const blocks = extractCodeBlocksFromMarkdown(content);
+    expect(blocks.map((b) => b.language)).toEqual(['app.ts']);
+  });
+});
+
+/**
+ * 内嵌换行走**整条生成链**：不落文件 + 留下一条可翻译的原因。
+ *
+ * 上面那组（`docgen-pptx-layout`）测的是判定本身；这一组测的是**判定有没有被接上** ——
+ * 本项目栽过"模块写好了却没接线"，所以两层都要有。
+ */
+describe('内嵌换行：一行都不许静默压扁，也就不许有产物', () => {
+  const slideWith = (field: 'title' | 'bullet', text: string): unknown => ({
+    kind: 'pptx',
+    title: '内测汇报',
+    slides: [{ title: field === 'title' ? text : '正常标题', bullets: field === 'bullet' ? [text] : ['正常一条'] }],
+  });
+
+  it('页标题里有 \\n ⇒ 报结构化原因，且**没调用过产物通道**', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(slideWith('title', '上半句\n下半句')),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'presentation-slide-title-multiline', format: 'pptx', page: 1 }]);
+    expect(mocks.saveArtifactFromBuffer, '被拒的内容不许有产物 —— 不是"存了再删"').not.toHaveBeenCalled();
+  });
+
+  it('要点里有 \\r\\n ⇒ 报"第几页第几条"', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(slideWith('bullet', '前半\r\n后半')),
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([
+      { code: 'presentation-slide-bullet-multiline', format: 'pptx', page: 1, bullet: 1 },
+    ]);
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 好坏混合：好的那份照样出，坏的那份单独失败且没有产物', async () => {
+    const content = [
+      docgenBlock({ ...PPTX, title: '好的那份' }),
+      '',
+      docgenBlock(slideWith('bullet', '带\n换行')),
+      '',
+      docgenBlock({ ...DOCX, title: '好的另一份' }),
+    ].join('\n');
+
+    const result = await generateDocumentsFromMessage({ workspacePath, taskId, messageId, content });
+
+    expect(result.saved.map((a) => a.name)).toEqual(['好的那份.pptx', '好的另一份.docx']);
+    expect(result.failed).toEqual([
+      { code: 'presentation-slide-bullet-multiline', format: 'pptx', page: 1, bullet: 1 },
+    ]);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
+  });
+
+  it('负对照：正常的中英混排照旧生成（这条不能被判得过宽）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock({
+        kind: 'pptx',
+        title: 'Q3 复盘与 1.0.1 计划',
+        slides: [{ title: '指标（环比）', bullets: ['周活 1,240（+8%）', '留存 38%'] }],
+      }),
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+  });
+});
+
+/**
+ * ⭐ **演示意图硬门（H0，2026-10-07）**：这一轮用户要的是"给人看的演示" ⇒ docgen 的
+ * `kind:"pptx"` **一律不出片**，改回一条结构化诊断把模型导流到「幻灯版面（自己排）」。
+ *
+ * 为什么要有它（根因链）：模型选路靠技能 description 这一句软约束，绕道成本极低 ——
+ * 真机上它就走了"文档生成"的 pptx（白底 + 项目符号的素版），成品直接进产物、
+ * 用户只看到一份"简约垃圾版"。**提示词层面拦不住，只能在数据层拦**：
+ * 拦掉之后那段 docgen 块什么也生不出来，模型下一轮收到的那条诊断会明确告诉它
+ * "演示必须走幻灯版面、整份版面写进 `.slidegen` 文件"。
+ *
+ * ⚠️ 边界（这一组用例专门钉住的）：
+ * - **只有 pptx 被拦**：同一段回复里的 docx / xlsx 照常出片；
+ * - **只有演示意图被拦**：用户明确要素版草稿（普通请求）照旧走 docgen；
+ * - **受控模式优先**：受控验收里 docgen pptx 本来就是**静默**跳过（native 链自己出片）
+ *   ⇒ 两个旗标同时成立时不许冒出一条失败（那会在交付链上凭空多一句"没生成"）。
+ */
+describe('演示意图硬门（pptx 改道幻灯版面）', () => {
+  it('⭐ 演示意图 ⇒ kind:pptx 不出片，回一条导流诊断（教模型下一步走哪条路）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+      reroutePptxToSlidegen: true,
+    });
+
+    expect(result.saved).toEqual([]);
+    expect(result.failed).toEqual([{ code: 'presentation-slidegen-required', format: 'pptx' }]);
+    // **从来没进过产物通道** —— 不是"生成了再删"（拦的就是那份素版）
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('⭐ 同一段回复里 docx/xlsx 照常出片 —— 被拦的只有演示', async () => {
+    const content = [docgenBlock(PPTX), '', docgenBlock(DOCX), '', docgenBlock(XLSX)].join('\n');
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content,
+      reroutePptxToSlidegen: true,
+    });
+
+    expect(result.saved.map((a) => a.name)).toEqual(['内测报告.docx', '九月台账.xlsx']);
+    expect(result.failed).toEqual([{ code: 'presentation-slidegen-required', format: 'pptx' }]);
+    expect(mocks.saveArtifactFromBuffer).toHaveBeenCalledTimes(2);
+    expect(savedParams(0).fileName).toBe('内测报告.docx');
+  });
+
+  it('⭐ 受控模式优先：skipPptx 与演示意图同时成立 ⇒ 静默跳过（不冒失败）', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+      skipPptx: true,
+      reroutePptxToSlidegen: true,
+    });
+
+    expect(result).toEqual({ saved: [], failed: [] });
+    expect(mocks.saveArtifactFromBuffer).not.toHaveBeenCalled();
+  });
+
+  it('负对照：非演示意图（用户明确要素版草稿）⇒ 照旧走 docgen 出片', async () => {
+    const result = await generateDocumentsFromMessage({
+      workspacePath,
+      taskId,
+      messageId,
+      content: docgenBlock(PPTX),
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.saved).toHaveLength(1);
+    expect(savedParams(0).fileName).toBe('内测汇报.pptx');
+  });
+});

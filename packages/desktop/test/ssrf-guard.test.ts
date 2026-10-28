@@ -1,0 +1,262 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { LookupAddress, LookupAllOptions } from 'node:dns';
+
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+import { isPrivateIP, isPrivateHost, assertNotPrivateHost } from '../src/main/net/ssrf-guard.js';
+import { lookup } from 'node:dns/promises';
+
+type LookupAll = (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>;
+
+const mockLookup = vi.mocked<LookupAll>(lookup);
+
+beforeEach(() => {
+  mockLookup.mockReset();
+});
+
+describe('isPrivateIP', () => {
+  const privateCases: [string, string][] = [
+    ['127.0.0.1', 'loopback'],
+    ['127.255.255.255', 'loopback high'],
+    ['10.0.0.1', '10/8'],
+    ['10.255.255.255', '10/8 high'],
+    ['172.16.0.1', '172.16/12 low'],
+    ['172.31.255.255', '172.16/12 high'],
+    ['192.168.0.1', '192.168/16'],
+    ['192.168.255.255', '192.168/16 high'],
+    ['169.254.1.1', 'link-local'],
+    ['0.0.0.0', 'unspecified'],
+    ['0.1.2.3', '0/8'],
+    ['100.64.0.1', 'CGNAT low'],
+    ['100.127.255.255', 'CGNAT high'],
+    ['198.18.0.1', 'benchmark low'],
+    ['198.19.255.255', 'benchmark high'],
+    ['240.0.0.1', 'reserved class E'],
+    ['255.255.255.255', 'broadcast'],
+  ];
+
+  for (const [ip, label] of privateCases) {
+    it(`blocks ${ip} (${label})`, () => {
+      expect(isPrivateIP(ip)).toBe(true);
+    });
+  }
+
+  const publicCases: [string, string][] = [
+    ['8.8.8.8', 'Google DNS'],
+    ['1.1.1.1', 'Cloudflare DNS'],
+    ['172.15.255.255', 'just below 172.16/12'],
+    ['172.32.0.0', 'just above 172.16/12'],
+    ['100.63.255.255', 'just below CGNAT'],
+    ['100.128.0.0', 'just above CGNAT'],
+    ['198.17.255.255', 'just below benchmark'],
+    ['198.20.0.0', 'just above benchmark'],
+    ['239.255.255.255', 'just below class E'],
+    ['11.0.0.1', 'public 11.x'],
+  ];
+
+  for (const [ip, label] of publicCases) {
+    it(`allows ${ip} (${label})`, () => {
+      expect(isPrivateIP(ip)).toBe(false);
+    });
+  }
+
+  it('blocks IPv6 loopback ::1', () => {
+    expect(isPrivateIP('::1')).toBe(true);
+  });
+
+  it('blocks zone-scoped IPv6 loopback', () => {
+    expect(isPrivateIP('::1%lo0')).toBe(true);
+  });
+
+  it('blocks IPv6 unspecified ::', () => {
+    expect(isPrivateIP('::')).toBe(true);
+  });
+
+  it('blocks IPv6 uncompressed loopback', () => {
+    expect(isPrivateIP('0000:0000:0000:0000:0000:0000:0000:0001')).toBe(true);
+  });
+
+  it('blocks IPv6 loopback with stripped zeros', () => {
+    expect(isPrivateIP('0:0:0:0:0:0:0:1')).toBe(true);
+  });
+
+  it('blocks IPv6 alternate loopback compression', () => {
+    expect(isPrivateIP('0::1')).toBe(true);
+  });
+
+  it('blocks IPv6 uncompressed unspecified', () => {
+    expect(isPrivateIP('0000:0000:0000:0000:0000:0000:0000:0000')).toBe(true);
+  });
+
+  it('blocks IPv6 ULA fd12:3456::1', () => {
+    expect(isPrivateIP('fd12:3456::1')).toBe(true);
+  });
+
+  it('blocks zone-scoped IPv6 ULA', () => {
+    expect(isPrivateIP('fd12::1%en0')).toBe(true);
+  });
+
+  it('blocks IPv6 ULA fc00::1', () => {
+    expect(isPrivateIP('fc00::1')).toBe(true);
+  });
+
+  it('blocks IPv6 uncompressed ULA', () => {
+    expect(isPrivateIP('fc00:0000:0000:0000:0000:0000:0000:0001')).toBe(true);
+  });
+
+  it('blocks IPv6 link-local fe80::1', () => {
+    expect(isPrivateIP('fe80::1')).toBe(true);
+  });
+
+  it('blocks zone-scoped IPv6 link-local', () => {
+    expect(isPrivateIP('fe80::1%lo0')).toBe(true);
+  });
+
+  it('blocks IPv6 uncompressed link-local', () => {
+    expect(isPrivateIP('fe80:0000:0000:0000:0000:0000:0000:0001')).toBe(true);
+  });
+
+  it('allows public IPv6 2001:4860:4860::8888', () => {
+    expect(isPrivateIP('2001:4860:4860::8888')).toBe(false);
+  });
+
+  it('allows public IPv6 uncompressed 2001:4860:4860:0000:0000:0000:0000:8888', () => {
+    expect(isPrivateIP('2001:4860:4860:0000:0000:0000:0000:8888')).toBe(false);
+  });
+
+  it('blocks IPv4-mapped IPv6 ::ffff:10.0.0.1', () => {
+    expect(isPrivateIP('::ffff:10.0.0.1')).toBe(true);
+  });
+
+  it('blocks IPv4-compatible IPv6 ::127.0.0.1', () => {
+    expect(isPrivateIP('::127.0.0.1')).toBe(true);
+  });
+
+  it('blocks IPv4-compatible IPv6 hex loopback', () => {
+    expect(isPrivateIP('::7f00:1')).toBe(true);
+  });
+
+  it('blocks uncompressed IPv4-compatible IPv6 loopback', () => {
+    expect(isPrivateIP('0:0:0:0:0:0:127.0.0.1')).toBe(true);
+  });
+
+  it('blocks IPv4-mapped IPv6 hex form ::ffff:a00:1', () => {
+    expect(isPrivateIP('::ffff:a00:1')).toBe(true);
+  });
+
+  it('allows IPv4-mapped IPv6 public ::ffff:8.8.8.8', () => {
+    expect(isPrivateIP('::ffff:8.8.8.8')).toBe(false);
+  });
+
+  it('allows IPv4-compatible IPv6 public address', () => {
+    expect(isPrivateIP('::8.8.8.8')).toBe(false);
+  });
+
+  it('allows public IPv6 that ends with an IPv4-mapped-looking tail', () => {
+    expect(isPrivateIP('2001:db8::ffff:127.0.0.1')).toBe(false);
+  });
+
+  it('blocks uncompressed IPv4-mapped IPv6 loopback', () => {
+    expect(isPrivateIP('0000:0000:0000:0000:0000:ffff:127.0.0.1')).toBe(true);
+  });
+
+  it('blocks uncompressed IPv4-mapped IPv6 loopback in hex form', () => {
+    expect(isPrivateIP('0000:0000:0000:0000:0000:ffff:7f00:1')).toBe(true);
+  });
+
+  it('allows uncompressed IPv4-mapped IPv6 public address', () => {
+    expect(isPrivateIP('0000:0000:0000:0000:0000:ffff:8.8.8.8')).toBe(false);
+  });
+
+  it('returns false for non-IP strings', () => {
+    expect(isPrivateIP('example.com')).toBe(false);
+    expect(isPrivateIP('10.cdn.example.com')).toBe(false);
+    expect(isPrivateIP('fc-assets.cloudfront.net')).toBe(false);
+  });
+});
+
+describe('isPrivateHost', () => {
+  it('blocks localhost', () => {
+    expect(isPrivateHost('localhost')).toBe(true);
+  });
+
+  it('blocks private IPs', () => {
+    expect(isPrivateHost('10.0.0.1')).toBe(true);
+  });
+
+  it('blocks bracketed IPv6 literals from URL.hostname', () => {
+    expect(isPrivateHost('[::1]')).toBe(true);
+    expect(isPrivateHost('[::7f00:1]')).toBe(true);
+  });
+
+  it('allows public domains', () => {
+    expect(isPrivateHost('example.com')).toBe(false);
+  });
+
+  it('does NOT false-positive on domains starting with private-looking prefixes', () => {
+    expect(isPrivateHost('10.cdn.example.com')).toBe(false);
+    expect(isPrivateHost('192.168.example.com')).toBe(false);
+    expect(isPrivateHost('fc-assets.cloudfront.net')).toBe(false);
+  });
+});
+
+describe('assertNotPrivateHost', () => {
+  it('rejects private IP immediately without DNS', async () => {
+    await expect(assertNotPrivateHost('10.0.0.1')).rejects.toThrow('SSRF blocked');
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('rejects localhost immediately without DNS', async () => {
+    await expect(assertNotPrivateHost('localhost')).rejects.toThrow('SSRF blocked');
+  });
+
+  it('rejects bracketed IPv6 loopback immediately without DNS', async () => {
+    await expect(assertNotPrivateHost('[::1]')).rejects.toThrow('SSRF blocked');
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('returns null for public IP literal without DNS', async () => {
+    await expect(assertNotPrivateHost('8.8.8.8')).resolves.toBeNull();
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it('resolves domain and blocks if DNS points to private IP', async () => {
+    mockLookup.mockResolvedValue([{ address: '10.0.0.1', family: 4 }]);
+    await expect(assertNotPrivateHost('evil.example.com')).rejects.toThrow('SSRF blocked');
+  });
+
+  it('returns pinned IP for domain that resolves to public IP', async () => {
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+    await expect(assertNotPrivateHost('example.com')).resolves.toBe('93.184.216.34');
+  });
+
+  it('blocks if any resolved address is private', async () => {
+    mockLookup.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+      { address: '10.0.0.1', family: 4 },
+    ]);
+    await expect(assertNotPrivateHost('mixed.example.com')).rejects.toThrow('SSRF blocked');
+  });
+
+  it('blocks if IPv6 resolution returns private address', async () => {
+    mockLookup.mockResolvedValue([{ address: 'fd12::1', family: 6 }]);
+    await expect(assertNotPrivateHost('v6only.example.com')).rejects.toThrow('SSRF blocked');
+  });
+
+  it('returns the first public IP when both v4 and v6 resolve', async () => {
+    mockLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+    await expect(assertNotPrivateHost('example.com')).resolves.toBe('93.184.216.34');
+  });
+
+  it('rejects when DNS fails entirely', async () => {
+    mockLookup.mockRejectedValue(new Error('ENOTFOUND'));
+    await expect(assertNotPrivateHost('broken-dns.example.com')).rejects.toThrow('SSRF blocked');
+  });
+
+  it('rejects when DNS returns no addresses', async () => {
+    mockLookup.mockResolvedValue([]);
+    await expect(assertNotPrivateHost('empty-dns.example.com')).rejects.toThrow('SSRF blocked');
+  });
+});

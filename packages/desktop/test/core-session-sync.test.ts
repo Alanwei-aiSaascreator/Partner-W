@@ -1,0 +1,366 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createSessionSync } from '@clawwork/core';
+import type { Message } from '@clawwork/shared';
+
+function createHarness(params: {
+  tasks: Array<{ id: string; gatewayId: string; sessionKey: string }>;
+  loadMessagesRows: Record<
+    string,
+    Array<{
+      id: string;
+      taskId: string;
+      role: string;
+      content: string;
+      timestamp: string;
+      attachments?: unknown[];
+      thinkingContent?: string;
+    }>
+  >;
+  discovered: Array<{
+    gatewayId: string;
+    taskId: string;
+    sessionKey: string;
+    title: string;
+    updatedAt: string;
+    agentId: string;
+    model?: string;
+    modelProvider?: string;
+    thinkingLevel?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    contextTokens?: number;
+    messages: {
+      role: string;
+      content: string;
+      timestamp: string;
+      attachments?: Message['attachments'];
+      toolCalls?: Message['toolCalls'];
+    }[];
+  }>;
+}) {
+  const persisted: Array<{
+    id: string;
+    taskId: string;
+    role: string;
+    content: string;
+    timestamp: string;
+    sessionKey?: string;
+    agentId?: string;
+    runId?: string;
+    attachments?: unknown[];
+    toolCalls?: unknown[];
+    thinkingContent?: string;
+  }> = [];
+
+  const taskStore = {
+    tasks: [...params.tasks],
+    hydrate: vi.fn(async () => {}),
+    adoptTasks: vi.fn((discovered: typeof params.discovered) => {
+      for (const task of discovered) {
+        if (taskStore.tasks.some((existing) => existing.id === task.taskId)) continue;
+        taskStore.tasks.push({
+          id: task.taskId,
+          gatewayId: task.gatewayId,
+          sessionKey: task.sessionKey,
+        });
+      }
+    }),
+    updateTaskMetadata: vi.fn(() => {}),
+  };
+
+  const messageStore = {
+    messagesByTask: {} as Record<string, Message[]>,
+    activeTurnBySession: {},
+    bulkLoad: vi.fn((taskId: string, messages: Message[]) => {
+      messageStore.messagesByTask[taskId] = messages;
+    }),
+    promoteActiveTurn: vi.fn(),
+    clearActiveTurn: vi.fn(),
+    setState: vi.fn(
+      (
+        updater: (state: {
+          messagesByTask: Record<string, Message[]>;
+        }) => Partial<{ messagesByTask: Record<string, Message[]> }>,
+      ) => {
+        const patch = updater({ messagesByTask: messageStore.messagesByTask });
+        if (patch.messagesByTask) messageStore.messagesByTask = patch.messagesByTask;
+      },
+    ),
+  };
+
+  const sessionSync = createSessionSync({
+    persistence: {
+      loadMessages: vi.fn(async (taskId: string) => ({ ok: true, rows: params.loadMessagesRows[taskId] ?? [] })),
+      persistMessage: vi.fn(async (message) => {
+        persisted.push(message);
+        return { ok: true };
+      }),
+    },
+    gateway: {
+      chatHistory: vi.fn(async () => ({ ok: true, result: { messages: [] } })),
+      syncSessions: vi.fn(async () => ({ ok: true, discovered: params.discovered })),
+    },
+    getTaskStore: () => taskStore,
+    getMessageStore: () => messageStore,
+  } as unknown as Parameters<typeof createSessionSync>[0]);
+
+  return { sessionSync, taskStore, messageStore, persisted };
+}
+
+describe('core session sync startup flow', () => {
+  it('persists only new assistant messages when local history already exists', async () => {
+    const harness = createHarness({
+      tasks: [
+        {
+          id: 'task-existing',
+          gatewayId: 'gw-1',
+          sessionKey: 'agent:main:clawwork:task:task-existing',
+        },
+      ],
+      loadMessagesRows: {
+        'task-existing': [
+          {
+            id: 'u1',
+            taskId: 'task-existing',
+            role: 'user',
+            content: 'Hello',
+            timestamp: '2026-03-16T10:00:00.000Z',
+          },
+        ],
+      },
+      discovered: [
+        {
+          gatewayId: 'gw-1',
+          taskId: 'task-existing',
+          sessionKey: 'agent:main:clawwork:task:task-existing',
+          title: 'Existing task',
+          updatedAt: '2026-03-16T10:00:03.000Z',
+          agentId: 'main',
+          messages: [
+            { role: 'user', content: 'Hello', timestamp: '2026-03-16T10:00:00.500Z' },
+            { role: 'assistant', content: 'Hi!', timestamp: '2026-03-16T10:00:01.000Z' },
+            { role: 'user', content: 'Hello', timestamp: '2026-03-16T10:00:02.000Z' },
+            { role: 'assistant', content: 'Hi again!', timestamp: '2026-03-16T10:00:03.000Z' },
+          ],
+        },
+      ],
+    });
+
+    await harness.sessionSync.syncFromGateway();
+
+    expect(harness.messageStore.messagesByTask['task-existing'].map((message) => message.content)).toEqual([
+      'Hello',
+      'Hi!',
+      'Hi again!',
+    ]);
+    expect(harness.persisted.map((message) => ({ role: message.role, content: message.content }))).toEqual([
+      { role: 'assistant', content: 'Hi!' },
+      { role: 'assistant', content: 'Hi again!' },
+    ]);
+  });
+
+  it('loads and persists the full discovered history when no local messages exist', async () => {
+    const harness = createHarness({
+      tasks: [],
+      loadMessagesRows: {},
+      discovered: [
+        {
+          gatewayId: 'gw-1',
+          taskId: 'task-fresh',
+          sessionKey: 'agent:main:clawwork:task:task-fresh',
+          title: 'Fresh task',
+          updatedAt: '2026-03-16T10:00:01.000Z',
+          agentId: 'main',
+          messages: [
+            { role: 'user', content: 'Draft me a note', timestamp: '2026-03-16T10:00:00.000Z' },
+            {
+              role: 'assistant',
+              content: 'Sure',
+              timestamp: '2026-03-16T10:00:01.000Z',
+              toolCalls: [
+                {
+                  id: 'exec-1',
+                  name: 'exec',
+                  status: 'done',
+                  startedAt: '2026-03-16T10:00:00.500Z',
+                  completedAt: '2026-03-16T10:00:01.000Z',
+                  result: 'ok',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    await harness.sessionSync.syncFromGateway();
+
+    expect(
+      harness.messageStore.messagesByTask['task-fresh'].map((message) => ({
+        role: message.role,
+        content: message.content,
+        sessionKey: message.sessionKey,
+      })),
+    ).toEqual([
+      { role: 'user', content: 'Draft me a note', sessionKey: undefined },
+      { role: 'assistant', content: 'Sure', sessionKey: 'agent:main:clawwork:task:task-fresh' },
+    ]);
+    expect(
+      harness.persisted.map((message) => ({
+        role: message.role,
+        content: message.content,
+        sessionKey: message.sessionKey,
+      })),
+    ).toEqual([
+      { role: 'user', content: 'Draft me a note', sessionKey: undefined },
+      {
+        role: 'assistant',
+        content: 'Sure',
+        sessionKey: 'agent:main:clawwork:task:task-fresh',
+      },
+    ]);
+    expect(harness.persisted[1]).toEqual(
+      expect.objectContaining({
+        role: 'assistant',
+        agentId: 'main',
+        toolCalls: [expect.objectContaining({ id: 'exec-1', name: 'exec', status: 'done', result: 'ok' })],
+      }),
+    );
+  });
+
+  it('normalizes persisted assistant MEDIA directives during local hydration', async () => {
+    const harness = createHarness({
+      tasks: [
+        {
+          id: 'task-media',
+          gatewayId: 'gw-1',
+          sessionKey: 'agent:main:clawwork:task:task-media',
+        },
+      ],
+      loadMessagesRows: {
+        'task-media': [
+          {
+            id: 'a1',
+            taskId: 'task-media',
+            role: 'assistant',
+            content: 'MEDIA:/Users/x/.openclaw/media/generated.png\n\nImage ready',
+            timestamp: '2026-03-16T10:00:01.000Z',
+          },
+        ],
+      },
+      discovered: [],
+    });
+
+    await harness.sessionSync.hydrateFromLocal();
+
+    expect(harness.messageStore.messagesByTask['task-media']).toEqual([
+      expect.objectContaining({
+        id: 'a1',
+        content: 'Image ready',
+        attachments: [
+          {
+            fileName: 'generated.png',
+            dataUrl: 'file:///Users/x/.openclaw/media/generated.png',
+            mimeType: 'image/png',
+            sourcePath: '/Users/x/.openclaw/media/generated.png',
+          },
+        ],
+      }),
+    ]);
+    expect(harness.persisted).toEqual([]);
+  });
+
+  // 背景：推理输出（`stream:"thinking"`）原本只活在内存的 activeTurn 里，
+  // 刷新一次就没了 —— 网关 transcript 里其实存着，是客户端不落库 + 不解析丢的。
+  // 这两条盯住「落库往返」这一半：写进去、读回来。
+  it('重载时把落库的思考读回消息上（否则刷新一次推理就没了）', async () => {
+    const harness = createHarness({
+      tasks: [{ id: 'task-think', gatewayId: 'gw-1', sessionKey: 'agent:main:clawwork:task:task-think' }],
+      loadMessagesRows: {
+        'task-think': [
+          {
+            id: 'a1',
+            taskId: 'task-think',
+            role: 'assistant',
+            content: '鸡 23 只、兔 12 只。',
+            timestamp: '2026-03-16T10:00:01.000Z',
+            thinkingContent: '设鸡 x 只、兔 y 只，则 x+y=35、2x+4y=94……',
+          },
+        ],
+      },
+      discovered: [],
+    });
+
+    await harness.sessionSync.hydrateFromLocal();
+
+    expect(harness.messageStore.messagesByTask['task-think']).toEqual([
+      expect.objectContaining({
+        id: 'a1',
+        content: '鸡 23 只、兔 12 只。',
+        thinkingContent: '设鸡 x 只、兔 y 只，则 x+y=35、2x+4y=94……',
+      }),
+    ]);
+  });
+
+  it('backfills attachments for existing assistant messages with the same timestamp', async () => {
+    const attachment = {
+      fileName: 'generated.png',
+      dataUrl: 'file:///Users/x/.openclaw/media/generated.png',
+      mimeType: 'image/png',
+      sourcePath: '/Users/x/.openclaw/media/generated.png',
+    };
+    const harness = createHarness({
+      tasks: [
+        {
+          id: 'task-media',
+          gatewayId: 'gw-1',
+          sessionKey: 'agent:main:clawwork:task:task-media',
+        },
+      ],
+      loadMessagesRows: {
+        'task-media': [
+          {
+            id: 'a1',
+            taskId: 'task-media',
+            role: 'assistant',
+            content: 'Image ready',
+            timestamp: '2026-03-16T10:00:01.000Z',
+          },
+        ],
+      },
+      discovered: [
+        {
+          gatewayId: 'gw-1',
+          taskId: 'task-media',
+          sessionKey: 'agent:main:clawwork:task:task-media',
+          title: 'Media task',
+          updatedAt: '2026-03-16T10:00:01.000Z',
+          agentId: 'main',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'Image ready',
+              timestamp: '2026-03-16T10:00:01.000Z',
+              attachments: [attachment],
+            },
+          ],
+        },
+      ],
+    });
+
+    await harness.sessionSync.syncFromGateway();
+
+    expect(harness.messageStore.messagesByTask['task-media']).toEqual([
+      expect.objectContaining({
+        id: 'a1',
+        attachments: [attachment],
+      }),
+    ]);
+    expect(harness.persisted).toEqual([
+      expect.objectContaining({
+        id: 'a1',
+        attachments: [attachment],
+      }),
+    ]);
+  });
+});

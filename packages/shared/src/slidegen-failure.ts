@@ -1,0 +1,233 @@
+/**
+ * **一份演示文稿没生成出来**的形状（助手在回复里写了 ```` ```slidegen ```` 块，
+ * 但客户端没能把它排成 `.pptx`）。
+ *
+ * ## 这条通道是什么
+ *
+ * 与 `docgen` / `htmlgen` 的根本差别：**这次让模型写版面本身**。
+ *
+ * `docgen` 的模板把版式**固化成了 pptx 形状**，于是每个占位符都有字符上限，
+ * 内容一多就整份被拒 —— 真机上出现过「让助手把第二页缩短 40 字，结果**一个文件都没生成**」。
+ * 那条路的表达力天花板是设计出来的，而"内容能不能写满"恰恰是用户最在意的事。
+ *
+ * 这条通道换成对标产品的做法：**用 JSX + CSS（flex / 绝对定位 / 渐变）描述版面**，
+ * 客户端拿真浏览器（Electron）排版、量出每个元素的最终矩形，
+ * 再写回成一页**真文字、可编辑**的 pptx。
+ * 模型写它最擅长的 CSS，而不是去凑一套固定格子的字段名。
+ *
+ * ⚠️ 与 `docgen-failure.ts` / `htmlgen-failure.ts` 同一个道理：定义在 shared 是**故意的** ——
+ *    这个形状要跨 主进程 → IPC → 渲染层 三道边界，每层各写一遍必然漂移。
+ * ⚠️ 这里只放**码 + 数据**，不放句子：文案在界面那一侧本地化（九种语言各一份）。
+ */
+
+/**
+ * 一栅最多几页 —— **成本兜底**，不是产品上限。
+ *
+ * 不是安全限制，是**成本**限制：每页都要起一次浏览器渲染 + 量框，
+ * 一栅几百页会让消息收尾路径卡住（那正是本项目已经踩过的"收尾链拖垮界面"）。
+ *
+ * ## ⚠️ 2026-09-29 从 60 提到 200：60 会在**正常长稿**上开枪
+ *
+ * 本机真渲染实测：**26 页 612 ms、64 页 1068 ms**（≈17–24 ms/页）。
+ * 旧值 60 会拒掉一份**只花 1 秒**就能渲染完的稿子（实测那一次就是 64 页），
+ * 而这是 `SlidegenFailure` 那份设计里明写"**不因为内容多而拒绝**"的通道。
+ *
+ * 200 保留了正常长稿的充足余量，同时仍然拦得住几百页导致的渲染成本失控。
+ * 它不与聊天历史的字符上限绑定：字符数不能稳定换算成页数或渲染成本。
+ */
+import type { DocgenFailure } from './docgen-failure.js';
+import type { HtmlgenFailure } from './htmlgen-failure.js';
+
+export const SLIDEGEN_MAX_PAGES = 200;
+
+/**
+ * 页数预算判据（2026-09-29 抽成纯函数）。
+ *
+ * ⚠️ 抽出来的**唯一理由**是它原来只活在 `generate.ts` 的循环里，而那个函数要起真浏览器
+ * （`measure.ts`，"在单测里起不来，硬桩一个假浏览器只会测到桩自己"）——
+ * 于是**这条判据从来没有过测试**。抽成纯函数，判据才守得住。
+ */
+export function pageBudgetFailure(pageCount: number): SlidegenFailure | null {
+  if (pageCount <= SLIDEGEN_MAX_PAGES) return null;
+  return { code: 'slidegen-too-many-pages', max: SLIDEGEN_MAX_PAGES, got: pageCount };
+}
+
+/** 同一条助手消息里的多份 deck 共享一份渲染成本预算。 */
+export function messagePageBudgetFailure(pageCounts: readonly number[]): SlidegenFailure | null {
+  return pageBudgetFailure(pageCounts.reduce((total, count) => total + count, 0));
+}
+
+/**
+ * 没生成出来的原因。**判别联合**，不是"码 + 一堆可选字段" ——
+ * 理由与 `DocgenFailure` 逐条相同（不带假默认值、穷尽性可查）。
+ *
+ * ⚠️ **注意这里没有"内容太长"这一档**，是刻意的：这条通道**不因为内容多而拒绝**。
+ *    版式有问题（越界、被盖住）走的是**警告**，文件照样出（见 `main/slidegen/validate.ts`）。
+ *    要恢复这个档位之前，先回去读 `docgen` 那段历史 —— 那是个已经踩过的坑。
+ */
+export type SlidegenFailure = SlidegenFailureReason & {
+  diagnostic?: { code: string; offset?: number; detail: string };
+};
+
+export interface ArtifactDeliveryFailure {
+  taskId: string;
+  sessionKey: string;
+  messageId: string;
+  /** 声称了、但在工作区里**物理上找不到**的文件名。 */
+  missing: string[];
+  /**
+   * 本轮要求了、成果列表里**没有登记到**的格式（人话标签，如「PPT/PPTX 演示文稿」）。
+   *
+   * ⭐ 与 `missing` 分开（2026-10-04 真机）：文件可能就在盘上，只是版本关联或成果登记
+   *    没走完。两者合成一句「工作区里没有这些文件」时，界面就在对用户撒谎。
+   */
+  missingKinds?: string[];
+  /**
+   * ⭐⭐ **写出来了、但字节不是那份格式**的文件名（BUG-042-c，2026-10-08）。
+   *
+   * 真机形状：模型自己把 JSON / 纯文本改名成 `.docx` 写进工作区，回复说"已生成 报告.docx"。
+   * 它**在盘上**（所以既不是 `missing` 也满足存在性判据），只在登记门的字节校验那一步被拒
+   * （进 `skipped`）—— 结果回复说做好了、产物列表空的、界面上**一条提示都没有**（静默丢弃）。
+   *
+   * 与另两档的差别（三个都要说得出不同的话）：
+   *   · `missing`       = 声称了，**盘上根本找不到**；
+   *   · `missingKinds`  = 格式对，**只是没登记上**；
+   *   · `invalidArtifacts` = 盘上有，**但它不是一份能打开的文档**（假装成了别的格式）。
+   */
+  invalidArtifacts?: string[];
+  slideFailures?: SlidegenFailure[];
+  docFailures?: DocgenFailure[];
+  htmlFailures?: HtmlgenFailure[];
+  mediaFailures?: { fileName: string; reason: 'unavailable' }[];
+}
+
+/** Emitted only after generation and workspace reconciliation have settled. */
+export interface ArtifactDeliverySettled {
+  taskId: string;
+  sessionKey: string;
+  messageId: string;
+  status: 'succeeded' | 'needs-review' | 'failed' | 'canceled';
+  slideWarnings?: SlidegenWarning[];
+}
+
+type SlidegenFailureReason =
+  /** 围栏里是空的。 */
+  | { code: 'slidegen-block-empty' }
+  /**
+   * 围栏**开了头没有结尾** —— 几乎总是"助手的回复被截断了"。
+   *
+   * ⚠️ 这一档是 2026-09-28 真机补上的，而且它防的正是**静默**：`FENCE_RE` 只认闭合的围栏，
+   *    所以被截断的那一份既不进 `decks` 也不进 `failures` ⇒ 上层两个分支都不进、直接 return
+   *    ⇒ 用户看到"任务已完成、结果已保存"，产物面板却是空的，且**日志里一条都没有**。
+   */
+  | { code: 'slidegen-block-unclosed' }
+  /**
+   * 助手**写了文件**（工作区里出现了 `.slidegen`），但文件里**没有围栏** ⇒ 一份 deck 都没解析出来。
+   *
+   * ⚠️ 与 `slidegen-block-unclosed` 是一对，分工必须分清：
+   *    · 围栏**开了没闭合** ⇒ 那份源码还在，是"被截断了" ⇒ 上面那档；
+   *    · 文件里**根本没有围栏** ⇒ 是"写错了内容/写错了文件" ⇒ 这一档。
+   *
+   * ⭐ 存在的理由是**防静默**：`extractSlidegenBlocks` 只认闭合围栏，
+   *    所以没有围栏的文本**既不进 `decks` 也不进 `failures`** ——
+   *    上层若只看这两样，就会什么都不做、什么都不报，界面上还说"任务已完成"。
+   *    （同族事故见 `slidegen-block-unclosed` 的注释，那是真机上抓到的。）
+   *
+   * ⚠️ **只在"确实有合格文件"时才报**：没有文件是**常规回落**（该去看聊天正文里的围栏），
+   *    不是失败 —— 否则每一轮与 PPT 无关的对话都会多出一条假失败。
+   */
+  | { code: 'slidegen-file-no-fence' }
+  /** 工作区里的 `.slidegen` 文件读不动（权限、被删、正写到一半）。 */
+  | { code: 'slidegen-file-unreadable' }
+  /**
+   * 版面文件**超过大小上限**。
+   *
+   * ## 为什么这条路也必须有上限（它已经绕开了运行时那两层顶）
+   *
+   * 文件这条路不走聊天投影，所以既没有 8,000 的显示截断、也没有单条消息
+   * 131,072 **字节**的那层顶。但"没有运行时上限"**不等于**"可以没有上限"：
+   * 一份畸形/失控的大文件会在**消息收尾路径**上被整份读进内存并送进排版，
+   * 那正是本项目踩过的"收尾链拖垮界面"。
+   *
+   * ⇒ 上限取一个**明确、可测、有限**的值（`DECK_FILE_MAX_BYTES`，1 MiB），
+   *    并把 `max` / `got` 一起带给界面 —— 用户看得到"超了多少"，而不是一句"失败了"。
+   *
+   * ⚠️ 单位为**字节**（与运行时那层一致）。中文一个字符 3 字节，
+   *    所以"多少字"这个说法在中文内容上会差三倍，别用它当判据。
+   */
+  | { code: 'slidegen-file-too-large'; max: number; got: number }
+  /**
+   * **取回了完整原文，但它本身还是不完整的**（超过 `maxChars`、或模型输出被截断）。
+   *
+   * ⚠️ 与 `slidegen-block-unclosed` 的关键差别：那一档是"我们**没拿到**全文"，
+   *    这一档是"**拿到了，全文就这么长**"—— 再取一次也不会更长。
+   *    ⇒ 对用户的意义不同：前者重试有意义，后者要改内容。
+   */
+  | { code: 'slidegen-reply-incomplete' }
+  /**
+   * **没能取回本轮那条回复**（还没落盘 / 网关没连上 / 这一轮压根没有助手消息）。
+   *
+   * ⭐ 存在的理由：**绝不拿被截断的文本去生成半份 PPT**。
+   *    取不到就明确报"没取到"，让用户重试 —— 那比交付一份缺了一半的演示强得多。
+   */
+  | { code: 'slidegen-reply-unavailable' }
+  | { code: 'slidegen-output-unconfirmed' }
+  /** 没有 `// title: …`。标题是文件名，缺了就只能编一个，而用户认不出编出来的名字。 */
+  | { code: 'slidegen-title-missing' }
+  /** JSX 结构不成立（标签不配平、属性没值…）。 */
+  | { code: 'slidegen-unparsable' }
+  /** 用了四个标签之外的标签（含 HTML 标签）。这是个**封闭集合**，不是"尽量兼容"。 */
+  | { code: 'slidegen-unknown-tag'; tag: string }
+  /** 求值失败（表达式抛错、超时）。`detail` 里有原始信息，只进日志、不上屏。 */
+  | { code: 'slidegen-eval-failed' }
+  /** 页数超了 `SLIDEGEN_MAX_PAGES`。 */
+  | { code: 'slidegen-too-many-pages'; max: number; got: number }
+  /** 渲染或写出阶段失败（浏览器起不来、写盘失败…）。我们自己的意外，不假装知道原因。 */
+  | { code: 'slidegen-render-failed' };
+
+/**
+ * 版式**警告**（文件出来了，但某几处不对）。
+ *
+ * ⭐ 与 `SlidegenFailure` 分开是这一条通道的核心设计：**警告不挡交付**。
+ *    对标产品那份 deck 里就有一处重叠，它照样出了成品 ——
+ *    "版式有点毛病"和"什么都没生成"是两种完全不同的坏。
+ */
+export type SlidegenWarning = SlidegenWarningReason & {
+  artifactName?: string;
+  /**
+   * **语言无关**的结构化载荷：界面据此拼本地化句子。
+   *
+   * ⚠️ 2026-10-16 真机截图缺陷：主进程侧的 `detail` 是**回落文本**，历史上有两条是英文
+   *    （`layout-footer-overlap` / `layout-text-low-contrast`），界面原来直接
+   *    `#${element}: ${detail}` 拼上去 ⇒ **中文界面整段英文上屏**。
+   *    现在界面优先用这里的 `data` 走 i18n；`data` 缺失才回落 `detail`。
+   *    ⇒ **不要**在渲染层从 `detail` 里正则解析（那是把文案当协议）。
+   */
+  data?: SlidegenWarningData;
+};
+
+/** 版式警告的语言无关载荷。形状与 `main/slidegen/validate.ts` 的产出**必须一致**。 */
+export interface SlidegenWarningData {
+  /** 元素种类。 */
+  kind?: 'text' | 'image' | 'block';
+  /** 文字元素的前若干字。 */
+  snippet?: string;
+  /** 冲出画布的边与像素（可能多条）。 */
+  overflow?: readonly { side: 'left' | 'top' | 'right' | 'bottom'; px: number }[];
+  /** 盖住它的那个东西（`#12` 或标签名）。 */
+  occludedBy?: string;
+  /** 页脚 / 正文区域的绘制序号。 */
+  footer?: number;
+  body?: number;
+  /** 实测对比度与目标下限。 */
+  ratio?: number;
+  minimum?: number;
+}
+
+type SlidegenWarningReason =
+  /** 元素冲出画布 ⇒ 放映时那一块看不到。 */
+  | { code: 'layout-out-of-bounds'; page: number; element: number; detail: string }
+  /** 文字被别的元素盖住 ⇒ 用户看不到那句话，还不知道它存在。 */
+  | { code: 'layout-text-occluded'; page: number; element: number; detail: string }
+  | { code: 'layout-footer-overlap'; page: number; element: number; detail: string }
+  | { code: 'layout-text-low-contrast'; page: number; element: number; detail: string };

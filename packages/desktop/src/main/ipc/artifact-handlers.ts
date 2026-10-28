@@ -1,0 +1,865 @@
+import { ipcMain, BrowserWindow, dialog, shell, nativeImage, type NativeImage } from 'electron';
+import { randomUUID } from 'node:crypto';
+import { readFileSync, realpathSync, statSync, writeFileSync } from 'fs';
+import { realpath, stat, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'os';
+import { fileURLToPath } from 'node:url';
+import { basename, isAbsolute, relative, resolve, sep } from 'path';
+import { eq } from 'drizzle-orm';
+import { getDb, getSqlite } from '../db/index.js';
+import { artifacts, tasks, messages } from '../db/schema.js';
+import { saveArtifact, saveArtifactFromBuffer } from '../artifact/save.js';
+import { getWorkspacePath } from '../workspace/config.js';
+import { searchArtifacts } from '../db/search.js';
+import { safeFetch } from '../net/safe-fetch.js';
+import { verifyImagegenFile } from '../imagegen/verify.js';
+import { getArtifactAvailability } from '../artifact/reconcile.js';
+import { resolveAgentWorkspace } from '../artifact/agent-workspace.js';
+import { copyArtifactToDestination, inspectArtifactFile, readVerifiedArtifactFile } from '../artifact/access.js';
+import { identityOf, sameIdentity } from '../util/file-identity.js';
+import { isVerifiedFileName, verifyArtifactBuffer } from '../artifact/verify.js';
+import { getGatewayClient } from '../ws/index.js';
+import { parseAgentIdFromSessionKey } from '@clawwork/shared';
+import {
+  ArtifactTooLargeError,
+  MAX_PLAIN_BINARY_SOURCE_BYTES,
+  MAX_PLAIN_TEXT_SOURCE_BYTES,
+} from '../artifact/too-large.js';
+import { trackOnSuccess } from '../analytics/reporter.js';
+import { buildArtifactPreview, previewKindFor } from '../preview/build-preview.js';
+
+interface SaveParams {
+  taskId: string;
+  sourcePath: string;
+  messageId: string;
+  fileName?: string;
+  mediaType?: string;
+}
+
+const MAX_THUMBNAIL_SOURCE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 用现有 `Artifact.filePath` 字段向界面交付成品的绝对路径，不新增 IPC。
+ * 这里只做词法边界校验；文件是否真实、是否符号链接仍由 availability/
+ * `inspectArtifactFile` 的强校验负责。
+ */
+function artifactAbsolutePath(rootPath: string, localPath: string): string | null {
+  if (!localPath || localPath.includes('\0') || isAbsolute(localPath)) return null;
+  const root = resolve(rootPath);
+  const absolutePath = resolve(root, localPath);
+  const relation = relative(root, absolutePath);
+  if (relation === '' || relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) return null;
+  return absolutePath;
+}
+/**
+ * 预览能读多大的源文件。
+ *
+ * ⚠️ 上限是**为了 IPC**：预览要把内容（PDF 还要 base64）从主进程搬到渲染进程，
+ *    几十兆的文件搬过去会让界面卡住。超了就**如实说"太大，用系统程序打开"**，
+ *    不许假装读过。
+ */
+const MAX_PREVIEW_SOURCE_BYTES = 40 * 1024 * 1024;
+
+function resizeThumbnailImage(image: NativeImage, size: number): NativeImage {
+  const { width, height } = image.getSize();
+  const maxDimension = Math.max(width, height);
+  if (maxDimension <= size) return image;
+  return width >= height ? image.resize({ width: size }) : image.resize({ height: size });
+}
+
+export function registerArtifactHandlers(): void {
+  ipcMain.handle('artifact:save', async (_event, params: SaveParams) => {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) {
+      return { ok: false, error: 'workspace not configured' };
+    }
+    try {
+      const realSource = realpathSync(params.sourcePath);
+      const allowedPrefixes = [resolve(workspacePath) + sep, tmpdir() + sep];
+      if (!allowedPrefixes.some((p) => realSource.startsWith(p))) {
+        return { ok: false, error: 'source path outside allowed locations' };
+      }
+
+      const artifact = await saveArtifact({
+        workspacePath,
+        taskId: params.taskId,
+        sourcePath: realSource,
+        messageId: params.messageId,
+        fileName: params.fileName,
+        mediaType: params.mediaType,
+      });
+
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) {
+        win.webContents.send('artifact:saved', artifact);
+      }
+
+      return trackOnSuccess({ ok: true, result: artifact }, 'artifact_saved');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: msg };
+    }
+  });
+
+  ipcMain.handle('artifact:list', async (_event, params: { taskId?: string }) => {
+    try {
+      const db = getDb();
+      const rows = params.taskId
+        ? db.select().from(artifacts).where(eq(artifacts.taskId, params.taskId)).all()
+        : db.select().from(artifacts).all();
+      // ⚠️ **逐行按它自己的根算**：一个任务会同时挂两批产物（应用根 + 助手根），
+      //    拿同一个目录去算另一批的 availability 会让它们全变成 `missing`（界面上一片红）。
+      return {
+        ok: true,
+        result: await Promise.all(
+          rows.map(async (row) => {
+            const rootPath = await rootForArtifact(row);
+            const filePath = rootPath ? artifactAbsolutePath(rootPath, row.localPath) : null;
+            return {
+              ...row,
+              ...(filePath ? { filePath } : {}),
+              // ⚠️ 根解析不出来（网关没连上/冷启动/切工作区）⇒ `'unknown'` —— **不是** `'missing'`。
+              //    旧值 `'missing'` 会让助手根那一批整族折进"历史与问题文件"（冷启动时"交付物没了"），
+              //    而这时候我们其实**不知道**文件在不在（见 `artifact-versions.ts` 的折叠规则）。
+              availability: rootPath ? await imagegenAwareAvailability(row, rootPath) : 'unknown',
+            };
+          }),
+        ),
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: msg };
+    }
+  });
+
+  ipcMain.handle('artifact:get', async (_event, params: { id: string }) => {
+    try {
+      const db = getDb();
+      const rows = db.select().from(artifacts).where(eq(artifacts.id, params.id)).all();
+      if (rows.length === 0) {
+        return { ok: false, error: 'artifact not found' };
+      }
+      const rootPath = await rootForArtifact(rows[0]);
+      const filePath = rootPath ? artifactAbsolutePath(rootPath, rows[0].localPath) : null;
+      return {
+        ok: true,
+        result: {
+          ...rows[0],
+          ...(filePath ? { filePath } : {}),
+          // 同 `artifact:list`：根解析不出来 ⇒ `'unknown'`（不知道），不是 `'missing'`（没有）。
+          availability: rootPath ? await imagegenAwareAvailability(rows[0], rootPath) : 'unknown',
+        },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: msg };
+    }
+  });
+
+  ipcMain.handle('artifact:save-as', async (_event, params: { artifactId: string; taskId?: string }) => {
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      // ⚠️ 根**在拿到 artifact 之后**才解析：`root:'agent'` 的行要按助手工作区解析，
+      //    而不是应用工作区（解析不到就是 `workspace not configured`，不回落）。
+      const rootPath = await rootForArtifact(artifact);
+      if (!rootPath) return { ok: false, error: 'workspace not configured' };
+      // ⭐ D5（2026-10-15 F owner）：**另存与打开同一套 M1 判据**。
+      //    `artifact:open-file` 在交 shell 之前复核受检格式字节（登记后被写坏/半截/外部改坏
+      //    的件一律拒，见图14/16 同族）。另存原来是"直拷"：同一份坏件「打不开却导出成
+      //    保存成功」——正是"失败条目伪装可下载"。这里在**弹对话框之前**过同一道门，
+      //    既与打开一致，也免得让用户先选好路径再被拒。
+      const verified = await verifyArtifactBeforeOpen(
+        artifact.name,
+        rootPath,
+        artifact.localPath,
+        artifact.sourceKey,
+        artifact.size,
+      );
+      if (!verified.ok) return { ok: false, error: verified.error };
+      const win = BrowserWindow.getAllWindows()[0];
+      const options = { defaultPath: artifact.name };
+      const choice = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+      if (choice.canceled || !choice.filePath) {
+        // ⚠️ 取消保存对话框也返回 ok:true（与 `context:import-files` 同一个坑）：
+        //    「打开对话框又关掉」不算一次 artifact_saved。
+        return { ok: true, result: { status: 'cancelled' as const } };
+      }
+      // ⭐ D5（2026-10-16 审计反例 SAVE_RACE）：**导出的必须是校验过的那份字节**。
+      //    旧实现弹框之后才去读源文件 ⇒ 校验与导出读的是两个时刻的两份字节：保存框停留
+      //    期间源文件被截断，导出的是坏件却回 `saved`。复核拿到快照时一律按快照导出
+      //    （见 `copyVerifiedSnapshot`）；没拿到快照的只有三种**本来就没读字节**的情况
+      //    （不受检的扩展名 / imagegen / 超 64MB 放行），沿用原来的复制。
+      const result = verified.snapshot
+        ? await copyVerifiedSnapshot(rootPath, artifact.localPath, verified.snapshot, choice.filePath)
+        : await copyArtifactToDestination(rootPath, artifact.localPath, choice.filePath);
+      return trackOnSuccess({ ok: true, result }, 'artifact_saved');
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
+    }
+  });
+
+  /**
+   * **朴素读法**：整份读出来给界面（文本进高亮 / 图片进 `<img>`）。
+   *
+   * ⚠️ 它现在是 `artifact:preview` 的**兜底**：富预览认不出（或 HTML 超了
+   *    `MAX_HTML_PREVIEW_BYTES`）就掉到这里。所以上限**必须**在这条路上也判 ——
+   *    否则"太大所以不给富预览"会变成"太大所以整份进高亮"，比不给预览还糟。
+   *
+   * ⚠️ 超限回的是 `{ tooLarge, size }` 而**不是** `{ ok: false }`：
+   *    文件是好的，是我们不肯搬 —— 这两件事在界面上要说两句不同的话。
+   */
+  ipcMain.handle('artifact:read-file', async (_event, params: { artifactId: string; taskId?: string }) => {
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      const rootPath = await rootForArtifact(artifact);
+      if (!rootPath) return { ok: false, error: 'workspace not configured' };
+      const isText = isTextFile(artifact.localPath);
+      const encoding = isText ? 'utf-8' : 'base64';
+      const maxBytes = isText ? MAX_PLAIN_TEXT_SOURCE_BYTES : MAX_PLAIN_BINARY_SOURCE_BYTES;
+      let buffer: Buffer;
+      try {
+        buffer = await readVerifiedArtifactFile(rootPath, artifact.localPath, { maxBytes });
+      } catch (err) {
+        if (err instanceof ArtifactTooLargeError) return { ok: true, result: { tooLarge: true, size: err.size } };
+        throw err;
+      }
+      const content = buffer.toString(encoding);
+      return { ok: true, result: { content, encoding } };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: msg };
+    }
+  });
+
+  /**
+   * **富预览**：把"我们能生成的那些文件"读成界面能直接渲染的形状。
+   *
+   * 为什么需要它：我们自己就产 `.docx` / `.xlsx` / `.pptx`（docgen），而 `FilePreview`
+   * 只认图片 / Markdown / 代码 ⇒ **用户做完一份东西，在应用里看不见它**，只能导出去用 Office 开。
+   *
+   * ⚠️ 读**全在主进程**：`exceljs` 本来就跑在这儿（打包态那套传递依赖的坑也是在这儿修的，
+   *    见 [[pnpm-flattening-drops-nested-deps]]），渲染进程再引一遍等于在新位置重踩一遍。
+   * ⚠️ 一律**只读**、**不落临时文件**（红线：不许写到工作区外面）。
+   */
+  ipcMain.handle('artifact:preview', async (_event, params: { artifactId: string; taskId?: string }) => {
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      // ⚠️ **先问认不认得出，再决定读不读**：认不出就直接回 `unsupported`，
+      //    否则每张 5 MB 的 PNG 都要被读进内存再丢掉。
+      if (previewKindFor(artifact.name) === null) return { ok: true, result: { kind: 'unsupported' } };
+      const rootPath = await rootForArtifact(artifact);
+      if (!rootPath) return { ok: false, error: 'workspace not configured' };
+      const buffer = await readVerifiedArtifactFile(rootPath, artifact.localPath, {
+        maxBytes: MAX_PREVIEW_SOURCE_BYTES,
+      });
+      return { ok: true, result: await buildArtifactPreview(artifact.name, buffer) };
+    } catch (err) {
+      // ⭐ 独立复核（2026-10-09）：**超限不是"读不了"**。识别格式的大文件（如 45MB PDF）
+      //    走通用 catch 会让界面显示「无法读取这份文件的内容」——把"文件是好的、只是
+      //    我们不肯整份搬"偷换成"读不了"（尺寸丢失）。回 `unsupported` 交回文本/图片
+      //    老路：那条路的同一档尺寸门会如实报出 `{ tooLarge, size }`。
+      if (err instanceof ArtifactTooLargeError) return { ok: true, result: { kind: 'unsupported' } };
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: msg };
+    }
+  });
+
+  ipcMain.handle(
+    'artifact:thumbnail',
+    async (_event, params: { artifactId: string; taskId?: string; size?: number }) => {
+      try {
+        const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+        if (!artifact) return { ok: false, error: 'artifact not found' };
+        const rootPath = await rootForArtifact(artifact);
+        if (!rootPath) return { ok: false, error: 'workspace not configured' };
+        const size = Math.min(Math.max(params.size ?? 128, 32), 256);
+        const buffer = await readVerifiedArtifactFile(rootPath, artifact.localPath, {
+          maxBytes: MAX_THUMBNAIL_SOURCE_BYTES,
+        });
+        const image = nativeImage.createFromBuffer(buffer);
+        if (image.isEmpty()) return { ok: false, error: 'thumbnail unavailable' };
+        const resized = resizeThumbnailImage(image, size);
+        return { ok: true, result: { dataUrl: resized.toDataURL() } };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        return { ok: false, error: msg };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'artifact:save-content',
+    async (
+      _event,
+      params: { taskId: string; messageId: string; content: string; language?: string; fileName?: string },
+    ) => {
+      const workspacePath = getWorkspacePath();
+      if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+      try {
+        const LANG_EXT: Record<string, string> = {
+          typescript: 'ts',
+          javascript: 'js',
+          python: 'py',
+          rust: 'rs',
+          go: 'go',
+          java: 'java',
+          md: 'md',
+          markdown: 'md',
+          tsx: 'tsx',
+          jsx: 'jsx',
+          json: 'json',
+          css: 'css',
+          html: 'html',
+          sh: 'sh',
+          bash: 'sh',
+          sql: 'sql',
+          yaml: 'yml',
+          yml: 'yml',
+        };
+        const fileName =
+          params.fileName ??
+          (() => {
+            const ext = (params.language && LANG_EXT[params.language.toLowerCase()]) ?? params.language ?? 'txt';
+            return `snippet.${ext}`;
+          })();
+        const buffer = Buffer.from(params.content, 'utf-8');
+        const artifact = await saveArtifactFromBuffer({
+          workspacePath,
+          taskId: params.taskId,
+          messageId: params.messageId,
+          fileName,
+          buffer,
+          artifactType: 'code',
+          contentText: params.content,
+        });
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) win.webContents.send('artifact:saved', artifact);
+        return trackOnSuccess({ ok: true, result: artifact }, 'artifact_saved');
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'artifact:save-image-url',
+    async (_event, params: { taskId: string; messageId: string; url: string; alt?: string }) => {
+      const workspacePath = getWorkspacePath();
+      if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+      try {
+        let buffer: Buffer;
+        const url = params.url;
+        if (/^https?:\/\//.test(url)) {
+          buffer = await safeFetch(url);
+        } else if (url.startsWith('file://')) {
+          // BUG-056③（2026-10-13 S 包 patch，P 接入）：词法 startsWith 不算边界 ——
+          // 先解码 → canonical 化 root/target → 相对包含判据 → 读**检查过的** canonical 目标。
+          let filePath: string;
+          try {
+            filePath = resolve(fileURLToPath(url)); // fileURLToPath 内含百分号解码：中文/空格 URL 合法
+          } catch {
+            return { ok: false, error: 'invalid file url' };
+          }
+          let realRoot: string;
+          let realTarget: string;
+          try {
+            realRoot = realpathSync(workspacePath);
+          } catch {
+            return { ok: false, error: 'workspace not found' };
+          }
+          try {
+            realTarget = realpathSync(filePath); // 不存在 ⇒ 这里明确失败（不猜）
+          } catch {
+            return { ok: false, error: 'file not found' };
+          }
+          const relation = relative(realRoot, realTarget);
+          if (relation === '' || relation === '..' || relation.startsWith(`..${sep}`) || isAbsolute(relation)) {
+            // 内部 link 指向外部、同前缀相邻目录（`<ws>-evil`）都落在这里
+            return { ok: false, error: 'file path outside workspace' };
+          }
+          if (!statSync(realTarget).isFile()) return { ok: false, error: 'not a file' };
+          // 残余（如实）：realpath→read 之间仍有极窄的交换窗口（Windows 无 O_NOFOLLOW 等价物）；
+          // 读的是刚判过的 canonical 路径，把风险收窄，但不宣称并发替换已彻底消除。
+          buffer = readFileSync(realTarget);
+        } else {
+          return { ok: false, error: 'unsupported url scheme' };
+        }
+        const ext = url.split('.').pop()?.split('?')[0]?.toLowerCase() ?? 'png';
+        const baseName = params.alt ? `${params.alt.replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}` : `image.${ext}`;
+        const artifact = await saveArtifactFromBuffer({
+          workspacePath,
+          taskId: params.taskId,
+          messageId: params.messageId,
+          fileName: baseName,
+          buffer,
+          artifactType: 'image',
+        });
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) win.webContents.send('artifact:saved', artifact);
+        return trackOnSuccess({ ok: true, result: artifact }, 'artifact_saved');
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+      }
+    },
+  );
+
+  ipcMain.handle('artifact:open-file', async (_event, params: { artifactId: string; taskId?: string }) => {
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      // ⚠️ 双重 inspect 都按**同一个根**解析（`root:'agent'` 的行用助手工作区）。
+      const rootPath = await rootForArtifact(artifact);
+      if (!rootPath) return { ok: false, error: 'workspace not configured' };
+      const inspected = await inspectArtifactFile(rootPath, artifact.localPath);
+      if (inspected.availability !== 'available' || !inspected.absolutePath) {
+        return { ok: false, error: `artifact ${inspected.availability}` };
+      }
+      const revalidated = await inspectArtifactFile(rootPath, artifact.localPath);
+      if (revalidated.availability !== 'available' || revalidated.absolutePath !== inspected.absolutePath) {
+        return { ok: false, error: `artifact ${revalidated.availability}` };
+      }
+      // M1 打开前复核（2026-10-07 体检 P2-6）：登记门只覆盖"新变更"那两条路径 ——
+      // 已登记、此后没再被动过的坏件（写坏 / 崩溃半截 / 外部改坏）会永远留在列表里，
+      // 而点开这条路**不复核**，"能点开但打不开"就在这里回归（图14/16 同族）。
+      // 受检格式（pptx/docx/xlsx/pdf）在交给 shell 之前做一次与登记门同一份轻量判据。
+      const verified = await verifyArtifactBeforeOpen(
+        artifact.name,
+        rootPath,
+        artifact.localPath,
+        artifact.sourceKey,
+        artifact.size,
+      );
+      if (!verified.ok) return { ok: false, error: verified.error };
+      const result = await shell.openPath(revalidated.absolutePath);
+      if (result) return { ok: false, error: classifyOpenPathFailure(result) };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
+    }
+  });
+
+  ipcMain.handle('artifact:show-in-folder', async (_event, params: { artifactId: string; taskId?: string }) => {
+    try {
+      const artifact = loadArtifactForAction(params.artifactId, params.taskId);
+      if (!artifact) return { ok: false, error: 'artifact not found' };
+      const rootPath = await rootForArtifact(artifact);
+      if (!rootPath) return { ok: false, error: 'workspace not configured' };
+      const inspected = await inspectArtifactFile(rootPath, artifact.localPath);
+      if (inspected.availability !== 'available' || !inspected.absolutePath) {
+        return { ok: false, error: `artifact ${inspected.availability}` };
+      }
+      const revalidated = await inspectArtifactFile(rootPath, artifact.localPath);
+      if (revalidated.availability !== 'available' || revalidated.absolutePath !== inspected.absolutePath) {
+        return { ok: false, error: `artifact ${revalidated.availability}` };
+      }
+      shell.showItemInFolder(revalidated.absolutePath);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown error' };
+    }
+  });
+
+  ipcMain.handle(
+    'artifact:search',
+    async (_event, params: { query: string; kind?: 'all' | 'image' | 'code' | 'file' | 'other' }) => {
+      const sqlite = getSqlite();
+      if (!sqlite) return { ok: false, error: 'db not ready' };
+      try {
+        const results = searchArtifacts(sqlite, params.query, { kind: params.kind });
+        return { ok: true, result: results };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+      }
+    },
+  );
+
+  ipcMain.handle('session:export-markdown', async (_event, params: { taskId: string }) => {
+    const workspacePath = getWorkspacePath();
+    if (!workspacePath) return { ok: false, error: 'workspace not configured' };
+    try {
+      const { md, safeName, lastMessageId } = loadSessionMarkdown(params.taskId);
+      const buffer = Buffer.from(md, 'utf-8');
+
+      const artifact = await saveArtifactFromBuffer({
+        workspacePath,
+        taskId: params.taskId,
+        messageId: lastMessageId ?? params.taskId,
+        fileName: `${safeName}.md`,
+        buffer,
+        artifactType: 'file',
+        contentText: md,
+      });
+
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) win.webContents.send('artifact:saved', artifact);
+      return { ok: true, result: artifact };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+    }
+  });
+
+  ipcMain.handle('session:export-markdown-as', async (_event, params: { taskId: string }) => {
+    try {
+      const { md, safeName } = loadSessionMarkdown(params.taskId);
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) return { ok: false, error: 'no window' };
+
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: `${safeName}.md`,
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      });
+      if (canceled || !filePath) return { ok: false, error: 'cancelled' };
+
+      writeFileSync(filePath, md, 'utf-8');
+      return { ok: true, result: { filePath } };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'unknown' };
+    }
+  });
+}
+
+function loadArtifactForAction(
+  artifactId: string,
+  taskId?: string,
+): Pick<typeof artifacts.$inferSelect, 'id' | 'taskId' | 'name' | 'localPath' | 'root' | 'sourceKey' | 'size'> | null {
+  if (!artifactId) return null;
+  const rows = getDb().select().from(artifacts).where(eq(artifacts.id, artifactId)).all();
+  const artifact = rows[0];
+  if (!artifact || (taskId && artifact.taskId !== taskId)) return null;
+  return artifact;
+}
+
+/**
+ * 某个任务所属**助手的工作区** —— 读不到就是 `null`（**不回落**到应用工作区）。
+ *
+ * 走 `resolveAgentWorkspace` 的进程内缓存（成功 5 分钟 / 失败 20 秒），
+ * 所以同一个任务里逐行调用**不会**重复发 RPC。
+ *
+ * ⚠️ 这里**只读**，什么都不建：助手工作区是网关的目录。
+ */
+async function agentWorkspaceForTask(taskId: string): Promise<string | null> {
+  try {
+    const row = getDb()
+      .select({ gatewayId: tasks.gatewayId, sessionKey: tasks.sessionKey })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .all()[0];
+    if (!row?.gatewayId || !row.sessionKey) return null;
+    return await resolveAgentWorkspace({
+      gatewayId: row.gatewayId,
+      agentId: parseAgentIdFromSessionKey(row.sessionKey),
+      listAgentFiles: (gatewayId, agentId) => {
+        const client = getGatewayClient(gatewayId);
+        if (!client) return Promise.reject(new Error('gateway client unavailable'));
+        return client.listAgentFiles(agentId);
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 一条产物该按**哪个目录**解析 —— 看行上的 `root`。
+ *
+ * ⚠️ `root` 缺省 / 任何认不出的值 ⇒ 应用工作区（**= 加这一列之前的行为**）。
+ *
+ * ⚠️ 助手根读不到时回 `null`：那一行的 `availability` 会算成 `missing`、卡片按钮全灰。
+ *    这是**刻意**的 —— 宁可"这个暂时打不开"，也**不能**拿**别的目录**去解析它
+ *    （出错的方向会是"把别的目录的同名文件当成你的产物"）。
+ */
+async function rootForArtifact(artifact: { taskId: string; root?: string | null }): Promise<string | null> {
+  if (artifact.root !== 'agent') return getWorkspacePath() || null;
+  return agentWorkspaceForTask(artifact.taskId);
+}
+
+/**
+ * 打开前复核要读多大。
+ *
+ * ⚠️ 超上限**放行**（返回 ok）：这条路的意义是挡"结构上打不开的坏件"，不是拿内存去换
+ *    大文件的开门权 —— 几十兆的 pptx 打不开是它自己的事，不能因为我们不肯读就不让开。
+ */
+const MAX_OPEN_VERIFY_BYTES = 64 * 1024 * 1024;
+
+/**
+ * 打开前的完整性复核。失败时回一个**稳定的机器可读标记**（`'artifact invalid'`）：
+ * 它与 `artifact missing` / `artifact unsafe`（availability 那族）以及 `shell.openPath`
+ * 的系统错误串分开，日志/测试/后续界面分化都以它为准；界面文案由渲染层给
+ * （`artifactCard.openFailed` + 提示「在文件夹中显示」）。
+ */
+const INVALID_ARTIFACT_ERROR = 'artifact invalid';
+
+/**
+ * ⭐ BUG-042-b（2026-10-08 亲验）：**"没有可打开它的程序"不是"文件损坏"**。
+ *
+ * 机器里没装 Word/WPS 时 `shell.openPath` 回的是系统错误串（Windows 上来自
+ * `ShellExecuteW`，如 "No application is associated with the specified file…" /
+ * "This file does not have a program associated with it…"），而界面原来对**任何**
+ * 打开失败都说「文件可能已损坏或未写完」—— 文件明明是好的，用户会白白重做一遍。
+ *
+ * 这里把那一族**分类**成一个稳定的机器可读标记（与 `artifact invalid` 同款做法）：
+ * 文案由渲染层按标记各说各的（`ArtifactCard`），日志/测试也以标记为准。
+ * ⚠️ 认不出的系统错误**原样回**（不发明结论）；坏件判据在 `verifyArtifactBeforeOpen`，
+ *    那条路仍然回 `artifact invalid`，两条不许互相冒充。
+ */
+const NO_OPENER_ARTIFACT_ERROR = 'artifact no-opener';
+
+/** `shell.openPath` 的失败串里，「系统没有可打开它的程序」那一族的形状。 */
+const NO_OPENER_PATTERNS: readonly RegExp[] = [
+  /no application/i,
+  // Windows 10/11 的 SE_ERR_NOASSOC 文案（"This file does not have a program associated with it…"）
+  /does not have a program/i,
+  /no (?:program|association)/i,
+  /not associated/i,
+  /failed to open/i,
+];
+
+/**
+ * 把 `shell.openPath` 的失败串分类。
+ *
+ * ⚠️ 判据刻意**只认"没有程序能打开它"这一族**：把别的原因也归进来（比如权限）等于
+ *    教用户装一个程序去修一个装程序解决不了的问题 —— 那和原来的"都说成损坏"是同一种错。
+ */
+function classifyOpenPathFailure(message: string): string {
+  return NO_OPENER_PATTERNS.some((pattern) => pattern.test(message)) ? NO_OPENER_ARTIFACT_ERROR : message;
+}
+
+async function imagegenAwareAvailability(
+  row: { localPath: string; sourceKey: string; size: number },
+  rootPath: string,
+) {
+  const availability = getArtifactAvailability(row.localPath, rootPath);
+  if (availability !== 'available' || !row.sourceKey?.startsWith('imagegen:')) return availability;
+  return (await verifyImagegenFile(rootPath, row.localPath, undefined, row.size)) ? 'available' : 'unsafe';
+}
+
+async function verifyArtifactBeforeOpen(
+  fileName: string,
+  rootPath: string,
+  localPath: string,
+  sourceKey?: string,
+  size?: number,
+): Promise<{ ok: true; snapshot?: Buffer } | { ok: false; error: string }> {
+  if (sourceKey?.startsWith('imagegen:')) {
+    return (await verifyImagegenFile(rootPath, localPath, undefined, size))
+      ? { ok: true }
+      : { ok: false, error: INVALID_ARTIFACT_ERROR };
+  }
+  if (!isVerifiedFileName(fileName)) return { ok: true };
+  let buffer: Buffer;
+  try {
+    buffer = await readVerifiedArtifactFile(rootPath, localPath, { maxBytes: MAX_OPEN_VERIFY_BYTES });
+  } catch (err) {
+    // ⚠️ 超上限**放行且不带快照**：这条路本来就不为超过 `MAX_OPEN_VERIFY_BYTES` 的件读字节
+    //    （见该常量注释），所以"没读"不是这次修法漏掉的一档 —— 调用方按原样处理。
+    if (err instanceof ArtifactTooLargeError) return { ok: true };
+    return { ok: false, error: err instanceof Error ? err.message : INVALID_ARTIFACT_ERROR };
+  }
+  // ⭐ D5：`snapshot` 是**这份判据读到的那些字节本身**。打开路径用完即弃；
+  //    另存路径必须拿它当导出的源（否则校验与导出是两时刻的两份字节）。
+  return verifyArtifactBuffer(fileName, buffer).ok
+    ? { ok: true, snapshot: buffer }
+    : { ok: false, error: INVALID_ARTIFACT_ERROR };
+}
+
+/**
+ * ⭐ BUG-090 残余（2026-10-16 r14 独立终审）：**"另存到了源文件自己"必须按真实文件身份判**。
+ *
+ * 反例：源 `report.docx` → 保存框里选同一目录的 `REPORT.DOCX`。Windows/NTFS 上这是
+ * **同一个文件**，旧 `copyArtifactToDestination` 的 dev/ino 判据（`access.ts:281`）会拒绝；
+ * 而 D5 快照路只做 `resolve()` **字符串等价**（大小写敏感）⇒ 放行 ⇒ 把保存框停留期间
+ * 用户新编辑的 **420B 覆盖回 395B 旧快照**却回 `saved`（`keptEdit=false` /
+ * `revertedToSnapshot=true`）。同文件 / 别名（大小写、硬链接、junction）保护在那条路上丢了。
+ *
+ * 修法：复用 `util/file-identity.ts`（全仓**唯一**一份正确实现：bigint dev/ino，
+ * 不做第二套比较），把源与目标的**真实身份**比一遍；字符串等价保留为路径兜底
+ * （身份不可用的文件系统 / 目标尚不存在的形状）。
+ *
+ * ⚠️ 比较的是**源文件**与目标，不是快照暂存文件与目标 —— 暂存件本来就是另一个 inode，
+ *    拿它比永远不相等（那正是这条保护原先失效的原因）。
+ * ⚠️ 与旧路一致：源读不到 / 目标不存在 ⇒ 不是"同一个文件"，交给后面的复制判据。
+ *    方向保守，不误拒合法另存。
+ */
+async function destinationMatchesSource(
+  rootPath: string,
+  localPath: string,
+  destinationPath: string,
+): Promise<boolean> {
+  const sourcePath = resolve(rootPath, localPath);
+  const targetPath = resolve(destinationPath);
+  if (targetPath === sourcePath) return true;
+  try {
+    const [sourceStats, targetStats] = await Promise.all([
+      stat(sourcePath, { bigint: true }),
+      stat(targetPath, { bigint: true }),
+    ]);
+    return sameIdentity(identityOf(sourceStats), identityOf(targetStats));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * ⭐ D5（2026-10-16 审计反例 SAVE_RACE）：把**校验过的那份字节**写到用户选定的路径。
+ *
+ * 反例形状（替身只接管对话框/DB，读盘与复制全走真实 access 模块，实测可复现）：
+ * 有效 DOCX 通过登记前复核 → 保存对话框停留期间源文件被编辑器/生成过程截断 →
+ * 用户点确定 → 旧实现 `copyArtifactToDestination` **这时才去读源文件**，读到 60B 坏件
+ * ⇒ 导出**打不开的文件**却回 `saved`（`originalValid=true → result.ok=true → exportedValid=false`）。
+ *
+ * 修法：校验时抓到的字节先落一枚**临时快照**（`os.tmpdir()` —— 与 `artifact:save` 的
+ * 受信前缀同一档：`[工作区, tmpdir]`），再交给既有的 `copyArtifactToDestination` 做原子发布
+ * （临时文件 + 逐字节校验 + rename；目标目录 realpath / 符号链接判据一条不减）。
+ * 于是导出的**只可能**是受检的那份字节，源文件此后怎么变都不影响这一次导出；
+ * 快照用完即删（成功、失败都一样走 `finally`）。
+ *
+ * ⚠️ 快照换掉了"源文件身份"，`copyArtifactToDestination` 里那条
+ *    `destination matches source`（另存到源文件自己）在快照路上必须**自己补判回来** ——
+ *    否则"另存到原路径 / 同文件别名"会从"拒绝"变成"静默自覆盖"。
+ *    判据见 `destinationMatchesSource`（r14 起：**真实文件身份**，不是字符串等价）。
+ */
+async function copyVerifiedSnapshot(
+  rootPath: string,
+  localPath: string,
+  snapshot: Buffer,
+  destinationPath: string,
+): Promise<{ status: 'saved'; filePath: string }> {
+  if (await destinationMatchesSource(rootPath, localPath, destinationPath)) {
+    throw new Error('destination matches source');
+  }
+  const stagingRoot = await realpath(tmpdir());
+  const stagedName = `.partner-w-save-as-${process.pid}-${randomUUID()}-${basename(localPath)}`;
+  const stagedPath = resolve(stagingRoot, stagedName);
+  await writeFile(stagedPath, snapshot, { flag: 'wx', mode: 0o600 });
+  try {
+    return await copyArtifactToDestination(stagingRoot, stagedName, destinationPath);
+  } finally {
+    await unlink(stagedPath).catch(() => undefined);
+  }
+}
+
+const TEXT_EXTS = new Set([
+  '.md',
+  '.txt',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.json',
+  '.html',
+  '.css',
+  '.sql',
+  '.yaml',
+  '.yml',
+  '.xml',
+  '.csv',
+  '.sh',
+  '.py',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.toml',
+  '.env',
+]);
+
+function isTextFile(localPath: string): boolean {
+  const dot = localPath.lastIndexOf('.');
+  if (dot === -1) return true;
+  return TEXT_EXTS.has(localPath.slice(dot).toLowerCase());
+}
+
+type TaskRow = typeof tasks.$inferSelect;
+type MessageRow = typeof messages.$inferSelect;
+
+interface ExportResult {
+  md: string;
+  safeName: string;
+  lastMessageId: string | undefined;
+}
+
+function loadSessionMarkdown(taskId: string): ExportResult {
+  const db = getDb();
+  const taskRows = db.select().from(tasks).where(eq(tasks.id, taskId)).all();
+  if (taskRows.length === 0) throw new Error('task not found');
+  const task = taskRows[0];
+
+  const msgRows = db.select().from(messages).where(eq(messages.taskId, taskId)).orderBy(messages.timestamp).all();
+
+  const md = buildSessionMarkdown(task, msgRows);
+  const safeName =
+    task.title
+      .replace(/[<>:"/\\|?*]/g, '_')
+      .replace(/[\t\n\r]/g, '_')
+      .trim() || 'session';
+  const lastMessageId = msgRows.length > 0 ? msgRows[msgRows.length - 1].id : undefined;
+  return { md, safeName, lastMessageId };
+}
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const Y = d.getFullYear();
+  const M = String(d.getMonth() + 1).padStart(2, '0');
+  const D = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${Y}-${M}-${D} ${h}:${m}`;
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  user: 'User',
+  assistant: 'Assistant',
+  system: 'System',
+};
+
+function buildSessionMarkdown(task: TaskRow, msgs: MessageRow[]): string {
+  const lines: string[] = [];
+
+  lines.push(`# ${task.title || 'Untitled Session'}`);
+  lines.push('');
+  lines.push(`**Created:** ${formatTimestamp(task.createdAt)}`);
+  if (task.model) {
+    const provider = task.modelProvider ? ` (${task.modelProvider})` : '';
+    lines.push(`**Model:** ${task.model}${provider}`);
+  }
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  for (const msg of msgs) {
+    const label = ROLE_LABEL[msg.role] ?? msg.role;
+    lines.push(`## ${label}`);
+    lines.push(`*${formatTimestamp(msg.timestamp)}*`);
+    lines.push('');
+    lines.push(msg.content);
+
+    if (msg.toolCalls) {
+      let calls: { name?: string; status?: string }[] = [];
+      try {
+        calls = JSON.parse(msg.toolCalls as string);
+      } catch {}
+      if (calls.length > 0) {
+        lines.push('');
+        lines.push('<details>');
+        lines.push('<summary>Tool Calls</summary>');
+        lines.push('');
+        for (const tc of calls) {
+          const status = tc.status ? ` [${tc.status}]` : '';
+          lines.push(`- \`${tc.name ?? 'unknown'}\`${status}`);
+        }
+        lines.push('');
+        lines.push('</details>');
+      }
+    }
+
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}

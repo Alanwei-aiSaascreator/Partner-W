@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Partner-W</string>
+    <string name="title_activity_main">Partner-W</string>
+    <string name="package_name">com.mofangluopan.mobile</string>
+    <string name="custom_url_scheme">com.mofangluopan.mobile</string>
+</resources>

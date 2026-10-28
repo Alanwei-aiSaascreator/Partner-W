@@ -1,0 +1,445 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BookOpen, ChevronRight, FilePlus2, Loader2, NotebookPen, Pin, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import EmptyState from '@/components/semantic/EmptyState';
+import InlineNotice from '@/components/semantic/InlineNotice';
+import SectionCard from '@/components/semantic/SectionCard';
+import WindowTitlebar from '@/components/semantic/WindowTitlebar';
+import ConfirmDialog from '@/components/semantic/ConfirmDialog';
+import NoteComposerDialog from './NoteComposerDialog';
+import { toast } from '@/lib/toast';
+import type { KbSearchHitView, KbSearchOutcomeView, KbSourceSummaryView, KbStatsView } from '../../../preload/clawwork';
+
+/**
+ * 资料库（T6）—— 工作区本地库 + **本地嵌入**检索。
+ *
+ * ## 这个界面要如实说清的三件事
+ *
+ * ① **东西存在哪**：这是本机（或 U 盘）工作区里的库，**不上云**（隐私政策 §12.2 的承诺）。
+ *    §12.2 写着"文件索引保存在本机、不予收集不予上传"，所以这里不放"同步"之类的暗示。
+ * ② **现在是什么检索模式**：有引擎 ⇒ 关键词 + 向量；没引擎 ⇒ 只有关键词。
+ *    后者是**合法降级不是错误**（引擎可能因为模型没打进包/被杀软拦而起不来），
+ *    所以用提示条说明，而不是报错弹窗 —— 用户搜东西仍然能用。
+ * ③ **在花什么**：本地嵌入**不花钱**。别在这里显示积分/token 之类的东西
+ *   （界面只显示积分那条红线，在这里根本不适用）。
+ *
+ * ⚠️ `not-ready` 跟"你还没加过资料"必须分开显示：运行时是工作区就绪后**异步**建的
+ *（要读 90MB 模型），界面可能在那之前就问上来。混在一起用户会以为自己的东西丢了。
+ */
+
+type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'not-ready' }
+  | { kind: 'ready'; stats: KbStatsView; engine: string | null; sources: KbSourceSummaryView[] }
+  | { kind: 'error'; message: string };
+
+type KbDegradedReason = NonNullable<KbSearchOutcomeView['degradedReason']>;
+
+/**
+ * 降级原因 → i18n key 后缀。
+ *
+ * ⚠️ 表里存的是**后缀**，整 key 由 `t(\`kb.degraded.${后缀}\`)` 拼出来。这不是风格问题：
+ *    `check:i18n` 的扫描器只认字面量 key 和这种模板串 —— 把整 key 当字符串常量放进表里，
+ *    它认不出来，那些 key 会被判成"没有任何地方在用"。
+ *
+ * ⚠️ 类型写成 `Record<KbDegradedReason, string>` 是**故意的**：将来在 preload 的
+ *    `KbSearchOutcomeView` 里加了新原因，这里少写一行就是编译错误。
+ *    之前那个内联三元没有这层保护 —— 新原因会静默落进最后那个 `else`，
+ *    显示成**另一句**降级说明（我这次加的 `'no-recall'` 差点就这样）。
+ */
+const DEGRADED_SUFFIX: Record<KbDegradedReason, string> = {
+  'no-engine': 'noEngine',
+  'engine-error': 'engineError',
+  'no-recall': 'noRecall',
+  'no-vectors': 'noVectors',
+};
+
+/**
+ * 一次检索的结果。**三个字段必须同生同死**，所以放一个对象里。
+ *
+ * 原来是三个并列的 `useState`，于是搜索**失败**时只清了 `hits`，
+ * `degraded` 还留着上一次那句 —— 界面会为一次根本没跑成的检索显示降级原因。
+ * 收成一个对象后，"这次检索是什么样"在结构上就只有一份。
+ *
+ * `search === null` = 还没搜过 / 查询词被清空 / 这次没搜成（错误另有 toast）。
+ * ⚠️ 失败时刻意**不留**"没搜到"的空态：那是"搜了但没有"，跟"没搜成"是两回事。
+ */
+interface SearchState {
+  mode: KbSearchOutcomeView['mode'];
+  degraded: KbDegradedReason | null;
+  hits: KbSearchHitView[];
+}
+
+export default function KnowledgeBase(): React.JSX.Element {
+  const { t } = useTranslation();
+  const [state, setState] = useState<LoadState>({ kind: 'loading' });
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState<SearchState | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<KbSourceSummaryView | null>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+  /** 展开的是哪一条命中（同时只开一条：搜索结果本来就短，全展开反而看不清）。 */
+  const [expandedHit, setExpandedHit] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [statsReply, sourcesReply] = await Promise.all([window.clawwork.kbStats(), window.clawwork.kbListSources()]);
+    if (!statsReply.ok || !sourcesReply.ok) {
+      // 两条里有任意一条回 not-ready ⇒ 就是"还没就绪"（两条同时问的，不会一好一坏）
+      const notReady =
+        (!statsReply.ok && statsReply.code === 'not-ready') || (!sourcesReply.ok && sourcesReply.code === 'not-ready');
+      setState(notReady ? { kind: 'not-ready' } : { kind: 'error', message: t('kb.loadFailed') });
+      return;
+    }
+    setState({ kind: 'ready', stats: statsReply.stats, engine: statsReply.engine, sources: sourcesReply.sources });
+  }, [t]);
+
+  useEffect(() => {
+    void refresh().catch(() => setState({ kind: 'error', message: t('kb.loadFailed') }));
+  }, [refresh, t]);
+
+  /** 索引是**异步**的（可能要嵌几百块）⇒ 入库后把界面状态刷一遍，别让它显示旧统计。 */
+  const runIndexThenRefresh = useCallback(async () => {
+    await window.clawwork.kbIndexPending().catch(() => undefined);
+    await refresh().catch(() => undefined);
+  }, [refresh]);
+
+  const handleAddFiles = useCallback(async () => {
+    const picked = await window.clawwork.kbPickFiles();
+    if (!picked.paths.length) return;
+
+    let added = 0;
+    let skipped = 0;
+    for (const path of picked.paths) {
+      const reply = await window.clawwork.kbAddFile({ path });
+      if (reply.ok && reply.outcome.status !== 'skipped') added += 1;
+      else skipped += 1;
+    }
+
+    // 全部被跳过要说出来：多半是"不是文本文件"或"空的"，静默成功会让用户以为索引坏了
+    if (added === 0) toast.warning(t('kb.addNone'));
+    else if (skipped > 0) toast.success(t('kb.addPartial', { added, skipped }));
+    else toast.success(t('kb.addDone', { count: added }));
+
+    await runIndexThenRefresh();
+  }, [runIndexThenRefresh, t]);
+
+  /** 建笔记 → 关框 → 建索引 → 刷列表。顺序刻意如此：先关框让用户看到反馈，再干活。 */
+  const handleCreateNote = useCallback(
+    async (input: { title: string; text: string }) => {
+      const reply = await window.clawwork.kbAddNote(input);
+      if (!reply.ok) {
+        toast.error(t('kb.loadFailed'));
+        return;
+      }
+      setNoteOpen(false);
+      toast.success(t('kb.noteAdded'));
+      await runIndexThenRefresh();
+    },
+    [runIndexThenRefresh, t],
+  );
+
+  /**
+   * 重建索引：整库重切 + 重嵌。
+   *
+   * ⚠️ 三种结果要**说成三句不同的话**：
+   *   - `skipped: 'no-engine'` ⇒ "没有可用的嵌入模型，已跳过"。服务在这种情况下
+   *     **一个字节都没动**（没引擎重建只会把向量删了补不回来），说成"重建完成"是最坏的撒谎。
+   *   - 出错 ⇒ 报错，别让界面停在"什么都没发生"上。
+   *   - 成功 ⇒ 说清重建了多少份资料、多少切片。
+   *
+   * 为什么不弹确认框：重建是**安全且可重入**的（真相是源文本，切片只是派生），
+   * 失败了大不了再来一次。给一个非破坏性操作加确认框，只会训练用户闭眼点"确定"。
+   */
+  const handleRebuild = useCallback(async () => {
+    if (rebuilding) return; // 双保险：按钮本身也 disabled，但连点事件可能在重渲前到
+    setRebuilding(true);
+    try {
+      const reply = await window.clawwork.kbRebuild();
+      if (!reply.ok) {
+        toast.error(t('kb.loadFailed'));
+        return;
+      }
+      if (reply.report.skipped === 'no-engine') {
+        toast.warning(t('kb.rebuildSkipped'));
+      } else {
+        toast.success(t('kb.rebuildDone', { sources: reply.report.sources, chunks: reply.report.chunks }));
+      }
+    } catch {
+      toast.error(t('kb.loadFailed'));
+    } finally {
+      setRebuilding(false);
+      await refresh().catch(() => undefined);
+    }
+  }, [rebuilding, refresh, t]);
+
+  const handleRemove = useCallback(async () => {
+    if (!pendingRemove) return;
+    await window.clawwork.kbRemoveSource(pendingRemove.id);
+    setPendingRemove(null);
+    await refresh().catch(() => undefined);
+  }, [pendingRemove, refresh]);
+
+  const handleSearch = useCallback(async () => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setSearch(null);
+      return;
+    }
+    setSearching(true);
+    try {
+      const reply = await window.clawwork.kbSearch({ query: trimmed });
+      if (reply.ok) {
+        // 新一次检索 ⇒ 收起上一次展开的那条（否则它会挂在一个不该存在的 id 上，看着像卡住）
+        setExpandedHit(null);
+        setSearch({
+          mode: reply.outcome.mode,
+          degraded: reply.outcome.degraded ? (reply.outcome.degradedReason ?? null) : null,
+          hits: reply.outcome.hits,
+        });
+      } else {
+        setSearch(null);
+        toast.error(t('kb.loadFailed'));
+      }
+    } finally {
+      setSearching(false);
+    }
+  }, [query, t]);
+
+  const pendingChunks = useMemo(
+    () =>
+      state.kind === 'ready' ? (state.stats.byState.pending_embedding ?? 0) + (state.stats.byState.stale ?? 0) : 0,
+    [state],
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <WindowTitlebar center={<span className="type-label">{t('kb.title')}</span>} />
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="mx-auto flex max-w-[var(--content-max-width)] flex-col gap-4 px-6 py-5">
+          {state.kind === 'loading' ? (
+            <div className="flex items-center gap-2 py-8 text-[var(--text-muted)]">
+              <Loader2 size={16} className="animate-spin" />
+              <span className="type-support">{t('kb.loading')}</span>
+            </div>
+          ) : state.kind === 'not-ready' ? (
+            // ⚠️ 与"还没有资料"分开：这一条会自己好（运行时建完就有了），重进页面即可
+            <InlineNotice tone="info">{t('kb.notReady')}</InlineNotice>
+          ) : state.kind === 'error' ? (
+            <InlineNotice tone="warning">{state.message}</InlineNotice>
+          ) : (
+            <>
+              {!state.engine && <InlineNotice tone="info">{t('kb.degraded.noEngine')}</InlineNotice>}
+
+              <SectionCard
+                title={t('kb.statsTitle')}
+                actions={
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => void handleAddFiles()}>
+                      <FilePlus2 size={14} />
+                      {t('kb.addFile')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setNoteOpen(true)}>
+                      <NotebookPen size={14} />
+                      {t('kb.addNote')}
+                    </Button>
+                    {pendingChunks > 0 && (
+                      <Button size="sm" variant="ghost" onClick={() => void runIndexThenRefresh()}>
+                        <NotebookPen size={14} />
+                        {t('kb.indexNow', { count: pendingChunks })}
+                      </Button>
+                    )}
+                    {/* ⚠️ 重建按钮**始终显示**，不按"有没有引擎"隐藏。
+                        理由是引擎状态是这一次 `kbStats` 的快照，而运行时是异步建的 ——
+                        按快照决定按钮存不存在，会让入口迟到；而"没有引擎"时点它也不是
+                        白点：那句 `kb.rebuildSkipped` 正是在告诉用户为什么搜得不准。 */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid="kb-rebuild"
+                      disabled={rebuilding}
+                      onClick={() => void handleRebuild()}
+                    >
+                      {rebuilding ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                      {rebuilding ? t('kb.rebuilding') : t('kb.rebuild')}
+                    </Button>
+                  </div>
+                }
+              >
+                <div className="grid grid-cols-3 gap-3">
+                  <Stat label={t('kb.statSources')} value={state.stats.sources} />
+                  <Stat label={t('kb.statChunks')} value={state.stats.chunks} />
+                  <Stat label={t('kb.statPending')} value={pendingChunks} />
+                </div>
+                <p className="type-meta mt-2 text-[var(--text-muted)]">
+                  {state.engine ? t('kb.engineLocal', { model: state.engine }) : t('kb.engineKeywordOnly')}
+                </p>
+              </SectionCard>
+
+              <SectionCard title={t('kb.searchTitle')}>
+                <div className="flex items-center gap-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-[var(--border-subtle)] px-2.5 py-1.5">
+                    <Search size={14} className="shrink-0 text-[var(--text-muted)]" />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void handleSearch();
+                      }}
+                      placeholder={t('kb.searchPlaceholder')}
+                      aria-label={t('kb.searchTitle')}
+                      className="min-w-0 flex-1 bg-transparent type-body outline-none placeholder:text-[var(--text-muted)]"
+                    />
+                    {searching && <Loader2 size={14} className="animate-spin text-[var(--text-muted)]" />}
+                  </div>
+                  <Button size="sm" onClick={() => void handleSearch()}>
+                    {t('kb.searchAction')}
+                  </Button>
+                </div>
+
+                {/*
+                  ⚠️ 检索模式**有结果就说**，不是只在降级时说话。
+                  原来"什么都没显示"既可能是"混合检索跑得好"，也可能是"忘了渲染"，
+                  用户分不出那个 0.83 分是语义算出来的还是关键词撞上的 ——
+                  检索模式是**结果的一部分**，不是异常信息。
+                  一条都没搜到时**不说**模式行："命中 0 段"跟下面那句"没搜到"是重复的两句，
+                  这时该讲的是**为什么**（降级原因），模式本身没有信息量。
+                */}
+                {search !== null && search.hits.length > 0 && (
+                  <p data-testid="kb-search-mode" className="type-meta mt-2 text-[var(--text-muted)]">
+                    {search.mode === 'hybrid'
+                      ? t('kb.modeHybrid', { count: search.hits.length })
+                      : t('kb.modeKeyword', { count: search.hits.length })}
+                    {search.degraded && ` · ${t(`kb.degraded.${DEGRADED_SUFFIX[search.degraded]}`)}`}
+                  </p>
+                )}
+
+                {search !== null && search.hits.length === 0 && search.degraded && (
+                  <p className="type-meta mt-2 text-[var(--text-muted)]">
+                    {t(`kb.degraded.${DEGRADED_SUFFIX[search.degraded]}`)}
+                  </p>
+                )}
+
+                {search !== null &&
+                  (search.hits.length === 0 ? (
+                    <p className="type-support mt-3 py-4 text-center text-[var(--text-muted)]">{t('kb.searchEmpty')}</p>
+                  ) : (
+                    <ul className="mt-3 flex flex-col gap-2">
+                      {search.hits.map((hit) => {
+                        // 依据要看得见：默认只给摘要（3 行），点开才是**完整正文 + 出处**。
+                        // 摘要够用来挑，正文才是"这条依据到底说了什么"。
+                        const open = expandedHit === hit.chunkId;
+                        return (
+                          <li key={hit.chunkId} className="rounded-lg border border-[var(--border-subtle)] p-2.5">
+                            <button
+                              type="button"
+                              data-testid="kb-hit-toggle"
+                              aria-expanded={open}
+                              aria-label={t('kb.hitToggle')}
+                              onClick={() => setExpandedHit(open ? null : hit.chunkId)}
+                              className="glow-focus flex w-full items-center gap-2 rounded-md text-left"
+                            >
+                              <ChevronRight
+                                size={13}
+                                className={cn(
+                                  'shrink-0 text-[var(--text-muted)] transition-transform',
+                                  open && 'rotate-90',
+                                )}
+                              />
+                              <span className="type-label min-w-0 flex-1 truncate">{hit.sourceTitle}</span>
+                              <span className="type-mono-data shrink-0 text-[var(--text-muted)]">
+                                {hit.score.toFixed(2)}
+                              </span>
+                            </button>
+                            <p
+                              className={cn('type-support mt-1 text-[var(--text-secondary)]', !open && 'line-clamp-3')}
+                            >
+                              {open ? hit.text : hit.snippet}
+                            </p>
+                            {open && (
+                              <p data-testid="kb-hit-source" className="type-meta mt-1.5 text-[var(--text-muted)]">
+                                {/* ⚠️ 笔记没有磁盘路径。显示"出处："后面跟个空串，比不显示更糟 */}
+                                {hit.sourceKind === 'note'
+                                  ? t('kb.hitFromNote')
+                                  : t('kb.hitFromFile', { path: hit.sourcePath })}
+                              </p>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ))}
+              </SectionCard>
+
+              <SectionCard title={t('kb.sourcesTitle')}>
+                {state.sources.length === 0 ? (
+                  <EmptyState title={t('kb.empty')} icon={<BookOpen size={18} />} className="py-6" />
+                ) : (
+                  <ul className="flex flex-col">
+                    {state.sources.map((source) => (
+                      <li
+                        key={source.id}
+                        className="flex items-center gap-2 border-b border-[var(--border-subtle)] py-2 last:border-b-0"
+                      >
+                        {source.kind === 'note' ? (
+                          <Pin size={13} className="shrink-0 text-[var(--text-muted)]" />
+                        ) : (
+                          <BookOpen size={13} className="shrink-0 text-[var(--text-muted)]" />
+                        )}
+                        <span className="type-body min-w-0 flex-1 truncate">{source.title}</span>
+                        {source.pending > 0 && (
+                          <span className="type-meta shrink-0 text-[var(--text-muted)]">
+                            {t('kb.sourcePending', { count: source.pending })}
+                          </span>
+                        )}
+                        <span className="type-meta shrink-0 text-[var(--text-muted)]">
+                          {t('kb.sourceChunks', { count: source.chunks })}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={t('kb.remove')}
+                          title={t('kb.remove')}
+                          onClick={() => setPendingRemove(source)}
+                          className={cn(
+                            'glow-focus shrink-0 rounded-md p-1 text-[var(--text-muted)]',
+                            'transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--danger)]',
+                          )}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </SectionCard>
+            </>
+          )}
+        </div>
+      </ScrollArea>
+
+      <NoteComposerDialog open={noteOpen} onCancel={() => setNoteOpen(false)} onSubmit={handleCreateNote} />
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        title={t('kb.remove')}
+        description={t('kb.removeConfirm', { title: pendingRemove?.title ?? '' })}
+        confirmLabel={t('kb.remove')}
+        variant="danger"
+        onConfirm={() => void handleRemove()}
+        onCancel={() => setPendingRemove(null)}
+      />
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }): React.JSX.Element {
+  return (
+    <div className="rounded-lg bg-[var(--bg-secondary)] px-3 py-2">
+      <div className="type-mono-data text-[var(--text-primary)]">{value}</div>
+      <div className="type-meta text-[var(--text-muted)]">{label}</div>
+    </div>
+  );
+}

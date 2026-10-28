@@ -1,0 +1,32 @@
+# 统一行尾：仓库里的文本文件**一律 LF**（索引与检出都是）。
+#
+# ## 为什么需要它
+#
+# 本机/团队里有人 `core.autocrlf=true`，而 `.prettierrc` 配的是 `endOfLine: "lf"`
+# —— 两者打架，**输的是工作区**：检出被写成 CRLF，于是 `pnpm format:check`
+# 在 Windows 上满屏红（几百个文件），而 CI 跑在 ubuntu 上、检出本来就是 LF ⇒ 绿。
+#
+# ⚠️ `.gitattributes` 里的 `eol` **优先于 `core.autocrlf`** ⇒ 从此不管谁怎么配本机
+#    git，检出都是 LF，那场"本地假红"不会再出现。
+#
+# ## 一次性扰动（合并这个提交的人看这里）
+#
+# 加了这一行之后，**已经检出到本机的工作区文件不会自动变**（它们还是 CRLF）——
+# 想让本机也变成 LF，重新检出一次即可：
+#
+#     git checkout-index -a -f      # 或干脆删掉重新 clone
+#
+# ⚠️ 内容一个字节都没变：**索引里早就是 LF 了**（实测 `git ls-files --eol`：
+#    1018 个文本文件全部 `i/lf`），这次只是把"检出成什么"写死。
+#    ⇒ 所以这次提交里**没有**任何文件的行尾被改动（见提交信息里的校验）。
+
+* text=auto eol=lf
+
+# Windows 批处理要 CRLF：cmd.exe 解析 LF 的 .bat 有已知问题（尤其带 `goto`/`for` 的）。
+# ⚠️ 仓库现在**没有** .bat/.cmd（`git ls-files | grep -c` = 0）—— 这两行是给将来留的，
+#    免得第一次加批处理脚本时踩坑。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制不显式写规则：`text=auto` 会自己判定并跳过
+# （免得将来加了新的二进制类型还得回来补一条）。

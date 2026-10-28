@@ -1,0 +1,1186 @@
+@import 'tailwindcss';
+@import './typography.css';
+
+@theme {
+  --content-max-width: 48rem;
+  --content-card-min: 260px;
+  --dialog-max-width: 56rem;
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  ::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  :root {
+    --surface-qr-bg: #ffffff;
+  }
+
+  :root,
+  :root[data-theme='dark'],
+  [data-theme='dark'] {
+    --bg-primary: #13131c;
+    --bg-secondary: #1a1a25;
+    --bg-tertiary: #20202d;
+    --bg-hover: #292936;
+    --bg-elevated: #1f1f2c;
+    --bg-input: var(--bg-primary);
+
+    --accent: #4d9fff;
+    --accent-hover: #66adff;
+    --accent-foreground: #0b1220;
+    --accent-dim: rgba(77, 159, 255, 0.16);
+    --accent-soft: rgba(77, 159, 255, 0.1);
+    --accent-soft-hover: rgba(77, 159, 255, 0.18);
+    --brand-start: #3b82f6;
+    --brand-end: #fb923c;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #60a5fa 55%, var(--brand-end));
+    --brand-glow: rgba(249, 115, 22, 0.24);
+
+    --text-primary: #f1f1f8;
+    --text-secondary: #b0b0bf;
+    --text-muted: #797987;
+    --text-danger: var(--danger);
+    --text-warning: var(--warning);
+    --mascot-eye: #20172b;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --border-subtle: rgba(255, 255, 255, 0.05);
+    --border-accent: rgba(77, 159, 255, 0.3);
+    --border-primary: var(--border);
+    --border-hover: var(--border-accent);
+
+    --scrollbar-thumb: #383846;
+    --scrollbar-track: transparent;
+
+    --danger: #f07079;
+    --danger-bg: rgba(240, 112, 121, 0.12);
+    --warning: #e6b35a;
+    --bg-warning: rgba(230, 179, 90, 0.12);
+    --border-warning: rgba(230, 179, 90, 0.28);
+    --info: #6aa9ed;
+
+    /**
+     * 渲染出来的文档（HTML 产物预览的 iframe）底下那层画布。
+     *
+     * ⚠️ **两个主题里都是白的，这是故意的**：网页是按"白纸"写的 —— 不显式设背景的
+     *    页面靠浏览器给的透明底 + 黑字。让深色主题透上来就变成"黑字压深底"，直接看不清。
+     *    所以它**不是**一个主题色，而是"第三方文档的默认画布"这个概念的名字。
+     */
+    --document-canvas: #ffffff;
+
+    --ring-accent: rgba(77, 159, 255, 0.4);
+    --glow-accent: rgba(77, 159, 255, 0.08);
+
+    --elev-1: 0 0 0 0.5px rgba(0, 0, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.25), 0 2px 3px rgba(0, 0, 0, 0.2);
+    --elev-2:
+      0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 10px rgba(0, 0, 0, 0.28),
+      0 12px 28px rgba(0, 0, 0, 0.25);
+    --elev-3:
+      0 0 0 0.5px rgba(0, 0, 0, 0.45), 0 2px 4px rgba(0, 0, 0, 0.35), 0 12px 24px rgba(0, 0, 0, 0.35),
+      0 32px 64px rgba(0, 0, 0, 0.4);
+    --inner-rim: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+
+    --shadow-card: var(--elev-1);
+    --shadow-elevated: var(--elev-2);
+    --shadow-floating: var(--elev-3);
+    --shadow-dialog: var(--elev-3);
+    --shadow-card-layered: var(--elev-1);
+    --shadow-elevated-layered: var(--elev-2);
+    --shadow-floating-layered: var(--elev-3);
+    --shadow-inset-soft: var(--inner-rim);
+    --shadow-inset-card: var(--inner-rim);
+    --overlay-scrim: rgba(0, 0, 0, 0.55);
+
+    --surface-page: var(--bg-primary);
+    --surface-panel: var(--bg-secondary);
+    --surface-card: var(--bg-secondary);
+    --surface-elevated-bg: var(--bg-elevated);
+    --surface-floating-bg: var(--bg-elevated);
+    --surface-dialog-bg: var(--bg-elevated);
+    --surface-rail: var(--bg-secondary);
+    --surface-assistant-rail: var(--bg-secondary);
+    --surface-onboarding-accent: var(--bg-tertiary);
+    --surface-onboarding-page: var(--bg-primary);
+    --text-onboarding-muted: var(--text-secondary);
+
+    --state-hover: var(--bg-hover);
+    --state-selected: var(--accent-dim);
+
+    --motion-duration-fast: 100ms;
+    --motion-duration-normal: 150ms;
+    --motion-duration-moderate: 200ms;
+    --motion-duration-slow: 300ms;
+    --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-enter: cubic-bezier(0, 0, 0.2, 1);
+    --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+    --glass-bg: rgba(26, 26, 37, 0.72);
+    --glass-bg-heavy: rgba(26, 26, 37, 0.88);
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-highlight: rgba(255, 255, 255, 0.04);
+    --glass-blur: 24px;
+    --glass-blur-heavy: 40px;
+    --glass-saturate: 170%;
+
+    --glow-ring: 0 0 0 1px rgba(77, 159, 255, 0.45);
+    --glow-diffuse: 0 0 0 4px rgba(77, 159, 255, 0.12);
+    --glow-inset: inset 0 0 0 1px rgba(77, 159, 255, 0);
+    --glow-pulse-mid: rgba(77, 159, 255, 0.18);
+
+    --tool-read: rgba(96, 165, 250, 0.9);
+    --tool-write: rgba(251, 146, 60, 0.9);
+    --tool-exec: rgba(59, 130, 246, 0.9);
+    --tool-think: rgba(45, 212, 191, 0.9);
+    --tool-web: rgba(56, 189, 248, 0.9);
+    --tool-default: rgba(160, 160, 176, 0.7);
+  }
+
+  :root[data-theme='light'] {
+    --bg-primary: #f4f3ef;
+    --bg-secondary: #fbfaf7;
+    --bg-tertiary: #efeee9;
+    --bg-hover: #e9e8e2;
+    --bg-elevated: #ffffff;
+    --bg-input: var(--bg-primary);
+
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-foreground: #ffffff;
+    --accent-dim: rgba(37, 99, 235, 0.1);
+    --accent-soft: rgba(37, 99, 235, 0.07);
+    --accent-soft-hover: rgba(37, 99, 235, 0.13);
+    --brand-start: #2563eb;
+    --brand-end: #f97316;
+    --brand-gradient: linear-gradient(105deg, var(--brand-start), #3b82f6 55%, var(--brand-end));
+    --brand-glow: rgba(249, 115, 22, 0.2);
+
+    --text-primary: #17171c;
+    --text-secondary: #3a3a42;
+    --text-muted: #6e6e7a;
+    --text-danger: var(--danger);
+    --text-warning: var(--warning);
+    --mascot-eye: #20172b;
+
+    --border: rgba(23, 23, 28, 0.07);
+    --border-subtle: rgba(23, 23, 28, 0.045);
+    --border-accent: rgba(37, 99, 235, 0.24);
+    --border-primary: var(--border);
+    --border-hover: var(--border-accent);
+
+    --scrollbar-thumb: #d0d0cb;
+    --scrollbar-track: transparent;
+
+    --danger: #d9434b;
+    --danger-bg: rgba(217, 67, 75, 0.08);
+    --warning: #c48a18;
+    --bg-warning: rgba(196, 138, 24, 0.1);
+    --border-warning: rgba(196, 138, 24, 0.26);
+    --info: #2f7bd1;
+
+    /** 见深色块里的说明：两个主题里都是白的，网页按白纸写。 */
+    --document-canvas: #ffffff;
+
+    --ring-accent: rgba(37, 99, 235, 0.3);
+    --glow-accent: rgba(37, 99, 235, 0.08);
+
+    --elev-1: 0 0 0 0.5px rgba(23, 23, 28, 0.06), 0 1px 1px rgba(23, 23, 28, 0.03), 0 2px 3px rgba(23, 23, 28, 0.02);
+    --elev-2:
+      0 0 0 0.5px rgba(23, 23, 28, 0.07), 0 1px 1px rgba(23, 23, 28, 0.04), 0 4px 10px rgba(23, 23, 28, 0.04),
+      0 12px 28px rgba(23, 23, 28, 0.05);
+    --elev-3:
+      0 0 0 0.5px rgba(23, 23, 28, 0.08), 0 2px 4px rgba(23, 23, 28, 0.06), 0 12px 24px rgba(23, 23, 28, 0.08),
+      0 32px 64px rgba(23, 23, 28, 0.12);
+    --inner-rim: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+
+    --shadow-card: var(--elev-1);
+    --shadow-elevated: var(--elev-2);
+    --shadow-floating: var(--elev-3);
+    --shadow-dialog: var(--elev-3);
+    --shadow-card-layered: var(--elev-1);
+    --shadow-elevated-layered: var(--elev-2);
+    --shadow-floating-layered: var(--elev-3);
+    --shadow-inset-soft: var(--inner-rim);
+    --shadow-inset-card: var(--inner-rim);
+    --overlay-scrim: rgba(23, 23, 28, 0.28);
+
+    --surface-page: var(--bg-primary);
+    --surface-panel: var(--bg-secondary);
+    --surface-card: var(--bg-secondary);
+    --surface-elevated-bg: var(--bg-elevated);
+    --surface-floating-bg: var(--bg-elevated);
+    --surface-dialog-bg: var(--bg-elevated);
+    --surface-rail: #f0eff6;
+    --surface-assistant-rail: #ffffff;
+    --surface-onboarding-accent: #f0eef8;
+    --surface-onboarding-page: #f7f7fb;
+    --text-onboarding-muted: #514b5d;
+
+    --state-hover: var(--bg-hover);
+    --state-selected: var(--accent-dim);
+
+    --motion-duration-fast: 100ms;
+    --motion-duration-normal: 150ms;
+    --motion-duration-moderate: 200ms;
+    --motion-duration-slow: 300ms;
+    --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-ease-enter: cubic-bezier(0, 0, 0.2, 1);
+    --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+    --glass-bg: rgba(251, 250, 247, 0.72);
+    --glass-bg-heavy: rgba(251, 250, 247, 0.88);
+    --glass-border: rgba(23, 23, 28, 0.06);
+    --glass-highlight: rgba(255, 255, 255, 0.6);
+    --glass-blur: 22px;
+    --glass-blur-heavy: 36px;
+    --glass-saturate: 160%;
+
+    --glow-ring: 0 0 0 1px rgba(37, 99, 235, 0.34);
+    --glow-diffuse: 0 0 0 4px rgba(37, 99, 235, 0.1);
+    --glow-inset: inset 0 0 0 1px rgba(37, 99, 235, 0);
+    --glow-pulse-mid: rgba(37, 99, 235, 0.18);
+
+    --tool-read: rgba(37, 99, 235, 0.85);
+    --tool-write: rgba(249, 115, 22, 0.9);
+    --tool-exec: rgba(29, 78, 216, 0.85);
+    --tool-think: rgba(13, 148, 136, 0.85);
+    --tool-web: rgba(3, 105, 161, 0.85);
+    --tool-default: rgba(120, 120, 135, 0.7);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-family-sans);
+    font-size: 16px;
+    font-weight: 420;
+    line-height: 1.5;
+    letter-spacing: -0.011em;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* macOS title bar drag region */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Scrollbar — native fallback for areas not using Radix ScrollArea */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* ============================================================
+   Markdown prose (assistant messages)
+   ============================================================ */
+
+@layer base {
+  .prose-chat {
+    line-height: 1.7;
+  }
+
+  .prose-chat p {
+    margin: 0.4em 0;
+  }
+
+  .prose-chat p:first-child {
+    margin-top: 0;
+  }
+  .prose-chat p:last-child {
+    margin-bottom: 0;
+  }
+
+  .prose-chat code {
+    font-family: var(--font-family-mono);
+    font-size: 0.85em;
+    background: var(--bg-tertiary);
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+  }
+
+  .prose-chat pre {
+    margin: 0.6em 0;
+    padding: 0.75em 1em;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+
+  .prose-chat pre code {
+    background: none;
+    padding: 0;
+    font-size: 0.82em;
+  }
+
+  .prose-chat ul,
+  .prose-chat ol {
+    margin: 0.4em 0;
+    padding-left: 1.5em;
+  }
+
+  .prose-chat li {
+    margin: 0.15em 0;
+  }
+
+  .prose-chat a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .prose-chat blockquote {
+    border-left: 3px solid var(--border);
+    padding-left: 0.75em;
+    margin: 0.4em 0;
+    color: var(--text-secondary);
+  }
+
+  .prose-chat h1,
+  .prose-chat h2,
+  .prose-chat h3 {
+    margin: 0.6em 0 0.3em;
+    font-weight: 600;
+  }
+
+  .prose-chat h1 {
+    font-size: 1.25em;
+  }
+  .prose-chat h2 {
+    font-size: 1.125em;
+  }
+  .prose-chat h3 {
+    font-size: 1.0625em;
+  }
+  .prose-chat h4 {
+    font-size: 1em;
+    font-weight: 600;
+    margin: 0.6em 0 0.3em;
+  }
+  .prose-chat h5,
+  .prose-chat h6 {
+    font-size: 0.9375em;
+    font-weight: 600;
+    margin: 0.5em 0 0.25em;
+  }
+
+  .prose-chat table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.9em;
+    margin: 0.6em 0;
+  }
+
+  .prose-chat th,
+  .prose-chat td {
+    border: 1px solid var(--border);
+    padding: 0.4em 0.75em;
+    text-align: left;
+  }
+
+  .prose-chat thead th {
+    background: var(--bg-secondary);
+    font-weight: 600;
+  }
+
+  .prose-chat tbody tr:nth-child(even) {
+    background: var(--bg-secondary);
+  }
+
+  .prose-chat hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1em 0;
+  }
+
+  .prose-chat del {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
+  .prose-chat input[type='checkbox'] {
+    margin-right: 0.4em;
+    accent-color: var(--accent);
+  }
+
+  .prose-chat li:has(> input[type='checkbox']) {
+    list-style: none;
+    margin-left: -1.2em;
+  }
+}
+
+/* ============================================================
+   Premium depth utilities
+   ============================================================ */
+
+@layer base {
+  .surface-elevated {
+    background-color: var(--surface-elevated-bg);
+    box-shadow: var(--shadow-elevated);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .surface-page {
+    background-color: var(--surface-page);
+  }
+
+  .surface-panel {
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .surface-card {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-subtle);
+  }
+
+  :root[data-theme='light'] .surface-card {
+    background-color: rgba(0, 0, 0, 0.02);
+  }
+
+  .surface-floating {
+    background-color: var(--surface-floating-bg);
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-floating);
+  }
+
+  .surface-dialog {
+    background-color: var(--surface-dialog-bg);
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-dialog);
+  }
+
+  .surface-overlay {
+    background-color: var(--overlay-scrim);
+  }
+
+  .glow-accent {
+    background-image: radial-gradient(circle, var(--glow-accent), transparent 70%);
+  }
+
+  .ring-accent-focus:focus-within {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--ring-accent);
+  }
+
+  /* Glass utilities */
+  .glass {
+    background: var(--surface-floating-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft);
+  }
+
+  .glass-heavy {
+    background: var(--surface-dialog-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft);
+  }
+
+  .glass-card {
+    background: var(--surface-floating-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-card), var(--shadow-card-layered);
+  }
+
+  /* 视频/媒体背景上的低透明度玻璃（全屏开场页用）：比 glass-card 透得多，让画面透出来。
+     刻意不用 backdrop-blur（契约禁 raw backdrop-blur；大面积视频上 blur 开销也高）。 */
+  .glass-scrim {
+    background: color-mix(in srgb, var(--bg-primary) 64%, transparent);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft);
+  }
+
+  /* 信息密度更高的卡片（首启进度卡）：衬托再压实一档，保证亮画面上文字对比稳定。 */
+  .glass-scrim-strong {
+    background: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft);
+  }
+
+  .glass-command {
+    background: var(--surface-dialog-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-inset-soft), var(--shadow-floating-layered);
+  }
+
+  .glow-focus:focus-visible,
+  .glow-focus:focus {
+    outline: none;
+    box-shadow: var(--glow-ring), var(--glow-diffuse), var(--glow-inset);
+  }
+
+  .glow-selected {
+    box-shadow: var(--glow-ring), var(--glow-diffuse), var(--glow-inset);
+  }
+
+  .glow-running {
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  /* 「我的 AI 团队」圆桌舞台（2026-10-12 视觉重做）：中心径向品牌光晕 + 极强的
+     舞台焦点感。只垫底不抢前景；暗/亮主题都走 accent-soft（浅色主题同样成立）。 */
+  .roundtable-stage {
+    background: radial-gradient(circle at 50% 50%, var(--accent-soft) 0%, transparent 62%);
+  }
+}
+
+@layer base {
+  :root,
+  :root[data-density='comfortable'] {
+    --density-toolbar-height: 44px;
+    --density-list-item-height: 40px;
+    --density-panel-gap: 16px;
+    --density-table-row-padding-y: 8px;
+    --density-control-height: 36px;
+    --density-control-height-sm: 32px;
+    --density-control-height-lg: 40px;
+    --density-avatar-size: 32px;
+  }
+
+  :root[data-density='compact'] {
+    --density-toolbar-height: 38px;
+    --density-list-item-height: 36px;
+    --density-panel-gap: 12px;
+    --density-table-row-padding-y: 6px;
+    --density-control-height: 32px;
+    --density-control-height-sm: 28px;
+    --density-control-height-lg: 36px;
+    --density-avatar-size: 28px;
+  }
+
+  :root[data-density='spacious'] {
+    --density-toolbar-height: 48px;
+    --density-list-item-height: 44px;
+    --density-panel-gap: 20px;
+    --density-table-row-padding-y: 10px;
+    --density-control-height: 40px;
+    --density-control-height-sm: 36px;
+    --density-control-height-lg: 44px;
+    --density-avatar-size: 36px;
+  }
+}
+
+/* ============================================================
+   Animations
+   ============================================================ */
+
+@keyframes msg-highlight {
+  0% {
+    background-color: var(--accent-dim);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.animate-highlight {
+  animation: msg-highlight 2s ease-out;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .glass {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+  }
+
+  .glass-heavy {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+  }
+
+  .glass-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-card);
+  }
+
+  .glass-command {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-floating);
+  }
+}
+
+/* ============================================================
+   Streaming keyframes
+   ============================================================ */
+
+@keyframes bar-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes tool-scan {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    box-shadow: var(--glow-ring), var(--glow-diffuse), var(--glow-inset);
+  }
+  50% {
+    box-shadow:
+      var(--glow-ring),
+      0 0 18px 4px var(--glow-pulse-mid),
+      var(--glow-inset);
+  }
+}
+
+/* First-run pages stay bright even when the operating system uses dark mode.
+   The full workspace still follows the user's saved theme preference. */
+.brand-first-run {
+  --bg-primary: #f8f7fb;
+  --bg-secondary: #fdfcff;
+  --bg-tertiary: #f1eef5;
+  --bg-hover: #ebe7f0;
+  --bg-elevated: #ffffff;
+  --bg-input: #f8f7fb;
+  --text-primary: #17141d;
+  --text-secondary: #453f4d;
+  --text-muted: #777081;
+  --text-onboarding-muted: #5b5265;
+  --border: rgba(33, 25, 42, 0.09);
+  --border-subtle: rgba(33, 25, 42, 0.055);
+  --surface-onboarding-accent: #f4f0f8;
+  --surface-onboarding-page: #fbfafc;
+  color-scheme: light;
+}
+
+.brand-action:not(:disabled) {
+  background-color: var(--accent);
+  background-image: var(--brand-gradient);
+  color: #ffffff;
+  box-shadow: 0 8px 22px var(--brand-glow);
+}
+
+.brand-action:not(:disabled):hover {
+  background-image: var(--brand-gradient);
+  filter: saturate(1.06) brightness(1.03);
+  box-shadow: 0 10px 28px var(--brand-glow);
+}
+
+/* ============================================================
+   Reduced motion — disable transforms, keep opacity
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .animate-pulse {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
+   对话可视化改造（2026-10-08）—— 思考折叠 / 工具行 / 活动行 / 光标 / 代码占位
+   ------------------------------------------------------------
+   值来自实测（WorkBuddy 复刻包 DEVELOPMENT.md 6.2/6.4/6.5/7.2 + Codex 对安装包
+   5.7.6 的复核）。类名与 spec 固定，组件只挂名、样式全在这里（gate 豁免文件）。
+   ============================================================ */
+
+/* ---- 扫光文字（思考标题 / 工具运行状态共用；「正在进行」的统一视觉） ----
+   性能：animation 只动 opacity（合成层动画，不触发每帧 paint）。
+   旧的 background-position 扫光 + color-mix + background-clip:text 会每帧重绘
+   渐变，会话里多条「进行中」条目并发时明显掉帧，故改为静态渐变 + 呼吸。 */
+.text-shimmer {
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--text-primary) 26%, transparent) 0%,
+    color-mix(in srgb, var(--text-primary) 60%, transparent) 50%,
+    color-mix(in srgb, var(--text-primary) 26%, transparent) 100%
+  );
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  width: fit-content;
+  animation: text-shimmer-breathe 2s ease-in-out infinite;
+}
+
+@keyframes text-shimmer-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---- 思考折叠 ---- */
+.thinking-collapse {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 2px;
+}
+
+.thinking-collapse__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.75;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.18s;
+}
+
+.thinking-collapse__header:hover {
+  color: var(--text-primary);
+}
+
+.thinking-collapse__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: -4px;
+  flex: none;
+  transform-origin: 50%;
+  transition:
+    transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.18s,
+    color 0.18s;
+}
+
+.thinking-collapse--expanded .thinking-collapse__icon {
+  transform: rotate(90deg);
+}
+
+/* 收起后图标隐身；悬停或本轮已完成才现形（"过程不打扰结论"，复刻包实测行为） */
+.thinking-collapse--collapsed .thinking-collapse__icon {
+  opacity: 0;
+  transform: rotate(0deg);
+}
+
+.thinking-collapse--collapsed .thinking-collapse__header:hover .thinking-collapse__icon,
+.thinking-collapse--done.thinking-collapse--collapsed .thinking-collapse__icon {
+  opacity: 1;
+}
+
+.thinking-collapse__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thinking-collapse__content {
+  interpolate-size: allow-keywords;
+  height: auto;
+  overflow: hidden;
+  contain: layout paint;
+  opacity: 1;
+  transition:
+    height 0.28s cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 0.2s ease-out;
+}
+
+.thinking-collapse--collapsed .thinking-collapse__content {
+  height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    height 0.28s cubic-bezier(0.33, 1, 0.68, 1),
+    opacity 0.18s ease-out,
+    visibility 0s linear 0.28s;
+}
+
+.thinking-collapse__body {
+  border-left: 4px solid var(--border-subtle);
+  margin: 8px 0 4px;
+  padding-left: 12px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+}
+
+/* ---- 工具行（单行 14px tertiary；不是卡片） ---- */
+.tool-row {
+  margin: 1px 0;
+  color: var(--text-muted);
+}
+
+.tool-row__trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.75;
+  cursor: pointer;
+}
+
+.tool-row__trigger:hover {
+  color: var(--text-secondary);
+}
+
+.tool-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.tool-row__primary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tool-row__status {
+  flex: none;
+}
+
+/* 失败说明块：行下方的独立 danger 块（行本身保持 tertiary —— 安装包复核口径） */
+.tool-row__error {
+  display: block;
+  margin: 2px 0 6px 22px;
+  padding: 6px 8px;
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tool-row__details {
+  padding: 2px 0 6px 22px;
+}
+
+.tool-icon-loading {
+  animation: tool-icon-turn 1.2s ease-in-out infinite;
+}
+
+@keyframes tool-icon-turn {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: rotate(180deg);
+  }
+}
+
+.tool-summary__trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.75;
+  cursor: pointer;
+}
+
+/* forcedOpen（运行/未确认失败）时表头是静态 div，不可点 —— 别继承按钮的 pointer 与悬停反馈。 */
+div.tool-summary__trigger {
+  cursor: default;
+}
+
+button.tool-summary__trigger:hover {
+  color: var(--text-secondary);
+}
+
+/* ---- 回合活动行（等待指示，轻量单行） ---- */
+.turn-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-muted);
+}
+
+.turn-activity-row__headline {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 流式光标 ---- */
+.stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 15px;
+  vertical-align: -2px;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: stream-cursor-blink 1s step-end infinite;
+}
+
+@keyframes stream-cursor-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ---- 代码块未闭合占位（标识由 MarkdownContent 打到对应代码块容器上） ---- */
+.prose-chat [data-code-pending='true'] pre {
+  border: 1px dashed var(--accent);
+}
+
+.prose-chat [data-code-pending='true'] pre code {
+  color: var(--text-muted);
+}
+
+/* ---- 降级：color-mix 不可用 / 减动效 → 静态但可辨（图标+文案+颜色三重） ---- */
+@supports not (color: color-mix(in srgb, red 50%, transparent)) {
+  .text-shimmer {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--text-muted);
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--text-muted);
+    animation: none;
+  }
+
+  .stream-cursor {
+    animation: none;
+    opacity: 1;
+  }
+
+  .tool-icon-loading {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ── 产物预览抽屉（WorkBuddy A 批 Task 4，2026-10-09）────────────────────────────
+   窄窗/小屏时预览不再挤并排栏，改贴右缘抽屉（Radix Dialog 提供 Esc/焦点归还）。
+   宽度由布局裁定经 --artifact-drawer-width 传入（内联变量，非类名任意值）。 */
+:root {
+  --artifact-drawer-width: 480px;
+}
+
+.artifact-drawer__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--overlay-scrim);
+}
+
+.artifact-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: var(--artifact-drawer-width, 480px);
+  max-width: 100vw;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-floating);
+  transition: width 0.28s cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+.artifact-drawer[data-mode='fullscreen'] {
+  width: 100vw;
+  border-left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-drawer {
+    transition: none;
+  }
+}
+
+/* 「小盈」灵宠（2026-10-17）：只做轻微上下浮动；减少动态偏好下静止。 */
+.mascot-pet img {
+  animation: mascot-bob 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 14px rgba(160, 40, 110, 0.18));
+}
+@keyframes mascot-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot-pet img {
+    animation: none;
+  }
+}
+
+/* 桌面宠物小窗（2026-10-17）：整个页面透明；**整窗背景是拖拽区**，按钮/吉祥物是 nodrag。 */
+.pet-surface,
+body.pet-surface,
+body.pet-surface #root {
+  /* ⚠️ `#root` 必须一起清：全局 `html, body, #root` 背景是 `--bg-primary`，
+     只清 html/body 时 `#root` 仍会铺一块不透明的浅色板（2026-10-18 实机截图）。 */
+  background: transparent !important;
+}
+.pet-window {
+  /* ⚠️ 2026-10-18 实机第二轮：只给"单独一层透明的 drag 层"时，Electron 仍然拖不动 ——
+     透明区域在 Chromium 里常常不参与拖拽区命中（没有绘制）。两条一起做才可靠：
+     ① 整个窗口本身是可拖区（交互元素各自 no-drag）；
+     ② 给拖拽区一个**几乎不可见**的底色（0.2% 黑，肉眼看不出，但保证有绘制）。 */
+  -webkit-app-region: drag;
+  background: rgba(0, 0, 0, 0.002);
+  user-select: none;
+}
+.pet-window .drag {
+  -webkit-app-region: drag;
+  /* 透明窗没有边框，光标是唯一能说明"这里能拖"的线索。 */
+  cursor: grab;
+}
+.pet-window .drag:active {
+  cursor: grabbing;
+}
+.pet-window .nodrag {
+  -webkit-app-region: no-drag;
+}
+.pet-bubble {
+  max-width: 100%;
+}
+.pet-bob {
+  animation: mascot-bob 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 6px 14px rgba(160, 40, 110, 0.18));
+  /* 2026-10-18 现场：「拖不动」。这里原来是 `cursor: grab`，但吉祥物本身是
+     `nodrag`（点击要冒泡、右键要开菜单，`drag` 会把这些事件吞掉）——
+     于是"看着能抓、抓着不动"。现在吉祥物只表示可点，能拖的是整窗 drag 层。 */
+  cursor: pointer;
+}
+/* 「吃掉」动画：整理/删除成功后弹一下。 */
+.pet-eat {
+  animation: pet-eat 0.9s ease-in-out 1;
+}
+@keyframes pet-eat {
+  0% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.18) rotate(-6deg);
+  }
+  50% {
+    transform: scale(0.92) rotate(4deg);
+  }
+  75% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-bob,
+  .pet-eat {
+    animation: none;
+  }
+}
+
+/* 技能库分类卡（2026-10-17 设计稿）：四类渐变 + 一个中性「其他」。
+   渐变只在 CSS 里定义，组件里不写裸色（UI 契约）。 */
+.skill-tile {
+  color: var(--accent-foreground);
+  box-shadow: var(--shadow-elevated);
+}
+.skill-tile--content {
+  background: linear-gradient(135deg, #a0219e 0%, #d51f7a 100%);
+}
+.skill-tile--commerce {
+  background: linear-gradient(135deg, #d5235b 0%, #f0623a 100%);
+}
+.skill-tile--research {
+  background: linear-gradient(135deg, #6d1bb0 0%, #a52a9e 100%);
+}
+.skill-tile--office {
+  background: linear-gradient(135deg, #c2410c 0%, #e05252 100%);
+}
+.skill-tile--other {
+  background: linear-gradient(135deg, #4b5563 0%, #6b7280 100%);
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.26",
+  "files": [
+    {
+      "path": "Partner-W.exe",
+      "size": 31,
+      "sha256": "f356bd453cf49ba8467d721785115faf78ef83e365b14864b16cadb5538b4c34"
+    },
+    {
+      "path": "resources/app.asar",
+      "size": 20,
+      "sha256": "1d8bb3dc83e3200fe13b2656af5dd9f445b9b007b90b7cb1243ffe4b20edfc79"
+    },
+    {
+      "path": "resources/runtime/node.exe",
+      "size": 22,
+      "sha256": "d5e6e0b4690916ebd1ffd86bffbe60a8bb205d7ec0313c1ab30e86a966012583"
+    }
+  ]
+}

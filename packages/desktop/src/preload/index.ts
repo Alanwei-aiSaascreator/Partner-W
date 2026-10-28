@@ -1,0 +1,950 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { ExecutionEvent } from '@clawwork/core';
+import type {
+  ApprovalDecision,
+  Artifact,
+  ArtifactDeliveryFailure,
+  ArtifactDeliverySettled,
+  ArtifactDeliveryActivity,
+  ArtifactWorkspaceScope,
+  CommandsListParams,
+  ConfigPatchParams,
+  ConfigSetParams,
+  CreateTeamMeetingInput,
+  CronJobCreate,
+  CronJobPatch,
+  CronListParams,
+  CronRunParams,
+  CronRunsParams,
+  DocgenFailure,
+  HtmlgenFailure,
+  VideogenFailure,
+  ImagegenFailure,
+  PortableUpdatePublicState,
+  QuestionResolveParams,
+  RelayBootstrapPublicState,
+  RelayLivenessPublicState,
+  RuntimeBootstrapStatus,
+  RuntimeDeployProgress,
+  SaveTeamMeetingInput,
+  SkillInstallParams,
+  SkillSearchParams,
+  SkillUpdateParams,
+  SlidegenFailure,
+  SlidegenWarning,
+  TeamPosition,
+} from '@clawwork/shared';
+import type { ClawWorkAPI, GatewayServerConfig } from './clawwork';
+
+function buildApi(): ClawWorkAPI {
+  return {
+    getArtifactWorkspaceScope: () => ipcRenderer.invoke('artifact:get-workspace-scope'),
+    getArtifactDeliveryActivitySnapshot: () => ipcRenderer.invoke('artifact:get-delivery-activity-snapshot'),
+    onArtifactWorkspaceScopeChanged: (callback: (scope: ArtifactWorkspaceScope) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, scope: ArtifactWorkspaceScope): void => callback(scope);
+      ipcRenderer.on('artifact:workspace-scope-changed', listener);
+      return () => ipcRenderer.removeListener('artifact:workspace-scope-changed', listener);
+    },
+    onArtifactDeliveryActivity: (callback: (activity: ArtifactDeliveryActivity) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, activity: ArtifactDeliveryActivity): void =>
+        callback(activity);
+      ipcRenderer.on('artifact:delivery-activity', listener);
+      return () => ipcRenderer.removeListener('artifact:delivery-activity', listener);
+    },
+    getHttpBase: (gatewayId: string) => ipcRenderer.invoke('ws:get-http-base', { gatewayId }),
+    sendMessage: (
+      gatewayId: string,
+      sessionKey: string,
+      content: string,
+      attachments?: { mimeType: string; fileName: string; content: string }[],
+      dispatchContext?: { userContent: string },
+    ) => ipcRenderer.invoke('ws:send-message', { gatewayId, sessionKey, content, attachments, dispatchContext }),
+    chatHistory: (gatewayId: string, sessionKey: string, limit?: number) =>
+      ipcRenderer.invoke('ws:chat-history', { gatewayId, sessionKey, limit }),
+    listSessions: (gatewayId: string) => ipcRenderer.invoke('ws:list-sessions', { gatewayId }),
+    gatewayStatus: () => ipcRenderer.invoke('ws:gateway-status'),
+    syncSessions: () => ipcRenderer.invoke('ws:sync-sessions'),
+    abortChat: (gatewayId: string, sessionKey: string) =>
+      ipcRenderer.invoke('ws:abort-chat', { gatewayId, sessionKey }),
+    listGateways: () => ipcRenderer.invoke('ws:list-gateways'),
+    /** 手机端配对：一次性 setup code + 隧道域名 → v2 二维码 payload（不含网关 token）。 */
+    mobilePairSetupCode: (
+      gatewayId: string,
+      publicUrl: string,
+      options?: { gatewayName?: string; deviceId?: string },
+    ) => ipcRenderer.invoke('ws:mobile-pair-setup-code', { gatewayId, publicUrl, ...(options ?? {}) }),
+    listModels: (gatewayId: string, agentId?: string) => ipcRenderer.invoke('ws:models-list', { gatewayId, agentId }),
+    /** 待批/已配对的手机设备（手机首次连接后会停在这里等批准）。 */
+    copyText: (text: string) => ipcRenderer.invoke('app:copy-text', text),
+    /** 身份画像镜像（主进程读得到，手机端「个性化中心」用同一份）。 */
+    saveProfile: (profile: unknown) => ipcRenderer.invoke('profile:save', profile),
+    getProfile: () => ipcRenderer.invoke('profile:get'),
+    devicePairList: (gatewayId: string) => ipcRenderer.invoke('ws:device-pair-list', { gatewayId }),
+    devicePairApprove: (gatewayId: string, requestId: string) =>
+      ipcRenderer.invoke('ws:device-pair-approve', { gatewayId, requestId }),
+    devicePairRemove: (gatewayId: string, deviceId: string) =>
+      ipcRenderer.invoke('ws:device-pair-remove', { gatewayId, deviceId }),
+    listCommands: (gatewayId: string, params?: CommandsListParams) =>
+      ipcRenderer.invoke('ws:commands-list', { gatewayId, ...(params ?? {}) }),
+    listAgents: (gatewayId: string) => ipcRenderer.invoke('ws:agents-list', { gatewayId }),
+    createAgent: (gatewayId: string, params: { name: string; workspace: string; emoji?: string; avatar?: string }) =>
+      ipcRenderer.invoke('ws:agents-create', { gatewayId, ...params }),
+    updateAgent: (
+      gatewayId: string,
+      params: {
+        agentId: string;
+        name?: string;
+        workspace?: string;
+        model?: string;
+        avatar?: string;
+      },
+    ) => ipcRenderer.invoke('ws:agents-update', { gatewayId, ...params }),
+    deleteAgent: (gatewayId: string, params: { agentId: string; deleteFiles?: boolean }) =>
+      ipcRenderer.invoke('ws:agents-delete', { gatewayId, ...params }),
+    listAgentFiles: (gatewayId: string, agentId: string) =>
+      ipcRenderer.invoke('ws:agents-files-list', { gatewayId, agentId }),
+    getAgentFile: (gatewayId: string, agentId: string, name: string) =>
+      ipcRenderer.invoke('ws:agents-files-get', { gatewayId, agentId, name }),
+    setAgentFile: (gatewayId: string, agentId: string, name: string, content: string) =>
+      ipcRenderer.invoke('ws:agents-files-set', { gatewayId, agentId, name, content }),
+    patchSession: (gatewayId: string, sessionKey: string, patch: Record<string, unknown>) =>
+      ipcRenderer.invoke('ws:session-patch', { gatewayId, sessionKey, patch }),
+    getToolsCatalog: (gatewayId: string, agentId?: string) =>
+      ipcRenderer.invoke('ws:tools-catalog', { gatewayId, agentId }),
+    getEffectiveTools: (gatewayId: string, sessionKey: string, agentId?: string) =>
+      ipcRenderer.invoke('ws:tools-effective', { gatewayId, sessionKey, agentId }),
+    getSkillsStatus: (gatewayId: string, agentId?: string) =>
+      ipcRenderer.invoke('ws:skills-status', { gatewayId, agentId }),
+    searchSkills: (gatewayId: string, params: SkillSearchParams) =>
+      ipcRenderer.invoke('ws:skills-search', { gatewayId, ...params }),
+    getSkillDetail: (gatewayId: string, slug: string) => ipcRenderer.invoke('ws:skills-detail', { gatewayId, slug }),
+    installSkill: (gatewayId: string, params: SkillInstallParams) =>
+      ipcRenderer.invoke('ws:skills-install', { gatewayId, ...params }),
+    updateSkill: (gatewayId: string, params: SkillUpdateParams) =>
+      ipcRenderer.invoke('ws:skills-update', { gatewayId, ...params }),
+    getSkillBins: (gatewayId: string) => ipcRenderer.invoke('ws:skills-bins', { gatewayId }),
+    // 「我们自己的技能」（T-a2）：列随包目录 + 一键装/卸。
+    // ⚠️ 只传 `{gatewayId, agentId, slug}` —— 安装目录由主进程问网关要，渲染层碰不到路径。
+    listOurSkills: (gatewayId?: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-list', { gatewayId, agentId }),
+    installOurSkill: (gatewayId: string, slug: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-install', { gatewayId, agentId, slug }),
+    // 开机自装：把还没装的随包技能补上（缺了就补，不动已装的）。
+    ensureOurSkills: (gatewayId: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-ensure', { gatewayId, agentId }),
+    removeOurSkill: (gatewayId: string, slug: string, agentId?: string) =>
+      ipcRenderer.invoke('skills:our-remove', { gatewayId, agentId, slug }),
+    getConfig: (gatewayId: string) => ipcRenderer.invoke('ws:config-get', { gatewayId }),
+    setConfig: (gatewayId: string, params: ConfigSetParams) =>
+      ipcRenderer.invoke('ws:config-set', { gatewayId, ...params }),
+    patchConfig: (gatewayId: string, params: ConfigPatchParams) =>
+      ipcRenderer.invoke('ws:config-patch', { gatewayId, ...params }),
+    getConfigSchema: (gatewayId: string) => ipcRenderer.invoke('ws:config-schema', { gatewayId }),
+    lookupConfigSchema: (gatewayId: string, path: string) =>
+      ipcRenderer.invoke('ws:config-schema-lookup', { gatewayId, path }),
+
+    onGatewayEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+        callback(data as { event: string; payload: Record<string, unknown>; gatewayId: string });
+      };
+      ipcRenderer.on('gateway-event', listener);
+      return () => {
+        ipcRenderer.removeListener('gateway-event', listener);
+      };
+    },
+    // ⭐ V3-artifact（I 接线）：主进程执行事件出口（交付/取消两族）——渲染层折入执行投影。
+    // ⭐ 2026-10-14 五小时窗：载荷带捕获时 workspace scope/revision（在途来源校验用，
+    //    接收侧对照当前权威 owner；无字段帧一律拒 —— 见 clawwork.d.ts 同款注释）。
+    onExecutionEvents: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+        callback(
+          payload as {
+            sessionKey: string;
+            events: ExecutionEvent[];
+            workspaceScope: string | null;
+            workspaceRevision: number;
+          },
+        );
+      };
+      ipcRenderer.on('artifact:execution-events', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:execution-events', listener);
+      };
+    },
+    // ⭐ 第二轮（R5 P1）：轮次登记回执（main 终稿登记处置完成时广播；载荷带捕获时
+    //    workspace scope/revision，接收侧对照当前权威 owner 同代才收）。
+    onTurnRegistration: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+        callback(
+          payload as {
+            taskId: string;
+            sessionKey: string;
+            runId: string;
+            status: 'registered' | 'needs-review' | 'none-expected';
+            expectedKinds: string[];
+            workspaceScope: string | null;
+            workspaceRevision: number;
+          },
+        );
+      };
+      ipcRenderer.on('artifact:turn-registration', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:turn-registration', listener);
+      };
+    },
+    // ⭐ V4（I 接线）：有界执行历史的写入（fire-and-forget）与恢复读取。
+    executionHistoryAppend: (sessionKey, records) => ipcRenderer.send('execution-history:append', sessionKey, records),
+    executionHistoryReadRun: (sessionKey, runId) => ipcRenderer.invoke('execution-history:read-run', sessionKey, runId),
+    executionHistoryListRuns: (sessionKey) => ipcRenderer.invoke('execution-history:list-runs', sessionKey),
+    onGatewayStatus: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+        // 形状对应 preload/clawwork.d.ts 的 `GatewayStatusEvent`（含 serverVersion /
+        // maxPayloadBytes 这些旁路字段，渲染层按需读）。
+        callback(status as { connected: boolean; error?: string; gatewayId: string; maxPayloadBytes?: number });
+      };
+      ipcRenderer.on('gateway-status', listener);
+      return () => {
+        ipcRenderer.removeListener('gateway-status', listener);
+      };
+    },
+    //   ⭐ 初始读：这条结论往往在窗口挂上来之前就产生了，那次推送没人收。
+    //     与 relay 公开状态同一个形状（见 `main/ipc/commercial-handlers.ts`）。
+    //     ⚠️ 返回 `null` = 还没有结论（**不是**"没问题"）。
+    runtimeStatus: () => ipcRenderer.invoke('runtime:bootstrap-status'),
+    onRuntimeStatus: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+        callback(status as RuntimeBootstrapStatus);
+      };
+      ipcRenderer.on('runtime-status', listener);
+      return () => {
+        ipcRenderer.removeListener('runtime-status', listener);
+      };
+    },
+    // 部署进度：与 runtime-status 同一个形状（快照 + 事件）。`null` = **现在没有
+    // 部署在进行**（不是"部署完成"，也不是"没问题"）。
+    runtimeDeployProgress: () => ipcRenderer.invoke('runtime:deploy-progress'),
+    onRuntimeDeployProgress: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: unknown): void => {
+        callback(progress as RuntimeDeployProgress | null);
+      };
+      ipcRenderer.on('runtime-deploy-progress', listener);
+      return () => {
+        ipcRenderer.removeListener('runtime-deploy-progress', listener);
+      };
+    },
+    // 「重新准备」：让主进程**真的重跑一轮** bootstrap（与启动同一条路）。
+    // 返回跑完之后的主进程快照 —— 渲染层拿它决定要不要重连网关。
+    runtimeBootstrapRetry: () => ipcRenderer.invoke('runtime:bootstrap-retry'),
+    onDebugEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: unknown): void => {
+        callback(
+          event as {
+            ts: string;
+            level: 'debug' | 'info' | 'warn' | 'error';
+            domain: string;
+            event: string;
+            data?: Record<string, unknown>;
+          },
+        );
+      };
+      ipcRenderer.on('debug-event', listener);
+      return () => {
+        ipcRenderer.removeListener('debug-event', listener);
+      };
+    },
+    exportDebugBundle: (filter) => ipcRenderer.invoke('debug:export-bundle', filter),
+    reportDebugEvent: (event) => ipcRenderer.send('debug:renderer-event', event),
+
+    loadTasks: () => ipcRenderer.invoke('data:list-tasks'),
+    loadMessages: (taskId: string) => ipcRenderer.invoke('data:list-messages', { taskId }),
+    loadDashboardStats: () => ipcRenderer.invoke('stats:get-dashboard'),
+
+    saveArtifact: (params: {
+      taskId: string;
+      sourcePath: string;
+      messageId: string;
+      fileName?: string;
+      mediaType?: string;
+    }) => ipcRenderer.invoke('artifact:save', params),
+    listArtifacts: (taskId?: string) => ipcRenderer.invoke('artifact:list', { taskId }),
+    getArtifact: (id: string) => ipcRenderer.invoke('artifact:get', { id }),
+    readArtifactFile: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:read-file', { artifactId, taskId }),
+    readArtifactThumbnail: (artifactId: string, taskId?: string, size?: number) =>
+      ipcRenderer.invoke('artifact:thumbnail', { artifactId, taskId, size }),
+    //   ⭐ 富预览：我们自己产的 .docx/.xlsx/.pptx 在应用里能看（PDF 也走这条）
+    previewArtifact: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:preview', { artifactId, taskId }),
+    onArtifactSaved: (callback: (artifact: Artifact) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, artifact: Artifact): void => {
+        callback(artifact);
+      };
+      ipcRenderer.on('artifact:saved', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:saved', listener);
+      };
+    },
+    onDocgenFailed: (callback: (failures: DocgenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: DocgenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('docgen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('docgen:failed', listener);
+      };
+    },
+    onHtmlgenFailed: (callback: (failures: HtmlgenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: HtmlgenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('htmlgen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('htmlgen:failed', listener);
+      };
+    },
+    onImagegenFailed: (callback: (failures: ImagegenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: ImagegenFailure[]): void => callback(failures);
+      ipcRenderer.on('imagegen:failed', listener);
+      return () => ipcRenderer.removeListener('imagegen:failed', listener);
+    },
+    onVideogenFailed: (callback: (failures: VideogenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: VideogenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('videogen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('videogen:failed', listener);
+      };
+    },
+    onSlidegenFailed: (callback: (failures: SlidegenFailure[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, failures: SlidegenFailure[]): void => {
+        callback(failures);
+      };
+      ipcRenderer.on('slidegen:failed', listener);
+      return () => {
+        ipcRenderer.removeListener('slidegen:failed', listener);
+      };
+    },
+    onSlidegenWarned: (callback: (warnings: SlidegenWarning[]) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, warnings: SlidegenWarning[]): void => {
+        callback(warnings);
+      };
+      ipcRenderer.on('slidegen:warned', listener);
+      return () => {
+        ipcRenderer.removeListener('slidegen:warned', listener);
+      };
+    },
+    onArtifactDeliverySettled: (callback: (result: ArtifactDeliverySettled) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, result: ArtifactDeliverySettled): void => callback(result);
+      ipcRenderer.on('artifact:delivery-settled', listener);
+      return () => ipcRenderer.removeListener('artifact:delivery-settled', listener);
+    },
+    onClaimViolation: (callback: (violation: ArtifactDeliveryFailure) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, violation: ArtifactDeliveryFailure): void => {
+        callback(violation);
+      };
+      ipcRenderer.on('artifact:claim-violation', listener);
+      return () => {
+        ipcRenderer.removeListener('artifact:claim-violation', listener);
+      };
+    },
+    saveCodeBlock: (params) => ipcRenderer.invoke('artifact:save-content', params),
+    saveImageFromUrl: (params) => ipcRenderer.invoke('artifact:save-image-url', params),
+    searchArtifacts: (query: string, options) => ipcRenderer.invoke('artifact:search', { query, ...(options ?? {}) }),
+    saveArtifactAs: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:save-as', { artifactId, taskId }),
+    openArtifactFile: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:open-file', { artifactId, taskId }),
+    showArtifactInFolder: (artifactId: string, taskId?: string) =>
+      ipcRenderer.invoke('artifact:show-in-folder', { artifactId, taskId }),
+    saveInboxAttachment: (params: { taskId: string; fileName: string; base64: string }) =>
+      ipcRenderer.invoke('inbox:save', params),
+    readInboxFile: (localPath: string) => ipcRenderer.invoke('inbox:read-file', { localPath }),
+    readInboxFileForSend: (localPath: string) => ipcRenderer.invoke('inbox:read-file-for-send', { localPath }),
+    openInboxFile: (localPath: string) => ipcRenderer.invoke('inbox:open', { localPath }),
+    showInboxInFolder: (localPath: string) => ipcRenderer.invoke('inbox:show-in-folder', { localPath }),
+    readMediaFile: (sourcePath: string) => ipcRenderer.invoke('media:read-file', { sourcePath }),
+    exportSessionMarkdown: (taskId: string) => ipcRenderer.invoke('session:export-markdown', { taskId }),
+    exportSessionMarkdownAs: (taskId: string) => ipcRenderer.invoke('session:export-markdown-as', { taskId }),
+
+    openWorkspaceFolder: () => ipcRenderer.invoke('workspace:open-folder'),
+    isWorkspaceConfigured: () => ipcRenderer.invoke('workspace:is-configured') as Promise<boolean>,
+    getWorkspacePath: () => ipcRenderer.invoke('workspace:get-path') as Promise<string | null>,
+    //   ⭐ 这一进程是不是盘上运行（U 盘形态）：界面上有一句只对盘上版成立的说明要按它显示
+    isPortableWorkspace: () => ipcRenderer.invoke('workspace:is-portable') as Promise<boolean>,
+    // 量工作区所在文件系统的身份（FAT32 上 dev=0 ⇒ 助手读写身份文件必失败）。
+    probeWorkspaceFsIdentity: () => ipcRenderer.invoke('workspace:fs-identity'),
+    // 启动时的"工作区被重建"通知（null = 没有这回事）；渲染层做非阻断告知用。
+    workspaceStartupNotice: () => ipcRenderer.invoke('workspace:startup-notice'),
+    getDefaultWorkspacePath: () => ipcRenderer.invoke('workspace:get-default') as Promise<string>,
+    getTeamWorkspacePath: (slug: string) => ipcRenderer.invoke('workspace:team-path', slug) as Promise<string>,
+    browseWorkspace: () => ipcRenderer.invoke('workspace:browse') as Promise<string | null>,
+    setupWorkspace: (path: string) => ipcRenderer.invoke('workspace:setup', path),
+    changeWorkspace: (path: string) => ipcRenderer.invoke('workspace:change', path),
+
+    getSettings: () => ipcRenderer.invoke('settings:get'),
+    updateSettings: (partial: Record<string, unknown>) => ipcRenderer.invoke('settings:update', partial),
+    rebuildMenu: () => ipcRenderer.invoke('app:rebuild-menu'),
+    getMicrophonePermission: () => ipcRenderer.invoke('voice:get-microphone-permission'),
+    requestMicrophonePermission: () => ipcRenderer.invoke('voice:request-microphone-permission'),
+    checkWhisper: () => ipcRenderer.invoke('voice:check-whisper'),
+    voiceCapabilities: () => ipcRenderer.invoke('voice:capabilities'),
+    synthesizeSpeech: (text: string, requestId: string) => ipcRenderer.invoke('voice:speech', { text, requestId }),
+    cancelVoice: () => ipcRenderer.invoke('voice:cancel'),
+    openMicrophoneSettings: () => ipcRenderer.invoke('voice:open-microphone-settings'),
+    transcribeAudio: (audio: ArrayBuffer, requestId: string) =>
+      ipcRenderer.invoke('voice:transcribe', { audio, requestId }),
+
+    reconnectGateway: (gatewayId: string) => ipcRenderer.invoke('ws:reconnect-gateway', { gatewayId }),
+
+    addGateway: (gateway: GatewayServerConfig) => ipcRenderer.invoke('settings:add-gateway', gateway),
+    removeGateway: (gatewayId: string) => ipcRenderer.invoke('settings:remove-gateway', gatewayId),
+    updateGateway: (gatewayId: string, partial: Partial<GatewayServerConfig>) =>
+      ipcRenderer.invoke('settings:update-gateway', gatewayId, partial),
+    setDefaultGateway: (gatewayId: string) => ipcRenderer.invoke('settings:set-default-gateway', gatewayId),
+    testGateway: (
+      url: string,
+      auth: { token?: string; password?: string; pairingCode?: string; tlsVerify?: boolean },
+    ) => ipcRenderer.invoke('settings:test-gateway', url, auth),
+
+    getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+    // 「连接器」（2026-10-17）：状态只报盘上可确认的事实。
+    getConnectors: () => ipcRenderer.invoke('connectors:status'),
+    // 2026-10-18：飞书改为**应用内扫码**（OAuth 设备码），不再开系统终端。
+    getFeishuState: () => ipcRenderer.invoke('connectors:feishu-state'),
+    beginFeishuRegistration: () => ipcRenderer.invoke('connectors:feishu-registration-begin'),
+    getFeishuRegistration: () => ipcRenderer.invoke('connectors:feishu-registration-status'),
+    cancelFeishuRegistration: () => ipcRenderer.invoke('connectors:feishu-registration-cancel'),
+    bindFeishuAgent: (agentId: string | null) => ipcRenderer.invoke('connectors:feishu-bind', { agentId }),
+    setFeishuChannelEnabled: (enabled: boolean) => ipcRenderer.invoke('connectors:feishu-enabled', { enabled }),
+    /** 旧终端的扫码窗口（保留兼容；界面已改走应用内扫码）。 */
+    connectFeishu: () => ipcRenderer.invoke('connectors:feishu-login'),
+    getVideoQuality: () => ipcRenderer.invoke('videogen:get-quality'),
+    setVideoQuality: (quality: 'standard' | 'seedance') => ipcRenderer.invoke('videogen:set-quality', quality),
+    reportPortableUpdateRendererReady: () => ipcRenderer.send('app:portable-update-renderer-ready'),
+    checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
+    getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),
+    onUpdateStateChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: unknown): void => {
+        callback(state as PortableUpdatePublicState);
+      };
+      ipcRenderer.on('update:state', listener);
+      return () => {
+        ipcRenderer.removeListener('update:state', listener);
+      };
+    },
+    downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
+    cancelUpdateDownload: () => ipcRenderer.invoke('app:cancel-update-download'),
+    installUpdate: () => ipcRenderer.invoke('app:install-update'),
+    onUpdateDownloadProgress: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+        callback(data as { percent: number; bytesPerSecond: number; transferred: number; total: number });
+      };
+      ipcRenderer.on('update:download-progress', listener);
+      return () => {
+        ipcRenderer.removeListener('update:download-progress', listener);
+      };
+    },
+    onUpdateDownloaded: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+        callback(data as { version: string });
+      };
+      ipcRenderer.on('update:downloaded', listener);
+      return () => {
+        ipcRenderer.removeListener('update:downloaded', listener);
+      };
+    },
+    onUpdateError: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+        callback(
+          data as {
+            message: string;
+            code: 'dev-not-supported' | 'network' | 'no-release-metadata' | 'signature' | 'unknown';
+          },
+        );
+      };
+      ipcRenderer.on('update:error', listener);
+      return () => {
+        ipcRenderer.removeListener('update:error', listener);
+      };
+    },
+
+    globalSearch: (query: string) => ipcRenderer.invoke('search:global', query),
+
+    persistTask: (task: {
+      id: string;
+      sessionKey: string;
+      sessionId: string;
+      title: string;
+      status: string;
+      ensemble?: boolean;
+      /** 任务模式（快速/智能/深度/高级指定模型）；见 `@clawwork/shared` 的 task-modes。 */
+      mode?: string;
+      model?: string;
+      modelProvider?: string;
+      thinkingLevel?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      contextTokens?: number;
+      createdAt: string;
+      updatedAt: string;
+      tags: string[];
+      artifactDir: string;
+      gatewayId: string;
+    }) => ipcRenderer.invoke('data:create-task', task),
+
+    persistTaskUpdate: (params: {
+      id: string;
+      title?: string;
+      status?: string;
+      ensemble?: boolean;
+      mode?: string;
+      model?: string;
+      modelProvider?: string;
+      thinkingLevel?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      contextTokens?: number;
+      teamId?: string | null;
+      sessionKey?: string;
+      /** 置顶时间（ISO）；`null` = 取消置顶。与 `updatedAt` 无关。 */
+      pinnedAt?: string | null;
+      /** deck 路由标记（演示文稿 → DeepSeek 的粘性开关）；见 `@clawwork/shared` 的 `Task.deckRouted`。 */
+      deckRouted?: boolean;
+      updatedAt: string;
+    }) => ipcRenderer.invoke('data:update-task', params),
+
+    persistMessage: (msg: {
+      id: string;
+      taskId: string;
+      role: string;
+      content: string;
+      timestamp: string;
+      sessionKey?: string;
+      agentId?: string;
+      runId?: string;
+      attachments?: unknown[];
+      toolCalls?: unknown[];
+      thinkingContent?: string;
+      /** 实际生成这条回复的模型 id（逐条来自网关）。 */
+      model?: string;
+      /** 整轮用时（本地量，ms）；缺省不覆盖已落库的值。 */
+      durationMs?: number;
+      /** ⚠️ DOCX-205 合同：整轮终态证据（见 core session-sync 的可信历史终态校验）。 */
+      terminal?: { kind: 'final'; runId: string; stopReason?: string; source?: string };
+      /** ⚠️ DOCX-205 合同：同步链路标记（带标记的消息在主进程只认终态证据）。 */
+      sync?: boolean;
+    }) => ipcRenderer.invoke('data:create-message', msg),
+
+    deleteTask: (taskId: string) => ipcRenderer.invoke('data:delete-task', { id: taskId }),
+    createTeamMeeting: (input: CreateTeamMeetingInput) => ipcRenderer.invoke('data:create-team-meeting', input),
+    saveTeamMeeting: (input: SaveTeamMeetingInput) => ipcRenderer.invoke('data:save-team-meeting', input),
+    listTeamMeetings: () => ipcRenderer.invoke('data:list-team-meetings'),
+
+    persistRoom: (params: { taskId: string; status: string; conductorReady: boolean }) =>
+      ipcRenderer.invoke('data:persist-room', params),
+    loadRoom: (taskId: string) => ipcRenderer.invoke('data:load-room', { taskId }),
+    persistPerformer: (params: {
+      taskId: string;
+      sessionKey: string;
+      agentId: string;
+      agentName: string;
+      emoji?: string;
+      verifiedAt: string;
+    }) => ipcRenderer.invoke('data:persist-performer', params),
+    deleteRoom: (taskId: string) => ipcRenderer.invoke('data:delete-room', { taskId }),
+
+    listSessionsBySpawner: (gatewayId: string, spawnedBy: string) =>
+      ipcRenderer.invoke('ws:list-sessions-by-spawner', { gatewayId, spawnedBy }),
+    createSession: (gatewayId: string, params: { key: string; agentId: string; message?: string }) =>
+      ipcRenderer.invoke('ws:create-session', { gatewayId, ...params }),
+
+    getUsageStatus: (gatewayId: string) => ipcRenderer.invoke('ws:usage-status', { gatewayId }),
+    previewSessions: (gatewayId: string, keys: string[], options?: { limit?: number; maxChars?: number }) =>
+      ipcRenderer.invoke('ws:session-preview', { gatewayId, keys, ...options }),
+
+    resolveExecApproval: (gatewayId: string, id: string, decision: ApprovalDecision) =>
+      ipcRenderer.invoke('ws:exec-approval-resolve', { gatewayId, id, decision }),
+
+    resolveQuestion: (gatewayId: string, params: QuestionResolveParams) =>
+      ipcRenderer.invoke('ws:question-resolve', { gatewayId, params }),
+    listQuestions: (gatewayId: string) => ipcRenderer.invoke('ws:question-list', { gatewayId }),
+
+    resetSession: (gatewayId: string, sessionKey: string, reason?: 'new' | 'reset') =>
+      ipcRenderer.invoke('ws:session-reset', { gatewayId, sessionKey, reason }),
+    deleteSession: (gatewayId: string, sessionKey: string) =>
+      ipcRenderer.invoke('ws:session-delete', { gatewayId, sessionKey }),
+    compactSession: (gatewayId: string, sessionKey: string, maxLines?: number) =>
+      ipcRenderer.invoke('ws:session-compact', { gatewayId, sessionKey, maxLines }),
+
+    updateTrayStatus: (status, tasks) => ipcRenderer.send('tray:update-status', { status, tasks: tasks ?? [] }),
+    getTrayEnabled: () => ipcRenderer.invoke('tray:get-enabled') as Promise<boolean>,
+    setTrayEnabled: (enabled: boolean) => ipcRenderer.invoke('tray:set-enabled', enabled) as Promise<boolean>,
+    onTrayNavigateTask: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, taskId: string): void => {
+        callback(taskId);
+      };
+      ipcRenderer.on('tray:navigate-task', listener);
+      return () => {
+        ipcRenderer.removeListener('tray:navigate-task', listener);
+      };
+    },
+    onTrayOpenSettings: (callback) => {
+      const listener = (): void => {
+        callback();
+      };
+      ipcRenderer.on('tray:open-settings', listener);
+      return () => {
+        ipcRenderer.removeListener('tray:open-settings', listener);
+      };
+    },
+
+    quickLaunchSubmit: (message: string) => ipcRenderer.send('quick-launch:submit', message),
+    quickLaunchHide: () => ipcRenderer.send('quick-launch:hide'),
+    getQuickLaunchConfig: () => ipcRenderer.invoke('quick-launch:get-config'),
+    updateQuickLaunchConfig: (enabled: boolean, shortcut?: string) =>
+      ipcRenderer.invoke('quick-launch:update-config', enabled, shortcut),
+    onQuickLaunchSubmit: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, message: string): void => {
+        callback(message);
+      };
+      ipcRenderer.on('quick-launch:submit', listener);
+      return () => {
+        ipcRenderer.removeListener('quick-launch:submit', listener);
+      };
+    },
+
+    setWindowButtonVisibility: (visible: boolean) => ipcRenderer.send('ui:set-window-button-visibility', visible),
+
+    onWorkspaceChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, newPath: string): void => {
+        callback(newPath);
+      };
+      ipcRenderer.on('workspace:changed', listener);
+      return () => {
+        ipcRenderer.removeListener('workspace:changed', listener);
+      };
+    },
+
+    getDeviceId: () => ipcRenderer.invoke('workspace:get-device-id') as Promise<string>,
+
+    importTaskFiles: (taskId: string, filePaths?: string[], purpose?: 'files' | 'images') =>
+      ipcRenderer.invoke('context:import-files', {
+        taskId,
+        // ⚠️ `filePaths` **只在真的给了路径时才带上**：主进程按"有没有这个键"分
+        //    「拖入」还是「弹对话框」——带一个空数组会把拖入判成一次空导入。
+        ...(filePaths && filePaths.length > 0 ? { filePaths } : {}),
+        ...(purpose ? { purpose } : {}),
+      }),
+
+    /**
+     * 拖入文件取**绝对路径**的唯一通道（T05）。
+     *
+     * `File.path` 在 Electron 32 起被移除，官方给的替代就是 preload 里的
+     * `webUtils.getPathForFile` + contextBridge 转发（本函数就是那个形状）。
+     * ⚠️ 它只解析路径、不做校验 —— 校验（绝对路径/存在/类型/大小）在主进程，
+     *    与对话框选文件走同一条导入管线。
+     */
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+    listImportedTaskFiles: (taskId: string) => ipcRenderer.invoke('context:list-imported-files', { taskId }),
+    grantTaskContextFolder: (taskId: string) => ipcRenderer.invoke('context:grant-folder', { taskId }),
+    listTaskContextSources: (taskId: string) => ipcRenderer.invoke('context:list-sources', { taskId }),
+    revokeTaskContextSource: (taskId: string, sourceId: string) =>
+      ipcRenderer.invoke('context:revoke-source', { taskId, sourceId }),
+    listTaskContextFiles: (taskId: string, sourceId: string, query?: string) =>
+      ipcRenderer.invoke('context:list-source-files', { taskId, sourceId, query }),
+    readTaskContextFile: (taskId: string, sourceId: string, relativePath: string) =>
+      ipcRenderer.invoke('context:read-source-file', { taskId, sourceId, relativePath }),
+    readTaskContextFileForSend: (taskId: string, sourceId: string, relativePath: string) =>
+      ipcRenderer.invoke('context:read-source-file-for-send', { taskId, sourceId, relativePath }),
+
+    sendNotification: (params: { title: string; body: string; taskId?: string }) =>
+      ipcRenderer.invoke('notification:send', params),
+    onNotificationNavigateTask: (callback: (taskId: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, taskId: string): void => {
+        callback(taskId);
+      };
+      ipcRenderer.on('notification:navigate-task', listener);
+      return () => {
+        ipcRenderer.removeListener('notification:navigate-task', listener);
+      };
+    },
+
+    listCronJobs: (gatewayId: string, params?: CronListParams) =>
+      ipcRenderer.invoke('ws:cron-list', { gatewayId, ...params }),
+    getCronStatus: (gatewayId: string) => ipcRenderer.invoke('ws:cron-status', { gatewayId }),
+    addCronJob: (gatewayId: string, params: CronJobCreate) =>
+      ipcRenderer.invoke('ws:cron-add', { gatewayId, ...params }),
+    updateCronJob: (gatewayId: string, jobId: string, patch: CronJobPatch) =>
+      ipcRenderer.invoke('ws:cron-update', { gatewayId, jobId, patch }),
+    removeCronJob: (gatewayId: string, jobId: string) => ipcRenderer.invoke('ws:cron-remove', { gatewayId, jobId }),
+    runCronJob: (gatewayId: string, jobId: string, mode?: CronRunParams['mode']) =>
+      ipcRenderer.invoke('ws:cron-run', { gatewayId, jobId, mode }),
+    listCronRuns: (gatewayId: string, params?: CronRunsParams) =>
+      ipcRenderer.invoke('ws:cron-runs', { gatewayId, ...params }),
+
+    listTeams: () => ipcRenderer.invoke('data:teams-list'),
+    getTeam: (id: string) => ipcRenderer.invoke('data:team-get', { id }),
+    persistTeam: (team: {
+      id: string;
+      name: string;
+      emoji?: string;
+      description?: string;
+      gatewayId: string;
+      source?: string;
+      version?: string;
+      hubSlug?: string;
+      agents: Array<{
+        agentId: string;
+        role?: string;
+        isManager?: boolean;
+        skills?: string[];
+        position?: TeamPosition;
+      }>;
+      createdAt: string;
+      updatedAt: string;
+    }) => ipcRenderer.invoke('data:team-persist', team),
+    deleteTeam: (id: string) => ipcRenderer.invoke('data:team-delete', { id }),
+
+    saveAgentAvatar: (gatewayId: string, agentId: string, dataUrl: string) =>
+      ipcRenderer.invoke('avatar:save', { gatewayId, agentId, dataUrl }),
+    deleteAgentAvatar: (gatewayId: string, agentId: string) =>
+      ipcRenderer.invoke('avatar:delete', { gatewayId, agentId }),
+    listLocalAvatars: (gatewayId: string) => ipcRenderer.invoke('avatar:list-local', { gatewayId }),
+
+    hubListRegistries: () => ipcRenderer.invoke('hub:registries-list'),
+    hubFetchRegistry: (id: string) => ipcRenderer.invoke('hub:registry-fetch', { id }),
+    hubAddRegistry: (url: string) => ipcRenderer.invoke('hub:registry-add', { url }),
+    hubRemoveRegistry: (id: string) => ipcRenderer.invoke('hub:registry-remove', { id }),
+    hubDownloadTeam: (registryId: string, slug: string) =>
+      ipcRenderer.invoke('hub:team-download', { registryId, slug }),
+
+    commercialGetConfig: () => ipcRenderer.invoke('commercial:get-config'),
+    commercialSetConfig: (payload: { supabaseUrl?: string; supabaseAnonKey?: string }) =>
+      ipcRenderer.invoke('commercial:set-config', payload),
+    modelApiGet: () => ipcRenderer.invoke('model-api:get'),
+    modelApiApply: (payload: {
+      endpoints: Array<{
+        id: string;
+        name: string;
+        baseUrl: string;
+        apiKey?: string;
+        modelIds: string[];
+        modelLevels?: Record<string, string>;
+      }>;
+    }) => ipcRenderer.invoke('model-api:apply', payload),
+    modelApiList: (payload: { baseUrl: string; apiKey: string }) => ipcRenderer.invoke('model-api:list', payload),
+    modelApiRemove: () => ipcRenderer.invoke('model-api:remove'),
+    relayApiGet: () => ipcRenderer.invoke('relay-api:get'),
+    relayApiApply: (payload: { baseUrl?: string; key?: string }) => ipcRenderer.invoke('relay-api:apply', payload),
+    relayApiRemove: () => ipcRenderer.invoke('relay-api:remove'),
+    commercialSendOtp: (target: string) => ipcRenderer.invoke('commercial:send-otp', target),
+    commercialVerifyOtp: (target: string, token: string) => ipcRenderer.invoke('commercial:verify-otp', target, token),
+    commercialSignInPassword: (email: string, password: string) =>
+      ipcRenderer.invoke('commercial:sign-in-password', email, password),
+    commercialSignOut: () => ipcRenderer.invoke('commercial:sign-out'),
+    commercialSession: () => ipcRenderer.invoke('commercial:session'),
+    /** B7 本地快速态：**不发网络**，只回答"本地存着一个会话吗"。 */
+    commercialLocalSession: () => ipcRenderer.invoke('commercial:local-session'),
+    commercialAccountOverview: () => ipcRenderer.invoke('commercial:account-overview'),
+    /** 轻量只读额度通道（BUG-082）：余额刷新走这条，不触发设备登记。 */
+    commercialQuotaSnapshot: () => ipcRenderer.invoke('commercial:quota-snapshot'),
+    commercialLicenseStatus: () => ipcRenderer.invoke('commercial:license-status'),
+    commercialLicenseActivate: (licenseKey: string) => ipcRenderer.invoke('commercial:license-activate', licenseKey),
+    commercialLicenseRecoverActivation: (licenseKey: string) =>
+      ipcRenderer.invoke('commercial:license-recover-activation', licenseKey),
+    commercialLicenseClear: () => ipcRenderer.invoke('commercial:license-clear'),
+    commercialDeviceFingerprint: () => ipcRenderer.invoke('commercial:device-fingerprint'),
+    commercialUsageReport: () => ipcRenderer.invoke('commercial:usage-report'),
+    commercialRechargeSkus: () => ipcRenderer.invoke('commercial:recharge-skus'),
+    commercialRechargeCreate: (sku: string) => ipcRenderer.invoke('commercial:recharge-create', sku),
+    commercialRechargeCreateCustom: (amountCents: number) =>
+      ipcRenderer.invoke('commercial:recharge-create-custom', amountCents),
+    commercialRechargeOrder: (orderNo: string) => ipcRenderer.invoke('commercial:recharge-order', orderNo),
+
+    // ── 中转 bootstrap 公开状态（渲染层唯一能看到的商业结论）────────────────
+    // ⚠️ 只有这三个：读快照、听变化、请求重试。**没有任何**"把卡密/relay key 读出去"
+    //    的口子 —— 公开状态本身就是无密的（`@clawwork/shared` 的 DTO）。
+    //
+    // 分工（别把两者搞混）：
+    //   · `commercialRelayBootstrapState()` 是**初始读** —— bootstrap 在窗口建好之前
+    //     就跑过一轮了，那之前的事件没人收，只能靠这次补读；
+    //   · `onCommercialRelayBootstrapState()` 只覆盖**挂上之后**的转变。
+    //
+    // 📏 事件契约（渲染层按它做取舍，别自己发明规则）：
+    //   - **幂等键 = `(phase, errorCode, updatedAt)`**。`updatedAt` 在主进程那边**严格
+    //     单调** ⇒ "两条快照谁更新"永远判得出来（初始读晚到也不许覆盖更新的那条事件）；
+    //   - **内容完全相同的事件可能重复发**（被单飞吸收的那次触发也会把状态推成
+    //     `running`）⇒ "一条事件 ≠ 一次状态转变"，按幂等键去重。
+    commercialRelayBootstrapState: () => ipcRenderer.invoke('commercial:relay-bootstrap-state'),
+    onCommercialRelayBootstrapState: (callback: (state: RelayBootstrapPublicState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: RelayBootstrapPublicState): void => {
+        callback(state);
+      };
+      ipcRenderer.on('commercial:relay-bootstrap-state-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('commercial:relay-bootstrap-state-changed', listener);
+      };
+    },
+    // 只**排队**一次重试，不等它跑完（进度跟上面那条事件走）。
+    commercialRelayBootstrapRetry: () => ipcRenderer.invoke('commercial:relay-bootstrap-retry'),
+
+    // ── relay 运行期存活（ready 之后的"还在不在"）────────────────────────
+    // 与上面那对同纪律：初读补"挂上之前"、事件覆盖"挂上之后"（按 updatedAt 取舍）。
+    commercialRelayLivenessState: () => ipcRenderer.invoke('commercial:relay-liveness-state'),
+    onCommercialRelayLivenessState: (callback: (state: RelayLivenessPublicState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: RelayLivenessPublicState): void => {
+        callback(state);
+      };
+      ipcRenderer.on('commercial:relay-liveness-state-changed', listener);
+      return () => {
+        ipcRenderer.removeListener('commercial:relay-liveness-state-changed', listener);
+      };
+    },
+    commercialRelayLivenessProbe: () => ipcRenderer.invoke('commercial:relay-liveness-probe'),
+
+    // ── 广场 / 团队（P1）──────────────────────────────────────────────
+    // 频道名与 `main/ipc/community-handlers.ts` 一一对应（那个文件的测试
+    // 会把频道清单锁死）；这里的键名由 `community-preload-surface.test.ts` 锁死。
+    communityInfo: () => ipcRenderer.invoke('community:info'),
+    communityMembers: () => ipcRenderer.invoke('community:members'),
+    communitySwitchTeam: (orgId: string) => ipcRenderer.invoke('community:switch-team', { orgId }),
+    communityFeed: (params?: { limit?: number; before?: string | null }) =>
+      ipcRenderer.invoke('community:feed', params),
+    communityCreatePost: (params: { body: string; visibility: 'private' | 'org' }) =>
+      ipcRenderer.invoke('community:post-create', params),
+    communityDeletePost: (postId: string) => ipcRenderer.invoke('community:post-delete', { postId }),
+    communityComments: (postId: string, limit?: number) => ipcRenderer.invoke('community:comments', { postId, limit }),
+    communityAddComment: (postId: string, body: string) =>
+      ipcRenderer.invoke('community:comment-add', { postId, body }),
+    communityLikeToggle: (postId: string) => ipcRenderer.invoke('community:like-toggle', { postId }),
+    communityInviteCreate: (params: { role: 'admin' | 'member'; maxUses: number; expiresInHours: number }) =>
+      ipcRenderer.invoke('community:invite-create', params),
+    communityInviteList: () => ipcRenderer.invoke('community:invite-list'),
+    communityInviteRevoke: (id: string) => ipcRenderer.invoke('community:invite-revoke', { id }),
+    communityJoin: (code: string) => ipcRenderer.invoke('community:join', { code }),
+    communityMemberSetRole: (userId: string, role: 'admin' | 'member') =>
+      ipcRenderer.invoke('community:member-set-role', { userId, role }),
+    communityMemberRemove: (userId: string) => ipcRenderer.invoke('community:member-remove', { userId }),
+    communityLeave: () => ipcRenderer.invoke('community:leave'),
+
+    // ── 助手市场 / 创作者中心（P2）────────────────────────────────────
+    // 注意：**安装动作不在这里** —— 真安装要在本地网关建 agent，由渲染进程走
+    // window.clawwork 的 agent API（见 useTemplateInstall）。这里只有记账与增删改查。
+    marketTemplates: (params?: { category?: string | null; query?: string | null }) =>
+      ipcRenderer.invoke('market:templates', params),
+    marketTemplateDetail: (id: string) => ipcRenderer.invoke('market:detail', { id }),
+    marketTemplateInstalled: (id: string) => ipcRenderer.invoke('market:installed', { id }),
+    marketMyTemplates: () => ipcRenderer.invoke('market:mine'),
+    marketCreateTemplate: (params: {
+      name: string;
+      description: string;
+      category: string;
+      emoji: string;
+      instructions: string;
+    }) => ipcRenderer.invoke('market:create', params),
+    marketUpdateTemplate: (params: {
+      id: string;
+      name: string;
+      description: string;
+      category: string;
+      emoji: string;
+      instructions: string;
+    }) => ipcRenderer.invoke('market:update', params),
+    marketSetTemplateStatus: (id: string, status: 'draft' | 'published' | 'archived') =>
+      ipcRenderer.invoke('market:set-status', { id, status }),
+    marketDeleteTemplate: (id: string) => ipcRenderer.invoke('market:delete', { id }),
+    // ── 成长值 / 悬赏（P3）──────────────────────────────────────────
+    growthSummary: () => ipcRenderer.invoke('growth:summary'),
+    growthCheckIn: () => ipcRenderer.invoke('growth:check-in'),
+    growthHistory: (params?: { limit?: number; before?: string | null }) =>
+      ipcRenderer.invoke('growth:history', params),
+    growthDailyTaskList: () => ipcRenderer.invoke('growth:task-list'),
+    growthDailyTaskClaim: (params: { task: string }) => ipcRenderer.invoke('growth:task-claim', params),
+    bountyList: (params?: { status?: string | null }) => ipcRenderer.invoke('bounty:list', params),
+    bountyCreate: (params: { title: string; description: string; reward: number }) =>
+      ipcRenderer.invoke('bounty:create', params),
+    bountyClaim: (id: string) => ipcRenderer.invoke('bounty:claim', { id }),
+    bountyRelease: (id: string) => ipcRenderer.invoke('bounty:release', { id }),
+    bountySubmit: (params: { id: string; note: string }) => ipcRenderer.invoke('bounty:submit', params),
+    bountyAccept: (id: string) => ipcRenderer.invoke('bounty:accept', { id }),
+    bountyReject: (params: { id: string; note: string }) => ipcRenderer.invoke('bounty:reject', params),
+    bountyCancel: (id: string) => ipcRenderer.invoke('bounty:cancel', { id }),
+
+    // ── 埋点上报（P4）────────────────────────────────────────────────
+    // ⚠️ 渲染层只能上报白名单里的事件名（`@clawwork/shared` 的 ANALYTICS_EVENTS，
+    //    与迁移 48 的表 CHECK 逐字一致）；`props` 到主进程还会过一遍标量白名单化
+    //    与体积上限。**不要**在这里加任何加工 —— 白名单只有一份，在 main 侧。
+    analyticsTrack: (payload: { event: string; props?: Record<string, string | number | boolean> }) =>
+      ipcRenderer.invoke('analytics:track', payload),
+
+    // ── 画像持久化（BUG-034 / M3）────────────────────────────────────
+    // 保存成功后请求把 sender 所属 session 的 DOMStorage 落盘：**无参**（目标 session
+    // 由主进程从 sender 解析，渲染层不得传 partition/path）；返回的 `requested:true`
+    // 只表示"已发起刷新请求"——Electron 34 该 API 无完成回执，不是物理落盘确认。
+    requestProfileStorageFlush: () => ipcRenderer.invoke('profile:flush-storage'),
+
+    // ── 资料库（T6c）────────────────────────────────────────────────
+    // ⚠️ 这里**只做管道**：哪些块该嵌、能不能搜、降级成什么，全在 `kb/service.ts`。
+    //    唯一需要渲染层理解的是 `{ ok:false, code:'not-ready' }` —— 运行时是工作区就绪后
+    //    **异步**建的（加载 90MB 模型），界面可能在那之前就问上来；这跟"你还没加过资料"
+    //    是两回事，混在一起用户会以为自己的东西丢了。
+    kbStats: () => ipcRenderer.invoke('kb:stats'),
+    kbListSources: () => ipcRenderer.invoke('kb:list-sources'),
+    kbPickFiles: () => ipcRenderer.invoke('kb:pick-files'),
+    kbAddFile: (params: { path: string; title?: string }) => ipcRenderer.invoke('kb:add-file', params),
+    kbAddNote: (params: { title: string; text: string }) => ipcRenderer.invoke('kb:add-note', params),
+    kbRemoveSource: (sourceId: string) => ipcRenderer.invoke('kb:remove-source', { sourceId }),
+    kbSearch: (params: { query: string; limit?: number }) => ipcRenderer.invoke('kb:search', params),
+    kbIndexPending: (params?: { sourceId?: string }) => ipcRenderer.invoke('kb:index-pending', params),
+    kbRebuild: (params?: { sourceId?: string }) => ipcRenderer.invoke('kb:rebuild', params),
+
+    // ── 隐私与数据（P4）──────────────────────────────────────────────
+    // 工单状态机、7 天冷却期、多成员团队 owner 拦截**全在数据库 RPC 里**，
+    // 这里只是管道：参数原样透传，错误码由主进程压成裸机器码（见 privacy-handlers.ts）。
+    privacyState: () => ipcRenderer.invoke('privacy:state', {}),
+    privacyRequestExport: () => ipcRenderer.invoke('privacy:request-export', {}),
+    privacyRequestDeletion: (payload: { reason?: string }) => ipcRenderer.invoke('privacy:request-deletion', payload),
+    privacyCancelDeletion: (payload: { id: string }) => ipcRenderer.invoke('privacy:cancel-deletion', payload),
+    privacyDownloadExport: () => ipcRenderer.invoke('privacy:download-export', {}),
+
+    // 长期记忆（2026-10-16）：库是真源；助手真正读到的是 `MEMORY.md`（由 main 投影并回读）。
+    memoryList: () => ipcRenderer.invoke('memory:list'),
+    memoryCreate: (payload: { text: string; gatewayId?: string }) => ipcRenderer.invoke('memory:create', payload),
+    memoryDelete: (payload: { id: string; gatewayId?: string }) => ipcRenderer.invoke('memory:delete', payload),
+    memoryConfirmDraft: (payload: { id: string; text?: string; gatewayId?: string }) =>
+      ipcRenderer.invoke('memory:draft-confirm', payload),
+    memoryRejectDraft: (payload: { id: string; gatewayId?: string }) =>
+      ipcRenderer.invoke('memory:draft-reject', payload),
+    memorySync: (payload?: { gatewayId?: string }) => ipcRenderer.invoke('memory:sync', payload ?? {}),
+    memoryRecallProof: (payload?: { gatewayId?: string }) => ipcRenderer.invoke('memory:recall-proof', payload ?? {}),
+    onMemoryChanged: (callback: (payload: { gatewayId: string | null }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { gatewayId: string | null }): void =>
+        callback(payload);
+      ipcRenderer.on('memory:changed', listener);
+      return () => ipcRenderer.removeListener('memory:changed', listener);
+    },
+
+    // ── 诊断与修复（FEAT-03）─────────────────────────────────────────
+    // 两条入口（`--repair` 独立窗口 / 设置页嵌入）**同一组通道**：判据只在主进程的
+    // 引擎里有一份，preload 是纯管道（与 analyticsTrack 同款纪律 —— 这一层不加工）。
+    repairBootstrap: () => ipcRenderer.invoke('repair:bootstrap'),
+    repairScan: () => ipcRenderer.invoke('repair:scan'),
+    repairApply: (payload: { actionIds: string[] }) => ipcRenderer.invoke('repair:apply', payload),
+    repairReveal: (targetPath: string) => ipcRenderer.invoke('repair:reveal', targetPath),
+    // T31：把这一轮的备份写回原路径（`apply` 回给界面的 `backupDir`）。
+    repairRestore: (backupDir: string) => ipcRenderer.invoke('repair:restore', backupDir),
+  };
+}
+
+if (process.contextIsolated) {
+  try {
+    contextBridge.exposeInMainWorld('clawwork', buildApi());
+  } catch (error) {
+    throw new Error(
+      `[preload] Failed to expose ClawWork API: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+} else {
+  throw new Error('[preload] contextIsolation must be enabled.');
+}

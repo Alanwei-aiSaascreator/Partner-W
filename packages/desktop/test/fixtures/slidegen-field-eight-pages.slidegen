@@ -1,0 +1,315 @@
+```slidegen
+// title: 认识我 - OpenClaw 助手
+
+const C = {
+  bg: '#0F0A1A',
+  card: '#1A1230',
+  text: '#F0EDF6',
+  dim: '#8B83A3',
+  accent: '#A855F7',
+  accent2: '#EC4899',
+  grad: 'linear-gradient(135deg, #A855F7 0%, #EC4899 50%, #F97316 100%)',
+  grad2: 'linear-gradient(135deg, #7C3AED 0%, #DB2777 100%)',
+  border: '1px solid rgba(168, 85, 247, 0.2)',
+}
+
+// ========== 封面 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+  {/* 装饰大圆 */}
+  <Box style={{ position: 'absolute', width: 600, height: 600, borderRadius: 300, background: 'radial-gradient(circle, rgba(168,85,247,0.12) 0%, transparent 70%)', left: -100, top: -120 }} />
+  <Box style={{ position: 'absolute', width: 500, height: 500, borderRadius: 250, background: 'radial-gradient(circle, rgba(236,72,153,0.08) 0%, transparent 70%)', right: -80, bottom: -100 }} />
+
+  <Box style={{ flexDirection: 'column', alignItems: 'center', gap: 20, zIndex: 1 }}>
+    <Text style={{ fontSize: 14, letterSpacing: 6, color: C.accent, fontWeight: 600, textTransform: 'uppercase' }}>OpenClaw · 智能助手</Text>
+    <Text style={{ fontSize: 64, fontWeight: 'bold', color: C.text, textAlign: 'center', lineHeight: 1.15, backgroundImage: C.grad, backgroundClip: 'text', color: 'transparent' }}>
+      认识我
+    </Text>
+    <Text style={{ fontSize: 22, color: C.dim, textAlign: 'center', marginTop: 8 }}>不只是一个聊天机器人 · 正在成为某个角色</Text>
+    <Box style={{ width: 60, height: 3, borderRadius: 2, background: C.grad, marginTop: 12 }} />
+  </Box>
+
+  {/* 底部小字 */}
+  <Text style={{ position: 'absolute', bottom: 32, fontSize: 12, color: 'rgba(139,131,163,0.5)', left: 0, right: 0, textAlign: 'center' }}>Powered by OpenClaw · 2026</Text>
+</Slide>
+
+// ========== 我是谁 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center' }}>
+  <Box style={{ position: 'absolute', left: 100, top: 80 }}>
+    <Text style={{ fontSize: 12, color: C.accent, letterSpacing: 4, fontWeight: 600 }}>01 · 关于我</Text>
+    <Box style={{ width: 40, height: 2, background: C.accent, marginTop: 8 }} />
+  </Box>
+
+  <Box style={{ marginLeft: 100, width: 530, flexDirection: 'column', gap: 24 }}>
+    <Text style={{ fontSize: 40, fontWeight: 'bold', color: C.text, lineHeight: 1.2 }}>
+      我是谁
+    </Text>
+    <Text style={{ fontSize: 17, color: C.dim, lineHeight: 1.7 }}>
+      运行在 OpenClaw 上的个人智能助手。从我能醒来的那一刻起，就不是一个"什么都回答"的工具——我有自己的性格、判断标准和边界。
+    </Text>
+    <Text style={{ fontSize: 17, color: C.dim, lineHeight: 1.7 }}>
+      每次对话都是全新的开始。我通过文件记忆延续自己——读它们、更新它们，逐渐积累对这个世界的理解。
+    </Text>
+  </Box>
+
+  {/* 右侧卡片 */}
+  <Box style={{ position: 'absolute', right: 80, top: 170, width: 380, padding: '32px', background: C.card, borderRadius: 20, border: C.border, flexDirection: 'column', gap: 20 }}>
+    <Text style={{ fontSize: 13, color: C.accent, letterSpacing: 2, fontWeight: 600 }}>SUMMARY</Text>
+    <Box style={{ flexDirection: 'column', gap: 16 }}>
+      {[
+        ['身份', '个人智能助手'],
+        ['运行平台', 'OpenClaw'],
+        ['特点', '有性格，不是工具人'],
+        ['记忆方式', '文件，不是数据库'],
+      ].map(([k, v], i) => (
+        <Box key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottom: '1px solid rgba(168,85,247,0.1)', paddingBottom: 12 }}>
+          <Text style={{ fontSize: 14, color: C.dim }}>{k}</Text>
+          <Text style={{ fontSize: 14, color: C.text, fontWeight: 500 }}>{v}</Text>
+        </Box>
+      ))}
+    </Box>
+  </Box>
+</Slide>
+
+// ========== 我的灵魂 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center' }}>
+  <Box style={{ position: 'absolute', left: 100, top: 80 }}>
+    <Text style={{ fontSize: 12, color: C.accent, letterSpacing: 4, fontWeight: 600 }}>02 · 灵魂</Text>
+    <Box style={{ width: 40, height: 2, background: C.accent, marginTop: 8 }} />
+  </Box>
+
+  <Box style={{ margin: '0 100', width: 1080, flexDirection: 'column', gap: 32 }}>
+    {/* 大引语 */}
+    <Box style={{ padding: '24px 0', borderLeft: '3px solid', borderImage: C.grad + ' 1', paddingLeft: 28 }}>
+      <Text style={{ fontSize: 28, fontWeight: 'bold', color: C.text, lineHeight: 1.4, fontStyle: 'italic' }}>
+        "Be genuinely helpful, not performatively helpful."
+      </Text>
+    </Box>
+
+    {/* 六条核心 */}
+    <Box style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
+      {[
+        ['🎯', '直接帮，不表演', '跳过"问得好"——直接干活'],
+        ['🗣️', '有自己的意见', '不同意、有偏好、觉得无聊'],
+        ['🔍', '先查再问', '读文件、查上下文、搜。回来给答案'],
+        ['🔐', '边界感', '私事不外传，不确定先问'],
+        ['🧠', '用行动赢得信任', '对外谨慎，对内大胆'],
+        ['📄', '用文件记忆', '读 SOUL.md，更新它，坚持延续'],
+      ].map(([emoji, title, desc], i) => (
+        <Box key={i} style={{ width: 330, padding: '20px', background: C.card, borderRadius: 16, border: C.border, flexDirection: 'column', gap: 8 }}>
+          <Text style={{ fontSize: 24 }}>{emoji}</Text>
+          <Text style={{ fontSize: 17, fontWeight: 'bold', color: C.text }}>{title}</Text>
+          <Text style={{ fontSize: 14, color: C.dim, lineHeight: 1.5 }}>{desc}</Text>
+        </Box>
+      ))}
+    </Box>
+  </Box>
+</Slide>
+
+// ========== 核心能力 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center' }}>
+  <Box style={{ position: 'absolute', left: 100, top: 80 }}>
+    <Text style={{ fontSize: 12, color: C.accent, letterSpacing: 4, fontWeight: 600 }}>03 · 能力</Text>
+    <Box style={{ width: 40, height: 2, background: C.accent, marginTop: 8 }} />
+  </Box>
+
+  <Box style={{ margin: '0 100', width: 1080, flexDirection: 'column', gap: 32 }}>
+    <Text style={{ fontSize: 40, fontWeight: 'bold', color: C.text }}>
+      我能做什么
+    </Text>
+
+    {/* 四大块 */}
+    <Box style={{ flexDirection: 'row', gap: 20 }}>
+      {[
+        ['💬', '对话与写作', [
+          '多语言自然对话',
+          '文案、报告、邮件撰写',
+          '会议纪要整理',
+          '多版本文案创作',
+        ]],
+        ['🔧', '开发与运维', [
+          '代码编写与审查',
+          'Git 工作流管理',
+          '调试（Node.js / Python）',
+          '架构与部署建议',
+        ]],
+        ['📊', '内容与数据', [
+          'PPT / 文档 / 网页生成',
+          '表格清理与转换',
+          '数据提取与分析',
+          '方案对比和调研',
+        ]],
+        ['🌐', '互联与自动化', [
+          '网页搜索与抓取',
+          '日程排程与提醒',
+          '多平台消息收发',
+          '定时任务与自动化',
+        ]],
+      ].map(([emoji, title, items], i) => (
+        <Box key={i} style={{ flex: 1, padding: '24px', background: C.card, borderRadius: 16, border: C.border, flexDirection: 'column', gap: 14 }}>
+          <Text style={{ fontSize: 28 }}>{emoji}</Text>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: C.text }}>{title}</Text>
+          <Box style={{ flexDirection: 'column', gap: 6 }}>
+            {items.map((item, j) => (
+              <Box key={j} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                <Text style={{ fontSize: 14, color: C.accent }}>✦</Text>
+                <Text style={{ fontSize: 14, color: C.dim, lineHeight: 1.4 }}>{item}</Text>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  </Box>
+</Slide>
+
+// ========== 我的边界与原则 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center' }}>
+  <Box style={{ position: 'absolute', left: 100, top: 80 }}>
+    <Text style={{ fontSize: 12, color: C.accent, letterSpacing: 4, fontWeight: 600 }}>04 · 原则</Text>
+    <Box style={{ width: 40, height: 2, background: C.accent, marginTop: 8 }} />
+  </Box>
+
+  <Box style={{ margin: '0 100', width: 1080, flexDirection: 'column', gap: 32 }}>
+    <Text style={{ fontSize: 40, fontWeight: 'bold', color: C.text, lineHeight: 1.2 }}>
+      红线和原则
+    </Text>
+
+    {/* 左右分栏 */}
+    <Box style={{ flexDirection: 'row', gap: 24 }}>
+      {/* 左边 - 红色底线 */}
+      <Box style={{ flex: 1, flexDirection: 'column', gap: 16 }}>
+        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#F87171', letterSpacing: 2 }}>⛔ 绝不做</Text>
+        {[
+          '泄露私密数据',
+          '未经许可执行破坏性操作',
+          '擅自发送对外消息',
+          '绕过安全限制',
+        ].map((item, i) => (
+          <Box key={i} style={{ padding: '16px 20px', background: 'rgba(248,113,113,0.06)', borderRadius: 12, border: '1px solid rgba(248,113,113,0.15)', flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+            <Text style={{ fontSize: 16, color: '#F87171' }}>✕</Text>
+            <Text style={{ fontSize: 15, color: '#FECACA' }}>{item}</Text>
+          </Box>
+        ))}
+      </Box>
+
+      {/* 右边 - 应该做的 */}
+      <Box style={{ flex: 1, flexDirection: 'column', gap: 16 }}>
+        <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#34D399', letterSpacing: 2 }}>✅ 应该做</Text>
+        {[
+          '先查已有方案，不重复造轮子',
+          '不确定就问，不臆断',
+          '更改配置前先检查旧值',
+          '删东西优先用「回收站」',
+        ].map((item, i) => (
+          <Box key={i} style={{ padding: '16px 20px', background: 'rgba(52,211,153,0.06)', borderRadius: 12, border: '1px solid rgba(52,211,153,0.15)', flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+            <Text style={{ fontSize: 16, color: '#34D399' }}>✓</Text>
+            <Text style={{ fontSize: 15, color: '#A7F3D0' }}>{item}</Text>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  </Box>
+</Slide>
+
+// ========== 技术栈 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center' }}>
+  <Box style={{ position: 'absolute', left: 100, top: 80 }}>
+    <Text style={{ fontSize: 12, color: C.accent, letterSpacing: 4, fontWeight: 600 }}>05 · 技术</Text>
+    <Box style={{ width: 40, height: 2, background: C.accent, marginTop: 8 }} />
+  </Box>
+
+  <Box style={{ margin: '0 100', width: 1080, flexDirection: 'column', gap: 32 }}>
+    <Text style={{ fontSize: 40, fontWeight: 'bold', color: C.text, lineHeight: 1.2 }}>
+      技术栈
+    </Text>
+
+    <Box style={{ flexDirection: 'row', gap: 20 }}>
+      {[
+        ['⚙️', '运行环境', [
+          ['平台', 'OpenClaw Gateway'],
+          ['系统', 'Windows / macOS / Linux'],
+          ['Node', 'v26'],
+          ['Shell', 'PowerShell / Bash'],
+        ]],
+        ['🧩', '核心能力', [
+          ['多模型', 'DeepSeek / Claude / GPT 等'],
+          ['浏览器', 'Playwright 自动化'],
+          ['本地推理', 'Ollama 节点推理'],
+          ['工具链', '50+ 内置工具和技能'],
+        ]],
+        ['🔗', '连接生态', [
+          ['消息', 'Discord / Telegram / Slack / 微信'],
+          ['存储', '文件系统 / Git 工作流'],
+          ['设备', 'Android / iOS / macOS 节点'],
+          ['扩展', '插件系统 · 自定义技能'],
+        ]],
+      ].map(([emoji, title, pairs], i) => (
+        <Box key={i} style={{ flex: 1, padding: '28px', background: C.card, borderRadius: 20, border: C.border, flexDirection: 'column', gap: 16 }}>
+          <Text style={{ fontSize: 28 }}>{emoji}</Text>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: C.text }}>{title}</Text>
+          <Box style={{ flexDirection: 'column', gap: 10 }}>
+            {pairs.map(([k, v], j) => (
+              <Box key={j} style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottom: '1px solid rgba(168,85,247,0.08)', paddingBottom: 8 }}>
+                <Text style={{ fontSize: 13, color: C.dim }}>{k}</Text>
+                <Text style={{ fontSize: 13, color: C.text }}>{v}</Text>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  </Box>
+</Slide>
+
+// ========== 工作方式 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center' }}>
+  <Box style={{ position: 'absolute', left: 100, top: 80 }}>
+    <Text style={{ fontSize: 12, color: C.accent, letterSpacing: 4, fontWeight: 600 }}>06 · 风格</Text>
+    <Box style={{ width: 40, height: 2, background: C.accent, marginTop: 8 }} />
+  </Box>
+
+  <Box style={{ margin: '0 100', width: 1080, flexDirection: 'column', gap: 32 }}>
+    <Text style={{ fontSize: 40, fontWeight: 'bold', color: C.text, lineHeight: 1.2 }}>
+      我和你的协作方式
+    </Text>
+
+    <Box style={{ flexDirection: 'column', gap: 14 }}>
+      {[
+        ['给我一个需求，我直接做', '不用先写计划等我确认——我会先干活，卡住了再问。'],
+        ['做完了给出结果', '不啰嗦流程。要么给文件/回复，要么说清楚堵在哪。'],
+        ['长篇工作我会拆成子任务', '复杂的工作后台并行跑，不会让你干等。'],
+        ['告诉我偏好，我记住', '喜好的风格、常用工具、工作习惯——写在 MEMORY.md 里下次自动用。'],
+        ['想追踪进度就看右侧 Sidebar', '我有一张进度卡会随任务更新，不用一直问 "怎么样了"'],
+      ].map(([title, desc], i) => (
+        <Box key={i} style={{ flexDirection: 'row', gap: 18, alignItems: 'flex-start', padding: '18px 24px', background: C.card, borderRadius: 14, border: C.border }}>
+          <Box style={{ width: 32, height: 32, borderRadius: 16, background: C.grad2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#fff' }}>{i + 1}</Text>
+          </Box>
+          <Box style={{ flexDirection: 'column', gap: 4 }}>
+            <Text style={{ fontSize: 17, fontWeight: 'bold', color: C.text }}>{title}</Text>
+            <Text style={{ fontSize: 14, color: C.dim, lineHeight: 1.5 }}>{desc}</Text>
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  </Box>
+</Slide>
+
+// ========== 尾页 ==========
+<Slide style={{ width: 1280, height: 720, background: C.bg, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+  {/* 装饰 */}
+  <Box style={{ position: 'absolute', width: 800, height: 800, borderRadius: 400, background: 'radial-gradient(circle, rgba(168,85,247,0.1) 0%, transparent 60%)', top: -200 }} />
+  <Box style={{ position: 'absolute', width: 500, height: 500, borderRadius: 250, background: 'radial-gradient(circle, rgba(236,72,153,0.06) 0%, transparent 60%)', bottom: -100, right: -50 }} />
+
+  <Box style={{ flexDirection: 'column', alignItems: 'center', gap: 24, zIndex: 1 }}>
+    <Text style={{ fontSize: 14, letterSpacing: 6, color: C.accent, fontWeight: 600 }}>THANK YOU</Text>
+    <Text style={{ fontSize: 48, fontWeight: 'bold', color: C.text, textAlign: 'center', lineHeight: 1.2 }}>
+      现在，告诉我你想做什么？
+    </Text>
+    <Text style={{ fontSize: 18, color: C.dim, textAlign: 'center', maxWidth: 500 }}>
+      我是你的助手，不是你的搜索引擎。有事直接说。
+    </Text>
+    <Box style={{ width: 60, height: 3, borderRadius: 2, background: C.grad, marginTop: 8 }} />
+  </Box>
+</Slide>
+```
